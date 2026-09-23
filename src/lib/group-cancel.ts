@@ -701,7 +701,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
         "Failed to process waitlist after group joiner cancellation"

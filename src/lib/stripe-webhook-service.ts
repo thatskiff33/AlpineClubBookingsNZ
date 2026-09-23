@@ -242,14 +242,16 @@ export async function processStripeWebhookEvent(
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
       case "payment_intent.payment_failed":
         await handlePaymentIntentFailed(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
@@ -437,7 +439,7 @@ async function handlePaymentIntentSucceeded(
       applied.outcome === "amount_mismatch" ||
       applied.outcome === "cancelled"
     ) {
-      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome);
+      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome, format);
     }
     return;
   }
@@ -464,7 +466,7 @@ async function handlePaymentIntentSucceeded(
 
   // Check if this is an additional modification payment
   if (paymentIntent.metadata?.type === "modification_additional") {
-    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId);
+    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId, format);
     return;
   }
 
@@ -494,7 +496,8 @@ async function handlePaymentIntentSucceeded(
   if (bookingRecord?.status === "CANCELLED") {
     await handleCancelledBookingPaymentSucceeded(
       bookingRecord,
-      paymentIntent
+      paymentIntent,
+      format
     );
     return;
   }
@@ -515,7 +518,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Primary booking payment"
+      "Primary booking payment",
+      format
     );
     throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
@@ -551,7 +555,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       bookingRecord.finalPriceCents,
       paymentIntent.amount,
-      "Primary booking payment (stale intent: booking was modified after the intent was created)"
+      "Primary booking payment (stale intent: booking was modified after the intent was created)",
+      format
     );
     throw new Error(
       `Stripe capture amount does not match current booking total for ${bookingId}`
@@ -559,6 +564,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   const reconciliation = await markBookingPaymentSucceeded({
+    format,
     bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -878,7 +884,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,
-      paymentTransaction
+      paymentTransaction,
+      format
     );
     return;
   }
@@ -909,7 +916,8 @@ async function handleAdditionalModificationPaymentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Booking modification payment"
+      "Booking modification payment",
+      format
     );
     throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
   }
@@ -1245,7 +1253,8 @@ async function refundSupersededGroupSettlementIntent(
     await alertSupersededGroupSettlementIntent(
       paymentIntent,
       groupBookingId,
-      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`
+      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`,
+      format
     );
     throw refundErr;
   }
@@ -1280,7 +1289,8 @@ async function refundSupersededGroupSettlementIntent(
   await alertSupersededGroupSettlementIntent(
     paymentIntent,
     groupBookingId,
-    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`
+    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`,
+    format
   );
 }
 
@@ -1456,6 +1466,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   }
 
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     // Pin the refund to THIS transaction so replays mint identical Stripe
@@ -1715,6 +1726,7 @@ async function handleCancelledBookingPaymentSucceeded(
   }
 
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     metadata: {

@@ -455,12 +455,12 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
   }
 }
 
-function triggerWaitlistProcessing(booking: PendingBooking) {
+function triggerWaitlistProcessing(booking: PendingBooking, format: ClubFormat) {
   processWaitlistForDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     lodgeId: booking.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
       "Failed to process waitlist after cron bump"
@@ -1231,7 +1231,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           snapshot: { flagged: resolution.flagged },
         });
         await sendBumpedEmail(resolution.booking, resolution.flagged);
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1349,7 +1349,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           );
         }
 
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1419,7 +1419,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           );
         }
 
-        triggerWaitlistProcessing(resolution.booking);
+        triggerWaitlistProcessing(resolution.booking, format);
         continue;
       }
 
@@ -1630,6 +1630,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // row FAILED before the throw reaches the catch below, which is what
       // lets #3268's retire null the row's card safely.
       const paymentIntent = await chargeSavedCardAttempt({
+        format,
         attempt: resolution.attempt,
         bookingId: resolution.booking.id,
         memberId: bookingOwner(resolution.booking).memberId,
@@ -1650,6 +1651,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         });
 
         const reconciliation = await markBookingPaymentSucceeded({
+          format,
           bookingId: resolution.booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,
@@ -1947,6 +1949,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             });
             if (failure.outcome === "terminal") {
               await retireAndEscalateUnusableSavedCard({
+                format,
                 booking: claimForCharge.booking,
                 paymentMethodId: claimForCharge.payment.stripePaymentMethodId,
                 paymentIntentId,

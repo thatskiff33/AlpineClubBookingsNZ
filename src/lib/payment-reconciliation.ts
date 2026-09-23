@@ -1930,6 +1930,7 @@ export async function markBookingPaymentSucceeded({
     // line and the admin alert below.
     try {
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -2107,6 +2108,7 @@ export async function markBookingPaymentSucceeded({
       }
 
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -2180,6 +2182,7 @@ export async function markBookingPaymentSucceeded({
         )
       );
       await alertRefundFailure({
+        format,
         booking: reconciliation.booking,
         paymentIntentId,
         amountCents,

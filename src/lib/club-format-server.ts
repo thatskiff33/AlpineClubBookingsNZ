@@ -5,11 +5,15 @@ import "server-only";
  * money kernel (stage 3 of programme #3205, #3565). INV-CONFIG-006.
  *
  * This is where #3563's answer and this stage's operations meet. A server
- * component, route handler, cron job or email builder calls `clubFormat()` once
- * and renders everything through the result; the currency and locale it holds are
- * the ones persisted in `ClubFormatSettings`, never `process.env.CURRENCY` and
- * never `APP_CURRENCY` / `APP_LOCALE`, which after this stage are a migration
- * scaffold (`club-format-transitional.ts`) that #3567 deletes.
+ * component, route handler, cron job or webhook calls `clubFormat()` or
+ * `clubFormatValues()` ONCE per request or run — before any transaction or lock
+ * — and passes the result down to every helper, email template and Xero text
+ * builder it reaches; the currency and locale it holds are the ones persisted in
+ * `ClubFormatSettings`, never `process.env.CURRENCY` and never `APP_CURRENCY` /
+ * `APP_LOCALE`, which after this stage are seed-only environment readings that
+ * #3567 retires. There is no one-argument spelling of any rendering to fall
+ * back on (owner decision on #3565, 23 Sep 2026): a caller without a format is
+ * a compile error.
  *
  * ## The caching contract #3563 deferred to here
  *

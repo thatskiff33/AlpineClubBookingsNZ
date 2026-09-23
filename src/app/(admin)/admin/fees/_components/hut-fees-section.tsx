@@ -152,7 +152,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     `undefined` in the published image, so a club charging in anything but
     New Zealand dollars was shown NZD here whatever it had configured.
   */
-  const { currencyCode } = useClubFormat();
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS);
   const [rateTypes, setRateTypes] = useState<RateType[]>([]);
@@ -794,7 +795,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             <span className="font-semibold">Flat whole-lodge night rate: </span>
             {season.flatWholeLodgeNightCents != null ? (
               <span className="font-mono">
-                {formatCents(season.flatWholeLodgeNightCents)} per night
+                {formatCents(season.flatWholeLodgeNightCents, format)} per night
               </span>
             ) : (
               <span className="text-muted-foreground">
@@ -826,7 +827,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                             <TableCell>{t.label}</TableCell>
                             <TableCell className="text-right font-mono">
                               {rate
-                                ? `${formatCents(rate.pricePerNightCents)}${rate.fromFlatRate ? " (flat rate)" : ""}`
+                                ? `${formatCents(rate.pricePerNightCents, format)}${rate.fromFlatRate ? " (flat rate)" : ""}`
                                 : "Not set"}
                             </TableCell>
                           </TableRow>
@@ -841,7 +842,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                           <TableRow>
                             <TableCell>All ages (flat)</TableCell>
                             <TableCell className="text-right font-mono">
-                              {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                              {rate ? formatCents(rate.pricePerNightCents, format) : "Not set"}
                             </TableCell>
                           </TableRow>
                         );

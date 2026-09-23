@@ -415,7 +415,7 @@ async function cancelLinkedProvisionalChildBookings(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-    }).catch(
+    }, format).catch(
       (err) =>
         logger.error(
           { err, bookingId: child.id },
@@ -787,7 +787,7 @@ async function performBookingCancellation(
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 
@@ -948,7 +948,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
@@ -1329,7 +1329,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
@@ -1887,7 +1887,7 @@ async function performBookingCancellation(
       )
     );
 
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after manual-refund cancellation"));
 
     return {
@@ -1980,7 +1980,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
 
     return {
@@ -2018,6 +2018,7 @@ async function performBookingCancellation(
     if (cardRefundPlan && plannedCardRefundCents > 0) {
       try {
         const refundResult = await refundPaymentTransactions({
+          format,
           paymentId,
           amountCents: plannedCardRefundCents,
           allocation: cardRefundPlan,
@@ -2152,7 +2153,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
 
     return {
@@ -2217,7 +2218,7 @@ async function performBookingCancellation(
   }
 
   // Trigger waitlist processing for freed dates
-  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
     .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {

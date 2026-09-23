@@ -399,6 +399,8 @@ export async function respondToMemberGuestConsent(params: {
   guestId: string;
   actorMemberId: string;
   action: MemberGuestConsentAction;
+  /** The club's format (#3565), resolved by the route before any transaction. */
+  format: ClubFormat;
   now?: Date;
   delegateResolver?: MemberGuestConsentDelegateResolver;
   db?: typeof prisma;
@@ -408,6 +410,7 @@ export async function respondToMemberGuestConsent(params: {
     guestId,
     actorMemberId,
     action,
+    format,
     now = new Date(),
     delegateResolver = familyAdultDelegateResolver,
     db = prisma,
@@ -550,6 +553,7 @@ export async function respondToMemberGuestConsent(params: {
         actorMemberId,
         kind: "CONSENT_DECLINE",
         today: clubTodayDateOnly,
+        format,
       });
 
       return {
@@ -588,10 +592,12 @@ export async function respondToMemberGuestConsent(params: {
  */
 export async function expireMemberGuestConsent(params: {
   guestId: string;
+  /** The club's format (#3565), resolved by the sweep before any transaction. */
+  format: ClubFormat;
   now?: Date;
   db?: typeof prisma;
 }): Promise<MemberGuestConsentOutcome> {
-  const { guestId, now = new Date(), db = prisma } = params;
+  const { guestId, format, now = new Date(), db = prisma } = params;
 
   // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
   // opens. Inside it this path holds `pg_advisory_xact_lock(1)` and the
@@ -672,6 +678,7 @@ export async function expireMemberGuestConsent(params: {
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",
         today: clubTodayDateOnly,
+        format,
       });
 
       return {
@@ -738,6 +745,8 @@ export async function finaliseMemberGuestConsentTransition(params: {
   outcome: MemberGuestConsentOutcome;
   /** The member who acted, or null for the sweep. */
   actorMemberId: string | null;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
   /** `cron:member-guest-consent-expiry` for the sweep; undefined for a person. */
   actorLabel?: string;
   /**
@@ -754,6 +763,7 @@ export async function finaliseMemberGuestConsentTransition(params: {
     targetMemberId,
     outcome,
     actorMemberId,
+    format,
     actorLabel,
     consentExpiresAt,
   } = params;
@@ -807,6 +817,7 @@ export async function finaliseMemberGuestConsentTransition(params: {
   }
 
   await notifyMemberGuestConsentOutcome({
+    format,
     bookingId,
     guestId,
     targetMemberId,

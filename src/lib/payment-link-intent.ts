@@ -170,6 +170,7 @@ export async function createPaymentIntentForPaymentLink(
         try {
           if (booking.payment.status !== PaymentStatus.SUCCEEDED) {
             const reconciliation = await markBookingPaymentSucceeded({
+              format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,

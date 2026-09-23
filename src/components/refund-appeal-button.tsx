@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { useClubTime } from "@/components/club-time-provider";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents } from "@/lib/utils"
+import { useClubFormat } from "@/components/club-format-provider"
 
 interface RefundAppealButtonProps {
   bookingId: string
@@ -49,6 +50,7 @@ export function RefundAppealButton({
   maxRefundableCents,
   description = "If you believe you are entitled to a larger refund, you can submit an appeal for review.",
 }: RefundAppealButtonProps) {
+  const format = useClubFormat()
   const formatAppealStamp = useAppealStampFormatter()
   const [showForm, setShowForm] = useState(false)
   const [reason, setReason] = useState("")
@@ -102,7 +104,7 @@ export function RefundAppealButton({
         */
         if (cents > maxRefundableCents) {
           setError(
-            `That is more than can be refunded on this booking. The most you can ask for is ${formatCents(maxRefundableCents)}.`,
+            `That is more than can be refunded on this booking. The most you can ask for is ${formatCents(maxRefundableCents, format)}.`,
           )
           return
         }
@@ -164,7 +166,7 @@ export function RefundAppealButton({
                 <p className="text-muted-foreground">{req.reason}</p>
                 {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
                   <p>
-                    Refunded: <strong>{formatCents(req.approvedAmountCents)}</strong>
+                    Refunded: <strong>{formatCents(req.approvedAmountCents, format)}</strong>
                   </p>
                 )}
                 {req.adminNotes && (
@@ -234,7 +236,7 @@ export function RefundAppealButton({
                 />
               </div>
               <FieldHint {...amountHint.hintProps}>
-                Example: 0.00 — maximum {formatCents(maxRefundableCents)}
+                Example: 0.00 — maximum {formatCents(maxRefundableCents, format)}
               </FieldHint>
             </div>
 

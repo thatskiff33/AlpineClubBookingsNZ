@@ -326,7 +326,7 @@ export async function issueSplitGuestPaymentLink(
       bookingReference: booking.id,
       expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
-    });
+    }, format);
   } catch (err) {
     // The raw token dies with this request; clear the sentinel so a retry
     // (button or cron) re-mints instead of pointing at an unreachable link.

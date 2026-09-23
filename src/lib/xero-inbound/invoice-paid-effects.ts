@@ -1250,6 +1250,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         bookingStatus: outcome.bookingStatus,
         invoiceId,
         invoiceNumber,
+        format,
       });
       continue;
     }
@@ -1413,7 +1414,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
         errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
         paymentIntentId: invoiceId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
           "Failed to alert admins about late Internet Banking capacity failure"
@@ -1443,7 +1444,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         lodgeId: outcome.payment.booking.lodgeId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId },
           "Failed to process waitlist after late Internet Banking cancellation"

@@ -864,13 +864,10 @@ export async function planStripeRefundAllocation({
   paymentId,
   amountCents,
   store = prisma,
-  format,
 }: {
   paymentId: string;
   amountCents: number;
   store?: PaymentStore;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
 }): Promise<{
   slices: RefundAllocationSlice[];
   plannedAmountCents: number;
@@ -922,10 +919,13 @@ export class PartialRefundError extends Error {
     completedRefundCents,
     refunds,
     cause,
+    format,
   }: {
     completedRefundCents: number;
     refunds: PartialRefundError["refunds"];
     cause: unknown;
+    /** The club's format (#3565): the message names the amount already refunded. */
+    format: ClubFormat;
   }) {
     super(
       `Refund failed after ${formatCents(completedRefundCents, format)} was refunded and recorded: ${
@@ -947,6 +947,7 @@ export async function refundPaymentTransactions({
   idempotencyKeyPrefix,
   allocation,
   store = prisma,
+  format,
 }: {
   paymentId: string;
   amountCents: number;
@@ -964,6 +965,8 @@ export async function refundPaymentTransactions({
    */
   allocation?: ReadonlyArray<RefundAllocationSlice>;
   store?: PaymentStore;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const payment = await ensurePaymentTransactionsBackfilled(store, paymentId);
   if (!payment) {
@@ -1030,6 +1033,7 @@ export async function refundPaymentTransactions({
         completedRefundCents,
         refunds,
         cause: err,
+        format,
       });
     }
 

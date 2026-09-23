@@ -34,6 +34,7 @@ import {
   type PublicFeeTable,
 } from "@/lib/public-page-content-tokens";
 import { resolveFeeTokenParameters } from "@/lib/token-parameters";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -449,6 +450,9 @@ async function resolveGalleryImages(
 }
 
 export async function buildEmbeddedBody(contentHtml: string) {
+  // The club's format (#3565), resolved once per render pass and shared with
+  // the page through `cache()`; every fee token below renders with it.
+  const format = await clubFormatValues();
   const htmlWithTextTokens = await resolveTextTokens(contentHtml);
   const matches = Array.from(htmlWithTextTokens.matchAll(EMBED_TOKEN_REGEX));
   const hasInlineGalleryToken = matches.some((match) => {
@@ -507,18 +511,18 @@ export async function buildEmbeddedBody(contentHtml: string) {
     } else if (parsed.token === "annual-fees" || parsed.token === "membership-types") {
       // {{membership-types}} is a deprecated alias of {{annual-fees}}.
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
-      parts.push({ type: "annual-fees", groups: await loadPublicAnnualFees({ typeKey: feeParams.type, components: feeParams.components }) });
+      parts.push({ type: "annual-fees", groups: await loadPublicAnnualFees(format, { typeKey: feeParams.type, components: feeParams.components }) });
     } else if (parsed.token === "joining-fees" || parsed.token === "entrance-fees") {
       // {{entrance-fees}} is a deprecated alias of {{joining-fees}}.
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
-      parts.push({ type: "joining-fees", groups: await loadPublicJoiningFees({ typeKey: feeParams.type, byAge: feeParams.groupBy.has("age") }) });
+      parts.push({ type: "joining-fees", groups: await loadPublicJoiningFees(format, { typeKey: feeParams.type, byAge: feeParams.groupBy.has("age") }) });
     } else if (parsed.token === "hut-fees") {
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
-      parts.push({ type: "hut-fees", tables: await loadPublicHutFees(feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
+      parts.push({ type: "hut-fees", tables: await loadPublicHutFees(format, feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
       parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {
-      parts.push({ type: "cancellation-policy", policy: await loadPublicCancellationPolicy(parsed.parameter) });
+      parts.push({ type: "cancellation-policy", policy: await loadPublicCancellationPolicy(format, parsed.parameter) });
     } else if (parsed.token === "contact-form") {
       parts.push({ type: "contact-form" });
     } else if (parsed.token === "booking-requests") {

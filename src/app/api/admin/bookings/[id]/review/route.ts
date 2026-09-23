@@ -15,6 +15,7 @@ import {
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const reviewSchema = z
   .object({
@@ -100,6 +101,9 @@ export async function PATCH(
   const reviewedAt = new Date();
   const ipAddress =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   // #1790: only record the notify choice when a member email was actually
   // suppressed. Both review sends below are unconditional, so this reflects
@@ -253,6 +257,7 @@ export async function PATCH(
         session.user.id,
         "ADMIN",
         ipAddress,
+        format,
         "card",
       );
     } catch (err) {

@@ -512,6 +512,7 @@ export async function executeEditReviewSettlement({
     const refundAmountCents = amountCents ?? 0;
     try {
       const refundResult = await refundPaymentTransactions({
+        format,
         paymentId: route.paymentId,
         amountCents: refundAmountCents,
         // #1507: the body is rebuilt byte-identically by a recovery replay from
@@ -625,6 +626,7 @@ export async function executeEditReviewSettlement({
    * is fire-and-forget, exactly as it was inline.
    */
   await dispatchEditReviewXeroSettlement({
+    format,
     bookingId,
     taskId,
     actingMemberId,

@@ -141,7 +141,12 @@ export default async function BookingDetailPage({
     bookingLodgeEmailSettings,
   });
 
-  const history = await loadBookingDetailHistory({ booking, club, viewer });
+  const history = await loadBookingDetailHistory({
+    booking,
+    club,
+    viewer,
+    format: money.format,
+  });
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -257,7 +262,7 @@ export default async function BookingDetailPage({
   const showCancellationInfo = canCancel && !isDeleted;
   const cancellationSchedule =
     showCancellationInfo && originalPaymentCaptured
-      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
+      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn), money.format)
       : undefined;
   const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
 

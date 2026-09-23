@@ -716,7 +716,7 @@ async function finishReap({
       checkOut: child.checkOut,
       // Re-process the freed lodge's own queue, not the default lodge's.
       lodgeId: child.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
         "Failed to process waitlist after group settlement reap"

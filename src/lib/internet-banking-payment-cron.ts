@@ -407,7 +407,7 @@ export async function releaseExpiredInternetBankingHolds(
       checkIn: payment.booking.checkIn,
       checkOut: payment.booking.checkOut,
       lodgeId: payment.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId },
         "Failed to process waitlist after expired Internet Banking hold release",

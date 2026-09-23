@@ -625,7 +625,6 @@ export function resolveBookingNarrative({
   financialReviewPending = false,
 }: ResolveBookingNarrativeInput,
   format: ClubFormat,
-  format: ClubFormat,
 ): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;

@@ -33,6 +33,7 @@ import {
   WAITLIST_OFFER_RELEASED_CAPACITY_BODY,
   WAITLIST_OFFER_RELEASED_FLAGS,
 } from "@/lib/waitlist-confirm-recovery-contract";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * #2623 T4 — budgets for the compensating offer release.
@@ -98,6 +99,9 @@ export async function POST(
   }
 
   const { id: bookingId } = await params;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   const result = await confirmWaitlistOffer(bookingId, session.user.id);
 
@@ -507,6 +511,7 @@ export async function POST(
       booking.checkOut,
       booking.guests.length,
       booking.finalPriceCents,
+      format,
       {
         lodgeId: booking.lodgeId,
         ...(booking.promoRedemption?.promoCode

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * Withdraw a booking's unpaid additional-payment request (#3528,
@@ -25,6 +26,7 @@ export function WithdrawAdditionalPaymentButton({
   bookingId: string;
   amountCents: number;
 }) {
+  const format = useClubFormat();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -46,7 +48,7 @@ export function WithdrawAdditionalPaymentButton({
       }
       setConfirming(false);
       setDone(
-        `Payment request of ${formatCents(amountCents)} withdrawn. The member no longer owes it.`,
+        `Payment request of ${formatCents(amountCents, format)} withdrawn. The member no longer owes it.`,
       );
       // NOT `router.refresh()` here: the panel around this button renders
       // nothing once nothing is owed, so a refresh would unmount this very
@@ -83,7 +85,7 @@ export function WithdrawAdditionalPaymentButton({
           aria-label="Confirm withdrawing the payment request"
         >
           <p className="text-sm">
-            Withdraw the request for <strong>{formatCents(amountCents)}</strong>?
+            Withdraw the request for <strong>{formatCents(amountCents, format)}</strong>?
             The card request is cancelled, the amount stops showing as owing, and
             any Xero invoice waiting on that payment is retired without being
             sent. The review that raised it stays completed; this withdrawal is
@@ -96,7 +98,7 @@ export function WithdrawAdditionalPaymentButton({
               onClick={withdraw}
               disabled={busy}
             >
-              {busy ? "Withdrawing..." : `Withdraw ${formatCents(amountCents)}`}
+              {busy ? "Withdrawing..." : `Withdraw ${formatCents(amountCents, format)}`}
             </Button>
             <Button
               type="button"

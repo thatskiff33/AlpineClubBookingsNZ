@@ -12,6 +12,7 @@ import type {
   PromoInfo,
   QuoteResult,
 } from "@/components/edit-booking/types";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * The booking's promo code: keep it, drop it, or apply a different one.
@@ -70,6 +71,7 @@ export function PromoCodeCard({
   onPrefillCode: (code: string) => void;
   onPromoApplied: (result: PromoResult | null) => void;
 }) {
+  const format = useClubFormat();
   return (
     <Card>
       <CardHeader>
@@ -88,7 +90,7 @@ export function PromoCodeCard({
                 <span className="text-sm text-muted-foreground ml-2">{promo.description}</span>
               )}
               <span className={`text-sm ml-2 ${promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-                ({formatSignedCents(promoAdjustmentCents)})
+                ({formatSignedCents(promoAdjustmentCents, format)})
               </span>
             </div>
             <Button

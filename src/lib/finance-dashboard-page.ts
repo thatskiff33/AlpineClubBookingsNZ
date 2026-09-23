@@ -1,5 +1,6 @@
 import { dateOnlyInstantOf, parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { clubFormatValues } from "@/lib/club-format-server";
 import {
   FINANCE_DASHBOARD_COMPARE_LABELS,
   FINANCE_DASHBOARD_FORWARD_LABELS,
@@ -201,6 +202,10 @@ export async function buildFinanceDashboardPageModel(input: {
     test covers.
   */
   const club = await clubTime();
+  // The club's FORMAT, resolved once for the whole page in the same way (#3565;
+  // INV-CONFIG-006): before any database read, then threaded into every view
+  // builder rather than re-read per builder or per amount.
+  const format = await clubFormatValues();
   const activeLodges = await prisma.lodge.findMany({
     where: { active: true },
     select: { id: true, name: true },
@@ -256,28 +261,34 @@ export async function buildFinanceDashboardPageModel(input: {
   let ratios: FinanceDashboardRatioExplorerModel | null = null;
 
   if (selection.view === "bookings") {
-    viewModel = await buildBookingsDashboard(selection, selectedLodgeId);
+    viewModel = await buildBookingsDashboard(selection, selectedLodgeId, format);
   } else if (selection.view === "revenue") {
-    viewModel = await buildRevenueDashboard(selection);
+    viewModel = await buildRevenueDashboard(selection, format);
   } else if (selection.view === "costs") {
     const costsModel = await buildMappedPnlDashboard({
       selection,
       kind: "EXPENSE",
+      format,
     });
-    await appendFinancialYearsPanel(costsModel, selection, "EXPENSE");
+    await appendFinancialYearsPanel(costsModel, selection, "EXPENSE", format);
     viewModel = costsModel;
   } else if (selection.view === "ratios") {
-    const ratiosModel = await buildRatiosDashboard(selection);
+    const ratiosModel = await buildRatiosDashboard(selection, format);
     ratios = ratiosModel.ratios;
     viewModel = ratiosModel;
   } else if (selection.view === "pricing-sensitivity") {
-    viewModel = await buildPricingSensitivityDashboard(selection, selectedLodgeId);
+    viewModel = await buildPricingSensitivityDashboard(
+      selection,
+      selectedLodgeId,
+      format,
+    );
   } else if (selection.view === "cash") {
-    viewModel = await buildCashDashboard(club, selection);
+    viewModel = await buildCashDashboard(club, selection, format);
   } else if (selection.view === "working-capital") {
     viewModel = await buildBalanceOrWorkingCapitalDashboard({
       selection,
       workingCapitalOnly: true,
+      format,
     });
   } else if (selection.view === "sync-health") {
     viewModel = await buildSyncHealthDashboard(selection);
@@ -285,6 +296,7 @@ export async function buildFinanceDashboardPageModel(input: {
     viewModel = await buildBalanceOrWorkingCapitalDashboard({
       selection,
       workingCapitalOnly: false,
+      format,
     });
   }
 

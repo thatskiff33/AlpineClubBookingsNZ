@@ -11,6 +11,7 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
@@ -155,7 +156,7 @@ async function getMemberScope(localId: string, yearEndMonth: number): Promise<Xe
   };
 }
 
-async function getPaymentScope(localId: string): Promise<XeroRecordScope | null> {
+async function getPaymentScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const payment = await prisma.payment.findUnique({
     where: { id: localId },
     select: {
@@ -186,7 +187,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
   const rootRecord = createRecordReference(
     "Payment",
     payment.id,
-    `Payment ${formatCents(payment.amountCents)} for ${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
+    `Payment ${formatCents(payment.amountCents, format)} for ${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
     "Payment"
   );
   const relatedBooking = createRecordReference(
@@ -207,7 +208,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
   };
 }
 
-async function getBookingScope(localId: string): Promise<XeroRecordScope | null> {
+async function getBookingScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const booking = await prisma.booking.findUnique({
     where: { id: localId },
     select: {
@@ -256,7 +257,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
       createRecordReference(
         "Payment",
         booking.payment.id,
-        `Payment ${formatCents(booking.payment.amountCents)}`,
+        `Payment ${formatCents(booking.payment.amountCents, format)}`,
         "Payment"
       )
     );
@@ -268,8 +269,8 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
       modification.priceDiffCents === 0
         ? "No price change"
         : modification.priceDiffCents > 0
-          ? `+${formatCents(modification.priceDiffCents)}`
-          : formatCents(modification.priceDiffCents);
+          ? `+${formatCents(modification.priceDiffCents, format)}`
+          : formatCents(modification.priceDiffCents, format);
 
     scopeRecords.push(
       createRecordReference(
@@ -292,7 +293,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
   };
 }
 
-async function getBookingModificationScope(localId: string): Promise<XeroRecordScope | null> {
+async function getBookingModificationScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const modification = await prisma.bookingModification.findUnique({
     where: { id: localId },
     select: {
@@ -323,8 +324,8 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
     modification.priceDiffCents === 0
       ? "No price change"
       : modification.priceDiffCents > 0
-        ? `+${formatCents(modification.priceDiffCents)}`
-        : formatCents(modification.priceDiffCents);
+        ? `+${formatCents(modification.priceDiffCents, format)}`
+        : formatCents(modification.priceDiffCents, format);
 
   const rootRecord = createRecordReference(
     "BookingModification",
@@ -346,7 +347,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
       createRecordReference(
         "Payment",
         modification.booking.payment.id,
-        `Payment ${formatCents(modification.booking.payment.amountCents)}`,
+        `Payment ${formatCents(modification.booking.payment.amountCents, format)}`,
         "Payment"
       )
     );
@@ -379,7 +380,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
  * rather than scope, exactly as on the booking-change scope, so this page shows
  * the second ask's own operations and links rather than the whole booking's.
  */
-async function getManualRefundTaskScope(localId: string): Promise<XeroRecordScope | null> {
+async function getManualRefundTaskScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const task = await prisma.manualRefundTask.findUnique({
     where: { id: localId },
     select: {
@@ -409,7 +410,7 @@ async function getManualRefundTaskScope(localId: string): Promise<XeroRecordScop
   const rootRecord = createRecordReference(
     "ManualRefundTask",
     task.id,
-    `Booking review ${task.amountCents === null ? "(amount not set)" : formatCents(task.amountCents)} (${formatStatusLabel(task.status)})`,
+    `Booking review ${task.amountCents === null ? "(amount not set)" : formatCents(task.amountCents, format)} (${formatStatusLabel(task.status)})`,
     "Booking Review"
   );
   const relatedRecords = [
@@ -426,7 +427,7 @@ async function getManualRefundTaskScope(localId: string): Promise<XeroRecordScop
       createRecordReference(
         "Payment",
         task.booking.payment.id,
-        `Payment ${formatCents(task.booking.payment.amountCents)}`,
+        `Payment ${formatCents(task.booking.payment.amountCents, format)}`,
         "Payment"
       )
     );
@@ -608,18 +609,18 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
   };
 }
 
-async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): Promise<XeroRecordScope | null> {
+async function getXeroRecordScope(localModel: XeroLocalModel, localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   switch (localModel) {
     case "Member":
       return getMemberScope(localId, await resolveYearEndMonth());
     case "Payment":
-      return getPaymentScope(localId);
+      return getPaymentScope(localId, format);
     case "Booking":
-      return getBookingScope(localId);
+      return getBookingScope(localId, format);
     case "BookingModification":
-      return getBookingModificationScope(localId);
+      return getBookingModificationScope(localId, format);
     case "ManualRefundTask":
-      return getManualRefundTaskScope(localId);
+      return getManualRefundTaskScope(localId, format);
     case "MemberSubscription":
       return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":
@@ -638,9 +639,10 @@ function toIsoString(value: Date | null): string | null {
 export async function getXeroRecordActivity(
   localModel: XeroLocalModel,
   localId: string,
+  format: ClubFormat,
   limit = 25
 ): Promise<XeroRecordActivityData | null> {
-  const scope = await getXeroRecordScope(localModel, localId);
+  const scope = await getXeroRecordScope(localModel, localId, format);
   if (!scope) {
     return null;
   }

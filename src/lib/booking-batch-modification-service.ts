@@ -2252,6 +2252,7 @@ export async function modifyBookingBatch({
     });
 
     const stripeRefundId = await executeBookingModificationRefund({
+      format,
       bookingId,
       result,
       metadataReason: "batch_modification",

@@ -11,6 +11,8 @@ import {
 import type Stripe from "stripe";
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { bookingOwner } from "@/lib/booking-owner";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { prisma } from "@/lib/prisma";
 import {
   cancelPaymentIntentIfCancellableWithResult,
@@ -486,8 +488,6 @@ import {
   isEditFinancialReviewAdditionalIntentRecoveryKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
-import type { ClubFormat } from "@/lib/club-format";
-import { clubFormatValues } from "@/lib/club-format-server";
 export {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -1911,6 +1911,7 @@ async function processRefundSupersededPaymentOperation(
   }
 
   await reportSupersededPaymentRefund({
+    format,
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     paymentIntentId: operation.paymentIntentId,
@@ -2115,6 +2116,7 @@ async function processBookingModificationRefundOperation(
   }
 
   await refundPaymentTransactions({
+    format,
     paymentId: operation.paymentId,
     amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
     allocation: plan,
@@ -2390,6 +2392,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       return;
     }
     const synced = await syncEditFinancialReviewChargeRequest({
+      format,
       bookingId: operation.bookingId,
       bookingModificationId,
       paymentId: operation.paymentId,
@@ -2483,6 +2486,7 @@ async function processCreateAdditionalPaymentIntentOperation(
           // What counts as short - and, since #3193, whether the difference can
           // be billed on its own invoice - belongs there, not to two callers.
           await recordShortEditReviewChargeInvoice({
+            format,
             outcome: attempt.outcome,
             bookingId: operation.bookingId,
             bookingModificationId,

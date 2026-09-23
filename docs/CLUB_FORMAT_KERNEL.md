@@ -34,12 +34,14 @@ decimal mark as a member reading it in Ohakune. `Intl.NumberFormat()
 | `club-format.ts` | the shape, the validators, the `ClubFormat` type | anyone, including the browser |
 | `club-format-intl.ts` | the ONE `new Intl.NumberFormat` for rendering, memoised | only the two formatter modules |
 | `club-format-bound.ts` | `bindClubFormat(format)` → the operations with the format closed over | anyone, including the browser |
-| `club-format-server.ts` | `clubFormat()` / `clubFormatValues()`, request-scoped | a server component, route handler, cron or email builder |
+| `club-format-server.ts` | `clubFormat()` / `clubFormatValues()`, request-scoped | a server component, route handler, cron or webhook — the entry point, which passes the result down |
 
 `formatCents` / `formatSignedCents` stay in `@/lib/utils` and the finance
 dashboard's renderings stay in `@/lib/finance-format`, because those are the
 imports a hundred call sites already carry and moving them would have been churn
-with no reader. What changed is that each takes the club's `format`.
+with no reader. What changed is that each takes the club's `format`, and takes it
+as a **required** argument: there is no one-argument spelling, so a call site
+that forgets the club's format does not compile.
 
 ## The same interface on both sides of the network
 
@@ -100,22 +102,48 @@ already reads as a delta. There is nothing there for a club's format to change,
 and localising a form field's value would be a defect rather than an
 improvement. It stays one-argument, permanently.
 
-## The migration window, and how it ends
+## The format is required, and the compiler is the census
 
-Programme [#3205](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3205)
-moves the call sites in groups so each ships green. Until the last group lands,
-every rendering also has a **deprecated one-argument overload**, which resolves
-through `club-format-transitional.ts` — the environment's `APP_CURRENCY` /
-`APP_LOCALE`, exactly what the call site rendered with before. It cannot reach
-the persisted setting and no version of it could: `@/lib/utils` is on the
-browser's import graph and the persisted format is an asynchronous `server-only`
-read.
+Stage 3 of programme
+[#3205](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3205)
+([#3565](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3565)) moved
+every call site in one change, by the owner's decision of 23 Sep 2026. There is
+**no one-argument overload and no transitional module**: `formatCents(cents)` is
+a type error, so a screen, an email or a line of Xero text that forgets the
+club's format cannot be built. That is the unrepresentable-over-policed shape
+`INV-SSOT` prefers, and it replaced the counted ratchet the migration briefly
+carried — a scanner counting arities cannot see a signature widened back to
+optional, and the compiler can. `club-format-kernel.test.ts` pins that with a
+`@ts-expect-error` per rendering, which turns a re-added optional parameter into
+an "unused directive" compile error under `tsc -p tsconfig.test.json`.
 
-So while the window is open, a club that has CHANGED its currency sees the
-persisted one on migrated surfaces and the environment's on the rest. A club on
-the shipped defaults sees no difference at all, which is proven byte-for-byte in
-`club-format-kernel.test.ts`. #3567 deletes `club-format-transitional.ts`, at
-which point the compiler names every remaining one-argument caller.
+The rules that make a required argument bearable, and that every call site now
+follows:
+
+- **The server resolves once per request or run, before any transaction or
+  lock.** A route handler, server page, cron, webhook or script calls
+  `await clubFormatValues()` (or `clubFormat()`) at the top and passes the result
+  down. Never per amount, never inside a transaction callback, and never inside
+  a library function a handler calls — outside a React render `cache()` gives
+  no memo, so a helper that resolved for itself would read the setting once per
+  email in a batch.
+- **Email templates and Xero text builders take the format from their
+  caller.** They are synchronous functions the sender or the outbox drives, so
+  they take `format: ClubFormat` (positional, before the first optional
+  parameter, or as a required property of their params object) and never look
+  it up.
+- **A `"use client"` component reads the stage 2 provider** —
+  `useClubFormat()` for the values or `useBoundClubFormat()` for the
+  operations — and never imports `club-format-server`.
+- **A `src/lib` module a client file can reach takes a parameter**, so it stays
+  off the `server-only` graph.
+
+A club on the shipped New Zealand defaults sees byte-identical output on every
+surface, including email bodies and the text written to Xero, which
+`club-format-kernel.test.ts` proves against the retired module constants and the
+email and Xero suites prove on their rendered output. `APP_CURRENCY` /
+`APP_LOCALE` remain only as the seed-only environment reading `resolveClubFormat`
+falls back to when nothing is persisted; #3567 retires them.
 
 ## Adding a new rendering
 

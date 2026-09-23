@@ -159,6 +159,7 @@ async function repriceWaitlistCandidate(
   // REQUIRED, and positioned ahead of the optional mode so it cannot be
   // defaulted: the default is what put this decision on the container's zone.
   todayAtClub: CalendarDate,
+  format: ClubFormat,
   // #2543 — the club's mode, resolved by the sweep BEFORE it opened this
   // transaction. This reprice inherits the unpaid-subscription reprice like every
   // other pricing call, and it passes no locked night prices, so the WHOLE stay
@@ -166,7 +167,6 @@ async function repriceWaitlistCandidate(
   // the offer the member is about to be sent and keeps a settings read out from
   // under the per-lodge capacity lock this transaction holds.
   subscriptionLockoutMode?: SubscriptionLockoutMode,
-  format: ClubFormat,
 ): Promise<number> {
   /**
    * #3166 (`INV-MOD-028`): A BLANK IS NEVER REPAIRED BY A REPRICE.
@@ -618,6 +618,7 @@ export async function processWaitlistForDates(freedDates: {
             candidate,
             offerLodgeId,
             todayAtClub,
+            format,
             subscriptionLockoutMode,
           );
         }
@@ -1299,7 +1300,7 @@ export async function confirmWaitlistOffer(
 /**
  * Expire stale WAITLIST_OFFERED bookings and re-offer to next candidates.
  */
-export async function expireStaleOffers(): Promise<{
+export async function expireStaleOffers(format: ClubFormat): Promise<{
   expiredCount: number;
   reofferedCount: number;
 }> {
@@ -1432,7 +1433,7 @@ export async function expireStaleOffers(): Promise<{
   }
 
   for (const range of affectedRanges) {
-    const { offeredBookingId } = await processWaitlistForDates(range);
+    const { offeredBookingId } = await processWaitlistForDates(range, format);
     if (offeredBookingId) {
       reofferedCount++;
     }

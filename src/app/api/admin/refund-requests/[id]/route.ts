@@ -184,6 +184,7 @@ export async function PUT(
 
     try {
       await refundPaymentTransactions({
+        format: money.format,
         paymentId: payment.id,
         amountCents: plannedAmountCents,
         allocation: refundPlan,
@@ -325,7 +326,7 @@ export async function PUT(
           adminNotes: adminNotes ?? null,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-        })),
+        }, money.format)),
         // Member-facing and booking-scoped: the per-booking "No emails"
         // switch withholds it (#2258).
         bookingContext: {

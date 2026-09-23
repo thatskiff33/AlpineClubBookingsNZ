@@ -221,6 +221,7 @@ export async function applyManualBookingPayment(
   }
 
   const settlement = await markBookingPaymentManuallySettled({
+    format,
     bookingId: input.bookingId,
     actingAdminMemberId: input.actingMemberId,
     note,

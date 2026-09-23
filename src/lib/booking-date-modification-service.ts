@@ -1471,6 +1471,7 @@ export async function modifyBookingDates({
   });
 
   const stripeRefundId = await executeBookingModificationRefund({
+    format,
     bookingId,
     result,
     metadataReason: "date_change_price_decrease",
@@ -1737,7 +1738,7 @@ async function dispatchDatePostTransactionSideEffects({
       checkIn: result.oldCheckIn,
       checkOut: result.oldCheckOut,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
     );
   }
@@ -2275,7 +2276,7 @@ export async function adminShiftBookingDates({
     checkIn: result.oldCheckIn,
     checkOut: result.oldCheckOut,
     lodgeId: result.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error({ err, bookingId }, "Failed to process waitlist after admin date shift"),
   );
 

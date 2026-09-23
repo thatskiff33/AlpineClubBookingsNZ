@@ -193,7 +193,7 @@ export async function POST(
     requestedAmountCents: requestedAmountCents ?? null,
     paidAmountCents: booking.payment.amountCents,
     refundedAmountCents: booking.payment.refundedAmountCents,
-  }).catch(() => {});
+  }, money.format).catch(() => {});
 
   return NextResponse.json(refundRequest, { status: 201 });
 }

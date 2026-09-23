@@ -106,6 +106,7 @@ export async function drainSupersededPrimaryIntents({
 }
 
 export async function executeBookingModificationRefund({
+  format,
   bookingId,
   result,
   metadataReason,
@@ -113,6 +114,7 @@ export async function executeBookingModificationRefund({
   failureMessage,
   recoveryFailureMessage,
 }: {
+  format: ClubFormat;
   bookingId: string;
   result: BookingModificationPaymentContext;
   metadataReason: string;
@@ -126,6 +128,7 @@ export async function executeBookingModificationRefund({
 
   try {
     const refundResult = await refundPaymentTransactions({
+      format,
       paymentId: result.paymentId,
       amountCents: result.pendingRefundAmountCents,
       // #1507: build the Stripe metadata from the shared helper so a recovery

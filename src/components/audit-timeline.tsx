@@ -20,6 +20,7 @@ import {
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type AuditTimelineProps = {
   endpoint: string;
@@ -93,6 +94,7 @@ export function AuditTimeline({
   showAdminEntityLinks = false,
   categoryOptions = AUDIT_TIMELINE_CATEGORY_OPTIONS,
 }: AuditTimelineProps) {
+  const format = useClubFormat();
   const formatDateTime = useAuditTimestampFormatter();
   const [entries, setEntries] = useState<AuditTimelineEntry[]>([]);
   const [category, setCategory] = useState("all");
@@ -270,7 +272,7 @@ export function AuditTimeline({
                         Metadata
                       </summary>
                       <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-card p-3 text-xs leading-relaxed">
-                        {formatAuditMetadataJson(entry.metadata)}
+                        {formatAuditMetadataJson(entry.metadata, format)}
                       </pre>
                     </details>
                   ) : null}

@@ -95,7 +95,8 @@ export function DiagnosticsBudgetCard({
     `undefined` in the published image, so a club charging in anything but
     New Zealand dollars was shown NZD here whatever it had configured.
   */
-  const { currencyCode } = useClubFormat();
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const [state, setState] = useState<BudgetState>({ kind: "loading" });
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -232,7 +233,7 @@ export function DiagnosticsBudgetCard({
     }
     if (cents > state.maxMonthlyBudgetCents) {
       setSaveError(
-        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents)}.`,
+        `The most that can be set is ${formatCents(state.maxMonthlyBudgetCents, format)}.`,
       );
       return;
     }
@@ -270,8 +271,8 @@ export function DiagnosticsBudgetCard({
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">Spent this month</dt>
         <dd className="tabular-nums">
-          {formatCents(state.settledCents)} of{" "}
-          {formatCents(state.monthlyBudgetCents)}
+          {formatCents(state.settledCents, format)} of{" "}
+          {formatCents(state.monthlyBudgetCents, format)}
         </dd>
         <dt className="text-muted-foreground">Questions asked</dt>
         <dd className="tabular-nums">{state.requestCount}</dd>
@@ -279,7 +280,7 @@ export function DiagnosticsBudgetCard({
           <>
             <dt className="text-muted-foreground">Held for questions in flight</dt>
             <dd className="tabular-nums">
-              {formatCents(state.activeReservedCents)}
+              {formatCents(state.activeReservedCents, format)}
             </dd>
           </>
         ) : null}
@@ -313,7 +314,7 @@ export function DiagnosticsBudgetCard({
       </div>
 
       <p id={hintId} className="mt-2 text-xs text-muted-foreground">
-        In {currencyCode}, up to {formatCents(state.maxMonthlyBudgetCents)}.
+        In {currencyCode}, up to {formatCents(state.maxMonthlyBudgetCents, format)}.
         Zero switches off every paid Diagnostics question without touching the
         module.
       </p>

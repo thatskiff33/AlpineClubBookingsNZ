@@ -25,6 +25,7 @@ import {
 } from "@/lib/booking-money-reconciliation-audience";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   calendarDateOfSerialisedDbDate,
   compareCalendarDates,
@@ -114,6 +115,7 @@ function BookingSummary({
   booking: MyBookingItem;
   showLinkLabel: boolean;
 }) {
+  const format = useClubFormat();
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="space-y-1">
@@ -122,7 +124,7 @@ function BookingSummary({
         </p>
         <p className="text-sm text-muted-foreground">
           {booking.guestCount} guest{booking.guestCount !== 1 ? "s" : ""} &middot;{" "}
-          {formatCents(booking.finalPriceCents)}
+          {formatCents(booking.finalPriceCents, format)}
           {/*
             #3033: the qualifier, not a replacement. The total IS what the
             booking is priced at after the change; what it does not include is
