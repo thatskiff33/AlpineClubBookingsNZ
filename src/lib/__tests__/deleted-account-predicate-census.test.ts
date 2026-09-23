@@ -105,6 +105,15 @@ export function retiredDeletionPredicateViolations(
   return violations;
 }
 
+function productionDeletionViolations(source: string, path: string): Violation[] {
+  const violations = retiredDeletionPredicateViolations(source, path);
+  // The canonical reader intentionally owns the predicate shapes, but it does
+  // not own the domain literal; that definition lives in deleted-account-email.
+  return path === CANONICAL
+    ? violations.filter((violation) => violation.kind === "reserved-domain-definition-copy")
+    : violations;
+}
+
 describe("one canonical erased-member predicate (#3542)", () => {
   it("keeps the approved-deletion producer on the canonical reserved domain", () => {
     const route = stripComments(
@@ -127,8 +136,7 @@ describe("one canonical erased-member predicate (#3542)", () => {
   it("finds no retired shape outside the canonical module", () => {
     const violations = productionSources(SRC_DIR).flatMap((path) => {
       const repoPath = relative(SRC_DIR, path).replaceAll("\\", "/");
-      if (repoPath === CANONICAL) return [];
-      return retiredDeletionPredicateViolations(
+      return productionDeletionViolations(
         readFileSync(path, "utf8"),
         repoPath,
       );
@@ -235,6 +243,16 @@ describe("one canonical erased-member predicate (#3542)", () => {
     expect(
       retiredDeletionPredicateViolations(mutant, "app/api/admin/deletion-requests/[id]/route.ts")
         .map((v) => v.kind),
+    ).toContain("reserved-domain-definition-copy");
+  });
+
+  it("mutation: rejects an executable override inside the canonical reader", () => {
+    const mutant = `
+      const reservedSuffix = \`@\${DELETED_CONTACT_EMAIL_DOMAIN}\`
+        .replace(DELETED_CONTACT_EMAIL_DOMAIN, "deleted.invalid");
+    `;
+    expect(
+      productionDeletionViolations(mutant, CANONICAL).map((v) => v.kind),
     ).toContain("reserved-domain-definition-copy");
   });
 });
