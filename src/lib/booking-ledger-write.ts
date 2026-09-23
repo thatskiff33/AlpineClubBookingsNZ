@@ -62,6 +62,12 @@ export type BookingLedgerPosting = {
     | "CANCELLATION";
   anchorId: string;
   narration: string;
+  /**
+   * Deterministic from the event the line records, so posting the same event
+   * twice produces the same key and the second write is a no-op (#3595).
+   * Required: a line without one could be posted twice by a replay.
+   */
+  postingKey: string;
   bookingGuestId?: string | null;
   nightStart?: Date | null;
   nightEndExclusive?: Date | null;
@@ -93,6 +99,11 @@ function assertPostable(posting: BookingLedgerPosting): void {
   if (!Number.isSafeInteger(posting.unitCents) || posting.unitCents < 0) {
     throw new BookingLedgerPostingError(
       `unitCents must be a whole number of cents, not negative — the direction is the sign (got ${posting.unitCents})`,
+    );
+  }
+  if (posting.postingKey.trim() === "") {
+    throw new BookingLedgerPostingError(
+      "a posting needs a non-empty postingKey, or a replay could post it twice",
     );
   }
   if (!Number.isSafeInteger(posting.quantity) || posting.quantity < 0) {
@@ -151,6 +162,7 @@ function toCreateInput(posting: BookingLedgerPosting): Prisma.BookingLedgerLineC
     anchorKind: posting.anchorKind,
     anchorId: posting.anchorId,
     narration: posting.narration,
+    postingKey: posting.postingKey,
     bookingGuestId: posting.bookingGuestId ?? null,
     nightStart: posting.nightStart ?? null,
     nightEndExclusive: posting.nightEndExclusive ?? null,
@@ -177,16 +189,40 @@ function toCreateInput(posting: BookingLedgerPosting): Prisma.BookingLedgerLineC
 export function buildBookingLedgerRows(
   postings: readonly BookingLedgerPosting[],
 ): Prisma.BookingLedgerLineCreateManyInput[] {
+  // A repeated key WITHIN one batch is a planner bug, not a replay: the write
+  // below would silently keep the first and drop the rest. Refused here, in
+  // pure code, where refusing is safe.
+  const seen = new Set<string>();
+  for (const posting of postings) {
+    if (seen.has(posting.postingKey)) {
+      throw new BookingLedgerPostingError(
+        `postingKey ${posting.postingKey} appears twice in one batch`,
+      );
+    }
+    seen.add(posting.postingKey);
+  }
   return postings.map(toCreateInput);
 }
 
-/** Write already-built rows. One statement, inside the caller's transaction. */
+/**
+ * Write already-built rows. One statement, inside the caller's transaction.
+ *
+ * `skipDuplicates` is `ON CONFLICT DO NOTHING`: a row whose `postingKey` is
+ * already posted is skipped, not refused. That distinction is the whole of
+ * #3595 — a refused statement would abort the caller's transaction (#3590's
+ * review), while a skipped one leaves it untouched. The count returned is the
+ * number of rows ACTUALLY inserted, so a caller can tell a replay (0) from a
+ * first posting.
+ */
 export async function writeBookingLedgerRows(
   store: BookingLedgerWriteStore,
   rows: readonly Prisma.BookingLedgerLineCreateManyInput[],
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  const result = await store.bookingLedgerLine.createMany({ data: [...rows] });
+  const result = await store.bookingLedgerLine.createMany({
+    data: [...rows],
+    skipDuplicates: true,
+  });
   return result.count;
 }
 

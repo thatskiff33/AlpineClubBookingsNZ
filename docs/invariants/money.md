@@ -459,6 +459,29 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   reads move (#3584). A strand with an unpriced night posts nothing, because
   `INV-MOD-028` says a blank is not evidence of an amount.
 
+## INV-MONEY-033
+
+- **Every booking-ledger posting carries an idempotency key, and a repeated
+  key posts nothing** (#3595). `BookingLedgerLine.postingKey` is deterministic
+  from the event the line records — `confirmation:<bookingId>:night:<guestId>:<date>`,
+  `capture:<transactionId>` — and unique. The write door inserts with
+  `ON CONFLICT DO NOTHING`, so posting the same event twice is a no-op: not a
+  duplicate line, and not a refused statement that would abort the caller's
+  transaction (`INV-MONEY-032`).
+
+  Two paths make this load-bearing rather than theoretical. A booking can pass
+  the settle's PAID claim twice: an officer marks it paid, reverses the
+  mark-paid (`INV-PAY-045` restores a payable status), and the member then
+  pays by card. And every settlement writer is an upsert a provider replays.
+  Neither may post its lines twice, and neither may be made to refuse.
+
+  The key is required by the write door's type and refused when empty; the
+  same key twice in one batch is refused as a planner bug before anything is
+  sent, because the write would otherwise keep the first row and silently drop
+  the rest. The column is nullable in the database only, so a draining
+  colour's inserts that omit it still succeed. C4's back-post (#3583) reuses
+  the same keys, which is what makes it safe to run twice.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

@@ -110,6 +110,10 @@ export function planConfirmationChargeLines(
         ageTier: guest.ageTier,
         guestNames: guestName ? [guestName] : [],
         narration: `${guestName || "Guest"} — one night`,
+        // One key per strand and night: the same booking settled twice (a
+        // reversed mark-paid, then a card payment) keys the same, and the
+        // second posting is a no-op (#3595).
+        postingKey: `confirmation:${booking.id}:night:${guest.id}:${calendarDateOfDateOnlyInstant(night.stayDate)}`,
       });
     }
   }
@@ -128,6 +132,7 @@ export function planConfirmationChargeLines(
       anchorId: booking.id,
       narration:
         sign < 0 ? "Promotion applied" : "Promotion, price raised",
+      postingKey: `confirmation:${booking.id}:promotion`,
     });
   }
 
