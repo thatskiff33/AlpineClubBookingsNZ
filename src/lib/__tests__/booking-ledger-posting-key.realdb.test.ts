@@ -133,29 +133,29 @@ async function clearLedger(): Promise<void> {
 
     it("skips a repeated key rather than refusing it, and the transaction survives to commit", async () => {
       const outcome = await prisma.$transaction(async (tx) => {
-        const first = await writeBookingLedgerRows(tx, buildBookingLedgerRows([changeFee("k-3595")]));
-        const second = await writeBookingLedgerRows(tx, buildBookingLedgerRows([changeFee("k-3595")]));
+        const first = await writeBookingLedgerRows(tx, buildBookingLedgerRows([changeFee("repeated")]));
+        const second = await writeBookingLedgerRows(tx, buildBookingLedgerRows([changeFee("repeated")]));
         // The statement AFTER the repeat. Had the repeat aborted the
         // transaction (25P02), this would throw and nothing would commit.
-        const visible = await tx.bookingLedgerLine.count({ where: { postingKey: "k-3595" } });
+        const visible = await tx.bookingLedgerLine.count({ where: { postingKey: "repeated" } });
         return { first, second, visible };
       });
       expect(outcome).toEqual({ first: 1, second: 0, visible: 1 });
-      expect(await prisma.bookingLedgerLine.count({ where: { postingKey: "k-3595" } })).toBe(1);
+      expect(await prisma.bookingLedgerLine.count({ where: { postingKey: "repeated" } })).toBe(1);
     });
 
     it("CONTRAST: the same repeat without the door's skip is refused and loses the whole transaction", async () => {
       // Pins why `skipDuplicates` is load-bearing: this is the #3590 lesson in
       // a real database, and it fails loudly if PostgreSQL ever stops behaving
       // this way, rather than leaving the first case green for the wrong reason.
-      const rows = buildBookingLedgerRows([changeFee("k-3595-contrast")]);
+      const rows = buildBookingLedgerRows([changeFee("contrast")]);
       await expect(
         prisma.$transaction(async (tx) => {
           await tx.bookingLedgerLine.createMany({ data: rows });
           await tx.bookingLedgerLine.createMany({ data: rows });
         }),
       ).rejects.toMatchObject({ code: "P2002" });
-      expect(await prisma.bookingLedgerLine.count({ where: { postingKey: "k-3595-contrast" } })).toBe(0);
+      expect(await prisma.bookingLedgerLine.count({ where: { postingKey: "contrast" } })).toBe(0);
     });
 
     it("the confirmation fence sees a line with NO key, so a line posted before keys existed still fences", async () => {
@@ -163,7 +163,7 @@ async function clearLedger(): Promise<void> {
       // A #3580-era line: no postingKey at all, which the column allows and
       // which a per-night key could never collide with.
       await prisma.bookingLedgerLine.create({
-        data: { ...buildBookingLedgerRows([changeFee("placeholder")])[0], postingKey: null },
+        data: { ...buildBookingLedgerRows([changeFee("unkeyed")])[0], postingKey: null },
       });
       expect(await bookingHasConfirmationLines(prisma, BOOKING_ID)).toBe(true);
     });
