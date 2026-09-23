@@ -1172,7 +1172,6 @@ type PaymentRecoveryFailureOutcome = "failed" | "retry" | "gone";
 
 async function markPaymentRecoveryOperationFailed({
   operation,
-  format,
   message,
   terminal,
   nextRetryAt,
