@@ -288,21 +288,18 @@ two refuses **three** states, with a 409 naming which:
   (`POST /api/admin/deletion-requests/[id]`) stamps neither flag. Before #2620,
   it therefore passed both guards and `active: false` was the only thing between
   an erased person and a working session carrying retained access roles.
-  Deletion is now recognised through the single shared predicate
-  `isDeletedAccountRecord` (`src/lib/deleted-account.ts`): `deletedAt` is the
-  structural signal written by current anonymisation, while the reserved
-  `@deleted.invalid` address permanently recognises adopter-era erased rows.
-  Every path that must recognise a deleted account consults that predicate; a
-  second marker test would recreate the drift the module prevents.
+  Both reactivation paths now consult the canonical
+  `isDeletedAccountRecord` predicate defined in INV-LIFE-015; a second marker
+  test would recreate the drift this shared predicate prevents.
 
 ## INV-LIFE-014
 
 Reactivation refusal is not the whole defence for a deleted account, because it
 protects only the application's own write paths. **A deleted account yields no
 session even with `active: true`** (#2620): all three sign-in providers refuse on
-the canonical structural-or-reserved-address predicate, independently of
-`active`. That includes an adopter-era row carrying only the reserved address
-and no `deletedAt` value. Password and magic-link `authorize` return null (the
+`isDeletedAccountRecord` (INV-LIFE-015), independently of `active`. The guarantee
+includes an adopter-era erased row carrying only the reserved address and no
+`deletedAt` value. Password and magic-link `authorize` return null (the
 password path still burns its dummy bcrypt compare, so the refusal stays
 timing-identical to an unknown email), and `resolveGoogleProfile` returns
 `refused`. Behind all three, the per-request token refresh in the `jwt` callback
