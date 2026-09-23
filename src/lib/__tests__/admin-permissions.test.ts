@@ -883,6 +883,32 @@ describe("admin route requirements", () => {
    *    (`"any-admin"` read, Full Admin write) are what enforce it; the same
    *    prefix caveat applies to anything added beneath it.
    */
+  /**
+   * The nav link and the page must answer the same question (#3596). The
+   * sidebar and command palette filter through `canViewAdminHrefWithMatrix`,
+   * and before this it never consulted the admission list, so each admission
+   * page had to hand-copy the rule onto its sidebar entry — and one that forgot
+   * could be opened by an admin who never saw the way in. Iterating the list
+   * itself means a future entry is covered without editing this test.
+   */
+  it("shows every admission path to exactly the admins it admits (#3596)", () => {
+    const financeOnly = getAdminPermissionMatrix({
+      accessRoles: ["FINANCE_USER" as const],
+    });
+    const noArea = getAdminPermissionMatrix({ accessRoles: [] });
+    for (const pathname of ANY_ADMIN_ADMISSION_PATHS) {
+      expect(
+        canViewAdminHrefWithMatrix(financeOnly, pathname),
+        `${pathname}: a finance-only admin is admitted, so must see the link`,
+      ).toBe(canOpenAdminPath({ accessRoles: ["FINANCE_USER" as const] }, pathname));
+      expect(canViewAdminHrefWithMatrix(financeOnly, pathname)).toBe(true);
+      expect(
+        canViewAdminHrefWithMatrix(noArea, pathname),
+        `${pathname}: a matrix with no admin area must not see the link`,
+      ).toBe(false);
+    }
+  });
+
   it("pins the any-admin admission carve-out to exactly the owner-decided pages (#2975, #3596)", () => {
     expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual([
       "/admin/ai-diagnostics",

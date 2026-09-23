@@ -73,7 +73,6 @@ import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
   canViewAdminHrefWithMatrix,
-  hasAnyAdminAreaFromMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -472,15 +471,14 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // route itself now returns.
         //
         // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
-        // administrator may open the shell, so the link follows the same rule
-        // `canOpenAdminPath` applies to the page. The href resolves to `overview`
-        // in the route map, which stopped meaning "any admin" when #2984 made
-        // portal standing any one of the seven areas — without this the shipped
-        // Finance Viewer grid could open the page and never see the way in.
+        // administrator may open the shell, and the link follows that rule with
+        // no flag here: `canViewAdminHrefWithMatrix` answers every
+        // `ANY_ADMIN_ADMISSION_PATHS` entry as `canOpenAdminPath` does (#3596).
+        // The href's `overview` map area stopped meaning "any admin" when #2984
+        // made portal standing any one of the seven areas.
         href: "/admin/ai-diagnostics",
         label: "AI Diagnostics",
         icon: Stethoscope,
-        orAccess: hasAnyAdminAreaFromMatrix,
         keywords: [
           "diagnose",
           "investigate",
@@ -602,13 +600,12 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       {
         // The one persisted currency and locale (#3563). UNLIKE its Full-Admin
         // neighbours, any admin sees it (#3596): all may VIEW, only a Full Admin
-        // may change, so the link follows the page's admission rule
-        // (`ANY_ADMIN_ADMISSION_PATHS`), not its `support` map area. The
+        // may change. It is an `ANY_ADMIN_ADMISSION_PATHS` entry, so the matrix
+        // check admits every admin, not just its `support` map area. The
         // keywords are the words an operator would type; the label matches none.
         href: "/admin/club-format",
         label: "Club Currency & Locale",
         icon: Coins,
-        orAccess: hasAnyAdminAreaFromMatrix,
         keywords: [
           "currency",
           "dollars",

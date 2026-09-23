@@ -2382,7 +2382,10 @@ shipped preset the lodge names it needs to label a payment. Entering the shell
 now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
 and level, and the sidebar and command palette still filter item by item through
-`canViewAdminHrefWithMatrix`. A finance-only administrator reaches the shell and
+`canViewAdminHrefWithMatrix`. That function answers an `ANY_ADMIN_ADMISSION_PATHS`
+entry with the same any-one-area rule `canOpenAdminPath` applies to the page, so
+a link and the page it opens cannot disagree (#3596); the fee console's OR rule
+still reaches the sidebar through its own `orAccess` flag. A finance-only administrator reaches the shell and
 Finance and nothing else, apart from the surfaces an owner decision opened to
 every administrator by name — the lodge names, the AI Diagnostics shell, and a
 read-only view of the club's currency and locale (#3596) — each pinned in the

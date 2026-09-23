@@ -843,12 +843,15 @@ export function canOpenAdminPath(
 /**
  * Matrix-based variant for client components (e.g. the admin sidebar), which
  * receive the precomputed matrix from a server layout instead of raw roles —
- * definitions live in the database and cannot be resolved client-side.
+ * definitions live in the database and cannot be resolved client-side. An
+ * admission path answers as `canOpenAdminPath` does, so a link to it can never
+ * disagree with the page it opens (#3596).
  */
 export function canViewAdminHrefWithMatrix(
   matrix: AdminPermissionMatrix,
   href: string,
 ) {
+  if (isAnyAdminAdmissionPath(href)) return hasAnyAdminAreaFromMatrix(matrix);
   const requirement = getAdminRouteRequirement(href, "GET");
   if (!requirement) return false;
   return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
