@@ -7,6 +7,7 @@ import { stripComments } from "./support/strip-comments";
 
 const SRC_DIR = join(import.meta.dirname, "..", "..");
 const CANONICAL = "lib/deleted-account.ts";
+const DOMAIN_DEFINITION = "lib/deleted-account-email.ts";
 
 type ViolationKind =
   | "retired-name"
@@ -15,6 +16,7 @@ type ViolationKind =
   | "reserved-address-prisma-copy"
   | "reserved-address-sql-copy"
   | "reserved-address-sql-like-copy"
+  | "reserved-domain-definition-copy"
   | "retired-five-field-shape";
 
 type Violation = { kind: ViolationKind; path: string };
@@ -37,8 +39,9 @@ function productionSources(dir: string, found: string[] = []): string[] {
  * This intentionally accepts imports and calls to the canonical helpers. What
  * it rejects is another place deciding from the old password sentinel, testing
  * the reserved suffix itself, reconstructing the suffix as SQL, or restoring
- * the deletion route's five-field AND. Comments are stripped through the
- * repository's one scanner so a postmortem cannot satisfy the census.
+ * the deletion route's five-field AND, or defining the reserved email domain
+ * outside its one module. Comments are stripped through the repository's one
+ * scanner so a postmortem cannot satisfy the census.
  */
 export function retiredDeletionPredicateViolations(
   source: string,
@@ -47,6 +50,10 @@ export function retiredDeletionPredicateViolations(
   const code = stripComments(source);
   const violations: Violation[] = [];
   const add = (kind: ViolationKind) => violations.push({ kind, path });
+
+  if (path !== DOMAIN_DEFINITION && /\bdeleted\.invalid\b/i.test(code)) {
+    add("reserved-domain-definition-copy");
+  }
 
   if (/\b(?:isDeletedAccountMarker|isMemberAnonymised)\b/.test(code)) {
     add("retired-name");
@@ -218,5 +225,16 @@ describe("one canonical erased-member predicate (#3542)", () => {
     expect(
       retiredDeletionPredicateViolations(mutant).map((v) => v.kind),
     ).toContain("reserved-address-sql-like-copy");
+  });
+
+  it("mutation: rejects an executable writer override of the imported domain", () => {
+    const mutant = `
+      const anonymisedEmail = \`deleted-\${member.id.substring(0, 8)}@\${DELETED_CONTACT_EMAIL_DOMAIN}\`
+        .replace(DELETED_CONTACT_EMAIL_DOMAIN, "deleted.invalid");
+    `;
+    expect(
+      retiredDeletionPredicateViolations(mutant, "app/api/admin/deletion-requests/[id]/route.ts")
+        .map((v) => v.kind),
+    ).toContain("reserved-domain-definition-copy");
   });
 });

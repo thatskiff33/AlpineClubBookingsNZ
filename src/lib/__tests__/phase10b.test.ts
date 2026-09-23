@@ -502,12 +502,13 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("approves a deletion request, anonymises member, and cancels future bookings", async () => {
+    const deletionMemberId = "member1234";
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",
       member: {
-        id: "m1",
+        id: deletionMemberId,
         firstName: "Jane",
         lastName: "Doe",
         email: "jane@test.com",
@@ -535,7 +536,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       }
       if (args?.select?.xeroContactId) {
         return {
-          id: "m1",
+          id: deletionMemberId,
           email: "jane@test.com",
           passwordHash: null,
           xeroContactId: null,
@@ -567,7 +568,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
 
     // Verify anonymisation
     expect(mockedPrisma.member.update).toHaveBeenCalledWith({
-      where: { id: "m1" },
+      where: { id: deletionMemberId },
       data: expect.objectContaining({
         firstName: "Deleted",
         lastName: "Member",
@@ -579,7 +580,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
     // The writer's address agrees with the one domain the erased-member reader uses.
     const updateCall = vi.mocked(mockedPrisma.member.update).mock.calls[0][0];
     const anonymisedEmail = (updateCall.data as { email: string }).email;
-    expect(anonymisedEmail).toBe(`deleted-m1@${DELETED_CONTACT_EMAIL_DOMAIN}`);
+    expect(anonymisedEmail).toBe(`deleted-member12@${DELETED_CONTACT_EMAIL_DOMAIN}`);
     expect(isDeletedAccountRecord({ email: anonymisedEmail, deletedAt: null })).toBe(true);
 
     // Booking was cancelled
