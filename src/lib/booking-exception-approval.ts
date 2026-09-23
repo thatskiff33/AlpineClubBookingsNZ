@@ -67,6 +67,7 @@ import {
   type ModificationDeltaInput,
 } from "@/lib/booking-exception-request-service";
 import type { PolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2526 — the REAL {@link PolicyExceptionApprovalHooks} the admin approval route
@@ -677,6 +678,7 @@ export function buildPolicyExceptionApprovalHooks(
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },
+        format,
       );
       void request;
     },
@@ -871,6 +873,8 @@ async function executeApprovedNewBooking(args: {
   overrideReason: string;
   context: PolicyExceptionApprovalContext;
   outcome: PolicyExceptionApprovalOutcome;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<{ deferredPostCommit: () => Promise<void> }> {
   const { tx, request, snapshot, override, overrideReason, context, outcome } = args;
   const execution = context.newBookingExecution;
@@ -1001,6 +1005,7 @@ async function executeApprovedNewBooking(args: {
   const memberGuestEntries = consentPlan.entriesByMemberId;
 
   const created = await createConfirmedBooking({
+    format,
     // #3123 review — the club day the route resolved before this transaction
     // opened, shared with the modification executor above (`INV-LOCK-004`).
     todayAtClub: context.todayAtClub,
@@ -1035,6 +1040,7 @@ async function executeApprovedNewBooking(args: {
   });
 
   if (created.type === "capacityExceeded") {
+  const { format } = args;
     // THROW, never return: the engine's contract is that a failed execution
     // aborts the transaction, so the claim and the reservation release roll back
     // with it and the request is left exactly as it was — REQUESTED, at its

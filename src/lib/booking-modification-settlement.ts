@@ -25,6 +25,7 @@ import {
   createPaymentIntent,
   findOrCreateCustomer,
 } from "@/lib/stripe";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
@@ -220,6 +221,7 @@ export async function createModificationAdditionalPaymentIntent({
   idempotencyKey,
   recoveryIdempotencyKey,
   failureMessage,
+  format,
 }: {
   bookingId: string;
   result: BookingModificationPaymentContext;
@@ -239,6 +241,8 @@ export async function createModificationAdditionalPaymentIntent({
    */
   recoveryIdempotencyKey?: string;
   failureMessage: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<{
   additionalPaymentClientSecret: string | undefined;
   additionalPaymentIntentId: string | undefined;
@@ -266,6 +270,7 @@ export async function createModificationAdditionalPaymentIntent({
     }
 
     const pi = await createPaymentIntent({
+      format,
       amountCents: result.additionalAsk.amountCents,
       currency: APP_STRIPE_CURRENCY,
       customerId,

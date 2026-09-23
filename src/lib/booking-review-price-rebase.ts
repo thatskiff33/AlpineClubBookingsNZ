@@ -16,6 +16,7 @@ import {
   type BookingMoneyBuildUpSelection,
 } from "@/lib/booking-money-build-up";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3219 (epic #2797): what a booking's stored price MEANS once a parked edit's
@@ -378,6 +379,7 @@ export async function rebaseBookingPriceFromStrands({
   repairedStrands,
   todayAtClub,
   store,
+  format,
 }: {
   bookingId: string;
   /**
@@ -497,6 +499,7 @@ export async function rebaseBookingPriceFromStrands({
   // them after it. The officer's prices stay OFFICER_PRICED; the build-up on
   // top of them is the engine's own figure and is RECORDED.
   await recordBookingNightAdjustments(store, {
+    format,
     bookingId,
     guestIds: strandNights.map((strand) => strand.bookingGuestId),
     targets: promo.adjustmentTargets,
@@ -567,6 +570,8 @@ export async function rebaseBookingPriceFromStrands({
       promoRemoved: promo.promoRemoved,
     },
   };
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }
 
 /**

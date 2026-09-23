@@ -110,6 +110,7 @@ import {
   pricingSideFromStoredGuests,
   type ModificationLine,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -307,6 +308,7 @@ export async function removeBookingGuestInTransaction({
   subscriptionLockoutMode,
   hostingCoverageOverride,
   today,
+  format,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -375,6 +377,8 @@ export async function removeBookingGuestInTransaction({
     guestId: string;
     /** Must equal that row's `memberId`, or the authority does not apply. */
     targetMemberId: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
   };
 }): Promise<RemoveBookingGuestResult> {
   // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
@@ -918,6 +922,7 @@ export async function removeBookingGuestInTransaction({
     // the build-up is rewritten — from the engine's fresh decision over exactly
     // those guests. A PARKED removal re-ran nothing and records nothing.
     await recordBookingNightAdjustments(tx, {
+      format,
       bookingId,
       guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
       targets: promoResult.adjustmentTargets,
@@ -943,6 +948,7 @@ export async function removeBookingGuestInTransaction({
   )?.evidence;
   const moneyBuildUpSelection = parkedFinancialReview
     ? selectBookingMoneyBuildUp({
+        format,
         ...recordedMoneyBuildUp,
         baseEvidence: {
           kind: "UNKNOWN",

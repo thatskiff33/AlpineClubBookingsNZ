@@ -84,6 +84,7 @@ export async function reportUnappliedCreditElection({
   source,
   reference,
   extraDetails = {},
+  format,
 }: {
   bookingId: string;
   /**
@@ -124,6 +125,8 @@ export async function reportUnappliedCreditElection({
   reference: string;
   /** Source-specific identifiers to carry into the audit row. */
   extraDetails?: Record<string, string | number | null>;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
   // The member's live balance, read once and shared by the audit row, the
   // member-visible history note and the operator alert, so the three cannot
@@ -202,10 +205,11 @@ export async function reportUnappliedCreditElection({
     errorMessage: `This member had asked to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was settled for ${formatCents(paidAmountCents, format)} before the credit could be applied, so the saved choice has been cleared. Their account credit balance was never debited and the booking is fully settled — no money is missing and nothing was charged twice. ${operatorAvailabilitySentence(
       electionCents,
       availableCreditCents,
-      refundableCents
+      refundableCents,
+      format
     )}`,
     paymentIntentId: reference,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId, source },
       "Failed to alert admins about a cleared credit election"
