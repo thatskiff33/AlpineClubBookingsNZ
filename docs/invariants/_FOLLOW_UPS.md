@@ -206,10 +206,10 @@ that one index heading, because 21 of the 27 inbound anchor links in the
 repository target the source `##` headings and keeping them byte-identical is
 what makes those links need no edit.
 
-## 7. Passages the document itself does not consider settled — filed as #2708
+## 7. Passages the document itself did not consider settled — closed
 
-These are rules whose own text says they are awaiting a decision. They moved
-verbatim and kept their flags. Somebody should schedule the confirmations.
+**Nothing outstanding here.** These rules moved with their original flags and
+were settled in the follow-up issues named below.
 
 - **`INV-LIFE-044`, `INV-LIFE-047`, `INV-LIFE-054` — DECIDED and shipped
   (#2716).** The owner walked all three on 9 August 2026 and the flags are gone
@@ -243,14 +243,12 @@ verbatim and kept their flags. Somebody should schedule the confirmations.
   new type-filtered mapping key each club points at its own expense account,
   falling back to the old destination while unset, which `INV-INT-021` now
   makes the house rule for every mapping key that follows.
-- **`INV-LIFE-013`** — a self-documented erratum rather than an open question,
-  but in the same family: "This one is NOT covered by the
-  `cancelledAt`/`archivedAt` refusal and **was wrongly documented here as if it
-  were.**" The correction is in the document; the rule around it may still be
-  worth a review.
-- **`INV-LIFE-015`** — records that stamping `cancelledAt` (or a dedicated
-  `deletedAt`) at anonymisation time "would make the state structural instead of
-  inferred; it is deliberately still open".
+- **`INV-LIFE-013` and `INV-LIFE-015` — REVIEWED, DECIDED and shipped
+  (#2718).** The historical erratum remains in
+  [`INV-LIFE-013`](membership-lifecycle.md#inv-life-013), and the settled rule
+  replaces the open flag in [`INV-LIFE-015`](membership-lifecycle.md#inv-life-015).
+  The [owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2718#issuecomment-5744458659)
+  records the scope and alternatives.
 
 ## 8. Positional cross-references that crossed a file boundary — closed
 
