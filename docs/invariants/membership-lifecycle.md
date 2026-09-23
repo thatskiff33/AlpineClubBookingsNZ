@@ -283,53 +283,49 @@ two refuses **three** states, with a 409 naming which:
   nothing in the application writes `cancelledAt: null` or `archivedAt: null`, so
   those two states are terminal.
 - **Deleted** — a member an approved deletion request has anonymised (#2620).
-  This one is NOT covered by the `cancelledAt`/`archivedAt` refusal and was
+  This state is NOT covered by the `cancelledAt`/`archivedAt` refusal and was
   wrongly documented here as if it were. Anonymisation
-  (`POST /api/admin/deletion-requests/[id]`) sets `active: false` but stamps
-  **neither** flag, so a deleted account passed both guards, and `active` is
-  exactly what bulk Reactivate flips. Because anonymisation also retains
-  `canLogin`, `googleSub`, `emailVerified` and the second factor, `active: false`
-  was the only thing between the erased person and a working session carrying
-  their retained admin roles — and a deleted row is `active: false,
-  cancelledAt: null`, i.e. squarely inside the members list's **Inactive**
-  lifecycle filter, so an officer undoing a mistaken bulk deactivate could
-  restore one without intending to. Deletion is recognised by the anonymisation
-  markers it writes — the `DELETED_ACCOUNT` password-hash sentinel and the
-  `@deleted.invalid` address — through the single shared predicate
-  `isDeletedAccountRecord` (`src/lib/deleted-account.ts`). Every path that must
-  recognise a deleted account consults that one predicate; a second copy of the
-  marker test is the drift the module exists to prevent.
+  (`POST /api/admin/deletion-requests/[id]`) stamps neither flag. Before #2620,
+  it therefore passed both guards and `active: false` was the only thing between
+  an erased person and a working session carrying retained access roles.
+  Both reactivation paths now consult the canonical
+  `isDeletedAccountRecord` predicate defined in INV-LIFE-015; a second marker
+  test would recreate the drift this shared predicate prevents.
 
 ## INV-LIFE-014
 
 Reactivation refusal is not the whole defence for a deleted account, because it
 protects only the application's own write paths. **A deleted account yields no
 session even with `active: true`** (#2620): all three sign-in providers refuse on
-the same predicate, independently of `active` — password and magic-link
-`authorize` return null (the password path still burns its dummy bcrypt compare,
-so the refusal stays timing-identical to an unknown email), and
-`resolveGoogleProfile` returns `refused`. The Google path is the one that most
-needs it: it resolves on `googleSub` alone, never on email, and anonymisation
-does not clear `googleSub`. Behind all three, the per-request token refresh in
-the `jwt` callback sets `sessionInvalidated` for a deleted member, so `auth()`
-nulls the session on the member's next request — which also covers a session
-minted *before* the deletion, since deletion revokes no tokens today. The
-members list surfaces the state as a distinct "Deleted" lifecycle chip and takes
-the row out of bulk selection, so the mistake is hard to make as well as
+`isDeletedAccountRecord` (INV-LIFE-015), independently of `active`. The guarantee
+includes an adopter-era erased row carrying only the reserved address and no
+`deletedAt` value. Password and magic-link `authorize` return null (the
+password path still burns its dummy bcrypt compare, so the refusal stays
+timing-identical to an unknown email), and `resolveGoogleProfile` returns
+`refused`. Behind all three, the per-request token refresh in the `jwt` callback
+sets `sessionInvalidated` for a deleted member, so `auth()` nulls the session on
+the member's next request. This also covers a session minted before deletion.
+The members list surfaces the state as a distinct "Deleted" lifecycle chip and
+takes the row out of bulk selection, so the mistake is hard to make as well as
 refused.
 
 ## INV-LIFE-015
 
-The marker predicate is a strong signal, not a schema invariant: it holds because
-the anonymisation write is the only producer of either marker and nothing else
-clears them. One path does overwrite both — the membership-application approval
-MAP branch (`src/lib/nomination.ts`) rewrites `email` to the applicant's real
-address and, on the non-login→login promotion, writes a fresh `passwordHash` — so
-a mapped-over deleted row stops being recognisable as one. That path writes no
-`active`, so it cannot itself mint a session for an inactive member. Stamping
-`cancelledAt` (or a dedicated `deletedAt`) at anonymisation time would make the
-state structural instead of inferred; it is deliberately still open, because it
-would also change how deleted members appear in every lifecycle filter and count.
+Deletion is structural. Approved anonymisation stamps `Member.deletedAt` in the
+same transaction and row write as the erased identity fields; rollback therefore
+removes the marker with the rest of an unsuccessful anonymisation. The one
+canonical predicate, `isDeletedAccountRecord` (`src/lib/deleted-account.ts`),
+recognises either that timestamp or a reserved `@deleted.invalid` address.
+
+The address arm is permanent compatibility, not a backfill bridge. This generic
+product cannot assume that every adopter has backfilled rows erased before
+`deletedAt` existed; removing the arm would make such a row ordinary and break
+INV-LIFE-014's no-session guarantee. The membership-application MAP preview and
+approval paths apply the same predicate and refuse an erased target before they
+can overwrite its identity or login fields, so an erased row cannot be reused as
+a different member. The programme deliberately added no historical backfill or
+unresolved state; the owner decision and rationale are recorded in
+[#2718](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2718#issuecomment-5744458659).
 
 ## INV-LIFE-016
 
