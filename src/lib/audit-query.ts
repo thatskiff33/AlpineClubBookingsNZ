@@ -12,6 +12,7 @@ import {
 } from "./audit-structured-detail";
 import { formatCents } from "./utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The Admin Audit Log's category filter, DERIVED from the canonical taxonomy
@@ -701,13 +702,14 @@ function getMemberSummary(log: AuditTimelineLog): string {
 function getDescription(
   log: AuditTimelineLog,
   metadata: Prisma.JsonValue | Prisma.JsonObject | null,
-  structuredDetails: boolean
+  structuredDetails: boolean,
+  format: ClubFormat,
 ): string | null {
   if (log.details && !structuredDetails) {
     return log.details;
   }
 
-  return formatMetadataDescription(metadata);
+  return formatMetadataDescription(metadata, format);
 }
 
 function addDrilldownLink(
@@ -1150,9 +1152,17 @@ function projectFreeTextForAudience(params: {
    */
   hasStructuredDetails: boolean;
   adminMetadata: Prisma.JsonValue | Prisma.JsonObject | null;
+  /** The club's format, for amounts in an officer's description (#3565). */
+  format: ClubFormat;
 }): { summary: string; description: string | null; details: string | null } {
-  const { audience, log, legacyMetadata, hasStructuredDetails, adminMetadata } =
-    params;
+  const {
+    audience,
+    log,
+    legacyMetadata,
+    hasStructuredDetails,
+    adminMetadata,
+    format,
+  } = params;
 
   if (audience === "member") {
     return {
@@ -1168,7 +1178,7 @@ function projectFreeTextForAudience(params: {
 
   return {
     summary: getSummary(log),
-    description: getDescription(log, adminMetadata, hasStructuredDetails),
+    description: getDescription(log, adminMetadata, hasStructuredDetails, format),
     // The RAW column, and the test is the CLEAN parse rather than
     // `hasStructuredDetails` — deliberately (#2704). A cleanly-parsed payload
     // is shown whole in the metadata panel, so repeating it is noise; a
@@ -1186,8 +1196,9 @@ function serializeAuditTimelineLog(params: {
   memberById: Map<string, AuditTimelineActorRecord>;
   audience: "admin" | "member";
   currentMemberId?: string;
+  format: ClubFormat;
 }): AuditTimelineEntry {
-  const { log, memberById, audience, currentMemberId } = params;
+  const { log, memberById, audience, currentMemberId, format } = params;
   const actorMemberId = getAuditLogActorMemberId(log);
   const subjectMemberId = getAuditLogSubjectMemberId(log);
   const actorResult = serializeActorForAudience({
@@ -1225,6 +1236,7 @@ function serializeAuditTimelineLog(params: {
     legacyMetadata,
     hasStructuredDetails: structuredDetails !== null,
     adminMetadata: metadata,
+    format,
   });
 
   return {
@@ -1277,6 +1289,8 @@ export async function getAuditTimelinePage(params: {
 }): Promise<AuditTimelineResponse> {
   const { db, where, page, pageSize, category, audience, currentMemberId } =
     params;
+  // Once per page (#3565): every row's description renders its amounts in it.
+  const format = await clubFormatValues();
   const [logs, total] = await Promise.all([
     db.auditLog.findMany({
       where,
@@ -1314,6 +1328,7 @@ export async function getAuditTimelinePage(params: {
         memberById,
         audience,
         currentMemberId,
+        format,
       })
     ),
     total,

@@ -48,6 +48,7 @@ import {
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * THE LINKED MOVE: move a member's booking and the booking of theirs that was
@@ -541,6 +542,9 @@ async function runLinkedDateMove(
 export async function offerLinkedDateMove(
   args: LinkedDateMoveArgs,
 ): Promise<never> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
   const preTransaction = await prepareLinkedMovePreTransaction(args);
   try {
@@ -556,7 +560,7 @@ export async function offerLinkedDateMove(
       throw new SameOwnerCoverageLinkedMoveRequiredError(error.quote, {
         acceptStateKey: error.acceptStateKey,
         declineStateKey: error.declineStateKey,
-      });
+      }, format);
     }
     // Contention is not a fault, and it must not reach the member as one: an
     // opaque 500 here replaces the OFFER, which is the only door they had.
@@ -577,6 +581,9 @@ export async function offerLinkedDateMove(
 export async function applyLinkedDateMove(
   args: LinkedDateMoveArgs & { linkedMove: HostingCoverageLinkedMoveInput },
 ): Promise<BatchModificationResponse> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const bothChangeFeesCharged = await loadLinkedMoveChargesBothChangeFees();
   const preTransaction = await prepareLinkedMovePreTransaction(args);
   let outcome;
@@ -593,7 +600,7 @@ export async function applyLinkedDateMove(
       throw new SameOwnerCoverageLinkedMoveRequiredError(error.quote, {
         acceptStateKey: error.acceptStateKey,
         declineStateKey: error.declineStateKey,
-      });
+      }, format);
     }
     // Nothing was committed, so "try again in a moment" is the whole truth. The
     // member's acceptance is still good: the state key is re-derived on the retry

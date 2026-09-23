@@ -648,8 +648,9 @@ export class SameOwnerCoverageLinkedMoveRequiredError extends ApiError {
   constructor(
     quote: LinkedMoveQuote,
     keys: { acceptStateKey: string; declineStateKey: string },
+    format: ClubFormat,
   ) {
-    super(formatLinkedMoveOfferMessage(quote), 409);
+    super(formatLinkedMoveOfferMessage(quote, format), 409);
     this.name = "SameOwnerCoverageLinkedMoveRequiredError";
     this.quote = quote;
     this.acceptStateKey = keys.acceptStateKey;

@@ -24,6 +24,7 @@ import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * WITHDRAW AN UNPAID ADDITIONAL-PAYMENT REQUEST (#3528, `INV-ADDPAY-040`,
@@ -132,6 +133,9 @@ export async function withdrawAdditionalPaymentAsk(params: {
   };
   now?: Date;
 }): Promise<WithdrawAdditionalPaymentAskResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = params.now ?? new Date();
 
   const booking = await prisma.booking.findUnique({
@@ -227,7 +231,7 @@ export async function withdrawAdditionalPaymentAsk(params: {
     return {
       ok: false,
       status: 409,
-      error: additionalAskCarriesPriceMessage(request.carriedAskCents),
+      error: additionalAskCarriesPriceMessage(request.carriedAskCents, format),
     };
   }
 
