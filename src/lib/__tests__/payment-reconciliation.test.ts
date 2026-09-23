@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   // #3580: the ledger's one write delegate, so a settle's charge lines are
   // observable here.
   ledgerCreateMany: vi.fn(),
+  // #3595: the per-booking confirmation fence asks this first.
+  ledgerFindFirst: vi.fn(),
   // #2576 §9: the single settle door is a confirming path, so it records the bounded
   // hosting re-evaluation with the PAID claim and drains it after the commit.
   enqueueOwnHostingCoverage: vi.fn(async (...args: unknown[]) => {
@@ -175,6 +177,7 @@ const tx = {
   // claim; nothing reads them yet.
   bookingLedgerLine: {
     createMany: (...args: unknown[]) => mocks.ledgerCreateMany(...args),
+    findFirst: (...args: unknown[]) => mocks.ledgerFindFirst(...args),
   },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
@@ -227,6 +230,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.ledgerCreateMany.mockImplementation(
       async ({ data }: { data: unknown[] }) => ({ count: data.length }),
     );
+    mocks.ledgerFindFirst.mockResolvedValue(null);
     mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: LODGE_CAPACITY });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
@@ -323,6 +327,49 @@ describe("markBookingPaymentSucceeded", () => {
     // card payment) cannot post its charge lines twice.
     expect(rows.every((row) => typeof row.postingKey === "string" && row.postingKey !== "")).toBe(true);
     expect(mocks.ledgerCreateMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true });
+  });
+
+  it("posts nothing when the booking's confirmation is already on the ledger (#3595)", async () => {
+    /*
+      The double-post the key alone could not stop. Mark-paid, reverse it (the
+      status goes back to payable), shift the dates — which recreates every
+      night row — then a card payment: the PAID claim succeeds a second time
+      and every per-night key is new. The fence asks the question once per
+      booking, under this settle's lock(1), before anything is planned.
+    */
+    mocks.ledgerFindFirst.mockResolvedValue({ id: "an-earlier-confirmation-line" });
+    const booking = makeStaggeredBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      lodgeId: "lodge-1",
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      guests: booking.guests.map((guest) => ({
+        ...guest,
+        firstName: "Moved",
+        lastName: "Dates",
+        ageTier: "ADULT",
+        rateMembershipTypeId: null,
+        nights: [{ stayDate: parseDateOnly("2026-04-17"), priceCents: 5000 }],
+      })),
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_second_settle",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(result.outcome).toBe("paid");
+    expect(mocks.ledgerFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "booking-1", anchorKind: "CONFIRMATION" },
+      }),
+    );
+    const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as unknown[] | undefined;
+    expect(rows ?? []).toEqual([]);
   });
 
   it("settles anyway when the charge lines cannot be BUILT, and writes none (#3580)", async () => {

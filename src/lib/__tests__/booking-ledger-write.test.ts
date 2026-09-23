@@ -73,6 +73,18 @@ describe("the posting key (#3595)", () => {
     expect(createMany).not.toHaveBeenCalled();
   });
 
+  it("refuses two reversals of the same line in one batch (review of #3597)", async () => {
+    // The unique reversesLineId would otherwise have the write keep one and
+    // silently drop the other.
+    const { store: s, createMany } = store();
+    const reversal = (key: string) =>
+      guestNight({ postingKey: key, sign: -1, reversesLineId: "line-1" });
+    await expect(
+      postBookingLedgerLines(s, [reversal("r1"), reversal("r2")]),
+    ).rejects.toThrow(/reversed twice in one batch/);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
   it("reports how many rows were really inserted, so a replay reads as 0", async () => {
     const createMany = vi.fn(async () => ({ count: 0 }));
     const s = { bookingLedgerLine: { createMany } } as never;

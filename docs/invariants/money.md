@@ -461,26 +461,29 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 
 ## INV-MONEY-033
 
-- **Every booking-ledger posting carries an idempotency key, and a repeated
-  key posts nothing** (#3595). `BookingLedgerLine.postingKey` is deterministic
-  from the event the line records — `confirmation:<bookingId>:night:<guestId>:<date>`,
-  `capture:<transactionId>` — and unique. The write door inserts with
-  `ON CONFLICT DO NOTHING`, so posting the same event twice is a no-op: not a
+- **A booking-ledger posting is idempotent, and a booking's confirmation posts
+  once** (#3595). Two rules, because one was not enough.
+
+  **Each posting carries a key** derived from the event it records, built only
+  in `booking-ledger-posting-keys.ts`, and unique. The write door inserts with
+  `ON CONFLICT DO NOTHING`, so the same event posted twice is skipped: not a
   duplicate line, and not a refused statement that would abort the caller's
-  transaction (`INV-MONEY-032`).
+  transaction (`INV-MONEY-032`). A reversal is keyed by the reversed line's id,
+  so a second reversal of one line is a skipped replay, never a different
+  posting the unique `reversesLineId` could silently absorb. The same key, or
+  the same reversal target, twice in one batch is refused before anything is
+  sent.
 
-  Two paths make this load-bearing rather than theoretical. A booking can pass
-  the settle's PAID claim twice: an officer marks it paid, reverses the
-  mark-paid (`INV-PAY-045` restores a payable status), and the member then
-  pays by card. And every settlement writer is an upsert a provider replays.
-  Neither may post its lines twice, and neither may be made to refuse.
+  **A key makes one event idempotent, not a booking's confirmation.** A
+  booking can pass the settle's PAID claim twice — mark-paid, its reversal
+  (`INV-PAY-045`), then a card payment — and its nights can change in between,
+  so their keys change too. The settle therefore fences per booking
+  (`bookingHasConfirmationLines`, under its own `lock(1)`), counting un-keyed
+  lines as well, and posts nothing if the booking is already confirmed on the
+  ledger. What changes after confirmation is a modification (#3582).
 
-  The key is required by the write door's type and refused when empty; the
-  same key twice in one batch is refused as a planner bug before anything is
-  sent, because the write would otherwise keep the first row and silently drop
-  the rest. The column is nullable in the database only, so a draining
-  colour's inserts that omit it still succeed. C4's back-post (#3583) reuses
-  the same keys, which is what makes it safe to run twice.
+  `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
+  transaction and the fence against PostgreSQL itself.
 
 ## INV-MONEY-006
 

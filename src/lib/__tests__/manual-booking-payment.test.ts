@@ -174,6 +174,12 @@ const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   $queryRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   lodge: { findFirst: (...args: unknown[]) => mocks.lodgeFindFirst(...args) },
+  // #3595: the settle asks the ledger once per booking whether its
+  // confirmation is already posted, then posts through the write door.
+  bookingLedgerLine: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     updateMany: (...args: unknown[]) => mocks.bookingUpdateMany(...args),
