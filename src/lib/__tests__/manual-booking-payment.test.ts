@@ -178,6 +178,8 @@ const tx = {
   // confirmation is already posted, then posts through the write door.
   bookingLedgerLine: {
     findFirst: vi.fn().mockResolvedValue(null),
+    // #3581: the settlement sync reads what is already posted before posting.
+    findMany: vi.fn().mockResolvedValue([]),
     createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
   },
   booking: {

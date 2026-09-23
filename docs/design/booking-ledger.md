@@ -230,6 +230,22 @@ the lines inside that same transaction in its posting child (§7, C1–C3).
 
 ### 5.2 Moving money (SETTLEMENT)
 
+**How C2 (#3581) actually posts these, which refines the "Writer" column
+below.** The capture, receipt, cash and card-refund rows do not post from each
+writer. Every one of those writers already ends in `reconcilePaymentAggregates`
+— the one place the `Payment` mirror is derived from `PaymentTransaction` and
+`PaymentRefund` rows — so a single sync runs there and CONVERGES the ledger
+from the same rows: it posts a line for every captured transaction and
+recorded refund that lacks one, and a reversal for every line whose source no
+longer holds. Insert-only would not have been sound: a mark-paid reversal flips
+its row from `SUCCEEDED` to `FAILED`, and a refund can fail after it was
+recorded. "Captured" and "recorded" are the mirror's own predicates
+(`payment-transaction-status.ts`), so the ledger counts exactly what the
+columns count. The manual mark-paid settle and its reversal bypass the
+chokepoint and call the same sync explicitly. The credit rows and the hand-back
+are not payment transactions and never pass through it; they post from their
+own writers in #3599.
+
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |

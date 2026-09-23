@@ -56,6 +56,12 @@ type StorePayment = {
 function makeStore(payment: StorePayment) {
   const paymentTransactionCreate = vi.fn();
   const store = {
+    // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
+    // ledger's settlement lines from the same rows, so it reads and writes here.
+    bookingLedgerLine: {
+      findMany: vi.fn(async () => []),
+      createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+    },
     payment: {
       findUnique: vi.fn(async () => payment),
       update: vi.fn(async ({ data }: { data: Partial<StorePayment> }) => {

@@ -74,6 +74,7 @@ import {
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
@@ -1617,6 +1618,15 @@ async function settleBookingPaymentInTransaction(
       );
     }
 
+    // #3581: the manual settle writes its transaction rows and the payment's
+    // columns itself, so it never passes through `reconcilePaymentAggregates`
+    // where every other settlement's ledger lines converge. It runs the same
+    // sync here, after the provenance columns above are written — so its rows
+    // read as cash recorded by an officer (`INV-PAY-001`), not a bank receipt.
+    if (settlement.kind === "manual") {
+      await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    }
+
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator
     // immediately before confirmation rather than trusting a quote-time answer.
@@ -2870,6 +2880,12 @@ export async function reverseManualBookingPayment({
       restoredAdditionalAmountCents =
         restoredAdditional.count === 1 ? settledAdditional.amountCents : null;
     }
+
+    // #3581: the reversal flipped the manual rows from SUCCEEDED to FAILED
+    // above, so the cash lines the settle posted no longer hold. The same sync
+    // posts their reversals — new lines, the originals untouched, each keyed by
+    // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
+    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding
