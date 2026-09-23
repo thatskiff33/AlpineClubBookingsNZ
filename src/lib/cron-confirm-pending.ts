@@ -74,6 +74,8 @@ import {
 import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
 import { processWaitlistForDates } from "./waitlist";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -391,7 +393,7 @@ async function queueXeroInvoice(bookingId: string, logMessage: string) {
   }
 }
 
-async function sendConfirmationEmail(booking: PendingBooking) {
+async function sendConfirmationEmail(booking: PendingBooking, format: ClubFormat) {
   try {
     await sendBookingConfirmedEmail(
       { bookingId: booking.id, recipientMemberId: bookingOwner(booking).memberId },
@@ -401,6 +403,7 @@ async function sendConfirmationEmail(booking: PendingBooking) {
       booking.checkOut,
       booking.guests.length,
       booking.finalPriceCents,
+      format,
       bookingPromoEmailOptions(booking)
     );
   } catch (emailErr) {
@@ -1164,6 +1167,9 @@ async function cancelSupersededLinkIntentsBestEffort(
  *    requester + admins are given a terminal notice (#2012).
  */
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = new Date();
 
   // ONE settings read per run, outside every transaction, so no lock waits on
@@ -1240,7 +1246,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           resolution.booking.id,
           "Xero invoice queued for $0 booking"
         );
-        await sendConfirmationEmail(resolution.booking);
+        await sendConfirmationEmail(resolution.booking, format);
         continue;
       }
 
@@ -1266,7 +1272,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               guestCount: resolution.booking.guests.length,
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
-            });
+            }, format);
           } catch (emailErr) {
             logger.error(
               {
@@ -1331,7 +1337,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             checkOut: resolution.booking.checkOut,
             guestCount: resolution.booking.guests.length,
             totalCents: resolution.booking.finalPriceCents,
-          });
+          }, format);
         } catch (alertErr) {
           logger.error(
             {
@@ -1401,7 +1407,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             guestCount: resolution.booking.guests.length,
             totalCents: resolution.booking.finalPriceCents,
             parentUnpaid: resolution.parentUnpaid,
-          });
+          }, format);
         } catch (alertErr) {
           logger.error(
             {
@@ -1473,7 +1479,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               bookingReference: resolution.booking.id,
               expiresAt,
               lodgeId: resolution.booking.lodgeId ?? null,
-            });
+            }, format);
             delivered = emailOutcome.status === "sent";
             // #2258: the switch can be flipped between the pre-mint gate and this
             // send. The token is revoked below either way, but a DELIBERATE
@@ -1539,7 +1545,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
               parentUnpaid: false,
-            });
+            }, format);
           } catch (alertErr) {
             logger.error(
               {
@@ -1581,7 +1587,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               totalCents: resolution.booking.finalPriceCents,
               holdUntil: resolution.extendedHoldUntil,
               parentUnpaid: true,
-            });
+            }, format);
           } catch (alertErr) {
             logger.error(
               {
@@ -1693,7 +1699,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(resolution.booking.id);
         await queueXeroInvoice(resolution.booking.id, "Xero invoice queued");
-        await sendConfirmationEmail(resolution.booking);
+        await sendConfirmationEmail(resolution.booking, format);
       } else {
         const settled = await prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -1871,7 +1877,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             amountCents: candidate.finalPriceCents,
             errorMessage: err.message,
             paymentIntentId: err.paymentIntentId ?? paymentIntentId,
-          }).catch((alertErr) =>
+          }, format).catch((alertErr) =>
             logger.error(
               { err: alertErr, bookingId: candidate.id },
               "Failed to send admin payment failure alert"
@@ -1964,7 +1970,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             amountCents: candidate.finalPriceCents,
             errorMessage: err instanceof Error ? err.message : String(err),
             paymentIntentId,
-          }).catch((alertErr) =>
+          }, format).catch((alertErr) =>
             logger.error(
               { err: alertErr, bookingId: candidate.id },
               "Failed to send admin payment failure alert"
