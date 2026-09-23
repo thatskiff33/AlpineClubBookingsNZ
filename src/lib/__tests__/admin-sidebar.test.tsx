@@ -146,11 +146,11 @@ describe("AdminSidebar", () => {
       // Full-Admin only, like the two entries above it.
       "Club Time Zone",
       // Club Currency & Locale (#3563, programme #3205): the one persisted
-      // currency and number/date format. Full-Admin only, like the three
-      // entries above it.
+      // currency and number/date format. UNLIKE its neighbours, any admin may
+      // open it (#3596) — viewing is for every admin, changing is Full Admin.
       "Club Currency & Locale",
       // Environment Safety (ENV-SAFETY 1 #3034): is this the club's live site
-      // or a copy of it. Full-Admin only, like the four entries above it.
+      // or a copy of it. Full-Admin only, like Club Time Zone above it.
       "Environment Safety",
       "Committee",
     ]);
@@ -273,6 +273,46 @@ describe("AdminSidebar", () => {
         false,
       ),
     ).not.toContain("/admin/club-format");
+  });
+
+  it("renders the Club Currency & Locale link for a signed-in admin who is not a Full Admin (#3596)", () => {
+    /*
+      The rendered component, not just the pure seam above: the layout hands
+      `AdminSidebar` the same matrix and Full-Admin flag the pure seam takes, so
+      this is the link a finance-only admin actually meets. The two admission
+      entries (`ANY_ADMIN_ADMISSION_PATHS`) appear with no `fullAdminOnly` or
+      `orAccess` flag of their own (81c2b5d11); the Full-Admin neighbours stay
+      away from the same admin.
+    */
+    render(
+      <AdminSidebar
+        features={allOn}
+        permissionMatrix={{
+          overview: "none",
+          bookings: "none",
+          membership: "none",
+          finance: "view",
+          lodge: "none",
+          content: "none",
+          support: "none",
+        }}
+        isFullAdmin={false}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Club Currency & Locale" })
+        .getAttribute("href"),
+    ).toBe("/admin/club-format");
+    expect(
+      screen.getByRole("link", { name: "AI Diagnostics" }).getAttribute("href"),
+    ).toBe("/admin/ai-diagnostics");
+    expect(
+      screen.queryByRole("link", { name: "Club Time Zone" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Environment Safety" }),
+    ).toBeNull();
   });
 
   it("owns Lobby Display once under Lodge Operations and keeps General intact", () => {
