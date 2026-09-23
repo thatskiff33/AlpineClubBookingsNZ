@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
   The club currency and locale maintenance API (#3563, stage 1 of programme
-  #3205; INV-CONFIG-006), proved against the REAL authorisation guard.
+  #3205; INV-CONFIG-006), proved against the REAL authorisation guard. Since
+  #3596 the two verbs carry DIFFERENT gates — any admitted admin reads, only a
+  Full Admin writes — and the matrix below proves each verb against each kind
+  of caller.
 
   THIS FILE DELIBERATELY DOES NOT MOCK `@/lib/session-guards`, for the reason
   the club-timezone route's test records: a mocked `requireAdmin` cannot tell
   `{ permission: false }` (Full Admin only) from an omitted `permission` (infer
-  `support` from the path) or from `"any-admin"` — the mock answers whatever the
+  `support` from the path) or from `"any-admin"` (anybody admitted to the admin
+  portal) — the mock answers whatever the
   test told it to, so all three gates look identical and the test passes against
   every one. PR #2885 shipped exactly that mistake: 17/17 green, and the 403 it
   existed to remove was still there. So everything below runs the real
@@ -193,6 +197,21 @@ function signInWithGrid(grid: Grid) {
   );
 }
 
+/**
+ * A signed-in MEMBER with no admin standing at all — the plain `USER` role, the
+ * way an ordinary club member's session looks.
+ */
+function signInAsMember() {
+  h.auth.mockResolvedValue({
+    user: { id: "member-plain", role: "USER", accessRoles: ["USER"] },
+  });
+  setGuardMember(
+    guardMemberWith([
+      { role: "USER", roleDefinitionId: null, roleDefinition: null },
+    ]),
+  );
+}
+
 function setPersisted(row: unknown) {
   h.root.behaviour.set("clubFormatSettings.findUnique", () => row);
   h.tx.behaviour.set("clubFormatSettings.findUnique", () => row);
@@ -264,7 +283,71 @@ beforeEach(() => {
   });
 });
 
-describe("GET /api/admin/club-format — Full Admin only", () => {
+/*
+  THE ACCESS MATRIX (#3596): four callers x two verbs, each cell a real request
+  through the real guard. The decision is "any admin may view the club's
+  currency and locale; only a Full Admin may change them", so the non-Full-Admin
+  admin is the row that matters — it is the one cell where the two verbs must
+  disagree. The grid chosen for it is the SHIPPED "Finance Viewer" shape
+  (finance at view, every other area none): the narrowest admin standing there
+  is, holding neither `support` (the area this path resolves to, so an omitted
+  `permission` would refuse it the read) nor `overview`.
+*/
+const VALID_CHANGE = { currencyCode: "CHF", locale: "de-CH", confirmed: true };
+
+describe("who may read and who may change (#3596)", () => {
+  it("a Full Admin: reads 200, changes 200", async () => {
+    expect((await get()).status).toBe(200);
+    expect((await put(VALID_CHANGE)).status).toBe(200);
+    expect(h.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("an admin who is not a Full Admin: reads 200 with the values, changes 403", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    const read = await get();
+    expect(read.status).toBe(200);
+    const body = (await read.json()) as { state: Record<string, unknown> };
+    expect(body.state.currencyCode).toBe("NZD");
+    expect(body.state.locale).toBe("en-NZ");
+
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a member with no admin standing: reads 403, changes 403", async () => {
+    signInAsMember();
+    expect((await get()).status).toBe(403);
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a signed-out caller: reads 401, changes 401", async () => {
+    h.auth.mockResolvedValue(null);
+    expect((await get()).status).toBe(401);
+    expect((await put(VALID_CHANGE)).status).toBe(401);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("an admin holding every area at edit: reads 200, still cannot change", async () => {
+    // Every area at `edit` is still not Full Admin — Full Admin is the
+    // protected `ADMIN` role, not a level in the grid — so the write refuses
+    // them exactly as it refuses the finance viewer above.
+    signInWithGrid({
+      overviewLevel: "EDIT",
+      bookingsLevel: "EDIT",
+      membershipLevel: "EDIT",
+      financeLevel: "EDIT",
+      lodgeLevel: "EDIT",
+      contentLevel: "EDIT",
+      supportLevel: "EDIT",
+    });
+    expect((await get()).status).toBe(200);
+    expect((await put(VALID_CHANGE)).status).toBe(403);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/admin/club-format — the read", () => {
   it("answers a Full Admin with the persisted pair, its provenance and who set it", async () => {
     const response = await get();
     expect(response.status).toBe(200);
@@ -322,23 +405,6 @@ describe("GET /api/admin/club-format — Full Admin only", () => {
     expect(body.state.locale).toBe("en-NZ");
   });
 
-  it("refuses an admin holding every area at edit, because none of that is Full Admin", async () => {
-    signInWithGrid({
-      overviewLevel: "EDIT",
-      bookingsLevel: "EDIT",
-      membershipLevel: "EDIT",
-      financeLevel: "EDIT",
-      lodgeLevel: "EDIT",
-      contentLevel: "EDIT",
-      supportLevel: "EDIT",
-    });
-    expect((await get()).status).toBe(403);
-  });
-
-  it("refuses a signed-out caller", async () => {
-    h.auth.mockResolvedValue(null);
-    expect((await get()).status).toBe(401);
-  });
 });
 
 describe("PUT /api/admin/club-format — the write", () => {

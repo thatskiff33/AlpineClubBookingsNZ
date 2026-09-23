@@ -8,6 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useClubTime } from "@/components/club-time-provider";
 import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import {
+  ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
+  useFullAdminEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
+import {
   CLUB_LOCALE_EXAMPLES,
   CLUB_LOCALE_MAX_LENGTH,
   listSelectableClubCurrencyCodes,
@@ -17,18 +25,24 @@ import {
  * The club currency and locale maintenance panel (stage 1 of programme #3205,
  * #3563). INV-CONFIG-006.
  *
- * WHY THIS SURFACE DOES NOT USE `ViewOnlyActionButton` /
- * `AdminViewOnlySectionBanner`, and please do not "fix" it to. Those are the
- * canonical furniture for a section with a VIEW tier and an EDIT tier: they
- * resolve `useAdminAreaEditAccess(area)` and explain that this admin can look
- * but not change, because their access role grants the area at `view`. This
- * screen has exactly one permission level — Full Admin, enforced in the route
- * by `requireAdmin({ permission: false })` — so there is no area-edit tier to
- * describe, and rendering that banner here would state a REASON that is not
- * the reason. `/admin/club-format`'s page shell therefore does what
- * `/admin/club-time` and `/admin/environment` do: it tests `isFullAdmin` and
- * shows a short "available to full administrators only" panel instead of this
- * one.
+ * EVERY ADMIN SEES IT; ONLY A FULL ADMIN CAN CHANGE IT (owner decision on
+ * #3596). So this surface now carries the canonical view-only furniture
+ * (`docs/ARCHITECTURE.md` -> "Admin/member layer"): one
+ * `AdminViewOnlySectionBanner` at the top, and every edit affordance through
+ * `ViewOnlyActionButton` with `describeReason={false}`. Stage 1 (#3563)
+ * refused both, on the ground that the screen had "no view tier" — every
+ * visitor was a Full Admin, so a banner explaining view-only access would have
+ * stated a reason that was not the reason. #3596 gave it a view tier, which
+ * reverses that ground rather than overriding it.
+ *
+ * THE EDIT TIER IS FULL ADMIN, NOT AN AREA LEVEL, which is why `canEdit` comes
+ * from `useFullAdminEditAccess` and not from `useAdminAreaEditAccess`. The
+ * route's write is `requireAdmin({ permission: false })`: an admin holding
+ * every area at `edit` is still refused, so an area check here would offer
+ * them a Save the server turns down. The banner therefore names Full Admin in
+ * its own words, the way the video-meetings and Alpine Server setup screens
+ * do for their Full-Admin-only writes. The server is still the enforcement:
+ * this only decides what the screen offers.
  *
  * IT STILL FOLLOWS THE STAGED-EDIT MODEL (`docs/ARCHITECTURE.md` ->
  * "Admin/member layer"). The panel mounts READ-ONLY showing the configured
@@ -188,6 +202,29 @@ export function ClubFormatPanel() {
   // deciding the currency; see the module doc.
   const allCurrencies = useMemo(() => listSelectableClubCurrencyCodes(), []);
 
+  /*
+    Tri-state: `undefined` while the session resolves, which keeps the buttons
+    below disabled and the banner empty rather than flashing either answer.
+  */
+  const canEdit = useFullAdminEditAccess();
+
+  /*
+    Hoisted above the early returns and rendered FIRST in every branch, so the
+    banner's `role="status"` region is registered from the first paint rather
+    than from whenever the fetch settles — a polite live region injected
+    already populated is dropped by some screen-reader/browser pairings. Every
+    branch returns a fragment with this as its first child, so React keeps the
+    same region mounted across loading -> loaded. Outside the `space-y-*`
+    stack, so an empty wrapper adds no gap for a Full Admin.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Every admin can see the club&apos;s currency and locale, but changing
+      them needs Full Admin — they decide how every amount and date the club
+      writes is shown. Ask a Full Admin if one of them looks wrong.
+    </AdminViewOnlySectionBanner>
+  );
+
   function load() {
     setLoadFailed(false);
     void fetch("/api/admin/club-format")
@@ -205,22 +242,28 @@ export function ClubFormatPanel() {
 
   if (loadFailed) {
     return (
-      <div className="space-y-3 rounded-md border bg-card p-6">
-        <p className="text-sm text-danger">
-          Could not load the club&apos;s currency and locale.
-        </p>
-        <Button variant="outline" onClick={load}>
-          Retry
-        </Button>
-      </div>
+      <>
+        {viewOnlyBanner}
+        <div className="space-y-3 rounded-md border bg-card p-6">
+          <p className="text-sm text-danger">
+            Could not load the club&apos;s currency and locale.
+          </p>
+          <Button variant="outline" onClick={load}>
+            Retry
+          </Button>
+        </div>
+      </>
     );
   }
 
   if (!state) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Loading the club&apos;s currency and locale…
-      </p>
+      <>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">
+          Loading the club&apos;s currency and locale…
+        </p>
+      </>
     );
   }
 
@@ -277,7 +320,7 @@ export function ClubFormatPanel() {
   }
 
   async function save() {
-    if (!acknowledged || unchanged) return;
+    if (canEdit !== true || !acknowledged || unchanged) return;
     setSaving(true);
     setError(null);
     try {
@@ -293,6 +336,19 @@ export function ClubFormatPanel() {
       const payload = (await response.json().catch(() => null)) as
         | { state?: ClubFormatState; error?: string }
         | null;
+      if (response.status === 403) {
+        /*
+          The defence-in-depth case behind the gating above: a tab opened while
+          this admin was a Full Admin, whose Full Admin was removed since. The
+          route's own "Forbidden" says nothing useful, so say which permission.
+        */
+        setError(
+          "This change was not saved: changing the club's currency and " +
+            "locale needs Full Admin, which your admin role does not have. " +
+            "Refresh the page to see the latest permissions.",
+        );
+        return;
+      }
       if (!response.ok || !payload?.state) {
         setError(
           payload?.error ?? "Could not save the club's currency and locale.",
@@ -309,208 +365,221 @@ export function ClubFormatPanel() {
   }
 
   return (
-    <div className="space-y-6 rounded-md border bg-card p-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">Currency</p>
-          <p
-            className="text-lg font-semibold"
-            data-testid="current-club-currency"
-          >
-            {state.currencyCode}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            <span className="font-medium">
-              {SOURCE_LABEL[state.currencySource]}
-            </span>
-            {` — ${describeSource(
-              state.currencySource,
-              state.currencyCode,
-              state.unusableStoredCurrency,
-              "currency",
-            )}`}
-          </p>
-        </div>
-        <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">
-            Number and date format
-          </p>
-          <p className="text-lg font-semibold" data-testid="current-club-locale">
-            {state.locale}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            <span className="font-medium">
-              {SOURCE_LABEL[state.localeSource]}
-            </span>
-            {` — ${describeSource(
-              state.localeSource,
-              state.locale,
-              state.unusableStoredLocale,
-              "number and date format",
-            )}`}
-          </p>
-        </div>
-      </div>
-
-      {state.updatedAt ? (
-        <p className="text-sm text-muted-foreground">
-          {`Last changed ${formatChangedAt(state.updatedAt)}`}
-          {state.updatedByName ? ` by ${state.updatedByName}` : null}
-        </p>
-      ) : null}
-
-      {!editing ? (
-        <Button onClick={startEditing}>Change currency and format</Button>
-      ) : (
-        <div className="space-y-4 border-t pt-4">
-          <div className="space-y-2">
-            <Label htmlFor={filterId}>Find a currency</Label>
-            <Input
-              id={filterId}
-              value={filter}
-              placeholder="Type a code, for example NZD"
-              onChange={(event) => setFilter(event.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor={currencyId}>Currency</Label>
-            <select
-              id={currencyId}
-              value={chosenCurrency}
-              onChange={(event) => setCurrencyChoice(event.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+    <>
+      {viewOnlyBanner}
+      <div className="space-y-6 rounded-md border bg-card p-6">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Currency</p>
+            <p
+              className="text-lg font-semibold"
+              data-testid="current-club-currency"
             >
-              {visibleCurrencies.map((code) => (
-                <option key={code} value={code}>
-                  {code}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {visibleCurrencies.length} of {allCurrencies.length} currencies
-              shown.
+              {state.currencyCode}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium">
+                {SOURCE_LABEL[state.currencySource]}
+              </span>
+              {` — ${describeSource(
+                state.currencySource,
+                state.currencyCode,
+                state.unusableStoredCurrency,
+                "currency",
+              )}`}
             </p>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor={localeId}>Number and date format</Label>
-            <Input
-              id={localeId}
-              value={chosenLocale}
-              maxLength={CLUB_LOCALE_MAX_LENGTH}
-              placeholder="en-NZ"
-              onChange={(event) => setLocaleChoice(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              A language tag: the language, then the country, separated by a
-              hyphen. For example {CLUB_LOCALE_EXAMPLES.slice(0, 5).join(", ")}.
-              It decides how numbers and dates are written, not what language
-              the site is in.
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">
+              Number and date format
+            </p>
+            <p className="text-lg font-semibold" data-testid="current-club-locale">
+              {state.locale}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium">
+                {SOURCE_LABEL[state.localeSource]}
+              </span>
+              {` — ${describeSource(
+                state.localeSource,
+                state.locale,
+                state.unusableStoredLocale,
+                "number and date format",
+              )}`}
             </p>
           </div>
+        </div>
 
-          <div className="space-y-3 rounded-md border border-warning-6 bg-warning-2 p-4">
-            <p className="text-sm font-semibold">
-              What changing these does, and what it does not
-            </p>
-            <dl className="grid gap-2 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-muted-foreground">Now</dt>
-                <dd className="font-medium" data-testid="confirm-current-format">
-                  {state.currencyCode} · {state.locale}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">After saving</dt>
-                <dd className="font-medium" data-testid="confirm-chosen-format">
-                  {chosenCurrency} · {chosenLocale}
-                </dd>
-              </div>
-            </dl>
-            <ul className="list-disc space-y-1 pl-5 text-sm">
-              <li>
-                <span className="font-semibold">
-                  Some screens follow this straight away; amounts do not yet.
-                </span>{" "}
-                The currency code shown beside a fee, a spend cap or a
-                booking-request total changes as soon as you save, and so do
-                the audit-log timestamps, the health dashboard&apos;s{" "}
-                <em>row</em> timestamps, the promo counts and the lobby
-                display&apos;s date. The <em>amounts themselves</em> — every
-                price, invoice figure and statement line — are still written
-                from the server&apos;s settings, and move across in the changes
-                that follow this one.
-              </li>
-              <li>
-                <span className="font-semibold">
-                  Two clocks on those screens do not move yet.
-                </span>{" "}
-                The health dashboard&apos;s &ldquo;Last refresh&rdquo; line and
-                the lobby display&apos;s live clock are written by the shared
-                date machinery rather than by their own screen, so they keep
-                following the server&apos;s <code>LOCALE</code> until the next
-                change moves it. They are the only place you will see both
-                answers at once.
-              </li>
-              <li>
-                No amount already recorded is rewritten or re-converted. A
-                payment of 8450 cents is still 8450 cents; only the way an
-                amount is WRITTEN will follow this setting, never what it is
-                worth.
-              </li>
-              <li>
-                Once saved, this page is where the setting is changed — editing{" "}
-                <code>CURRENCY</code> or <code>LOCALE</code> on the server will
-                not change it back. <strong>Do not remove them yet</strong>, and
-                keep them matching what you choose here: amounts are still
-                written from them, so a mismatch shows your chosen code beside
-                figures written the old way.
-              </li>
-              <li>
-                Stripe still charges in the currency the deployment is
-                configured with. Moving the club to a different currency is a
-                conversation with the payment provider and the club&apos;s
-                accountant before it is a setting here.
-              </li>
-            </ul>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id={acknowledgeId}
-                checked={acknowledged}
-                onCheckedChange={(checked) => setAcknowledged(checked)}
+        {state.updatedAt ? (
+          <p className="text-sm text-muted-foreground">
+            {`Last changed ${formatChangedAt(state.updatedAt)}`}
+            {state.updatedByName ? ` by ${state.updatedByName}` : null}
+          </p>
+        ) : null}
+
+        {!editing ? (
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
+            onClick={startEditing}
+          >
+            Change currency and format
+          </ViewOnlyActionButton>
+        ) : (
+          <div className="space-y-4 border-t pt-4">
+            <div className="space-y-2">
+              <Label htmlFor={filterId}>Find a currency</Label>
+              <Input
+                id={filterId}
+                value={filter}
+                placeholder="Type a code, for example NZD"
+                onChange={(event) => setFilter(event.target.value)}
               />
-              <Label htmlFor={acknowledgeId} className="text-sm font-normal">
-                I understand that this records the club&apos;s currency and
-                number format, that no amount already recorded is changed or
-                re-converted, that amounts are still written from the
-                server&apos;s settings for now, and that the server settings
-                stop deciding this one once this is saved.
-              </Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor={currencyId}>Currency</Label>
+              <select
+                id={currencyId}
+                value={chosenCurrency}
+                onChange={(event) => setCurrencyChoice(event.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              >
+                {visibleCurrencies.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {visibleCurrencies.length} of {allCurrencies.length} currencies
+                shown.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor={localeId}>Number and date format</Label>
+              <Input
+                id={localeId}
+                value={chosenLocale}
+                maxLength={CLUB_LOCALE_MAX_LENGTH}
+                placeholder="en-NZ"
+                onChange={(event) => setLocaleChoice(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                A language tag: the language, then the country, separated by a
+                hyphen. For example {CLUB_LOCALE_EXAMPLES.slice(0, 5).join(", ")}.
+                It decides how numbers and dates are written, not what language
+                the site is in.
+              </p>
+            </div>
+
+            <div className="space-y-3 rounded-md border border-warning-6 bg-warning-2 p-4">
+              <p className="text-sm font-semibold">
+                What changing these does, and what it does not
+              </p>
+              <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">Now</dt>
+                  <dd className="font-medium" data-testid="confirm-current-format">
+                    {state.currencyCode} · {state.locale}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">After saving</dt>
+                  <dd className="font-medium" data-testid="confirm-chosen-format">
+                    {chosenCurrency} · {chosenLocale}
+                  </dd>
+                </div>
+              </dl>
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                <li>
+                  <span className="font-semibold">
+                    Some screens follow this straight away; amounts do not yet.
+                  </span>{" "}
+                  The currency code shown beside a fee, a spend cap or a
+                  booking-request total changes as soon as you save, and so do
+                  the audit-log timestamps, the health dashboard&apos;s{" "}
+                  <em>row</em> timestamps, the promo counts and the lobby
+                  display&apos;s date. The <em>amounts themselves</em> — every
+                  price, invoice figure and statement line — are still written
+                  from the server&apos;s settings, and move across in the changes
+                  that follow this one.
+                </li>
+                <li>
+                  <span className="font-semibold">
+                    Two clocks on those screens do not move yet.
+                  </span>{" "}
+                  The health dashboard&apos;s &ldquo;Last refresh&rdquo; line and
+                  the lobby display&apos;s live clock are written by the shared
+                  date machinery rather than by their own screen, so they keep
+                  following the server&apos;s <code>LOCALE</code> until the next
+                  change moves it. They are the only place you will see both
+                  answers at once.
+                </li>
+                <li>
+                  No amount already recorded is rewritten or re-converted. A
+                  payment of 8450 cents is still 8450 cents; only the way an
+                  amount is WRITTEN will follow this setting, never what it is
+                  worth.
+                </li>
+                <li>
+                  Once saved, this page is where the setting is changed — editing{" "}
+                  <code>CURRENCY</code> or <code>LOCALE</code> on the server will
+                  not change it back. <strong>Do not remove them yet</strong>, and
+                  keep them matching what you choose here: amounts are still
+                  written from them, so a mismatch shows your chosen code beside
+                  figures written the old way.
+                </li>
+                <li>
+                  Stripe still charges in the currency the deployment is
+                  configured with. Moving the club to a different currency is a
+                  conversation with the payment provider and the club&apos;s
+                  accountant before it is a setting here.
+                </li>
+              </ul>
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id={acknowledgeId}
+                  checked={acknowledged}
+                  onCheckedChange={(checked) => setAcknowledged(checked)}
+                />
+                <Label htmlFor={acknowledgeId} className="text-sm font-normal">
+                  I understand that this records the club&apos;s currency and
+                  number format, that no amount already recorded is changed or
+                  re-converted, that amounts are still written from the
+                  server&apos;s settings for now, and that the server settings
+                  stop deciding this one once this is saved.
+                </Label>
+              </div>
+            </div>
+
+            {unchanged ? (
+              <p className="text-sm text-muted-foreground">
+                {chosenCurrency} and {chosenLocale} are already recorded. Choose
+                something different to save a change.
+              </p>
+            ) : null}
+            {error ? <p className="text-sm text-danger">{error}</p> : null}
+
+            <div className="flex gap-2">
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                describeReason={false}
+                readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
+                onClick={() => void save()}
+                disabled={!acknowledged || unchanged || saving}
+              >
+                {saving ? "Saving…" : "Save currency and format"}
+              </ViewOnlyActionButton>
+              <Button variant="outline" onClick={cancelEditing} disabled={saving}>
+                Cancel
+              </Button>
             </div>
           </div>
-
-          {unchanged ? (
-            <p className="text-sm text-muted-foreground">
-              {chosenCurrency} and {chosenLocale} are already recorded. Choose
-              something different to save a change.
-            </p>
-          ) : null}
-          {error ? <p className="text-sm text-danger">{error}</p> : null}
-
-          <div className="flex gap-2">
-            <Button
-              onClick={() => void save()}
-              disabled={!acknowledged || unchanged || saving}
-            >
-              {saving ? "Saving…" : "Save currency and format"}
-            </Button>
-            <Button variant="outline" onClick={cancelEditing} disabled={saving}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 }

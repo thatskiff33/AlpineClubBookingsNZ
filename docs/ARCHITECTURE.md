@@ -1145,12 +1145,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **97 components render a banner, and
-308 of the 362 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **98 components render a banner, and
+310 of the 364 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 308 split by WHICH rule
-covers them: **274** pass the literal
+test currently pins, which is the only authority.) Those 310 split by WHICH rule
+covers them: **276** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
@@ -2383,20 +2383,26 @@ now buys nothing: `guardAdminLayout` still requires the **requested path's** own
 area, every `/api/admin` route still clears `requireAdmin` against its own area
 and level, and the sidebar and command palette still filter item by item through
 `canViewAdminHrefWithMatrix`. A finance-only administrator reaches the shell and
-Finance and nothing else. The callers that may legitimately ask this question are
+Finance and nothing else, apart from the surfaces an owner decision opened to
+every administrator by name — the lodge names, the AI Diagnostics shell, and a
+read-only view of the club's currency and locale (#3596) — each pinned in the
+proof test below. The callers that may legitimately ask this question are
 the nav bar's Admin link, the admin-notification recipient roster,
-`requireAdmin`'s explicit `permission: "any-admin"`, and ADR-002 §1's admission
-surface — and a caller reasoning "they cleared the shell, therefore they may see
+`requireAdmin`'s explicit `permission: "any-admin"`, and the admission paths
+below — and a caller reasoning "they cleared the shell, therefore they may see
 X" is a privilege escalation as written.
 `src/lib/__tests__/admin-route-authorization-proof.test.ts` proves the negative by
 attempting every discovered admin page and `/api/admin` route as that user,
 through the real guards.
 
 **"May this person open this admin path" has ONE implementation**
-(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the two
+(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the
 adjudicated special cases — the consolidated fee console, admitted on view of
-either `bookings` or `finance` (#1933), and the AI Diagnostics workspace,
-admitted on ADMISSION rather than on an area (ADR-002 §1, owner-ratified #2370).
+either `bookings` or `finance` (#1933); Rooms & Beds, on view of either `lodge`
+or `bookings` (#2937); and the pages admitted on ADMISSION rather than on an
+area, `ANY_ADMIN_ADMISSION_PATHS`: the AI Diagnostics workspace (ADR-002 §1,
+owner-ratified #2370) and the club currency and locale page, which any admin
+may view and only a Full Admin may change (#3596).
 `guardAdminLayout` step 6 and `/api/help/chat`'s surface downgrade both call it.
 The composition had been written out four times before that, and the fee rule had
 two different spellings between the copies;

@@ -496,8 +496,9 @@ home for that explanation and is not repeated here.
   `club-format.ts`.
 - **Changing either re-denominates nothing.** Stored amounts stay integer cents
   worth what they were; only how one is WRITTEN follows this.
-- **Full Admin on both verbs, confirmed, audited, and excluded from config
-  transfer as instance-local** — a bundle apply is none of those things.
+- **Any admin may read them; changing them is Full Admin, confirmed, audited,
+  and excluded from config transfer as instance-local** — a bundle apply is
+  none of those things. The read was widened from Full Admin on #3596.
 - Decided on #3563, stage 1 of programme #3205 (decisions D1-D6), which hold the
   narrative and the rejected alternatives. Readers move onto it in #3564-#3567,
   so nothing displays from this row yet. Operator guide:

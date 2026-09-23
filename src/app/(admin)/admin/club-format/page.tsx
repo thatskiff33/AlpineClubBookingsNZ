@@ -1,25 +1,22 @@
-"use client";
-
-import { useSession } from "next-auth/react";
-
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
-import { isFullAdmin } from "@/lib/access-roles";
 
 /**
- * Club Currency & Locale — the Full-Admin maintenance surface for the two
- * settings that decide how this club's money and dates are written (stage 1 of
- * programme #3205, #3563). INV-CONFIG-006.
+ * Club Currency & Locale — the maintenance surface for the two settings that
+ * decide how this club's money and dates are written (stage 1 of programme
+ * #3205, #3563). INV-CONFIG-006.
  *
- * THE WHOLE SCREEN IS FULL ADMIN, which is why it is shaped like
- * `/admin/club-time`, `/admin/environment` and `/admin/config-transfer` rather
- * than like an ordinary settings section. There is no view tier and no edit
- * tier to distinguish, so there is nothing for `AdminViewOnlySectionBanner` to
- * explain; a support-area admin who reaches the page (the route is registered
- * under `support` so it resolves to a concrete permission area instead of the
- * `overview` catch-all) is told plainly that this one is Full Admin only. The
- * real enforcement is server-side — `requireAdmin({ permission: false })` on
- * both verbs of `/api/admin/club-format` — and this check exists so the screen
- * does not offer an action it knows will be refused.
+ * EVERY ADMIN MAY OPEN IT; ONLY A FULL ADMIN MAY CHANGE IT (owner decision on
+ * #3596). Stage 1 shaped this screen like `/admin/club-time`,
+ * `/admin/environment` and `/admin/config-transfer` — a Full Admin test here
+ * and an "available to full administrators only" panel for everyone else —
+ * and those three still are. This one stopped being their twin on READ access
+ * only: an admin investigating why an amount or a date is written the way it
+ * is can now see the setting that decides it. The layout admits any admitted
+ * admin (`ANY_ADMIN_ADMISSION_PATHS`), so there is no longer a refusal to
+ * render here, and the page needs no session of its own; the panel resolves
+ * Full Admin itself and shows everyone else the values read-only under the
+ * canonical view-only banner. The enforcement is server-side on both verbs of
+ * `/api/admin/club-format` — `"any-admin"` on the read, Full Admin on the write.
  *
  * THE BLURB SAYS WHAT IS TRUE TODAY, WHICH IS STILL LESS THAN IT WILL SAY.
  * Stage 1 recorded the setting and no screen read it. Stage 2 (#3564) moved the
@@ -38,20 +35,6 @@ import { isFullAdmin } from "@/lib/access-roles";
  * the stage that makes its claim true; this one shrank rather than vanished.
  */
 export default function ClubFormatPage() {
-  const { data: session } = useSession();
-  const fullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
-
-  if (session && !fullAdmin) {
-    return (
-      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
-        The club&apos;s currency and locale are available to full administrators
-        only.
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="space-y-2">
