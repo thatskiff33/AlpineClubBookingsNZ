@@ -24,13 +24,14 @@ type StripeRefundLedgerInput = {
   payment_intent?: StripeReference;
 };
 
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
-
-const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
+// Moved to a leaf so the booking ledger's settlement sync can share them
+// without an import cycle (#3581); re-exported so existing importers stand.
+import {
+  EXCLUDED_LEDGER_REFUND_STATUSES,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
+export { isCapturedTransactionStatus };
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
@@ -56,9 +57,6 @@ function normalizeRefundStatus(status: string | null | undefined) {
  * charge request has already been PAID before it lets another share be added to
  * it. `INV-SSOT`: one definition, imported.
  */
-export function isCapturedTransactionStatus(status: PaymentStatus) {
-  return CAPTURED_TRANSACTION_STATUSES.has(status);
-}
 
 function mapAdditionalSummaryStatus(status: PaymentStatus | null): string | null {
   if (!status) {
@@ -420,6 +418,12 @@ export async function reconcilePaymentAggregates({
       ),
     },
   });
+
+  // #3581: the booking ledger's settlement lines converge from the SAME rows
+  // the mirror above was just derived from, at the same place — so every
+  // capture, receipt and refund writer that ends here is covered, including
+  // one nobody has written yet. Idempotent by key (`INV-MONEY-033`).
+  await syncBookingLedgerSettlements({ paymentId: payment.id, store });
 
   return store.payment.findUnique({
     where: { id: payment.id },

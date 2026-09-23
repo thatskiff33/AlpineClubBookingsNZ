@@ -70,6 +70,12 @@ function createRefundStore() {
   const refunds = new Map<string, Record<string, unknown>>();
 
   const store = {
+    // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
+    // ledger's settlement lines from the same rows, so it reads and writes here.
+    bookingLedgerLine: {
+      findMany: vi.fn(async () => []),
+      createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+    },
     payment: {
       findUnique: vi.fn(async (args: any) => {
         if (args.where?.stripePaymentIntentId || args.where?.additionalPaymentIntentId) {

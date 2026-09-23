@@ -45,3 +45,17 @@ export function confirmationPromotionKey(bookingId: string): string {
 export function reversalKey(reversedLineId: string): string {
   return `reversal:${reversedLineId}`;
 }
+
+/**
+ * A settlement line for one payment transaction — a card capture, a bank
+ * receipt, or cash recorded by an officer (#3581). One transaction is captured
+ * at most once, so its id is the whole identity.
+ */
+export function captureKey(paymentTransactionId: string): string {
+  return `capture:${paymentTransactionId}`;
+}
+
+/** A card refund, one `PaymentRefund` row (#3581). */
+export function refundKey(paymentRefundId: string): string {
+  return `refund:${paymentRefundId}`;
+}

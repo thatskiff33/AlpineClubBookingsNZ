@@ -485,6 +485,30 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
 
+## INV-MONEY-034
+
+- **A booking's settlement lines converge from its payment rows, at the place
+  the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
+  runs at the end of `reconcilePaymentAggregates` — which every capture,
+  receipt and refund writer already ends in — and from the two paths that
+  bypass it (the manual mark-paid settle and its reversal). It posts one line
+  per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
+  when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
+  refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
+  nothing for a $0 capture.
+
+  **A source that stops holding is reversed, never edited.** A mark-paid
+  reversal flips its row to `FAILED` (`INV-PAY-045`) and a refund can fail
+  after it was recorded; the sync then posts a reversal copied from the line,
+  once, keyed by the line's id. It never re-derives a method from a row whose
+  reason has since changed.
+
+  **"Captured" and "recorded" are the mirror's own predicates**, in
+  `payment-transaction-status.ts`, imported by both, so the ledger's settled
+  total equals `amountCents - refundedAmountCents` for the rows it posts —
+  proved against PostgreSQL in `booking-ledger-settlement-sync.realdb.test.ts`.
+  A line whose source amount later changes is reported, not corrected.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and
