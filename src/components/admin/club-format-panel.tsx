@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useClubTime } from "@/components/club-time-provider";
 import {
+  AdminForbiddenSaveNotice,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
@@ -193,6 +194,7 @@ export function ClubFormatPanel() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forbiddenSave, setForbiddenSave] = useState(false);
 
   const filterId = useId();
   const currencyId = useId();
@@ -317,6 +319,7 @@ export function ClubFormatPanel() {
     setFilter("");
     setAcknowledged(false);
     setError(null);
+    setForbiddenSave(false);
     setEditing(true);
   }
 
@@ -327,12 +330,14 @@ export function ClubFormatPanel() {
     setFilter("");
     setAcknowledged(false);
     setError(null);
+    setForbiddenSave(false);
   }
 
   async function save() {
     if (canEdit !== true || !acknowledged || unchanged) return;
     setSaving(true);
     setError(null);
+    setForbiddenSave(false);
     try {
       const response = await fetch("/api/admin/club-format", {
         method: "PUT",
@@ -350,13 +355,10 @@ export function ClubFormatPanel() {
         /*
           The defence-in-depth case behind the gating above: a tab opened while
           this admin was a Full Admin, whose Full Admin was removed since. The
-          route's own "Forbidden" says nothing useful, so say which permission.
+          route's own "Forbidden" says nothing useful, so the shared notice
+          below carries the Full-Admin reason rather than its area-level default.
         */
-        setError(
-          "The server refused this change: changing the club's currency " +
-            "and locale needs Full Admin, which your admin role does not " +
-            "have. Refresh the page to see the latest permissions.",
-        );
+        setForbiddenSave(true);
         return;
       }
       if (!response.ok || !payload?.state) {
@@ -572,6 +574,18 @@ export function ClubFormatPanel() {
               </p>
             ) : null}
             {error ? <p className="text-sm text-danger">{error}</p> : null}
+            {forbiddenSave ? (
+              /*
+                The default copy names the wrong permission for this section
+                ("can view this area but cannot make changes"): the write is
+                Full Admin, not an area level, so the notice states that
+                instead — the same reason the two buttons carry.
+              */
+              <AdminForbiddenSaveNotice>
+                {`This change was not saved. ${ADMIN_FULL_ADMIN_ONLY_ACTION_REASON} ` +
+                  "Refresh the page to see the latest permissions."}
+              </AdminForbiddenSaveNotice>
+            ) : null}
 
             <div className="flex gap-2">
               <ViewOnlyActionButton

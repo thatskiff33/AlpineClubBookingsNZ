@@ -38,6 +38,7 @@ vi.mock("next-auth/react", () => ({
 import ClubFormatPage from "@/app/(admin)/admin/club-format/page";
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
+import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 
 /*
   CHF and de-CH, not the NZD/en-NZ the test environment resolves to, so a value
@@ -173,8 +174,15 @@ describe("a Full Admin", () => {
       screen.getByRole("button", { name: "Save currency and format" }),
     );
     await waitFor(() => expect(putCalls()).toHaveLength(1));
+    // The shared forbidden-save notice (`role="alert"`), carrying the
+    // Full-Admin reason rather than its area-level default copy.
+    const notice = await screen.findByRole("alert");
+    expect(notice).toHaveTextContent(ADMIN_FULL_ADMIN_ONLY_ACTION_REASON);
+    expect(notice).toHaveTextContent(/Refresh the page/);
+    expect(notice).not.toHaveTextContent(/can view this area/);
+    // The editor stays open, so the admin can see what was refused.
     expect(
-      await screen.findByText(/needs Full Admin, which your admin role does not have/),
+      screen.getByRole("button", { name: "Save currency and format" }),
     ).toBeInTheDocument();
   });
 });
