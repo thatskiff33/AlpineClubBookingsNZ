@@ -94,10 +94,10 @@ model BookingLedgerLine {
   postedByMemberId  String?               // a person's decision; NULL for the system
   /// Narration only, never read for money (INV-MOD-058's discipline).
   narration         String
-  /// Idempotency key, deterministic from the event (#3595, INV-MONEY-033):
-  /// `confirmation:<bookingId>:night:<guestId>:<date>`, `capture:<txnId>`.
-  /// Unique; the write door inserts with ON CONFLICT DO NOTHING, so the same
-  /// event posted twice is a no-op rather than a duplicate or an abort.
+  /// Idempotency key, deterministic from the event (#3595, INV-MONEY-033),
+  /// built only in `booking-ledger-posting-keys.ts`. Unique; the write door
+  /// inserts with ON CONFLICT DO NOTHING, so the same event posted twice is a
+  /// no-op rather than a duplicate or an abort.
   postingKey        String?               @unique
   lodgeId           String
 
@@ -151,39 +151,45 @@ is settled. One pure module, `src/lib/booking-ledger-balance.ts`, is the only
 home of those four sums and of the slices §8 renders from. It takes rows and
 returns figures; it reads nothing.
 
-### 4.1a Idempotency: every posting is keyed
+### 4.1a Idempotency: every posting is keyed, and confirmation is fenced
 
 Added after C1 shipped (#3595, `INV-MONEY-033`), because the first draft of
 this design did not say, and C1's review lens that would have asked was cut
-short. **A booking can pass the settle's PAID claim twice** — an officer marks
-it paid, reverses the mark-paid (which restores a payable status), and the
-member then pays by card — and every settlement writer in §5.2 is an upsert a
-provider replays. Without a rule, each of those posts its lines again.
+short. Two rules, because the first fix found one was not enough.
 
-Every posting therefore carries a `postingKey` derived from the event it
-records, never from when it was posted or by whom, and the write door inserts
-with `ON CONFLICT DO NOTHING`. The same event produces the same key and the
-second write is a no-op. That it is a *skip* and not a *refusal* is the point:
-a refused statement aborts the caller's transaction (#3590's review), so a
-unique key that errored would have turned every replay into a failed settle.
+**Every posting carries a key** derived from the event it records — never from
+when it was posted or by whom — and the write door inserts with
+`ON CONFLICT DO NOTHING`. The same event produces the same key and the second
+write is a no-op. That it is a *skip* and not a *refusal* is the point: a
+refused statement aborts the caller's transaction (#3590's review). Every key
+is built in `src/lib/booking-ledger-posting-keys.ts` and nowhere else — a
+child that hand-rolled a spelling would produce keys that never collide with
+the ones it was meant to. A **reversal** is keyed by the reversed line's *id*
+(every line has one; a line posted before #3595 has no key), so a second
+reversal of one line is a skipped replay rather than a second, different
+posting the unique `reversesLineId` could silently absorb.
 
-Keys by kind, so each child can be written against them:
+**A key makes one event idempotent — not a booking's confirmation.** A booking
+can pass the settle's PAID claim twice: an officer marks it paid, reverses the
+mark-paid (restoring a payable status), and the member then pays by card. In
+between, its nights can change — a date shift recreates them, a guest removed
+and re-added gets a new id — so per-night keys would all be new and the whole
+charge would post again. The first cut of #3595 claimed keys alone closed
+this; its review showed they do not. So the settle also **fences per
+booking**: under its own global `lock(1)`, it asks whether any confirmation
+line exists for the booking (keyed or not, so #3580-era lines fence too) and
+posts nothing if one does.
 
-| Posting | Key |
-| --- | --- |
-| Confirmation guest-night | `confirmation:<bookingId>:night:<guestId>:<YYYY-MM-DD>` |
-| Confirmation promotion | `confirmation:<bookingId>:promotion` |
-| Card capture / bank receipt / cash recorded | `capture:<paymentTransactionId>` |
-| Card refund | `refund:<paymentRefundId>` |
-| Credit applied / issued | `credit:<memberCreditId>` |
-| Hand-back completed | `handback:<manualRefundTaskId>` |
-| A reversal | `reversal:<reversedLineKey>` |
-| Edit lines | `modification:<bookingModificationId>:<runIndex>` |
-| Agreed adjustment | `review:<manualRefundTaskId>` |
+That fence has a consequence C3 must honour: **an edit to a booking that is
+already confirmed on the ledger posts modification lines, whatever its payment
+status** — including in the window between a mark-paid reversal and the next
+settle, because the next settle will post nothing.
 
-C4's back-post (#3583) derives the same keys from the same rows, which makes
-the back-post idempotent for free: running it twice posts nothing the second
-time.
+Two limits, stated rather than hidden. A line the *old* colour posts during a
+blue/green drain has no key and the old colour has no fence, so a booking
+re-settled by the old colour inside that window could post twice; C4's census
+reports it. And C4's back-post (#3583) must fence per booking the same way,
+not rely on keys alone, because it runs over lines that predate them.
 
 ### 4.2 What is deliberately not in the model
 

@@ -193,6 +193,7 @@ export function buildBookingLedgerRows(
   // below would silently keep the first and drop the rest. Refused here, in
   // pure code, where refusing is safe.
   const seen = new Set<string>();
+  const reversed = new Set<string>();
   for (const posting of postings) {
     if (seen.has(posting.postingKey)) {
       throw new BookingLedgerPostingError(
@@ -200,6 +201,17 @@ export function buildBookingLedgerRows(
       );
     }
     seen.add(posting.postingKey);
+    // The same for a reversal target: two reversals of one line in a batch is
+    // a planner bug, and the database's unique `reversesLineId` would have the
+    // write keep one and silently drop the other (review of #3597).
+    if (posting.reversesLineId != null) {
+      if (reversed.has(posting.reversesLineId)) {
+        throw new BookingLedgerPostingError(
+          `line ${posting.reversesLineId} is reversed twice in one batch`,
+        );
+      }
+      reversed.add(posting.reversesLineId);
+    }
   }
   return postings.map(toCreateInput);
 }
