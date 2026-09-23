@@ -117,18 +117,47 @@ export function reconcilePromoAdjustmentTargets(params: {
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
   priceAdjustmentCents: number;
   context: string;
-}): void {
+},
+  /**
+   * The club's format (#3565), for the refusal's two amounts. A parameter
+   * because every writer runs this inside its own transaction, which is past
+   * the point where a setting may be read.
+   */
+  format: ClubFormat,
+): void {
   const mismatch = findReconciliationMismatch(params);
-  if (mismatch) refuse(`${params.context}: ${mismatch}`);
+  if (mismatch) refuse(`${params.context}: ${describeReconciliationMismatch(mismatch, format)}`);
+}
+
+/**
+ * What did not reconcile, as DATA. Rendered only by the writer that refuses on
+ * it; {@link deriveNightAdjustmentState} asks only whether there is one, so it
+ * takes no format and renders nothing (#3565).
+ */
+type ReconciliationMismatch =
+  | { kind: "not-integer"; amountCents: number }
+  | { kind: "member"; memberId: string; summedCents: number; recordedCents: number }
+  | { kind: "total"; summedCents: number; recordedCents: number };
+
+function describeReconciliationMismatch(
+  mismatch: ReconciliationMismatch,
+  format: ClubFormat,
+): string {
+  switch (mismatch.kind) {
+    case "not-integer":
+      return `an adjustment amount is not integer cents (${mismatch.amountCents})`;
+    case "member":
+      return `adjustment rows for member ${mismatch.memberId} sum to ${formatCents(mismatch.summedCents, format)} but the recorded allocation is ${formatCents(mismatch.recordedCents, format)}`;
+    case "total":
+      return `adjustment rows sum to ${formatCents(mismatch.summedCents, format)} but the recorded redemption adjustment is ${formatCents(mismatch.recordedCents, format)}`;
+  }
 }
 
 function findReconciliationMismatch(params: {
   targets: ReadonlyArray<{ beneficiaryMemberId: string; amountCents: number | null }>;
   allocations: ReadonlyArray<{ memberId: string; priceAdjustmentCents: number }>;
   priceAdjustmentCents: number;
-},
-  format: ClubFormat,
-): string | null {
+}): ReconciliationMismatch | null {
   const { targets, allocations, priceAdjustmentCents } = params;
   const sums = new Map<string, number>();
   const unknown = new Set<string>();
@@ -138,7 +167,7 @@ function findReconciliationMismatch(params: {
       continue;
     }
     if (!Number.isInteger(target.amountCents)) {
-      return `an adjustment amount is not integer cents (${target.amountCents})`;
+      return { kind: "not-integer", amountCents: target.amountCents };
     }
     sums.set(
       target.beneficiaryMemberId,
@@ -154,13 +183,13 @@ function findReconciliationMismatch(params: {
     const recorded = allocationByMember.has(memberId) ? allocationByMember.get(memberId)! : 0;
     const summed = sums.get(memberId) ?? 0;
     if (summed !== recorded) {
-      return `adjustment rows for member ${memberId} sum to ${formatCents(summed, format)} but the recorded allocation is ${formatCents(recorded, format)}`;
+      return { kind: "member", memberId, summedCents: summed, recordedCents: recorded };
     }
   }
   if (unknown.size === 0) {
     const total = [...sums.values()].reduce((sum, cents) => sum + cents, 0);
     if (total !== priceAdjustmentCents) {
-      return `adjustment rows sum to ${formatCents(total, format)} but the recorded redemption adjustment is ${formatCents(priceAdjustmentCents, format)}`;
+      return { kind: "total", summedCents: total, recordedCents: priceAdjustmentCents };
     }
   }
   return null;
@@ -264,9 +293,11 @@ export async function recordBookingNightAdjustments(
     guestIds: ReadonlyArray<string | null | undefined>;
     targets: ReadonlyArray<PromoAdjustmentTarget>;
     writer: string;
+    /** The club's format (#3565), resolved before the caller's transaction. */
+    format: ClubFormat;
   },
 ): Promise<void> {
-  const { bookingId, guestIds, targets, writer } = params;
+  const { bookingId, guestIds, targets, writer, format } = params;
   const engineGuestIds = guestIds.filter((id): id is string => Boolean(id));
   if (engineGuestIds.length !== guestIds.length) {
     refuse(`${writer}: a guest the engine priced has no booking guest id`);
@@ -293,7 +324,7 @@ export async function recordBookingNightAdjustments(
       allocations: memberBenefitAllocations(redemption.allocations),
       priceAdjustmentCents: redemption.priceAdjustmentCents,
       context: writer,
-    });
+    }, format);
 
     const nights =
       engineGuestIds.length > 0

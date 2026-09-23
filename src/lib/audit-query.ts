@@ -491,7 +491,8 @@ export function formatMetadataFragment(key: string, value: Prisma.JsonValue, for
 }
 
 function formatMetadataDescription(
-  metadata: Prisma.JsonValue | Prisma.JsonObject | null
+  metadata: Prisma.JsonValue | Prisma.JsonObject | null,
+  format: ClubFormat,
 ): string | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;
@@ -523,7 +524,7 @@ function formatMetadataDescription(
     if (value === undefined) {
       continue;
     }
-    const fragment = formatMetadataFragment(key, value);
+    const fragment = formatMetadataFragment(key, value, format);
     if (fragment) {
       fragments.push(fragment);
     }
@@ -544,7 +545,7 @@ function formatMetadataDescription(
     .filter(([key]) => !isReservedDetailKey(key))
     .slice(0, 4)
     .map(([key, value]) =>
-      value === undefined ? null : formatMetadataFragment(key, value)
+      value === undefined ? null : formatMetadataFragment(key, value, format)
     )
     .filter((value): value is string => Boolean(value))
     .join(" · ") || null;

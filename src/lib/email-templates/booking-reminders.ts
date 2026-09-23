@@ -81,7 +81,9 @@ export function preArrivalReminderTemplate(params: {
   // fail-quiet direction: a member never sees a roster instruction the club may
   // not mean.
   checkoutChoreNote?: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: emailCalendarDay(params.checkIn) },
     { label: "Check-out", value: emailCalendarDay(params.checkOut) },

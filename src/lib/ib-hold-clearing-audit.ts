@@ -552,7 +552,7 @@ export function formatIbAppliedCreditStrandReport(
     );
     lines.push("");
     for (const finding of result.realized) {
-      lines.push(...formatIbAppliedCreditStrandRow(finding));
+      lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
     lines.push("");
   }
@@ -567,7 +567,7 @@ export function formatIbAppliedCreditStrandReport(
     lines.push("before the member pays; no realized loss yet.");
     lines.push("");
     for (const finding of result.pending) {
-      lines.push(...formatIbAppliedCreditStrandRow(finding));
+      lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
   }
 
@@ -794,7 +794,7 @@ export function formatCardAppliedCreditDoublePayReport(
   );
   lines.push("");
   for (const finding of result.doublePays) {
-    lines.push(...formatCardAppliedCreditDoublePayRow(finding));
+    lines.push(...formatCardAppliedCreditDoublePayRow(finding, format));
   }
 
   return lines.join("\n");

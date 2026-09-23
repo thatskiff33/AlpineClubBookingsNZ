@@ -714,7 +714,9 @@ export function composeMemberGuestConsentOutcome(params: {
   checkIn: Date;
   checkOut: Date;
   outcome: MemberGuestConsentOutcome;
-}): MemberGuestConsentOutcomeCopy {
+},
+  format: ClubFormat,
+): MemberGuestConsentOutcomeCopy {
   const { guest, lodgeName, checkIn, checkOut, outcome } = params;
   const guestName = `${guest.firstName} ${guest.lastName}`.trim();
   const guestFirstName = guest.firstName;
@@ -731,7 +733,7 @@ export function composeMemberGuestConsentOutcome(params: {
       return {
         heading: `${guestName} has declined`,
         sentence: `${guestName} has declined and has been taken off your booking at ${stay}.`,
-        consequenceNote: composeRepricedConsequence(outcome.creditCents),
+        consequenceNote: composeRepricedConsequence(outcome.creditCents, format),
       };
     case "DECLINED_STILL_ON_BOOKING":
       return {
@@ -748,7 +750,7 @@ export function composeMemberGuestConsentOutcome(params: {
         sentence:
           `your request to add ${guestName} lapsed on ${emailClubDate(outcome.expiredAt)} ` +
           `with no answer, and ${guestFirstName} has been taken off your booking at ${stay}.`,
-        consequenceNote: composeRepricedConsequence(outcome.creditCents),
+        consequenceNote: composeRepricedConsequence(outcome.creditCents, format),
       };
     case "EXPIRED_STILL_ON_BOOKING":
       return {

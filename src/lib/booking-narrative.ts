@@ -298,7 +298,8 @@ function buildCancelledPostPaymentNarrative(
 function buildCancelledNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime
+  club: BoundClubTime,
+  format: ClubFormat,
 ): BookingNarrative {
   // A booking held for admin review that was rejected is cancelled via the
   // shared cancel flow; surface it as "declined" with the admin's reason.
@@ -372,7 +373,8 @@ function buildCancelledNarrative(
       paidEvent,
       cancelEvent,
       settlementEvent,
-      club
+      club,
+      format
     );
   }
 
@@ -562,8 +564,9 @@ function buildPaidWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
   club: BoundClubTime,
+  format: ClubFormat,
 ): BookingNarrative {
-  const paid = buildPaidNarrative(booking, events, club);
+  const paid = buildPaidNarrative(booking, events, club, format);
 
   return {
     state: "financial_review_pending",
@@ -587,8 +590,9 @@ function buildPayableWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
   now: Date,
+  format: ClubFormat,
 ): BookingNarrative {
-  const payable = buildPayableNarrative(booking, link, now);
+  const payable = buildPayableNarrative(booking, link, now, format);
 
   return {
     state: "financial_review_pending",
@@ -619,7 +623,9 @@ export function resolveBookingNarrative({
   link,
   now = new Date(),
   financialReviewPending = false,
-}: ResolveBookingNarrativeInput): BookingNarrative {
+}: ResolveBookingNarrativeInput,
+  format: ClubFormat,
+): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;
 
@@ -685,11 +691,11 @@ export function resolveBookingNarrative({
   }
 
   if (status === "PAID" || status === "COMPLETED") {
-    return buildPaidNarrative(booking, ordered, club);
+    return buildPaidNarrative(booking, ordered, club, format);
   }
 
   if (PAYABLE_STATUSES.has(status)) {
-    return buildPayableNarrative(booking, link, now);
+    return buildPayableNarrative(booking, link, now, format);
   }
 
   // DRAFT / WAITLISTED / WAITLIST_OFFERED and any unexpected state: a clear,

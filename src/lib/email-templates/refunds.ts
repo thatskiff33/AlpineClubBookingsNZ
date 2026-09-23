@@ -119,7 +119,7 @@ export function supersededPaymentRefundedTemplate(data: {
   format: ClubFormat,
 ): string {
   const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
-  const owingLine = supersededRefundOwingSentence(data.amountOwingCents);
+  const owingLine = supersededRefundOwingSentence(data.amountOwingCents, format);
   return layout(`
     ${heading("We've Refunded a Payment")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}

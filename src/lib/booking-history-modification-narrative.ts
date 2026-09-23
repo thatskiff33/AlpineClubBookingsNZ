@@ -222,10 +222,11 @@ export function describeModificationLines(
   modification: Pick<BookingHistoryModification, "priceLines">,
   /** #2543's member word follows the rate snapshot; null falls back to `isMember`. */
   rateLabels: RateMembershipLabelResolver | null,
+  format: ClubFormat,
 ): string | null {
   const lines = parseModificationLines(modification.priceLines);
   if (!lines) return null;
   return `Made up of: ${lines
-    .map((line) => renderModificationLineWithAmount(line, rateLabels))
+    .map((line) => renderModificationLineWithAmount(line, format, rateLabels))
     .join("; ")}.`;
 }

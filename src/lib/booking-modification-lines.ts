@@ -421,7 +421,7 @@ export function renderModificationLineWithAmount(
   format: ClubFormat,
   labels?: RateMembershipLabelResolver | null,
 ): string {
-  return `${renderModificationLineDescription(line, labels)} (${formatSignedCents(line.amountCents, format)})`;
+  return `${renderModificationLineDescription(line, format, labels)} (${formatSignedCents(line.amountCents, format)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -608,11 +608,12 @@ export async function computeModificationPriceLines(
 export function modificationLinesAuditFields(
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   labels: RateMembershipLabelResolver | null,
+  format: ClubFormat,
 ): ModificationLinesAuditFields {
   if (!lines || lines.length === 0) return {};
   return {
     priceLines: [...lines],
-    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, labels)),
+    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, format, labels)),
   };
 }
 

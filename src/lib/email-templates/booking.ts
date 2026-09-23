@@ -179,6 +179,7 @@ export function bookingConfirmedTemplate(
   for (const row of promoAdjustmentSummaryRows(
     totalCents,
     promoAdjustmentCents,
+    format,
     options?.promoCode,
   )) {
     // The shared rows are unescaped plain text (the flat token path needs them
@@ -203,6 +204,7 @@ export function bookingConfirmedTemplate(
       unpaid: Boolean(paymentDue),
       outstandingCents: outstandingBalance?.amountCents ?? 0,
     }),
+    format,
     options?.appliedCredit?.settlementMethod ?? "card",
   ).map((row) => ({
     // Labels and formatted money only — no club- or member-entered data — but
@@ -222,7 +224,7 @@ export function bookingConfirmedTemplate(
     // email), the reconciling trio when it does, and a bare "Booking Total"
     // when the ledger contradicts the price — from the shared builder, escaped
     // at this HTML edge on the same principle as the rows above.
-    for (const row of unpaidMoneySummaryRows(totalCents, unpaidNetting)) {
+    for (const row of unpaidMoneySummaryRows(totalCents, unpaidNetting, format)) {
       rows.push({ label: escapeHtml(row.label), value: escapeHtml(row.value) });
     }
   } else if (outstandingBalance) {
@@ -514,7 +516,7 @@ export function bookingModifiedTemplate(params: {
     changeFeeCents,
     promoCoverageNote,
     promoChangeNotAppliedNote,
-  }).map((row) => ({
+  }, format).map((row) => ({
     label: escapeHtml(row.label),
     value: escapeHtml(row.value),
   }));

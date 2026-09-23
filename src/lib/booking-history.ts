@@ -404,13 +404,13 @@ export function buildBookingHistoryItems({
   }
 
   for (const modification of modifications) {
-    const detailParts = [describeModification(modification)];
+    const detailParts = [describeModification(modification, format)];
     // #3530: the itemised lines behind the figure, when the edit stored them.
     const linesNote = describeModificationLines(modification, rateLabels);
     if (linesNote) {
       detailParts.push(linesNote);
     }
-    const moneyBuildUpNote = moneyBuildUpNoteOf(modification);
+    const moneyBuildUpNote = moneyBuildUpNoteOf(modification, format);
     if (moneyBuildUpNote) {
       detailParts.push(moneyBuildUpNote);
     }

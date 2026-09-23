@@ -215,6 +215,7 @@ export async function sendBookingConfirmedEmail(
   const promoSummary = promoAdjustmentSummaryRows(
     totalCents,
     promoAdjustmentCents,
+    format,
     options?.promoCode,
   )
     .map((row) => `${row.label}: ${row.value}\n`)
@@ -361,6 +362,7 @@ export async function sendBookingConfirmedEmail(
   const creditNote = appliedCreditSummaryRows(
     appliedCreditCents,
     settledCents,
+    format,
     appliedCredit.settlementMethod,
   )
     .map((row) => `${row.label}: ${row.value}\n`)

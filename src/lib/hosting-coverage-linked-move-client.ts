@@ -232,7 +232,7 @@ export function formatLinkedMoveMoneySentence(
         `what comes back is less than the drop in price.`,
     );
   }
-  parts.push(linkedMoveChangeFeeSentence(facts));
+  parts.push(linkedMoveChangeFeeSentence(facts, format));
   // ONLY WHERE SOMEBODY IS REALLY GOING TO BE ASKED. A request that already carried
   // the choice is re-quoted with it, and promising a question nobody will put is
   // how a member waits for a control that never appears.
