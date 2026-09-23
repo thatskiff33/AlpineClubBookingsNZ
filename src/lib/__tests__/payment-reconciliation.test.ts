@@ -318,6 +318,11 @@ describe("markBookingPaymentSucceeded", () => {
     // The lines add up to what the booking says it costs — which is the whole
     // claim the ledger will eventually replace the mirror columns on.
     expect(rows.reduce((sum, row) => sum + (row.amountCents as number), 0)).toBe(10000);
+    // #3595: every line is keyed, and the write skips a key already posted, so
+    // a booking that passes the PAID claim twice (a reversed mark-paid, then a
+    // card payment) cannot post its charge lines twice.
+    expect(rows.every((row) => typeof row.postingKey === "string" && row.postingKey !== "")).toBe(true);
+    expect(mocks.ledgerCreateMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true });
   });
 
   it("settles anyway when the charge lines cannot be BUILT, and writes none (#3580)", async () => {

@@ -94,6 +94,11 @@ model BookingLedgerLine {
   postedByMemberId  String?               // a person's decision; NULL for the system
   /// Narration only, never read for money (INV-MOD-058's discipline).
   narration         String
+  /// Idempotency key, deterministic from the event (#3595, INV-MONEY-033):
+  /// `confirmation:<bookingId>:night:<guestId>:<date>`, `capture:<txnId>`.
+  /// Unique; the write door inserts with ON CONFLICT DO NOTHING, so the same
+  /// event posted twice is a no-op rather than a duplicate or an abort.
+  postingKey        String?               @unique
   lodgeId           String
 
   booking   Booking          @relation(...)
@@ -145,6 +150,40 @@ owed(b)      = charged(b) + adjusted(b) - settled(b)
 is settled. One pure module, `src/lib/booking-ledger-balance.ts`, is the only
 home of those four sums and of the slices §8 renders from. It takes rows and
 returns figures; it reads nothing.
+
+### 4.1a Idempotency: every posting is keyed
+
+Added after C1 shipped (#3595, `INV-MONEY-033`), because the first draft of
+this design did not say, and C1's review lens that would have asked was cut
+short. **A booking can pass the settle's PAID claim twice** — an officer marks
+it paid, reverses the mark-paid (which restores a payable status), and the
+member then pays by card — and every settlement writer in §5.2 is an upsert a
+provider replays. Without a rule, each of those posts its lines again.
+
+Every posting therefore carries a `postingKey` derived from the event it
+records, never from when it was posted or by whom, and the write door inserts
+with `ON CONFLICT DO NOTHING`. The same event produces the same key and the
+second write is a no-op. That it is a *skip* and not a *refusal* is the point:
+a refused statement aborts the caller's transaction (#3590's review), so a
+unique key that errored would have turned every replay into a failed settle.
+
+Keys by kind, so each child can be written against them:
+
+| Posting | Key |
+| --- | --- |
+| Confirmation guest-night | `confirmation:<bookingId>:night:<guestId>:<YYYY-MM-DD>` |
+| Confirmation promotion | `confirmation:<bookingId>:promotion` |
+| Card capture / bank receipt / cash recorded | `capture:<paymentTransactionId>` |
+| Card refund | `refund:<paymentRefundId>` |
+| Credit applied / issued | `credit:<memberCreditId>` |
+| Hand-back completed | `handback:<manualRefundTaskId>` |
+| A reversal | `reversal:<reversedLineKey>` |
+| Edit lines | `modification:<bookingModificationId>:<runIndex>` |
+| Agreed adjustment | `review:<manualRefundTaskId>` |
+
+C4's back-post (#3583) derives the same keys from the same rows, which makes
+the back-post idempotent for free: running it twice posts nothing the second
+time.
 
 ### 4.2 What is deliberately not in the model
 

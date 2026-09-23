@@ -33,6 +33,7 @@ function guestNight(overrides: Partial<BookingLedgerPosting> = {}): BookingLedge
     nightStart: NIGHT,
     nightEndExclusive: NEXT_MORNING,
     narration: "A Member — one night",
+    postingKey: `test:${Math.random()}`,
     ...overrides,
   };
 }
@@ -41,6 +42,43 @@ function store() {
   const createMany = vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
   return { store: { bookingLedgerLine: { createMany } } as never, createMany };
 }
+
+describe("the posting key (#3595)", () => {
+  it("writes with ON CONFLICT DO NOTHING, so a repeat is skipped rather than refused", async () => {
+    // A refused statement would abort the caller's transaction (#3590's
+    // review); a skipped one leaves it untouched. `skipDuplicates` is the
+    // difference, so it is pinned here.
+    const { store: s, createMany } = store();
+    await postBookingLedgerLines(s, [guestNight({ postingKey: "k1" })]);
+    expect(createMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true });
+    const rows = createMany.mock.calls[0]?.[0].data as Array<Record<string, unknown>>;
+    expect(rows[0]?.postingKey).toBe("k1");
+  });
+
+  it("refuses an empty key before anything is sent", async () => {
+    const { store: s, createMany } = store();
+    await expect(
+      postBookingLedgerLines(s, [guestNight({ postingKey: "  " })]),
+    ).rejects.toBeInstanceOf(BookingLedgerPostingError);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses the same key twice in one batch — a planner bug, not a replay", async () => {
+    // Otherwise the write would silently keep the first row and drop the
+    // second, hiding the bug that produced them.
+    const { store: s, createMany } = store();
+    await expect(
+      postBookingLedgerLines(s, [guestNight({ postingKey: "dup" }), guestNight({ postingKey: "dup" })]),
+    ).rejects.toThrow(/appears twice in one batch/);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("reports how many rows were really inserted, so a replay reads as 0", async () => {
+    const createMany = vi.fn(async () => ({ count: 0 }));
+    const s = { bookingLedgerLine: { createMany } } as never;
+    expect(await postBookingLedgerLines(s, [guestNight({ postingKey: "already-there" })])).toBe(0);
+  });
+});
 
 describe("buildBookingLedgerRows", () => {
   it("throws in pure JavaScript, before any statement reaches the database", async () => {
