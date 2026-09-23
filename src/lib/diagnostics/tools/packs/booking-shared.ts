@@ -92,8 +92,6 @@ import {
   type AuditCorrelationDomain,
 } from "@/lib/audit-categories";
 import type { AdminPermissionArea } from "@/lib/admin-permissions";
-import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
-
 import { defuseRoleLabels, foldUntrustedText } from "../../untrusted-text";
 import { FINANCE_UNPARSEABLE_VALUE } from "./finance-shared";
 
@@ -561,47 +559,6 @@ export function countOrNull(value: unknown): number | null {
  */
 export function dateOnly(column: string): string {
   return `pg_catalog.to_char(${column}, 'YYYY-MM-DD')`;
-}
-
-/**
- * THE ANONYMISED-ACCOUNT MARKER, IN SQL — the erasure test, not a guess at it.
- *
- * `isDeletedAccountRecord` (`src/lib/deleted-account.ts`, `INV-LIFE-013`) is the
- * platform's ONE definition of "this member has been through an approved deletion",
- * and it is an OR over the two markers the anonymisation writes together: the
- * sentinel `passwordHash`, and an `email` rewritten onto the reserved
- * `@deleted.invalid` domain. This is the second half of that disjunction, expressed
- * as a `select_only_sql` predicate, with the domain taken from the same constant so
- * the two cannot drift apart.
- *
- * WHY THE PASSWORD-HASH HALF IS ABSENT, and why that is the right absence.
- * `Member."passwordHash"` is not granted to the diagnostics database role and must
- * never be: a credential column does not become readable because a diagnostic would
- * find it convenient. The two markers are written in ONE `update` and nothing else
- * in the application writes either of them, so on any row the current code can
- * produce the email half alone is decisive. `member_eligibility_state` is the entry
- * that tests both, and it does the hash comparison INSIDE PostgreSQL as a count so
- * no hash ever crosses the boundary — see `booking-evidence.ts`.
- *
- * WHAT IT REPLACED, because the difference is a false accusation.
- * `active = false AND cancelledAt IS NULL AND archivedAt IS NULL` was offered as
- * the shape of an erased account. It is also the shape of ORDINARY BULK
- * DEACTIVATION, which is reversible, routine, and stamps neither instant either —
- * so every deactivated member was reported as possibly erased, and an officer told
- * a member may have been erased does not reactivate them. Erasure is defined by its
- * markers, never by the absence of other markers.
- *
- * `pg_catalog.right` AND `=` RATHER THAN `LIKE`. The suffix comparison is the SQL
- * form of the helper's `endsWith`, and `right` is a catalogued function that can be
- * schema-qualified; `LIKE` is an operator resolved through `search_path`, which is
- * the same reason the mobile arm uses `pg_catalog.concat` instead of `||`. The
- * literal carries no pattern language at all. Case and space folding mirror the
- * helper's `.trim().toLowerCase()`; the trim is defensive on both sides, since the
- * only writer of an anonymised address mints it itself.
- */
-export function deletedAccountEmailMarkerSql(column: string): string {
-  const suffix = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
-  return `(pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(${column})), ${suffix.length}) = '${suffix}')`;
 }
 
 /**

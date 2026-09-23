@@ -401,28 +401,30 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   promotion build-up not known, promotion build-up mismatch,
   discount-component mismatch, and final-price relation mismatch.
 
-  It checks recorded facts only: `Booking.totalPriceCents` against readable
+  It checks recorded facts: `Booking.totalPriceCents` against readable
   whole-guest sold-price evidence; `promoAdjustmentCents` against the
   `INV-MONEY-029` adjustment build-up when known; `discountCents` against
   `max(0, -promoAdjustmentCents)`; and `finalPriceCents` through
-  `bookingFinalPriceCents`. `EVEN_SPLIT` remains usable only at whole-guest
-  grain. Unknown provenance, a missing build-up, or a null adjustment becomes a
-  reason, never zero or a present-day reprice. Account credit remains solely in
+  `bookingFinalPriceCents`. `EVEN_SPLIT` is usable only at whole-guest grain.
+  Unknown provenance, a missing build-up or a null adjustment becomes a reason,
+  never zero or a present-day reprice. Account credit stays solely in
   `MemberCredit`.
 
   **The verdict is officer-only** (owner decision, 20 September 2026): a member
   sees their amounts unmarked and their data export carries no verdict.
-  `booking-money-reconciliation-audience.ts` is the one home for that gate, for
-  the named `WITHHELD` state replacing a nullable absence, and for the wording. Behind it, booking detail and lists, officer history,
-  finance metrics, reports and exports, and per-booking Xero reconciliation
-  input carry the same state and complete ordered reasons. The Xero invoice shape and every
-  displayed or settled amount remain unchanged. A read-only repeatable-read
-  census (`npm run booking-money:census`) reports all state/reason counts from
-  one ordered snapshot and writes nothing. The mutation-verified
-  `booking-money-writer-census.test.ts` names direct headline/component writers
-  and rejects raw-SQL or forwarded-delegate bypasses. A partly-refunded
-  guest-add mismatch is therefore visible for #3244 to repair separately; this
-  rule does not choose a card, charge, refund, credit, or invoice correction.
+  `booking-money-reconciliation-audience.ts` is the one home for that gate, the
+  named `WITHHELD` state replacing a nullable absence, and the wording. Behind
+  it, booking detail and lists, officer history, finance metrics, reports,
+  exports and per-booking Xero reconciliation input carry the same state and
+  ordered reasons; the Xero invoice shape and every displayed or settled amount
+  are unchanged. A read-only repeatable-read census
+  (`npm run booking-money:census`) reports state/reason counts, night rows by
+  provenance and strands by `INV-MOD-028` verdict per booking month, and edit
+  reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
+  names direct headline/component writers and rejects raw-SQL or
+  forwarded-delegate bypasses. A partly-refunded guest-add mismatch is
+  therefore visible for #3244 to repair separately; this rule chooses no card,
+  charge, refund, credit, or invoice correction.
 
 ## INV-MONEY-032
 

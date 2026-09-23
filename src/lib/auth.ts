@@ -72,14 +72,10 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   forcePasswordChange: true,
   emailVerified: true,
   passwordChangedAt: true,
-  // #2620: the two markers an approved deletion request writes over the row.
-  // Read on every token refresh so an anonymised member's session dies on their
-  // NEXT request through the same kill-switch a revoking password change uses —
-  // deletion invalidates no token today, so without this a session minted
-  // before the deletion (or after a direct `active` flip) would keep working.
-  // Neither value is ever copied into the token; only the predicate's verdict
-  // is used.
+  // #2620/#3542: refresh both canonical deletion signals so a session
+  // minted before erasure dies on its next request. Neither enters the token.
   email: true,
+  deletedAt: true,
   passwordHash: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
@@ -255,10 +251,8 @@ export const authConfig = {
         // restatement of `!member.active`. An approved deletion request
         // anonymises the row and leaves `active: false` as the only barrier, and
         // an admin Reactivate (or a direct column edit) flips exactly that flag.
-        // Refusing on the anonymisation markers means an erased account cannot
-        // sign in even with `active: true`. The sentinel password hash is not a
-        // bcrypt hash so a compare could never match anyway — this is here so a
-        // future credential-restoring path cannot re-open the door silently.
+        // Refusing on the structural-or-reserved-address predicate means an
+        // erased account cannot sign in even with `active: true`.
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
@@ -366,7 +360,7 @@ export const authConfig = {
         // anonymised. Deletion does not revoke outstanding magic-link tokens
         // (Half B of #2620 will), so any unexpired link the erased member was
         // sent stays redeemable the moment `active` goes back to true. Refuse on
-        // the anonymisation markers, independently of `active`.
+        // the canonical deletion predicate, independently of `active`.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
           return null;
         }

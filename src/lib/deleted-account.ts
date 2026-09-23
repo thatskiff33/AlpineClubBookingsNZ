@@ -5,13 +5,14 @@
  * An approved self-service deletion request anonymises the member in place
  * rather than deleting the row (`POST /api/admin/deletion-requests/[id]`,
  * the "Anonymise the member record" block) — bookings, payments and audit
- * history all reference it. The anonymisation leaves two recognisable markers
- * on the row:
+ * history all reference it. The anonymisation leaves one structural marker on
+ * the row and one retained compatibility signal:
  *
- *   - `passwordHash` set to the sentinel {@link DELETED_ACCOUNT_PASSWORD_HASH},
- *     which is not a bcrypt hash and can therefore never match a password, and
+ *   - `deletedAt`, stamped by the approving transaction, is authoritative for
+ *     every row erased by current code; and
  *   - `email` rewritten to `deleted-xxxxxxxx@deleted.invalid`, on the reserved
- *     `.invalid` TLD (see `DELETED_CONTACT_EMAIL_DOMAIN`).
+ *     `.invalid` TLD (see `DELETED_CONTACT_EMAIL_DOMAIN`), recognises adopter
+ *     rows erased before the structural field existed.
  *
  * Neither `cancelledAt` nor `archivedAt` is stamped, so the reactivation
  * refusals that key on those two fields never saw a deleted account: bulk
@@ -21,23 +22,56 @@
  * identically by the reactivation guards, the login providers and the members
  * list, and none of them can drift into its own copy of the marker test.
  *
- * The test is deliberately an OR over whichever markers the caller has: it is
- * only ever used to REFUSE, so a partial row must fail closed rather than fail
- * open. Both markers are written together in one `update`, and nothing else in
- * the application writes either of them, so the OR cannot produce a false
- * positive on a live member.
+ * The legacy address arm is permanent, not a backfill bridge. This repository
+ * is the generic product, so an adopter may hold an erased row that predates
+ * `deletedAt` and will never be backfilled. Removing the arm would make that
+ * row ordinary again and would break INV-LIFE-014's no-session guarantee.
  *
- * Dependency-light on purpose (one leaf import) so it can be pulled into
- * `auth.ts`, the Google resolver and the member-lifecycle services without
- * introducing an import cycle.
- *
- * NOTE (#2618): PR #2618 introduces a second, Xero-only copy of this predicate
- * as `isDeletedAccountMarker` in `src/lib/xero-contact-create-recovery.ts`.
- * Once that PR has merged the two should be unified onto this module — it is
- * the auth/lifecycle-facing one, and a second marker test is exactly the drift
- * this module exists to prevent.
+ * This is the one home for both the in-memory decision and its Prisma query
+ * projection. Callers must import them from here rather than restating either
+ * arm (INV-SSOT-001).
  */
-import { DELETED_CONTACT_EMAIL_DOMAIN } from "./placeholder-contact-email";
+import type { Prisma } from "@prisma/client";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "./deleted-account-email";
+
+const DELETED_ACCOUNT_EMAIL_SUFFIX = `@${DELETED_CONTACT_EMAIL_DOMAIN}`;
+
+// Every character ECMAScript trim() removes. A stored email containing any of
+// these characters is invalid as an address; listing them lets Prisma exclude
+// a padded adopter-era marker before a capped query without treating a valid
+// subdomain such as `@deleted.invalid.example` as deleted.
+const DELETED_ACCOUNT_TRAILING_WHITESPACE = [
+  "\u0009",
+  "\u000a",
+  "\u000b",
+  "\u000c",
+  "\u000d",
+  "\u0020",
+  "\u00a0",
+  "\u1680",
+  "\u2000",
+  "\u2001",
+  "\u2002",
+  "\u2003",
+  "\u2004",
+  "\u2005",
+  "\u2006",
+  "\u2007",
+  "\u2008",
+  "\u2009",
+  "\u200a",
+  "\u2028",
+  "\u2029",
+  "\u202f",
+  "\u205f",
+  "\u3000",
+  "\ufeff",
+] as const;
+
+const DELETED_ACCOUNT_SQL_TRIM_CHARACTERS =
+  `U&'${DELETED_ACCOUNT_TRAILING_WHITESPACE.map((character) =>
+    `\\${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  ).join("")}'`;
 
 /**
  * The sentinel written over `Member.passwordHash` when a deletion request is
@@ -46,14 +80,13 @@ import { DELETED_CONTACT_EMAIL_DOMAIN } from "./placeholder-contact-email";
 export const DELETED_ACCOUNT_PASSWORD_HASH = "DELETED_ACCOUNT";
 
 /**
- * Whatever subset of the anonymisation markers a caller happens to have
- * selected. Both fields are optional so a narrow `select` can still be tested
- * without widening it (the members list, for instance, never reads a password
- * hash).
+ * Whatever subset of the deletion signals a caller happens to have selected.
+ * Both fields are optional so a narrow `select` can still be tested without
+ * widening unrelated data.
  */
 export type DeletedAccountMarkers = {
   email?: string | null;
-  passwordHash?: string | null;
+  deletedAt?: Date | string | null;
 };
 
 /** The 409 a bulk **Reactivate** answers with for a deleted account (#2620). */
@@ -75,21 +108,71 @@ export function isDeletedAccountEmail(
   email: string | null | undefined,
 ): boolean {
   if (!email) return false;
-  return email
-    .trim()
-    .toLowerCase()
-    .endsWith(`@${DELETED_CONTACT_EMAIL_DOMAIN}`);
+  return email.trim().toLowerCase().endsWith(DELETED_ACCOUNT_EMAIL_SUFFIX);
 }
 
 /**
- * True when the row carries either anonymisation marker, i.e. this member has
- * been through an approved deletion request. Use this — never a hand-rolled
- * comparison — anywhere a deleted account must be refused.
+ * True when the row carries either the structural deletion marker or the
+ * permanent adopter-compatibility address. Use this — never a hand-rolled
+ * comparison — anywhere an erased account must be refused.
  */
 export function isDeletedAccountRecord(
   member: DeletedAccountMarkers | null | undefined,
 ): boolean {
   if (!member) return false;
-  if (member.passwordHash === DELETED_ACCOUNT_PASSWORD_HASH) return true;
-  return isDeletedAccountEmail(member.email);
+  return member.deletedAt != null || isDeletedAccountEmail(member.email);
+}
+
+/**
+ * The Prisma exclusion counterpart of {@link isDeletedAccountRecord}.
+ *
+ * Kept beside the runtime predicate so capped database searches can exclude
+ * erased rows before applying their limit without restating the two arms at
+ * each query site. Prisma cannot apply `trim()` inside a string filter, so the
+ * query rejects the suffix both at the end and immediately before every trim
+ * character. Any broader match would already be an invalid email; callers also
+ * retain the authoritative runtime predicate as a defence at the boundary.
+ * Returned as `AND` clauses: both signals must be absent.
+ */
+export function notDeletedAccountWhere(): Prisma.MemberWhereInput[] {
+  const legacyAddressFilters: Prisma.MemberWhereInput[] = [
+    {
+      email: {
+        endsWith: DELETED_ACCOUNT_EMAIL_SUFFIX,
+        mode: "insensitive",
+      },
+    },
+    ...DELETED_ACCOUNT_TRAILING_WHITESPACE.map((character) => ({
+      email: {
+        contains: `${DELETED_ACCOUNT_EMAIL_SUFFIX}${character}`,
+        mode: "insensitive" as const,
+      },
+    })),
+  ];
+
+  return [
+    { deletedAt: null },
+    {
+      NOT: {
+        OR: legacyAddressFilters,
+      },
+    },
+  ];
+}
+
+/**
+ * Read-only SQL projection of {@link isDeletedAccountRecord} for diagnostics
+ * statements that cannot call TypeScript per row. Column identifiers are
+ * supplied only by trusted source code, never by request data.
+ */
+export function deletedAccountSql(
+  deletedAtColumn: string,
+  emailColumn: string,
+): string {
+  const suffix = DELETED_ACCOUNT_EMAIL_SUFFIX;
+  const legacyAddress =
+    `(pg_catalog.right(pg_catalog.lower(pg_catalog.btrim(${emailColumn}, ` +
+    `${DELETED_ACCOUNT_SQL_TRIM_CHARACTERS})), ` +
+    `${suffix.length}) = '${suffix}')`;
+  return `(${deletedAtColumn} IS NOT NULL OR ${legacyAddress})`;
 }

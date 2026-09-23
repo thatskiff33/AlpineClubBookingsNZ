@@ -157,12 +157,9 @@ export async function POST(req: NextRequest) {
         archivedAt: true,
         ageTier: true,
         dateOfBirth: true,
-        // #2620: the anonymisation marker the reactivate guard below reads. An
-        // approved deletion rewrites the password hash to a sentinel and the
-        // email to `@deleted.invalid` and stamps NEITHER cancelledAt nor
-        // archivedAt, so without these two columns the guard cannot see that
-        // the selected row is an erased account.
-        passwordHash: true,
+        // #2620/#3542: read the structural marker plus the reserved
+        // adopter-compatibility address selected above.
+        deletedAt: true,
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     });

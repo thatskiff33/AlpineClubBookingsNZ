@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/placeholder-contact-email";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
+export { DELETED_ACCOUNT_PASSWORD_HASH } from "@/lib/deleted-account";
 import {
   assertXeroContactHasNoOtherHome,
   lockXeroContactHome,
@@ -84,8 +85,6 @@ export const XERO_CONTACT_CREATE_BLOCKS_DELETION_MESSAGE =
   "Member deletion was not completed because a Xero contact change is still in progress or awaiting recovery. Resolve that Xero operation under Admin → Xero → Operations, then retry the remaining deletion cleanup.";
 export const XERO_CONTACT_OPERATION_RESOLVE_REMEDY =
   "Open Admin → Xero → Operations, find the member's open CONTACT operation, and either wait for it to finish or use “Resolve (fixed in Xero)” once the contact is correct in Xero.";
-export const DELETED_ACCOUNT_PASSWORD_HASH = "DELETED_ACCOUNT";
-
 export class XeroContactCreateInProgressError extends Error {
   readonly code = XERO_CONTACT_CREATE_IN_PROGRESS_CODE;
   readonly statusCode = 409;
@@ -143,8 +142,7 @@ export class XeroContactCreateBlocksDeletionError extends Error {
   }
 }
 
-export type MemberContactCreateRecoveryState =
-  | "CREATE_IN_PROGRESS"
+export type MemberContactCreateRecoveryState = "CREATE_IN_PROGRESS"
   | "PROVIDER_CREATED_LINK_PENDING";
 
 /**
@@ -206,25 +204,11 @@ export function ambiguousMemberContactCreateReservationWhere(
   };
 }
 
-export function isDeletedAccountMarker(member: {
-  email: string;
-  passwordHash?: string | null;
-}): boolean {
-  // The persisted column is non-null. The fallback keeps older unit fixtures
-  // that intentionally project only the fields under test from masquerading
-  // as a deleted account; production reads always select the real email.
-  const email = (member.email ?? "").trim().toLowerCase();
-  return (
-    member.passwordHash === DELETED_ACCOUNT_PASSWORD_HASH ||
-    email.endsWith(`@${DELETED_CONTACT_EMAIL_DOMAIN}`)
-  );
-}
-
 export function assertMemberAvailableForXeroContactChange(member: {
   email: string;
-  passwordHash?: string | null;
+  deletedAt: Date | null;
 }): void {
-  if (isDeletedAccountMarker(member)) {
+  if (isDeletedAccountRecord(member)) {
     throw new XeroMemberUnavailableError();
   }
 }
@@ -259,7 +243,7 @@ async function lockMemberRowForXeroFence(
     select: {
       id: true,
       email: true,
-      passwordHash: true,
+      deletedAt: true,
       xeroContactId: true,
     },
   });

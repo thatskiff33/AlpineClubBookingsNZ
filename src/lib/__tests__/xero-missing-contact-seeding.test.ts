@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   prisma: {
     xeroSyncCursor: { findUnique: vi.fn() },
-    member: { findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    member: { findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), },
     booking: { findMany: vi.fn() },
     bookingRequest: { findMany: vi.fn() },
     organisation: { findMany: vi.fn() },
@@ -87,7 +87,7 @@ function member(overrides: Record<string, unknown> = {}) {
     firstName: "Ada",
     lastName: "Lovelace",
     email: "ada@example.com",
-    passwordHash: "hash",
+    deletedAt: null,
     role: "USER",
     xeroContactId: null,
     ...overrides,
@@ -148,7 +148,7 @@ function givenTree(input: {
         .map((row) => ({ id: row.id }));
     }
     return input.members ?? [member()];
-  });
+  },);
   mocks.prisma.booking.findMany.mockResolvedValue(
     (input.schoolBookingMemberIds ?? []).map((memberId) => ({ memberId })),
   );
@@ -158,7 +158,7 @@ function givenTree(input: {
     })),
   );
   mocks.prisma.organisation.findMany.mockResolvedValue(
-    (input.heldByOrganisations ?? []).map((xeroContactId) => ({ xeroContactId })),
+    (input.heldByOrganisations ?? []).map((xeroContactId) => ({ xeroContactId, })),
   );
   /*
     The `where` is APPLIED rather than ignored. A mock that hands back every
@@ -440,7 +440,11 @@ describe("ambiguity is handed back, never guessed (#2939)", () => {
     givenTree({
       members: [member()],
       contacts: [
-        cachedContact({ name: "Grace Hopper", firstName: "Grace", lastName: "Hopper" }),
+        cachedContact({
+          name: "Grace Hopper",
+          firstName: "Grace",
+          lastName: "Hopper",
+        }),
       ],
     });
 
@@ -511,7 +515,9 @@ describe("the run (#2939)", () => {
     // review gave them a contact, which is the expected shape of a multi-chunk
     // run — the operator has nothing to look at here. The two were reported as
     // one number until #2939's review.
-    expect(result.skipped).toEqual([{ memberId: "m1", reason: "ALREADY_DONE" }]);
+    expect(result.skipped).toEqual([
+      { memberId: "m1", reason: "ALREADY_DONE" },
+    ]);
     expect(result.processed).toBe(0);
   });
 
@@ -1141,7 +1147,9 @@ describe("the two exclusions that were being reported wrongly (#2939 review)", (
       which reads nothing like "never had one".
     */
     givenTree({
-      members: [member({ email: "inheritance-lost-abc@inheritance-lost.invalid" })],
+      members: [
+        member({ email: "inheritance-lost-abc@inheritance-lost.invalid" }),
+      ],
     });
 
     const snapshot = await getXeroMissingContactSnapshot();
@@ -1157,15 +1165,15 @@ describe("the two exclusions that were being reported wrongly (#2939 review)", (
       record was offered up as an ordinary person.
     */
     givenTree({ members: [member()] });
-    mocks.prisma.bookingRequest.findMany.mockImplementation(async (args: {
-      where?: { OR?: Array<Record<string, unknown>> };
-    }) => {
-      const clauses = args?.where?.OR ?? [];
-      const readsTheType = clauses.some(
-        (clause) => (clause as { type?: string }).type === "SCHOOL",
-      );
-      return readsTheType ? [{ convertedMemberId: "m1" }] : [];
-    });
+    mocks.prisma.bookingRequest.findMany.mockImplementation(
+      async (args: { where?: { OR?: Array<Record<string, unknown>> } }) => {
+        const clauses = args?.where?.OR ?? [];
+        const readsTheType = clauses.some(
+          (clause) => (clause as { type?: string }).type === "SCHOOL",
+        );
+        return readsTheType ? [{ convertedMemberId: "m1" }] : [];
+      },
+    );
 
     const snapshot = await getXeroMissingContactSnapshot();
 

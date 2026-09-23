@@ -81,8 +81,7 @@ export interface GoogleMemberUser {
   twoFactorMethod: "TOTP" | "EMAIL" | null;
 }
 
-export type GoogleLoginStatus =
-  | "ok"
+export type GoogleLoginStatus = "ok"
   | "unlinked"
   | "refused"
   | "password_change"
@@ -134,7 +133,7 @@ function requireSecret(): string {
 }
 
 function sign(payload: string): string {
-  return base64url(createHmac("sha256", requireSecret()).update(payload).digest());
+  return base64url(createHmac("sha256", requireSecret()).update(payload).digest(),);
 }
 
 /**
@@ -348,7 +347,7 @@ export async function resolveGoogleProfile(profile: {
     // `@deleted.invalid` address is never consulted — so the erased person's
     // Google account still points at their row. `active: false` is the only
     // thing refusing them, and `active` is precisely what an admin Reactivate
-    // flips. Refusing on the anonymisation markers here means a directly
+    // flips. Refusing on the canonical deletion predicate here means a directly
     // flipped `active` column still yields no session.
     if (isDeletedAccountRecord(member)) {
       logger.warn(
