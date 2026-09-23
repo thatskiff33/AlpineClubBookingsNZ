@@ -57,6 +57,7 @@ import {
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import type { ClubFormat } from "@/lib/club-format";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
@@ -165,6 +166,7 @@ async function repriceWaitlistCandidate(
   // the offer the member is about to be sent and keeps a settings read out from
   // under the per-lodge capacity lock this transaction holds.
   subscriptionLockoutMode?: SubscriptionLockoutMode,
+  format: ClubFormat,
 ): Promise<number> {
   /**
    * #3166 (`INV-MOD-028`): A BLANK IS NEVER REPAIRED BY A REPRICE.
@@ -381,6 +383,7 @@ async function repriceWaitlistCandidate(
   // #3276: after the last night write and the promotion write, and outside the
   // degrade path above (see the comment at the top of the try).
   await recordBookingNightAdjustments(tx, {
+    format,
     bookingId: candidate.id,
     guestIds: candidate.guests.map((guest) => guest.id),
     targets: repriced.adjustmentTargets,
@@ -404,7 +407,9 @@ export async function processWaitlistForDates(freedDates: {
   checkIn: Date;
   checkOut: Date;
   lodgeId?: string | null;
-}): Promise<{ offeredBookingId: string | null }> {
+},
+  format: ClubFormat,
+): Promise<{ offeredBookingId: string | null }> {
   let offeredBookingId: string | null = null;
   type OfferDetails = {
     email: string;
@@ -732,6 +737,7 @@ export async function processWaitlistForDates(freedDates: {
       offerDetails.finalPriceCents,
       // A cross-lodge offer speaks with the offered lodge's identity and
       // must name that lodge (ADR-004 owner decision 2).
+      format,
       offerDetails.offeredLodgeId ?? offerDetails.lodgeId,
       offerDetails.offeredLodgeId
         ? { lodgeName: offerDetails.offeredLodgeName }

@@ -40,6 +40,7 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -100,6 +101,9 @@ export type PaymentLinkIntentResult =
 export async function createPaymentIntentForPaymentLink(
   token: string
 ): Promise<PaymentLinkIntentResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const link = await resolvePaymentLink(token);
   const booking = link.booking;
 
@@ -348,11 +352,11 @@ export async function createPaymentIntentForPaymentLink(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: err.electionCents,
-      errorMessage: `This booking still has a saved account-credit choice of ${formatCents(err.electionCents)} on it, so the payment link declined to take a card payment: charging through the link would bill the full price and ignore the credit, and a public link must not spend a member's credit balance on its own authority. Nothing was charged and the saved choice is untouched. Ask the member to pay from their own bookings page, where the credit is applied and the card is charged only the remainder.`,
+      errorMessage: `This booking still has a saved account-credit choice of ${formatCents(err.electionCents, format)} on it, so the payment link declined to take a card payment: charging through the link would bill the full price and ignore the credit, and a public link must not spend a member's credit balance on its own authority. Nothing was charged and the saved choice is untouched. Ask the member to pay from their own bookings page, where the credit is applied and the card is charged only the remainder.`,
       // No intent exists — nothing was minted — so give the officer the booking
       // reference to search on instead.
       paymentIntentId: booking.id,
-    }).catch((alertErr) =>
+    }, format).catch((alertErr) =>
       logger.error(
         { err: alertErr, bookingId: booking.id },
         "Failed to alert admins about a payment link refused for an unconsumed credit election"
@@ -376,6 +380,7 @@ export async function createPaymentIntentForPaymentLink(
   });
 
   const paymentIntent = await createPaymentIntent({
+    format,
     amountCents: booking.finalPriceCents,
     currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,

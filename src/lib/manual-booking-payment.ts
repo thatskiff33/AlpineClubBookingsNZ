@@ -15,6 +15,7 @@ import {
 } from "@/lib/payment-reconciliation";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * B5 (#2262): admin-recorded settlement of a booking payment made in cash, or
@@ -184,6 +185,9 @@ export type ApplyManualBookingPaymentResult = {
 export async function applyManualBookingPayment(
   input: ApplyManualBookingPaymentInput
 ): Promise<ApplyManualBookingPaymentResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const note = normaliseManualPaymentNote(input.note);
 
   if (input.direction === "unpaid") {
@@ -300,6 +304,7 @@ export async function applyManualBookingPayment(
           recipient.checkOut,
           recipient._count.guests,
           recipient.finalPriceCents,
+          format,
           {
             lodgeId: recipient.lodgeId,
             ...(provisionalGuests ? { provisionalGuests } : {}),

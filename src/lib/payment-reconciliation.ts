@@ -77,6 +77,7 @@ import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
 } from "@/lib/booking-ledger-write";
+import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -196,11 +197,14 @@ async function alertRefundFailure({
   paymentIntentId,
   amountCents,
   error,
+  format,
 }: {
   booking: ReconciliationBooking;
   paymentIntentId: string;
   amountCents: number;
   error: unknown;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -211,7 +215,7 @@ async function alertRefundFailure({
     amountCents,
     errorMessage: `Payment succeeded but final capacity claim failed and automatic refund failed: ${errorMessage}`,
     paymentIntentId,
-  }).catch((alertErr) =>
+  }, format).catch((alertErr) =>
     logger.error(
       { err: alertErr, bookingId: booking.id, paymentIntentId },
       "Failed to alert admins about capacity refund failure"
@@ -1828,11 +1832,14 @@ export async function markBookingPaymentSucceeded({
   paymentIntentId,
   amountCents,
   paymentMethodId,
+  format,
 }: {
   bookingId: string;
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -1865,6 +1872,7 @@ export async function markBookingPaymentSucceeded({
     // their booking history and put it in front of an operator who can decide
     // whether to refund the difference. Their balance is untouched either way.
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
@@ -1986,7 +1994,7 @@ export async function markBookingPaymentSucceeded({
           paymentIntentId
         ),
         refundFailed: false,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the auto-refunded duplicate capture"
@@ -2036,7 +2044,7 @@ export async function markBookingPaymentSucceeded({
             ? refundError.message
             : String(refundError),
         refundFailed: true,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the failed duplicate-capture refund"
@@ -2344,6 +2352,7 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents,
   notifyMember,
   additionalCoverage = null,
+  format,
 }: {
   bookingId: string;
   actingAdminMemberId: string;
@@ -2351,6 +2360,8 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents: number;
   notifyMember: boolean;
   additionalCoverage?: ManualAdditionalCoverage | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<ManualBookingSettlementResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -2398,6 +2409,7 @@ export async function markBookingPaymentManuallySettled({
   // first cannot cost the event either.
   if (reconciliation.staleCreditElectionCents != null) {
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,

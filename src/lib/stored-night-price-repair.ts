@@ -461,10 +461,13 @@ export function checkStoredNightPriceRepair({
   summary,
   entries,
   deltaCents,
+  format,
 }: {
   summary: UnpricedNightsSummary;
   entries: readonly RecordedNightPrice[];
   deltaCents: number;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): StoredNightPriceRepairCheck {
   const targetCents = unpricedNightTargetCents(summary, deltaCents);
 
@@ -517,7 +520,7 @@ export function checkStoredNightPriceRepair({
   if (targetCents < 0) {
     return {
       ok: false,
-      message: nightPriceRepairUnreachableMessage(targetCents),
+      message: nightPriceRepairUnreachableMessage(targetCents, format),
       targetCents,
     };
   }
@@ -532,7 +535,7 @@ export function checkStoredNightPriceRepair({
   if (enteredCents !== targetCents) {
     return {
       ok: false,
-      message: nightPriceRepairReconcileMessage(targetCents, enteredCents),
+      message: nightPriceRepairReconcileMessage(targetCents, enteredCents, format),
       targetCents,
     };
   }

@@ -33,6 +33,7 @@ import type {
 } from "@/lib/member-guest-email-notes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The member-guest consent state machine ("+ Add Member Guest", epic #2305,
@@ -1002,7 +1003,10 @@ async function notifyMemberGuestConsentOutcome(params: {
   actorMemberId: string | null;
   /** The deadline as recorded on the row; see `finaliseMemberGuestConsentTransition`. */
   consentExpiresAt?: Date | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { bookingId, guestId, targetMemberId, outcome, actorMemberId, consentExpiresAt } =
     params;
   if (outcome.outcome === "ALREADY_RESOLVED") return;
@@ -1096,7 +1100,7 @@ async function notifyMemberGuestConsentOutcome(params: {
           lodgeId: booking.lodgeId,
           guest,
           outcome: emailOutcome,
-        });
+        }, format);
       } catch (err) {
         logger.error(
           { err, bookingId, guestId },

@@ -425,6 +425,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /** The bookings that hold at least one candidate strand, oldest first. */
 export async function findRateDerivationCandidateBookings(
@@ -518,6 +519,9 @@ export async function runRateDerivedNightPriceBackfill(args: {
   bookingId?: string | null;
   limit?: number | null;
 }): Promise<RateDerivedBackfillRun> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const store = args.store ?? prisma;
   const config = await loadRateDerivationConfig(store);
   const bookingIds = await findRateDerivationCandidateBookings(store, { bookingId: args.bookingId, limit: args.limit });
@@ -540,7 +544,7 @@ export async function runRateDerivedNightPriceBackfill(args: {
         });
         // One write site, several rows: a row per rewritten strand with its
         // before/after pairs, then the booking's own with the counts.
-        for (const row of rateDerivedBackfillAuditRows(plan)) {
+        for (const row of rateDerivedBackfillAuditRows(plan, format)) {
           await createAuditLog(
             {
               action: "booking-payment.stored-night-price.rate-derived",
