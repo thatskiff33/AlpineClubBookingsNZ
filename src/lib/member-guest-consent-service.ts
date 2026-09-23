@@ -314,6 +314,8 @@ async function removeClaimedConsentGuest(
      * per-lodge capacity key.
      */
     today: Date;
+    /** The club's format (#3565), resolved with `today` and for the same reason. */
+    format: ClubFormat;
   },
 ): Promise<{ removed: true; creditCents: number }> {
   try {
@@ -324,6 +326,7 @@ async function removeClaimedConsentGuest(
       actorMemberId: params.actorMemberId,
       actorRole: "MEMBER",
       today: params.today,
+      format: params.format,
       ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
       consentAuthority: {
         kind: params.kind,
