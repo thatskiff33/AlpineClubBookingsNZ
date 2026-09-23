@@ -582,7 +582,7 @@ export function ClubFormatPanel() {
                 instead — the same reason the two buttons carry.
               */
               <AdminForbiddenSaveNotice>
-                {`This change was not saved. ${ADMIN_FULL_ADMIN_ONLY_ACTION_REASON} ` +
+                {`Nothing was saved. ${ADMIN_FULL_ADMIN_ONLY_ACTION_REASON} ` +
                   "Refresh the page to see the latest permissions."}
               </AdminForbiddenSaveNotice>
             ) : null}

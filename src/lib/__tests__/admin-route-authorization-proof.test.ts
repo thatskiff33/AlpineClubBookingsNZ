@@ -852,6 +852,21 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
 // ADR-002 §1 — admission, not an area.
 // ---------------------------------------------------------------------------
 
+describe("#3596 admission: the Currency & locale page admits any admitted admin", () => {
+  it("opens the page for every single-area grid, and for nobody else", async () => {
+    for (const area of AREAS) {
+      const grid = viewGridFor(area);
+      expect(
+        (await pageAdmits(grid, "/admin/club-format")).ok,
+        `${area}:view only must be able to open the Currency & locale page`,
+      ).toBe(true);
+    }
+    expect((await pageAdmits(PLAIN_MEMBER, "/admin/club-format")).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe("ADR-002 §1 admission: the Diagnostics surfaces admit any admitted admin", () => {
   it("opens the workspace shell for every single-area grid, and for nobody else", async () => {
     for (const area of AREAS) {
