@@ -244,13 +244,11 @@ were settled in the follow-up issues named below.
   falling back to the old destination while unset, which `INV-INT-021` now
   makes the house rule for every mapping key that follows.
 - **`INV-LIFE-013` and `INV-LIFE-015` — REVIEWED, DECIDED and shipped
-  (#2718).** The historical erratum remains explicit: deletion was never
-  covered by the cancelled/archive refusal. Approved anonymisation now stamps
-  `deletedAt`, and one canonical predicate recognises that structural marker or
-  the permanent reserved-address compatibility signal for adopter-era erased
-  rows. Application mapping refuses the same predicate before it can overwrite
-  an erased identity. The owner deliberately required no historical backfill or
-  unresolved state; the decision record is linked from `INV-LIFE-015`.
+  (#2718).** The historical erratum remains in
+  [`INV-LIFE-013`](membership-lifecycle.md#inv-life-013), and the settled rule
+  replaces the open flag in [`INV-LIFE-015`](membership-lifecycle.md#inv-life-015).
+  The [owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2718#issuecomment-5744458659)
+  records the scope and alternatives.
 
 ## 8. Positional cross-references that crossed a file boundary — closed
 
