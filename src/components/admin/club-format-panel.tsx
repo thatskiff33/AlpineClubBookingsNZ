@@ -343,9 +343,9 @@ export function ClubFormatPanel() {
           route's own "Forbidden" says nothing useful, so say which permission.
         */
         setError(
-          "This change was not saved: changing the club's currency and " +
-            "locale needs Full Admin, which your admin role does not have. " +
-            "Refresh the page to see the latest permissions.",
+          "The server refused this change: changing the club's currency " +
+            "and locale needs Full Admin, which your admin role does not " +
+            "have. Refresh the page to see the latest permissions.",
         );
         return;
       }
