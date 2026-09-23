@@ -50,9 +50,9 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function formatCents(cents: number, format: ClubFormat): string;
 /**
- * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — the last group of
- * stage #3565, which retires `club-format-transitional.ts` and with it this
- * overload. Without a format it renders in the ENVIRONMENT's currency and
+ * @deprecated TEMPORARY, AND DUE TO BE DELETED BY #3567 — stage 5 of #3205,
+ * which retires the environment constants and with them
+ * `club-format-transitional.ts` and this overload. Without a format it renders in the ENVIRONMENT's currency and
  * locale, which is what every call site rendered in before this stage and is NOT
  * the club's persisted setting. Pass the format. `club-format-transitional.ts`
  * states the cost this buys and why the overload exists at all.
