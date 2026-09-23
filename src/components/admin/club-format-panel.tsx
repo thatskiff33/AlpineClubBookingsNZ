@@ -215,10 +215,17 @@ export function ClubFormatPanel() {
     than from whenever the fetch settles — a polite live region injected
     already populated is dropped by some screen-reader/browser pairings. Every
     branch returns a plain `<div>` with this as its first child, so React keeps
-    the same region mounted across loading -> loaded. The `<div>` is also what
-    keeps the empty wrapper OUT of the page's `space-y-6` stack: returned bare
-    in a fragment it would be a stack child, and its margin would add a gap
-    above the card for every Full Admin.
+    the same region mounted across loading -> loaded.
+
+    The `<div>` also keeps the wrapper OUT of the page's `space-y-6` stack.
+    `space-y-6` gives every child after the first a `margin-top`; returned in a
+    fragment, the banner's always-present wrapper and the card would BOTH be
+    stack children, so a Full Admin — for whom the wrapper is empty and zero
+    height — would get two stack margins between the heading and the card
+    instead of one. Inside this `<div>` the panel is one stack child, and the
+    only spacing between banner and card is the `mb-4` below, which
+    `AdminViewOnlySectionBanner` puts on its inner box — the box that exists
+    only when `canEdit === false`.
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
