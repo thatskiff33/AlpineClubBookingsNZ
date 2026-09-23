@@ -4,6 +4,7 @@ import {
 } from "@/lib/member-address"
 import { seasonSelectLabel } from "@/lib/season-label"
 import { formatCents } from "@/lib/utils"
+import type { ClubFormat } from "@/lib/club-format"
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -197,7 +198,10 @@ export function dedupeParentOptions<T extends { id: string }>(parents: T[]) {
   })
 }
 
-export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
+export function formatPromoBenefit(
+  promo: PromoCodeBenefitSource,
+  format: ClubFormat,
+) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
       ? `${promo.percentOff}% off per individual`
@@ -352,7 +356,7 @@ export function formatMemberFinancePreview(input: {
   creditBalanceCents: number | null
   promoCodeCount: number
   xeroLinked: boolean
-}) {
+}, format: ClubFormat) {
   return [
     input.creditBalanceCents === null
       ? "Credit —"
