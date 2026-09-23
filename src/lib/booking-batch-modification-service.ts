@@ -131,6 +131,7 @@ import {
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -618,6 +619,7 @@ export async function modifyBookingBatch({
   input,
   ipAddress,
   todayAtClub,
+  format,
   tx: callerTx,
   hostingReconcile,
   waiveChangeFee,
@@ -681,6 +683,12 @@ export async function modifyBookingBatch({
    * two todays here would be a batch edit priced against itself.
    */
   todayAtClub: CalendarDate;
+  /**
+   * The club's currency and locale (#3565), resolved by the caller before it
+   * opened ANY transaction, for exactly the reason `todayAtClub` above is: this
+   * service renders money inside a transaction that may be the caller's.
+   */
+  format: ClubFormat;
   /**
    * Caller-supplied transaction (#2525). When present, the modification runs
    * inside it — so an atomic approve-and-execute can release a policy-exception
@@ -2279,6 +2287,7 @@ export async function modifyBookingBatch({
       result,
       additionalPaymentIntentId,
       linkedChangeRequestId,
+      format,
     });
 
     return {
@@ -2359,6 +2368,7 @@ async function dispatchBatchPostTransactionSideEffects({
   result,
   additionalPaymentIntentId,
   linkedChangeRequestId,
+  format,
 }: {
   bookingId: string;
   actorMemberId: string;
@@ -2366,6 +2376,8 @@ async function dispatchBatchPostTransactionSideEffects({
   result: BatchModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
+  /** The club's format (#3565), resolved before the edit's transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // #3530: what that figure is made of, line by line and in dollars.
   const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);

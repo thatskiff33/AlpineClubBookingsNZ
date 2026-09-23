@@ -157,6 +157,8 @@ import {
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -335,6 +337,9 @@ export async function modifyBookingDates({
   // money, and two todays on one date change would price it against itself.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+  // The club's format (#3565), for the same reason and at the same point: the
+  // edit renders money under both locks, so it is read before either is taken.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -1507,6 +1512,7 @@ export async function modifyBookingDates({
     result,
     additionalPaymentIntentId,
     linkedChangeRequestId,
+    format,
   });
 
   return {
@@ -1534,6 +1540,7 @@ async function dispatchDatePostTransactionSideEffects({
   result,
   additionalPaymentIntentId,
   linkedChangeRequestId,
+  format,
 }: {
   bookingId: string;
   actorMemberId: string;
@@ -1541,6 +1548,8 @@ async function dispatchDatePostTransactionSideEffects({
   result: DateModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
+  /** The club's format (#3565), resolved before the edit's transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // Issue #1668: an admin override records the pricing mode, capacity decision
   // and linked change request alongside the standard date-change audit fields.
@@ -1784,6 +1793,8 @@ export async function adminShiftBookingDates({
   // `clubTimeSettings.findUnique` on a second pooled connection while the global
   // cohort key and the lodge capacity key are both held (`INV-LOCK-004`).
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), before the transaction for the same reason.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
