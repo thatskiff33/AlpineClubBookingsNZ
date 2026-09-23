@@ -1563,7 +1563,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     );
   }
 
-  return result;, format
+  return result;
 }
 
 /**
