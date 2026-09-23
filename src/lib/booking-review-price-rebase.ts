@@ -402,6 +402,11 @@ export async function rebaseBookingPriceFromStrands({
    */
   todayAtClub: CalendarDate;
   store: Prisma.TransactionClient;
+  /**
+   * The club's format (#3565), resolved by the caller BEFORE it opened this
+   * transaction, like `todayAtClub` above.
+   */
+  format: ClubFormat;
 }): Promise<BookingPriceRebaseOutcome> {
   const booking = await store.booking.findUnique({
     where: { id: bookingId },
@@ -570,8 +575,6 @@ export async function rebaseBookingPriceFromStrands({
       promoRemoved: promo.promoRemoved,
     },
   };
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
 }
 
 /**

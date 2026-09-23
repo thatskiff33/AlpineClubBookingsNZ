@@ -352,6 +352,7 @@ export async function recordShortEditReviewChargeInvoice({
   totalCents,
   shareCents,
   createdByMemberId,
+  format,
 }: {
   outcome: XeroSupplementaryInvoiceEnqueueOutcome;
   bookingId: string;
@@ -372,6 +373,8 @@ export async function recordShortEditReviewChargeInvoice({
    */
   shareCents: number | null;
   createdByMemberId?: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<boolean> {
   if (outcome !== "short-sent" && outcome !== "short-in-flight") return false;
 
@@ -390,6 +393,7 @@ export async function recordShortEditReviewChargeInvoice({
 
   if (secondAsk === "raised" && shareCents !== null) {
     await recordSecondEditReviewChargeInvoice({
+      format,
       bookingId,
       bookingModificationId,
       memberId,
@@ -400,6 +404,7 @@ export async function recordShortEditReviewChargeInvoice({
   }
 
   await recordUncollectedEditReviewChargeShare({
+    format,
     leg: "xero-invoice",
     // Both short outcomes are an ask that exists and could not be raised. Which
     // one travels in `secondAsk`, because that is what changes the officer's
@@ -616,7 +621,7 @@ export async function recordUncollectedEditReviewChargeShare({
 }) {
   // #3371: net of anything carried in, plus the sentence that says so.
   const { requestedForThisEditCents, shortfallCents, carriedSentence } =
-    measureCarriedAskShortfall({ derivedTotalCents, requestedTotalCents, carriedAskCents });
+    measureCarriedAskShortfall({ format, derivedTotalCents, requestedTotalCents, carriedAskCents });
   const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
   const invoiceOwedUnknown =
     leg === "xero-invoice" && cause === "ask-owed-unknown";

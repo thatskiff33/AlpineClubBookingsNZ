@@ -1201,6 +1201,7 @@ export async function modifyBookingDates({
     // stored prices; its nights stay UNKNOWN for the reviewer.
     if (!parked) {
       await recordBookingNightAdjustments(tx, {
+        format,
         bookingId,
         guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
         targets: adjustmentTargets,
@@ -1481,6 +1482,7 @@ export async function modifyBookingDates({
 
   const { additionalPaymentClientSecret, additionalPaymentIntentId } =
     await createModificationAdditionalPaymentIntent({
+      format,
       bookingId,
       result,
       reason: "date_change_price_increase",
@@ -1569,7 +1571,7 @@ async function dispatchDatePostTransactionSideEffects({
       ? {}
       : { notifyMember: false };
   // #3530: what the figure is made of, line by line and in dollars.
-  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
   logAudit({
     action: result.adminOverride
       ? "booking.modify.admin_override"
@@ -1722,7 +1724,7 @@ async function dispatchDatePostTransactionSideEffects({
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
     );
   }
@@ -2262,7 +2264,7 @@ export async function adminShiftBookingDates({
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
       lodgeId: result.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),
     );
   }

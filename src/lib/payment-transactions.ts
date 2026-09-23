@@ -10,6 +10,7 @@ import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
@@ -863,10 +864,13 @@ export async function planStripeRefundAllocation({
   paymentId,
   amountCents,
   store = prisma,
+  format,
 }: {
   paymentId: string;
   amountCents: number;
   store?: PaymentStore;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<{
   slices: RefundAllocationSlice[];
   plannedAmountCents: number;
@@ -924,7 +928,7 @@ export class PartialRefundError extends Error {
     cause: unknown;
   }) {
     super(
-      `Refund failed after ${formatCents(completedRefundCents)} was refunded and recorded: ${
+      `Refund failed after ${formatCents(completedRefundCents, format)} was refunded and recorded: ${
         cause instanceof Error ? cause.message : String(cause)
       }`
     );

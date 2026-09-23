@@ -235,7 +235,7 @@ export async function createGroupSettlementIntent(
       const applied = await applyGroupSettlementSucceeded({
         id: existingIntent.id,
         amount: existingIntent.amount,
-      });
+      }, format);
       return {
         outcome:
           applied.outcome === "settled" ||
@@ -283,7 +283,7 @@ export async function createGroupSettlementIntent(
       const applied = await applyGroupSettlementSucceeded({
         id: existing.id,
         amount: existing.amount,
-      });
+      }, format);
       if (
         applied.outcome === "settled" ||
         applied.outcome === "already_settled"

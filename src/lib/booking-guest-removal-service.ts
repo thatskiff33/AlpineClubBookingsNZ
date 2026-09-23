@@ -377,9 +377,9 @@ export async function removeBookingGuestInTransaction({
     guestId: string;
     /** Must equal that row's `memberId`, or the authority does not apply. */
     targetMemberId: string;
+  };
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
-  };
 }): Promise<RemoveBookingGuestResult> {
   // Two-tier lock protocol (#1881). A single-guest removal computes a reduction
   // refund (money) AND re-checks capacity, so it takes BOTH locks: the global

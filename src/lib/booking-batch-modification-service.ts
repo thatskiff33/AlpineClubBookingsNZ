@@ -1617,6 +1617,7 @@ export async function modifyBookingBatch({
       }
       let created = 0;
       await recordBookingNightAdjustments(tx, {
+        format,
         bookingId,
         guestIds: pricingResult.guestNightRates.map(
           (guest) => guest.bookingGuestId ?? createdGuests[created++]?.id ?? null,
@@ -2262,6 +2263,7 @@ export async function modifyBookingBatch({
 
     const { additionalPaymentClientSecret, additionalPaymentIntentId } =
       await createModificationAdditionalPaymentIntent({
+        format,
         bookingId,
         result,
         reason: "batch_modify_price_increase",
@@ -2380,7 +2382,7 @@ async function dispatchBatchPostTransactionSideEffects({
   format: ClubFormat;
 }): Promise<void> {
   // #3530: what that figure is made of, line by line and in dollars.
-  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
   const auditDetails = {
     datesChanged: result.datesChanged,
     oldGuestCount: result.oldGuestCount,
@@ -2590,7 +2592,7 @@ async function dispatchBatchPostTransactionSideEffects({
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
     lodgeId: result.booking.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId },
       "Failed to send batch modification email",
