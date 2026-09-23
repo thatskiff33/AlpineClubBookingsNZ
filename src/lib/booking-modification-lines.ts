@@ -632,6 +632,7 @@ export async function loadModificationLinesAuditFields(
   db: Parameters<typeof loadRateMembershipLabelResolver>[0],
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  format: ClubFormat,
 ): Promise<ModificationLinesAuditFields> {
   if (!lines || lines.length === 0) return {};
   let labels: RateMembershipLabelResolver | null = null;
@@ -643,5 +644,5 @@ export async function loadModificationLinesAuditFields(
       "booking-modification-lines: member label resolver unavailable; audit text falls back to isMember",
     );
   }
-  return modificationLinesAuditFields(lines, labels);
+  return modificationLinesAuditFields(lines, labels, format);
 }

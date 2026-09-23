@@ -154,7 +154,7 @@ export function buildModificationDocumentLineItems(args: {
 
   const items: LineItem[] = lines.map((line): LineItem => {
     const base: LineItem = {
-      description: renderModificationLineDescription(line, context.itemCodeResolver, format),
+      description: renderModificationLineDescription(line, format, context.itemCodeResolver),
       quantity: line.kind === "PROMO_DELTA" ? 1 : line.quantity,
       // Xero uses dollars; the sign lives on the unit price so the quantity
       // stays the honest count of guest-nights.
@@ -309,7 +309,9 @@ export async function resolveModificationDocumentLineItems(args: {
   billedCents: number;
   billedFigures?: { priceDiffCents: number; changeFeeCents: number };
   secondAsk?: boolean;
-}): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
+},
+  format: ClubFormat,
+): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
   try {
     const row =
       args.row !== undefined
@@ -359,7 +361,7 @@ export async function resolveModificationDocumentLineItems(args: {
       changeFeeCents: figures.changeFeeCents,
       document: args.document,
       context,
-    });
+    }, format);
     return {
       lineItems,
       record: {

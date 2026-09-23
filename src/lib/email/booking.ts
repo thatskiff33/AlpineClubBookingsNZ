@@ -371,7 +371,7 @@ export async function sendBookingConfirmedEmail(
   // uses. One "Total Due" line when no credit applies — byte-for-byte the
   // pre-#2483 block — the reconciling trio when it does, and a bare
   // "Booking Total" when the ledger contradicts the price.
-  const unpaidMoneyBlock = unpaidMoneySummaryRows(totalCents, unpaidNetting)
+  const unpaidMoneyBlock = unpaidMoneySummaryRows(totalCents, unpaidNetting, format)
     .map((row) => `${row.label}: ${row.value}\n`)
     .join("");
   const paymentOutcome = paymentDue
@@ -1172,7 +1172,7 @@ export async function sendPreArrivalReminderEmail(params: {
       lodgeTravelNote: settings.lodgeTravelNote,
       doorCode: settings.doorCode,
       checkoutChoreNote: checkoutChoreSentence,
-    })),
+    }, format)),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "pre-arrival-reminder",
     templateData: {
@@ -1414,7 +1414,7 @@ export async function sendBookingModifiedEmail(params: {
   // is shown as a Previous/New pair, and a change fee only when one was
   // charged. Each row carries its own trailing newline (the {{promoSummary}}
   // precedent) so the default body can place it as a single block.
-  const changeSummary = bookingModificationSummaryRows(params)
+  const changeSummary = bookingModificationSummaryRows(params, format)
     .map((row) => `${row.label}: ${row.value}\n`)
     .join("");
   const xeroInvoicePaymentContext = params.xeroInvoiceNumber
@@ -1708,7 +1708,7 @@ export async function sendSupersededPaymentRefundedEmail(params: {
       // #3340 fix round: the SENTENCE, composed by the same function the coded
       // template calls, so a club that rewrites this message in the editor
       // cannot end up sending "Still owing: $0.00" as reassurance.
-      owingSentence: supersededRefundOwingSentence(params.amountOwingCents),
+      owingSentence: supersededRefundOwingSentence(params.amountOwingCents, format),
     },
     lodgeId: params.lodgeId,
   });

@@ -476,7 +476,8 @@ function summarizeContactGroupSync(
  * shape is not mapped (the panel then falls back to the raw JSON view).
  */
 export function summarizeXeroOperation(
-  input: XeroOperationSummaryInput
+  input: XeroOperationSummaryInput,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   // The stored-record limits, not the log cap: these are already-persisted,
   // already-redacted payloads being re-read to build the panel's summary, and a
@@ -486,17 +487,17 @@ export function summarizeXeroOperation(
 
   const queueType = req ? readString(req.queueType) : null;
   if (queueType) {
-    const queued = summarizeQueuedPayload(queueType, req!);
+    const queued = summarizeQueuedPayload(queueType, req!, format);
     if (queued) return queued;
   }
 
   switch (input.entityType) {
     case "INVOICE":
-      return summarizeInvoice(input.operationType, req, res);
+      return summarizeInvoice(input.operationType, req, res, format);
     case "CREDIT_NOTE":
-      return summarizeCreditNote(req, res);
+      return summarizeCreditNote(req, res, format);
     case "ALLOCATION":
-      return summarizeAllocation(req, res);
+      return summarizeAllocation(req, res, format);
     case "CONTACT_GROUP":
       return input.operationType === "SYNC_MANAGED_MEMBERSHIP"
         ? summarizeContactGroupSync(req, res)

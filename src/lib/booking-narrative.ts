@@ -625,6 +625,7 @@ export function resolveBookingNarrative({
   financialReviewPending = false,
 }: ResolveBookingNarrativeInput,
   format: ClubFormat,
+  format: ClubFormat,
 ): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;
@@ -651,12 +652,12 @@ export function resolveBookingNarrative({
     argument for its own shape.
   */
   if (status === "CANCELLED" || status === "BUMPED") {
-    return buildCancelledNarrative(booking, ordered, club);
+    return buildCancelledNarrative(booking, ordered, club, format);
   }
 
   if (status === "AWAITING_REVIEW") {
     if (booking.adminReviewStatus === "REJECTED") {
-      return buildCancelledNarrative(booking, ordered, club);
+      return buildCancelledNarrative(booking, ordered, club, format);
     }
     return {
       state: "under_review",
@@ -676,7 +677,7 @@ export function resolveBookingNarrative({
       to pay.
     */
     if (PAYABLE_STATUSES.has(status)) {
-      return buildPayableWithFinancialReviewNarrative(booking, link, now);
+      return buildPayableWithFinancialReviewNarrative(booking, link, now, format);
     }
     /*
       And a PAID booking keeps its payment facts and gains the review ones, for
@@ -685,7 +686,7 @@ export function resolveBookingNarrative({
       public payment link, the only thing that page had to say.
     */
     if (status === "PAID" || status === "COMPLETED") {
-      return buildPaidWithFinancialReviewNarrative(booking, ordered, club);
+      return buildPaidWithFinancialReviewNarrative(booking, ordered, club, format);
     }
     return buildFinancialReviewPendingNarrative(booking);
   }
