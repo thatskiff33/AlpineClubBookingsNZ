@@ -70,6 +70,8 @@ import {
   sendGroupSettlementReceiptEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
 const SETTLEABLE_CHILD_STATUSES = [
@@ -180,6 +182,9 @@ export async function createGroupSettlementIntent(
   sessionUserId: string,
   paymentMethod: BookingPaymentMethod = "stripe"
 ): Promise<GroupSettlementIntentResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const group = await requireOrganiserPaysGroup(rawCode, sessionUserId);
 
   if (group.settlement?.status === PaymentStatus.SUCCEEDED) {
@@ -314,6 +319,7 @@ export async function createGroupSettlementIntent(
   });
 
   const paymentIntent = await createPaymentIntent({
+    format,
     amountCents,
     currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
@@ -770,8 +776,11 @@ async function settleConfirmedChildrenAndNotify(
     reference: string;
     stripeCustomerId?: string | null;
     enqueueChildInvoices: boolean;
+    /** The club's format (#3565), resolved by the webhook or job. */
+    format: ClubFormat;
   }
 ): Promise<GroupSettlementAppliedResult> {
+  const { format } = options;
   // #2576 §9: drain whatever `commitChildrenToConfirmed` recorded for these
   // children before this settlement runs. Best-effort; the cron sweep is the
   // authority on completion.
@@ -1021,7 +1030,7 @@ async function settleConfirmedChildrenAndNotify(
         checkOut: organiserBooking.checkOut,
         joinerCount: settled.length,
         totalCents: settlement.amountCents,
-      });
+      }, format);
     } catch (emailErr) {
       logger.error(
         { err: emailErr, groupBookingId: settlement.groupBookingId },
@@ -1084,10 +1093,14 @@ async function settleConfirmedChildrenAndNotify(
  * Payment per child referencing the combined intent, and marks the settlement
  * SUCCEEDED. Idempotent across webhook redelivery.
  */
-export async function applyGroupSettlementSucceeded(paymentIntent: {
-  id: string;
-  amount: number;
-}): Promise<GroupSettlementAppliedResult> {
+export async function applyGroupSettlementSucceeded(
+  paymentIntent: {
+    id: string;
+    amount: number;
+  },
+  /** The club's format (#3565), resolved once by the webhook. */
+  format: ClubFormat,
+): Promise<GroupSettlementAppliedResult> {
   const settlement = await prisma.groupBookingSettlement.findUnique({
     where: { stripePaymentIntentId: paymentIntent.id },
     include: APPLY_SETTLEMENT_INCLUDE,
@@ -1145,6 +1158,7 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
     reference: paymentIntent.id,
     stripeCustomerId: settlement.stripeCustomerId,
     enqueueChildInvoices: true,
+    format,
   });
 }
 
@@ -1155,7 +1169,9 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
  * settlement SUCCEEDED. Idempotent across re-reconciliation.
  */
 export async function applyGroupSettlementSucceededFromInvoice(
-  xeroInvoiceId: string
+  xeroInvoiceId: string,
+  /** The club's format (#3565), resolved once by the inbound Xero job. */
+  format: ClubFormat,
 ): Promise<GroupSettlementAppliedResult> {
   const settlement = await prisma.groupBookingSettlement.findFirst({
     where: { xeroInvoiceId },
@@ -1179,6 +1195,7 @@ export async function applyGroupSettlementSucceededFromInvoice(
     reference: settlement.xeroInvoiceNumber ?? xeroInvoiceId,
     stripeCustomerId: null,
     enqueueChildInvoices: false,
+    format,
   });
 }
 
