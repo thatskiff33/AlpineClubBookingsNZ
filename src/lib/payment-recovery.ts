@@ -486,6 +486,8 @@ import {
   isEditFinancialReviewAdditionalIntentRecoveryKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 export {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -1109,7 +1111,8 @@ async function completePaymentRecoveryOperation(
 
 async function alertPaymentRecoveryFailure(
   operation: PaymentRecoveryOperation,
-  message: string
+  message: string,
+  format: ClubFormat,
 ) {
   const booking = await prisma.booking.findUnique({
     where: { id: operation.bookingId },
@@ -1132,7 +1135,7 @@ async function alertPaymentRecoveryFailure(
     amountCents: operation.amountCents,
     errorMessage: `Stripe payment recovery ${operation.type} failed after ${operation.attempts} attempts: ${message}`,
     paymentIntentId: operation.paymentIntentId,
-  });
+  }, format);
 }
 
 /**
@@ -1169,11 +1172,13 @@ type PaymentRecoveryFailureOutcome = "failed" | "retry" | "gone";
 
 async function markPaymentRecoveryOperationFailed({
   operation,
+  format,
   message,
   terminal,
   nextRetryAt,
   fromStatuses,
   fromProcessingStartedAt,
+  format,
 }: {
   operation: PaymentRecoveryOperation;
   /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
@@ -1203,6 +1208,8 @@ async function markPaymentRecoveryOperationFailed({
    * `processingStartedAt`.
    */
   fromProcessingStartedAt?: Date | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<PaymentRecoveryFailureOutcome> {
   const marked = await prisma.paymentRecoveryOperation.updateMany({
     where: {
@@ -1232,7 +1239,7 @@ async function markPaymentRecoveryOperationFailed({
     return "retry";
   }
 
-  await alertPaymentRecoveryFailure(operation, message).catch((alertError) =>
+  await alertPaymentRecoveryFailure(operation, message, format).catch((alertError) =>
     logger.error(
       { err: alertError, operationId: operation.id },
       "Failed to send payment recovery failure alert"
@@ -1504,13 +1511,15 @@ async function recordRefusedStrandedIntentCancellation({
 
 async function failPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation,
-  error: unknown
+  error: unknown,
+  format: ClubFormat,
 ) {
   const message = errorMessage(error);
   const exhausted = operation.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS;
 
   const outcome = await markPaymentRecoveryOperationFailed({
     operation,
+    format,
     message,
     terminal: exhausted,
     nextRetryAt: nextRetryDate(operation.attempts),
@@ -1588,7 +1597,7 @@ async function claimPaymentRecoveryOperation(operationId: string) {
  * `attempts` too: the claim is the only writer that increments `attempts`, and
  * it is the same write that replaces `processingStartedAt`.
  */
-async function resetStaleProcessingOperations() {
+async function resetStaleProcessingOperations(format: ClubFormat) {
   const staleBefore = new Date(
     Date.now() - STALE_PROCESSING_MINUTES * 60 * 1000
   );
@@ -1616,6 +1625,7 @@ async function resetStaleProcessingOperations() {
 
     await markPaymentRecoveryOperationFailed({
       operation,
+      format,
       message: terminal
         ? "Payment recovery worker timed out on the final attempt before completion."
         : "Payment recovery worker timed out before completion.",
@@ -1780,7 +1790,8 @@ async function processCancelPaymentIntentOperation(
 }
 
 async function processRefundSupersededPaymentOperation(
-  operation: PaymentRecoveryOperation
+  operation: PaymentRecoveryOperation,
+  format: ClubFormat,
 ) {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
@@ -1936,6 +1947,7 @@ function parseRefundAllocationPlan(
 
 async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
+  format: ClubFormat,
 ) {
   // Group settlement refund replay (F3, #1351): dispatch on the key prefix
   // BEFORE any payment lookup — these operations anchor paymentId to the
@@ -1957,7 +1969,7 @@ async function processBookingModificationRefundOperation(
     const { executeGroupSettlementRefundPlan } = await import(
       "@/lib/group-cancel"
     );
-    await executeGroupSettlementRefundPlan(settlementId);
+    await executeGroupSettlementRefundPlan(settlementId, format);
     await completePaymentRecoveryOperation(operation.id);
     return;
   }
@@ -2304,6 +2316,7 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
  */
 async function processCreateAdditionalPaymentIntentOperation(
   operation: PaymentRecoveryOperation,
+  format: ClubFormat,
 ) {
   /**
    * #3170 (epic #2797): the `BookingModification` this operation belongs to, read
@@ -2520,6 +2533,7 @@ async function processCreateAdditionalPaymentIntentOperation(
            * durable trace, and a log line is not one.
            */
           await recordUncollectedEditReviewChargeShare({
+            format,
             leg: "xero-invoice",
             /**
              * #3181 fix round: THE TWO NON-QUEUED OUTCOMES ARE DIFFERENT FACTS,
@@ -2589,7 +2603,7 @@ async function processCreateAdditionalPaymentIntentOperation(
      */
     if (synced.outcome === "not-raised") {
       throw new Error(
-        `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents)} still owed); leaving the recovery operation open to retry`,
+        `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,
       );
     }
     await completePaymentRecoveryOperation(operation.id);
@@ -2755,6 +2769,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       ? operation.paymentIntentId
       : stripeIdempotencyKeyForAskAmount(operation.paymentIntentId, askCents);
   const pi = await createPaymentIntent({
+    format,
     amountCents: askCents,
     currency: APP_STRIPE_CURRENCY,
     customerId,
@@ -2863,7 +2878,8 @@ async function processCreateAdditionalPaymentIntentOperation(
 }
 
 async function processPaymentRecoveryOperation(
-  operation: PaymentRecoveryOperation
+  operation: PaymentRecoveryOperation,
+  format: ClubFormat,
 ) {
   if (operation.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT) {
     await processCancelPaymentIntentOperation(operation);
@@ -2874,7 +2890,7 @@ async function processPaymentRecoveryOperation(
     operation.type ===
     PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION
   ) {
-    await processBookingModificationRefundOperation(operation);
+    await processBookingModificationRefundOperation(operation, format);
     return;
   }
 
@@ -2882,14 +2898,14 @@ async function processPaymentRecoveryOperation(
     operation.type ===
     PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT
   ) {
-    await processCreateAdditionalPaymentIntentOperation(operation);
+    await processCreateAdditionalPaymentIntentOperation(operation, format);
     return;
   }
 
   if (
     operation.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT
   ) {
-    await processRefundSupersededPaymentOperation(operation);
+    await processRefundSupersededPaymentOperation(operation, format);
     return;
   }
 
@@ -2911,7 +2927,7 @@ const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 // the whole fleet, not once per process.
 const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
 
-async function alertStalePaymentRecoveryQueueIfNeeded() {
+async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
   const now = new Date();
   const staleThreshold = new Date(
     now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
@@ -2953,7 +2969,7 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
     errorMessage:
       "Stripe payment recovery queue is stalled. Confirm that /api/cron/payments?task=recovery is running every 5 minutes.",
     paymentIntentId: oldest.paymentIntentId,
-  }).catch((alertError) =>
+  }, format).catch((alertError) =>
     logger.error(
       { err: alertError, operationId: oldest.id },
       "Failed to send stale payment recovery queue alert",
@@ -2988,6 +3004,9 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
 export async function runPaymentRecoveryOperationNow(
   operationId: string,
 ): Promise<"succeeded" | "not-claimed" | "failed"> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const operation = await claimPaymentRecoveryOperation(operationId).catch(
     (err) => {
       logger.error(
@@ -3020,14 +3039,14 @@ export async function runPaymentRecoveryOperationNow(
   }
 
   try {
-    await processPaymentRecoveryOperation(operation);
+    await processPaymentRecoveryOperation(operation, format);
     return "succeeded";
   } catch (error) {
     logger.error(
       { err: error, operationId, type: operation.type },
       "Immediate payment recovery attempt failed; the durable queued operation remains",
     );
-    await failPaymentRecoveryOperation(operation, error).catch((markErr) =>
+    await failPaymentRecoveryOperation(operation, error, format).catch((markErr) =>
       logger.error(
         { err: markErr, operationId },
         "Could not record the failed immediate payment recovery attempt",
@@ -3040,8 +3059,11 @@ export async function runPaymentRecoveryOperationNow(
 export async function processPaymentRecoveryOperations(options?: {
   limit?: number;
 }): Promise<PaymentRecoveryProcessResult> {
-  await resetStaleProcessingOperations();
-  await alertStalePaymentRecoveryQueueIfNeeded();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
+  await resetStaleProcessingOperations(format);
+  await alertStalePaymentRecoveryQueueIfNeeded(format);
 
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
@@ -3073,14 +3095,14 @@ export async function processPaymentRecoveryOperations(options?: {
     result.processed += 1;
 
     try {
-      await processPaymentRecoveryOperation(operation);
+      await processPaymentRecoveryOperation(operation, format);
       result.succeeded += 1;
     } catch (error) {
       logger.error(
         { err: error, operationId: operation.id, type: operation.type },
         "Payment recovery operation failed"
       );
-      const outcome = await failPaymentRecoveryOperation(operation, error);
+      const outcome = await failPaymentRecoveryOperation(operation, error, format);
       if (outcome === "failed") {
         result.failed += 1;
       } else {
