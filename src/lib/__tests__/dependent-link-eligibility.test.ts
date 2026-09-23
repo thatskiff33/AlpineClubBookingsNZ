@@ -23,6 +23,10 @@ import {
   MAX_PARENT_LINK_CHAIN_LENGTH,
 } from "@/lib/member-family-link-depth";
 import { notPartnerWithMemberWhere } from "@/lib/member-parent-partner-exclusivity";
+import {
+  isDeletedAccountRecord,
+  notDeletedAccountWhere,
+} from "@/lib/deleted-account";
 
 /**
  * #2254. The dependant-link candidate search returned "No eligible members
@@ -131,7 +135,11 @@ function toSqliteSelect(query: CapturedQuery) {
       .concat([query.sql.length]),
   );
 
-  const body = query.sql.slice(fromAt, pagingAt).replaceAll('"public".', "");
+  const body = query.sql.slice(fromAt, pagingAt).replaceAll('"public".', "")
+    // Prisma expresses a case-insensitive Postgres suffix match as ILIKE.
+    // SQLite's LIKE is already ASCII case-insensitive, so this preserves the
+    // exact semantics needed by the reserved-address fixture.
+    .replaceAll(" ILIKE ", " LIKE ");
 
   const placeholders = [...body.matchAll(/\$(\d+)/g)].map((match) =>
     Number(match[1]),
@@ -154,9 +162,14 @@ type Fixture = DependentLinkCandidate & {
 };
 type FixtureInput = Omit<
   Fixture,
-  "partnerLinksAsMemberA" | "partnerLinksAsMemberB"
+  "email" | "deletedAt" | "partnerLinksAsMemberA" | "partnerLinksAsMemberB"
 > &
-  Partial<Pick<Fixture, "partnerLinksAsMemberA" | "partnerLinksAsMemberB">>;
+  Partial<
+    Pick<
+      Fixture,
+      "email" | "deletedAt" | "partnerLinksAsMemberA" | "partnerLinksAsMemberB"
+    >
+  >;
 
 /**
  * A single family graph, expressed ONLY through the two parent columns.
@@ -379,12 +392,27 @@ const FIXTURE_INPUTS: Array<{ member: FixtureInput; why: string }> = [
       secondaryParentId: "sec-3",
     },
   },
+  {
+    why: "an adopter-era erased row with only the reserved address",
+    member: {
+      id: "legacy-deleted",
+      firstName: "Deleted",
+      email: "deleted-legacy@deleted.invalid",
+      deletedAt: null,
+      active: true,
+      archivedAt: null,
+      parentMemberId: null,
+      secondaryParentId: null,
+    },
+  },
 ];
 
 const FIXTURES: Array<{ member: Fixture; why: string }> = FIXTURE_INPUTS.map(
   ({ member, why }) => ({
     why,
     member: {
+      email: `${member.id}@example.test`,
+      deletedAt: null,
       partnerLinksAsMemberA: [],
       partnerLinksAsMemberB: [],
       ...member,
@@ -441,7 +469,10 @@ function ancestorsOf(id: string): { ids: string[]; generations: number } {
  * graph rather than restated — so a fixture edit can never leave the expected
  * depth behind.
  */
-function graphFactsFor(parentId: string, candidateId: string): DependentLinkGraphFacts {
+function graphFactsFor(
+  parentId: string,
+  candidateId: string,
+): DependentLinkGraphFacts {
   const above = ancestorsOf(parentId);
   return {
     parentAncestorIds: above.ids,
@@ -452,6 +483,7 @@ function graphFactsFor(parentId: string, candidateId: string): DependentLinkGrap
 
 /** The eligibility answer this suite expects, derived from the same graph. */
 function expectedEligible(parentId: string, candidate: Fixture): boolean {
+  if (isDeletedAccountRecord(candidate)) return false;
   if (candidate.archivedAt) return false;
   if (candidate.id === parentId) return false;
   if (
@@ -465,9 +497,7 @@ function expectedEligible(parentId: string, candidate: Fixture): boolean {
     candidate.partnerLinksAsMemberA?.some(
       (link) => link.memberBId === parentId,
     ) ||
-    candidate.partnerLinksAsMemberB?.some(
-      (link) => link.memberAId === parentId,
-    )
+    candidate.partnerLinksAsMemberB?.some((link) => link.memberAId === parentId)
   ) {
     return false;
   }
@@ -485,6 +515,8 @@ function seedFixtureDatabase() {
     `CREATE TABLE "Member" (
       "id" TEXT PRIMARY KEY,
       "firstName" TEXT NOT NULL,
+      "email" TEXT NOT NULL,
+      "deletedAt" TEXT,
       "active" INTEGER NOT NULL,
       "archivedAt" TEXT,
       "parentMemberId" TEXT,
@@ -499,12 +531,14 @@ function seedFixtureDatabase() {
     )`,
   );
   const insert = db.prepare(
-    `INSERT INTO "Member" VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO "Member" VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const { member } of FIXTURES) {
     insert.run(
       member.id,
       member.firstName,
+      member.email,
+      member.deletedAt ? member.deletedAt.toISOString() : null,
       member.active ? 1 : 0,
       member.archivedAt ? member.archivedAt.toISOString() : null,
       member.parentMemberId,
@@ -519,13 +553,21 @@ function seedFixtureDatabase() {
     for (const link of member.partnerLinksAsMemberA ?? []) {
       const key = `${member.id}\u0000${link.memberBId}`;
       if (insertedPairs.has(key)) continue;
-      insertPartner.run(`link-${insertedPairs.size}`, member.id, link.memberBId);
+      insertPartner.run(
+        `link-${insertedPairs.size}`,
+        member.id,
+        link.memberBId,
+      );
       insertedPairs.add(key);
     }
     for (const link of member.partnerLinksAsMemberB ?? []) {
       const key = `${link.memberAId}\u0000${member.id}`;
       if (insertedPairs.has(key)) continue;
-      insertPartner.run(`link-${insertedPairs.size}`, link.memberAId, member.id);
+      insertPartner.run(
+        `link-${insertedPairs.size}`,
+        link.memberAId,
+        member.id,
+      );
       insertedPairs.add(key);
     }
   }
@@ -572,9 +614,14 @@ describe("dependentLinkBlockers", () => {
 
   it("names the specific reason, most specific first", () => {
     const blockersFor = (id: string) =>
-      dependentLinkBlockers(PARENT_ID, fixture(id), graphFactsFor(PARENT_ID, id));
+      dependentLinkBlockers(
+        PARENT_ID,
+        fixture(id),
+        graphFactsFor(PARENT_ID, id),
+      );
 
     expect(blockersFor("two-parents")).toEqual(["TWO_PARENTS"]);
+    expect(blockersFor("legacy-deleted")).toEqual(["DELETED"]);
     expect(blockersFor("archived")).toEqual(["ARCHIVED"]);
     expect(blockersFor("already-linked")).toEqual(["ALREADY_LINKED_TO_PARENT"]);
     // The parent themself trips SELF first, and SELF is what the admin needs.
@@ -609,6 +656,8 @@ describe("dependentLinkBlockers", () => {
       PARENT_ID,
       {
         id: PARENT_ID,
+        email: "deleted-parent@deleted.invalid",
+        deletedAt: null,
         archivedAt: new Date(),
         parentMemberId: PARENT_ID,
         secondaryParentId: "other",
@@ -646,7 +695,9 @@ describe("dependentLinkCandidateWhere", () => {
   it("guards both nullable parent columns with an explicit IS NULL branch", () => {
     expect(candidateWhereFor(PARENT_ID)).toEqual([
       { id: { notIn: [PARENT_ID] } },
-      { OR: [{ parentMemberId: null }, { parentMemberId: { not: PARENT_ID } }] },
+      {
+        OR: [{ parentMemberId: null }, { parentMemberId: { not: PARENT_ID } }],
+      },
       ...notPartnerWithMemberWhere(PARENT_ID),
       {
         OR: [
@@ -657,6 +708,7 @@ describe("dependentLinkCandidateWhere", () => {
       { OR: [{ parentMemberId: null }, { secondaryParentId: null }] },
       descendantDepthWithinWhere(2),
       { archivedAt: null },
+      ...notDeletedAccountWhere(),
     ]);
   });
 
@@ -703,6 +755,7 @@ describe("dependentLinkCandidateWhere", () => {
     expect(returned).toContain("parentless-adult");
     expect(returned).toContain("gen-2");
     expect(returned).not.toContain("gen-1");
+    expect(returned).not.toContain("legacy-deleted");
   });
 
   it("counts depth through the SECOND parent slot as well as the first", async () => {
@@ -716,7 +769,9 @@ describe("dependentLinkCandidateWhere", () => {
     // could be deleted with every other test in this suite still passing.
     const primaryOnlyDepth: Prisma.MemberWhereInput = {
       NOT: {
-        dependents: { some: { dependents: { some: { dependents: { some: {} } } } } },
+        dependents: {
+          some: { dependents: { some: { dependents: { some: {} } } } },
+        },
       },
     };
     // Addressed by CONTENT, not by index: `clauses[4]` would silently start
@@ -815,7 +870,9 @@ describe("parent-direction (Add Parent) search/write parity", () => {
    * `admin-members-service` assembles it, so this test cannot pass against a
    * predicate the service does not actually issue.
    */
-  function parentCandidateWhereFor(memberId: string): Prisma.MemberWhereInput[] {
+  function parentCandidateWhereFor(
+    memberId: string,
+  ): Prisma.MemberWhereInput[] {
     const below = descendantGenerationsOf(memberId);
     const descendants = FIXTURES.map(({ member }) => member.id).filter((id) =>
       ancestorsOf(id).ids.includes(memberId),
@@ -852,9 +909,18 @@ describe("parent-direction (Add Parent) search/write parity", () => {
   }
 
   it("agrees row-for-row with the row-level verdict, at every depth", async () => {
-    for (const memberId of ["gen-1", "gen-2", "gen-3", "gen-4", "sec-2", "parentless-adult"]) {
+    for (const memberId of [
+      "gen-1",
+      "gen-2",
+      "gen-3",
+      "gen-4",
+      "sec-2",
+      "parentless-adult",
+    ]) {
       const offered = new Set(
-        await runWhereAgainstFixtures({ AND: parentCandidateWhereFor(memberId) }),
+        await runWhereAgainstFixtures({
+          AND: parentCandidateWhereFor(memberId),
+        }),
       );
 
       for (const { member } of FIXTURES) {
@@ -963,6 +1029,8 @@ describe("dependentParentStateBlocker (#2282)", () => {
     accessRoles: ["USER"] as string[],
     canLogin: true,
     active: true,
+    email: "current@example.test",
+    deletedAt: null as Date | string | null,
     archivedAt: null as Date | string | null,
   };
 
@@ -1104,6 +1172,7 @@ describe("dependentParentStateBlocker (#2282)", () => {
         },
       },
       { active: true },
+      ...notDeletedAccountWhere(),
       { archivedAt: null },
     ]);
 

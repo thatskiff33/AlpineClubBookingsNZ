@@ -36,6 +36,7 @@ import {
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
+import { formatCents } from "@/lib/utils";
 
 const DEFAULT_STALE_PENDING_MINUTES = 30;
 
@@ -736,7 +737,7 @@ export async function buildXeroReconciliationReport(options?: {
         operationStatus: null,
         operationType: null,
         correlationKey: null,
-        detail: `Active refund credit-note coverage is ${coveredCents} cents against a provider-backed cash refund target of ${evidence.cashRefundCents} cents (${evidence.source}; refunded mirror ${payment.refundedAmountCents} cents), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
+        detail: `Active refund credit-note coverage is ${formatCents(coveredCents)} against a provider-backed cash refund target of ${formatCents(evidence.cashRefundCents)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
         latestErrorMessage: null,
         createdAt: null,
       });

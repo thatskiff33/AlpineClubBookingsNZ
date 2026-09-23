@@ -19,6 +19,7 @@ import {
 } from "@/lib/audit-query";
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { useClubTime } from "@/components/club-time-provider";
+import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
 
 type AuditTimelineProps = {
   endpoint: string;
@@ -269,7 +270,7 @@ export function AuditTimeline({
                         Metadata
                       </summary>
                       <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-card p-3 text-xs leading-relaxed">
-                        {JSON.stringify(entry.metadata, null, 2)}
+                        {formatAuditMetadataJson(entry.metadata)}
                       </pre>
                     </details>
                   ) : null}

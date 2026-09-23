@@ -41,6 +41,7 @@ import { createAuditLog } from "@/lib/audit";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { formatCents } from "@/lib/utils";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -2588,7 +2589,7 @@ async function processCreateAdditionalPaymentIntentOperation(
      */
     if (synced.outcome === "not-raised") {
       throw new Error(
-        `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${synced.totalCents} cents still owed); leaving the recovery operation open to retry`,
+        `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents)} still owed); leaving the recovery operation open to retry`,
       );
     }
     await completePaymentRecoveryOperation(operation.id);

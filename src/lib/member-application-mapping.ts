@@ -42,6 +42,7 @@ import {
 } from "@/lib/member-parent-partner-exclusivity";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
+import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
 
 // personDecisionsSchema, personDecisionSchema, refKey, resolvePersonDecisions,
 // PersonDecisionInput, and DecisionResolution used to be re-exported here too,
@@ -198,7 +199,7 @@ export type MappingTargetRecord = MemberPartnerRelationshipFacts & {
   dateOfBirth: Date | null;
   ageTier: AgeTier;
   role: string;
-  active: boolean;
+  active: boolean; deletedAt: Date | null;
   archivedAt: Date | null;
   canLogin: boolean;
   parentMemberId: string | null;
@@ -257,7 +258,7 @@ export async function loadApprovalMappingTargets(
       dateOfBirth: true,
       ageTier: true,
       role: true,
-      active: true,
+      active: true, deletedAt: true,
       archivedAt: true,
       canLogin: true,
       parentMemberId: true,
@@ -643,8 +644,8 @@ function buildApplicantMapOutcome(args: {
 
   const errors: string[] = [];
   const notes: string[] = [];
-
-  if (!target.active || target.archivedAt) {
+  if (isDeletedAccountRecord(target)) errors.push("Cannot map to a deleted member.");
+  else if (!target.active || target.archivedAt) {
     errors.push("Cannot map to an inactive or archived member.");
   }
   // Relax the create-path canLogin-email 409 ONLY when the login-holder IS the
@@ -796,8 +797,8 @@ function buildFamilyMapOutcome(args: {
 
   const errors: string[] = [];
   const notes: string[] = [];
-
-  if (!target.active || target.archivedAt) {
+  if (isDeletedAccountRecord(target)) errors.push("Cannot map to a deleted member.");
+  else if (!target.active || target.archivedAt) {
     errors.push("Cannot map to an inactive or archived member.");
   }
   if (target.role === "ADMIN") {
@@ -1023,21 +1024,20 @@ async function suggestCandidates(
     // search must still show the existing record so the admin does not create
     // a duplicate; selecting it recomputes the preview with the stable,
     // blocking INV-LIFE-024 reason above.
-    where: { archivedAt: null, OR: orClauses },
+    where: { archivedAt: null, AND: notDeletedAccountWhere(), OR: orClauses },
     select: {
       id: true,
       firstName: true,
       lastName: true,
       email: true,
       ageTier: true,
-      active: true,
+      active: true, deletedAt: true,
       canLogin: true,
     },
     take: 12,
   });
 
-  return rows
-    .map((row) => {
+  return rows.filter((row) => !isDeletedAccountRecord(row)).map((row) => {
       const matchedOnEmail = Boolean(
         email && row.email.trim().toLowerCase() === email,
       );

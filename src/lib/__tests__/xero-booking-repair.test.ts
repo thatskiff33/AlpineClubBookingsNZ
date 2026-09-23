@@ -3587,7 +3587,8 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       (candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE"
     );
     expect(action?.status).toBe("manual_review");
-    expect(action?.resultMessage).toContain("4000 cents against an ask of 6000");
+    // #3533: the sweep's sentence states amounts, not the storage form.
+    expect(action?.resultMessage).toContain("$40.00 against an ask of $60.00");
   });
 
   it("is idempotent: a second run over a repaired review-priced edit finds nothing", async () => {

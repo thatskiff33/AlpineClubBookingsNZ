@@ -14,6 +14,9 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3580: the ledger's one write delegate, so a settle's charge lines are
+  // observable here.
+  ledgerCreateMany: vi.fn(),
   // #2576 §9: the single settle door is a confirming path, so it records the bounded
   // hosting re-evaluation with the PAID claim and drains it after the commit.
   enqueueOwnHostingCoverage: vi.fn(async (...args: unknown[]) => {
@@ -168,6 +171,11 @@ const tx = {
   // #2286: the capacity engines read bed-holding hut-leader assignments
   // (custodian occupancy). None in these cases.
   hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+  // #3580: the append-only money ledger. Charge lines post here on the PAID
+  // claim; nothing reads them yet.
+  bookingLedgerLine: {
+    createMany: (...args: unknown[]) => mocks.ledgerCreateMany(...args),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
@@ -216,6 +224,9 @@ describe("markBookingPaymentSucceeded", () => {
       fn(tx)
     );
     mocks.executeRaw.mockResolvedValue(undefined);
+    mocks.ledgerCreateMany.mockImplementation(
+      async ({ data }: { data: unknown[] }) => ({ count: data.length }),
+    );
     mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: LODGE_CAPACITY });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
@@ -257,6 +268,102 @@ describe("markBookingPaymentSucceeded", () => {
    * silent, because a member who chose to spend credit and then paid full price
    * otherwise has no way to tell whether their balance was touched. It was not.
    */
+  /*
+    #3580 — the booking money ledger's first posting site.
+
+    The settle is where a booking's price becomes a fact, so it is where the
+    charge lines are posted, inside this transaction and under this claim. The
+    two cases below are the pair that matters: the lines really are written
+    from the night rows, and a booking whose projection cannot be priced does
+    not lose its settle over rows nobody reads yet.
+  */
+  it("posts the booking's charge lines on the PAID claim, from the night rows (#3580)", async () => {
+    const booking = makeStaggeredBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      lodgeId: "lodge-1",
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      guests: booking.guests.map((guest, index) => ({
+        ...guest,
+        firstName: index === 0 ? "Alice" : "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        rateMembershipTypeId: "type-1",
+        nights: [
+          {
+            stayDate: parseDateOnly(index === 0 ? "2026-04-10" : "2026-04-11"),
+            priceCents: 5000,
+          },
+        ],
+      })),
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_ledger",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(result.outcome).toBe("paid");
+    const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as Array<
+      Record<string, unknown>
+    >;
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.kind === "GUEST_NIGHT")).toBe(true);
+    expect(rows.every((row) => row.side === "CHARGE")).toBe(true);
+    expect(rows.every((row) => row.anchorKind === "CONFIRMATION")).toBe(true);
+    // The lines add up to what the booking says it costs — which is the whole
+    // claim the ledger will eventually replace the mirror columns on.
+    expect(rows.reduce((sum, row) => sum + (row.amountCents as number), 0)).toBe(10000);
+  });
+
+  it("settles anyway when the charge lines cannot be BUILT, and writes none (#3580)", async () => {
+    /*
+      The half that is genuinely safe to swallow, and the only half.
+
+      A projection carrying no night rows cannot be priced. That throws in pure
+      JavaScript, before any statement reaches Postgres, so the transaction is
+      untouched and the settle — whose capture has already taken the member's
+      money — stands. The booking simply has no lines, which is the coverage
+      gap C4's census (#3583) exists to report.
+
+      THE OTHER HALF IS DELIBERATELY NOT TESTED HERE, because it cannot be:
+      a `createMany` that Postgres refuses aborts the transaction (`25P02`),
+      and no mock of a plain object can reproduce that — a test asserting the
+      settle survived a rejected mock would pass for the wrong reason and say
+      something false about production. So the write is not wrapped at all, on
+      the same rule this file's neighbours state explicitly (see
+      `adult-member-hosting-system-cancellation.ts`: "there is no `try` here on
+      purpose"). Review of #3580 is where that was caught.
+    */
+    const booking = makeStaggeredBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      lodgeId: "lodge-1",
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      // No `nights` at all: the planner cannot price this strand.
+      guests: booking.guests.map((guest) => ({ ...guest, nights: undefined })),
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_ledger_unbuildable",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(result.outcome).toBe("paid");
+    expect(mocks.bookingUpdateMany).toHaveBeenCalled();
+    // Nothing was written, rather than something wrong being written.
+    const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as unknown[] | undefined;
+    expect(rows ?? []).toEqual([]);
+  });
+
   it("clears a stale credit election on the PAID claim and reports it (#2265)", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
       ...makeStaggeredBooking(),

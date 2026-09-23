@@ -132,12 +132,12 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
         ...base,
         allocations: [{ memberId: "booker", priceAdjustmentCents: -1400 }],
       }),
-    ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*booker.*-1500.*-1400`));
+    ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*booker.*-\\$15\\.00.*-\\$14\\.00`));
   });
 
   it("refuses when the rows sum to the allocations but not to the redemption total", () => {
     expect(() => reconcilePromoAdjustmentTargets({ ...base, priceAdjustmentCents: -1600 })).toThrow(
-      new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*-1500.*-1600`),
+      new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*-\\$15\\.00.*-\\$16\\.00`),
     );
   });
 

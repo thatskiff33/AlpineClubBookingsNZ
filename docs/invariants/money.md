@@ -401,28 +401,63 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   promotion build-up not known, promotion build-up mismatch,
   discount-component mismatch, and final-price relation mismatch.
 
-  It checks recorded facts only: `Booking.totalPriceCents` against readable
+  It checks recorded facts: `Booking.totalPriceCents` against readable
   whole-guest sold-price evidence; `promoAdjustmentCents` against the
   `INV-MONEY-029` adjustment build-up when known; `discountCents` against
   `max(0, -promoAdjustmentCents)`; and `finalPriceCents` through
-  `bookingFinalPriceCents`. `EVEN_SPLIT` remains usable only at whole-guest
-  grain. Unknown provenance, a missing build-up, or a null adjustment becomes a
-  reason, never zero or a present-day reprice. Account credit remains solely in
+  `bookingFinalPriceCents`. `EVEN_SPLIT` is usable only at whole-guest grain.
+  Unknown provenance, a missing build-up or a null adjustment becomes a reason,
+  never zero or a present-day reprice. Account credit stays solely in
   `MemberCredit`.
 
   **The verdict is officer-only** (owner decision, 20 September 2026): a member
   sees their amounts unmarked and their data export carries no verdict.
-  `booking-money-reconciliation-audience.ts` is the one home for that gate, for
-  the named `WITHHELD` state replacing a nullable absence, and for the wording. Behind it, booking detail and lists, officer history,
-  finance metrics, reports and exports, and per-booking Xero reconciliation
-  input carry the same state and complete ordered reasons. The Xero invoice shape and every
-  displayed or settled amount remain unchanged. A read-only repeatable-read
-  census (`npm run booking-money:census`) reports all state/reason counts from
-  one ordered snapshot and writes nothing. The mutation-verified
-  `booking-money-writer-census.test.ts` names direct headline/component writers
-  and rejects raw-SQL or forwarded-delegate bypasses. A partly-refunded
-  guest-add mismatch is therefore visible for #3244 to repair separately; this
-  rule does not choose a card, charge, refund, credit, or invoice correction.
+  `booking-money-reconciliation-audience.ts` is the one home for that gate, the
+  named `WITHHELD` state replacing a nullable absence, and the wording. Behind
+  it, booking detail and lists, officer history, finance metrics, reports,
+  exports and per-booking Xero reconciliation input carry the same state and
+  ordered reasons; the Xero invoice shape and every displayed or settled amount
+  are unchanged. A read-only repeatable-read census
+  (`npm run booking-money:census`) reports state/reason counts, night rows by
+  provenance and strands by `INV-MOD-028` verdict per booking month, and edit
+  reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
+  names direct headline/component writers and rejects raw-SQL or
+  forwarded-delegate bypasses. A partly-refunded guest-add mismatch is
+  therefore visible for #3244 to repair separately; this rule chooses no card,
+  charge, refund, credit, or invoice correction.
+
+## INV-MONEY-032
+
+- **A booking's money ledger is append-only, and one module writes it**
+  (#3580, programme #3527 stage 4; design
+  [`design/booking-ledger.md`](../design/booking-ledger.md)).
+  `BookingLedgerLine` records a booking's money as posted lines: charge,
+  settlement or adjustment, each with a sign, a quantity, a unit price and the
+  event that anchored it. A line is never updated or deleted; a correction is
+  a new line naming the one it reverses, and `reversesLineId` is unique.
+
+  **The balance is derived, never stored.** `booking-ledger-balance.ts` is the
+  one place charged, settled, adjusted and owed are summed. No running total
+  and no status: a stored copy of a derived figure is the mirror this table
+  retires.
+
+  **`booking-ledger-write.ts` is the only door**, it exposes creation alone,
+  and every posting goes inside the transaction of the writer whose act it
+  records — a settle that rolls back leaves no line saying it did not.
+  Building rows is pure and may be refused safely; writing them is a statement
+  and is never wrapped, because a refused statement has already aborted the
+  transaction. The database holds the shape rules: a sign is 1 or -1,
+  `amountCents` IS `sign * unitCents * quantity` with a non-negative unit and
+  quantity, a `GUEST_NIGHT` line names its strand and its nights, and nothing
+  else names any of them. The strand and the acting member are plain columns,
+  not keys, so no cascade can rewrite a posted line.
+  `booking-ledger-append-only-census.test.ts` fails a second writer, or any
+  update, upsert or delete of a line, anywhere — including in the door.
+
+  Stage C1 posts charge lines at confirmation, from the night rows, and
+  nothing reads them: `INV-PAY-047`'s mirror is still the answer until the
+  reads move (#3584). A strand with an unpriced night posts nothing, because
+  `INV-MOD-028` says a blank is not evidence of an amount.
 
 ## INV-MONEY-006
 

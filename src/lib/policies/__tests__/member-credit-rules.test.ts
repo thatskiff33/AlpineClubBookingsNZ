@@ -23,7 +23,7 @@ describe("member credit policy rules", () => {
     expect(() => validateNegativeAdjustmentAgainstBalance(-1000, 1500)).not.toThrow();
     expect(() => validateNegativeAdjustmentAgainstBalance(-1500, 1500)).not.toThrow();
     expect(() => validateNegativeAdjustmentAgainstBalance(-1501, 1500)).toThrow(
-      "Cannot deduct 1501 cents: only 1500 cents available"
+      "Cannot deduct $15.01: only $15.00 available"
     );
     expect(() => validateNegativeAdjustmentAgainstBalance(2500, 0)).not.toThrow();
   });
@@ -33,7 +33,7 @@ describe("member credit policy rules", () => {
       "Credit amount must be positive"
     );
     expect(() => validateCreditApplicationAgainstBalance(6000, 5000)).toThrow(
-      "Insufficient credit balance: 5000 cents available, 6000 cents requested"
+      "Insufficient credit balance: $50.00 available, $60.00 requested"
     );
     expect(() => validateCreditApplicationAgainstBalance(5000, 5000)).not.toThrow();
   });
@@ -91,7 +91,8 @@ describe("member credit policy rules", () => {
   });
 
   it("formats signed adjustment amounts consistently", () => {
-    expect(formatAdjustmentAmount(2500)).toBe("+2500 cents");
-    expect(formatAdjustmentAmount(-2500)).toBe("-2500 cents");
+    // #3533: the adjustment reads as an amount, with its sign.
+    expect(formatAdjustmentAmount(2500)).toBe("+$25.00");
+    expect(formatAdjustmentAmount(-2500)).toBe("-$25.00");
   });
 });

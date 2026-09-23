@@ -189,9 +189,7 @@ import { bookingReviewReasonCodes, isCheckinBlockedByPendingReview } from "@/lib
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
 import { formatDateOnly } from "@/lib/date-only";
-import {
-  DELETED_ACCOUNT_PASSWORD_HASH,
-  isDeletedAccountRecord,
+import { isDeletedAccountRecord
 } from "@/lib/deleted-account";
 import { getInductionStatusForMember } from "@/lib/induction";
 import { asClubTimeZone } from "@/lib/club-time";
@@ -2033,6 +2031,7 @@ async function readMemberEligibility(
       // email address is `member_diagnostic_summary`, under the same permission,
       // for one selected member.
       email: true,
+      deletedAt: true,
       ageTier: true,
       active: true,
       canLogin: true,
@@ -2097,35 +2096,10 @@ async function readMemberEligibility(
   });
   const unpaid = subscriptionIsUnpaid(settlement);
 
-  /**
-   * The lifecycle label, from the resolver every admin badge uses — and
-   * `deletedAccount` computed rather than left `false`.
-   *
-   * Erasure sets `active: false` and stamps NEITHER `cancelledAt` NOR
-   * `archivedAt`, so a caller that omits this flag gets "Inactive" for an
-   * anonymised account. That is not a cosmetic difference: an officer told a member
-   * is merely inactive will try to reactivate them.
-   *
-   * THE PASSWORD HASH IS A PREDICATE, NOT A PROJECTION, and this is the one place
-   * in either tool pack where that pattern is applied to a credential column.
-   * `isDeletedAccountRecord` is the single definition of the erasure test and it is
-   * a disjunction: the anonymised email address OR the sentinel password hash.
-   * Reading a real password hash into a diagnostics module — even to compare it —
-   * is not something this pack will do, and reading only the email half would make
-   * the test silently incomplete for an account erased before the address was
-   * rewritten. So the hash comparison happens INSIDE PostgreSQL as a `count` on an
-   * equality against the server-written sentinel; only the boolean crosses the
-   * boundary, and the sentinel constant is then handed back to the authoritative
-   * predicate so the disjunction keeps exactly one definition. No member's real
-   * hash is ever loaded, logged, hashed into an audit row or projected.
-   */
-  const erasedPasswordHash =
-    (await tx.member.count({
-      where: { id: memberId, passwordHash: DELETED_ACCOUNT_PASSWORD_HASH },
-    })) > 0;
+  /** Canonical structural-or-reserved-address deletion verdict. */
   const erased = isDeletedAccountRecord({
     email: member.email,
-    passwordHash: erasedPasswordHash ? DELETED_ACCOUNT_PASSWORD_HASH : null,
+    deletedAt: member.deletedAt,
   });
   const lifecycle = getLifecycleStatusConfig({
     deletedAccount: erased,

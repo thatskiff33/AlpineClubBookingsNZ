@@ -13,6 +13,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -149,21 +150,6 @@ function deletionCleanupRecovery(input: {
   };
 }
 
-function isMemberAnonymised(member: {
-  firstName: string;
-  lastName: string;
-  email: string;
-  active: boolean;
-}): boolean {
-  return (
-    member.active === false &&
-    member.firstName === "Deleted" &&
-    member.lastName === "Member" &&
-    member.email.startsWith("deleted-") &&
-    member.email.endsWith("@deleted.invalid")
-  );
-}
-
 async function readFinalDeletionDecision(
   requestId: string,
   cancelledBookings: number,
@@ -176,10 +162,8 @@ async function readFinalDeletionDecision(
         status: true,
         member: {
           select: {
-            firstName: true,
-            lastName: true,
             email: true,
-            active: true,
+            deletedAt: true,
           },
         },
       },
@@ -207,7 +191,7 @@ async function readFinalDeletionDecision(
         // Whatever this attempt committed before it lost the row stays
         // committed, which is exactly what the next decider has to be told.
         cancelledBookings,
-        memberAnonymised: isMemberAnonymised(latest.member),
+        memberAnonymised: isDeletedAccountRecord(latest.member),
         retryAllowed: false as const,
       };
     }
@@ -215,7 +199,7 @@ async function readFinalDeletionDecision(
       latest &&
       (latest.status === "APPROVED" || latest.status === "REJECTED")
     ) {
-      const memberAnonymised = isMemberAnonymised(latest.member);
+      const memberAnonymised = isDeletedAccountRecord(latest.member);
       return {
         code: decisionErrorCode,
         error:
