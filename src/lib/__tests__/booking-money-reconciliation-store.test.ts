@@ -7,15 +7,18 @@ import {
   readBookingMoneyReconciliation,
   type StoredBookingMoneyReconciliationProjection,
 } from "@/lib/booking-money-reconciliation-store";
+import { requireClubTimeZone } from "@/lib/club-time";
 
 const NIGHT = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-02T00:00:00.000Z");
 
-function row(
-  overrides: Partial<StoredBookingMoneyReconciliationProjection> = {},
-): StoredBookingMoneyReconciliationProjection {
+type CensusRow = StoredBookingMoneyReconciliationProjection & { createdAt: Date };
+
+function row(overrides: Partial<CensusRow> = {}): CensusRow {
   return {
     id: "booking-1",
+    // #3531 3c: the census groups by creation month; the row shape carries it.
+    createdAt: new Date("2026-06-15T00:00:00.000Z"),
     checkIn: NIGHT,
     checkOut: CHECK_OUT,
     totalPriceCents: 10_000,
@@ -120,19 +123,39 @@ describe("booking money reconciliation store", () => {
       row({ id: "booking-discount", discountCents: 1 }),
       row({ id: "booking-final", finalPriceCents: 123 }),
     ]);
+    const reviewFindMany = vi.fn().mockResolvedValue([
+      {
+        createdAt: new Date("2026-09-17T00:00:00.000Z"),
+        status: "OPEN",
+        reviewContext: null,
+      },
+    ]);
     const transaction = vi.fn(async (callback) =>
-      callback({ booking: { findMany } }),
+      callback({ booking: { findMany }, manualRefundTask: { findMany: reviewFindMany } }),
     );
-    const result = await censusBookingMoneyReconciliation({
-      $transaction: transaction,
-    } as never);
+    const result = await censusBookingMoneyReconciliation(
+      { $transaction: transaction } as never,
+      requireClubTimeZone("Pacific/Auckland"),
+    );
 
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: "RepeatableRead",
     });
     expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { id: "asc" } }),
+      expect.objectContaining({
+        orderBy: { id: "asc" },
+        select: expect.objectContaining({ createdAt: true }),
+      }),
     );
+    // #3531 3c: the two provenance summaries come from the SAME snapshot.
+    expect(reviewFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { kind: "EDIT_FINANCIAL_REVIEW" } }),
+    );
+    expect(result.nightPriceProvenance.strandsByClass).toMatchObject({
+      INEXACT_STORED_NIGHT_PRICES: 1,
+      NO_STORED_NIGHT_PRICES: 1,
+    });
+    expect(result.editFinancialReviews).toMatchObject({ total: 1, byStatus: { OPEN: 1 }, byCause: { UNREADABLE_CONTEXT: 1 } });
     expect(result).toMatchObject({
       totalBookings: 9,
       byState: { RECONCILED: 2, UNRECONCILED: 7 },
