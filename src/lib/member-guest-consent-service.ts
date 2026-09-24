@@ -726,6 +726,9 @@ export async function expireMemberGuestConsent(params: {
     });
   } catch (err) {
     if (!(err instanceof ConsentRemovalRefusal)) throw err;
+    // A refusal is only raised after the row was read under the lock, so the
+    // member is always known here; rethrow rather than claim without it.
+    if (expiringMemberId === null) throw err;
     return recordBlockedConsentTransition({
       db,
       guestId,

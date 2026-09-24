@@ -77,7 +77,7 @@ reason: the cross-lodge offer rebuilds the same stay, so it captures each
   source row's value and carries it onto the new guest rows.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1235
+lines: 1259
 reason: granting a member guest's pending consent is the moment their row
   first belongs to them, so the approval fills an empty dietary note from their
   profile inside the consent transaction it already holds (#3029 S5); the
