@@ -119,6 +119,14 @@ import "./member-parent-partner-exclusion-races.realdb.test";
 // Its describe stays skipped unless RUN_CONCURRENCY_RACE_TESTS=1 and it owns and
 // drops its own probe table.
 import "./migration-lock-timeout.realdb.test";
+// #3595 reuses this guarded database to prove the booking ledger's
+// idempotency in PostgreSQL itself: a repeated posting key is SKIPPED (not
+// refused) and its transaction survives to commit, the same repeat without the
+// door's skip is refused and loses the transaction, and the per-booking
+// confirmation fence sees a line with no key. A mock can pin none of those.
+// Its describe stays skipped unless RUN_CONCURRENCY_RACE_TESTS=1, and it owns
+// and cleans its own `race-3595-` fixtures.
+import "./booking-ledger-posting-key.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

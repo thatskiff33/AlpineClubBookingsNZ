@@ -229,10 +229,11 @@ These family rules are enforced by automated tests (issue #1132):
 
   It also proves the #2984 boundary by attempt — a finance-only administrator is
   refused every admin page outside Finance and every non-finance API route on
-  GET, POST, PATCH, PUT and DELETE, save exactly three admissions that are named
+  GET, POST, PATCH, PUT and DELETE, save exactly four admissions that are named
   and reasoned in the suite (the shared lodge vocabulary, the Diagnostics ask
-  route's ADR-002 admission, and the joining-fee preview, which is gated on
-  `finance:view` in its own source).
+  route's ADR-002 admission, the joining-fee preview, which is gated on
+  `finance:view` in its own source, and the read of the club's currency and
+  locale (#3596), whose write stays Full Admin).
 
 ### Public or Provider-Signed Exceptions
 

@@ -23,19 +23,21 @@ import { requireAdmin } from "@/lib/session-guards";
  * The club currency and locale maintenance API (stage 1 of programme #3205,
  * #3563). INV-CONFIG-006.
  *
- * FULL ADMIN ON BOTH VERBS, AND NOT BY AREA LEVEL. `requireAdmin({ permission:
- * false })` is the guard's "only a full administrator" shape (see
- * `RequireAdminOptions` in `src/lib/session-guards.ts`). The two other shapes
- * are both wrong here and both look right at a glance: an OMITTED `permission`
- * infers the requirement from the path, which for this prefix is `support`, so
- * a support editor would be admitted; `"any-admin"` widens to every admitted
- * administrator. `/admin/club-format` and `/api/admin/club-format` are
- * registered under `support` in `ROUTE_AREA_PREFIXES` only so the route-map
- * drift guard and the sidebar matrix resolve them to a concrete area instead of
- * the `overview` catch-all; that AREA decides who can reach the surface at all,
- * and the `permission: false` here is what enforces Full Admin. Both verbs are
- * declared in `REVIEWED_PERMISSION_DIVERGENCES`, which is where a gate stricter
- * than the map is recorded.
+ * ANY ADMIN READS; ONLY A FULL ADMIN CHANGES (owner decision on #3596). `GET`
+ * is `requireAdmin({ permission: "any-admin" })` (`hasAdminPortalAccess`),
+ * copied from `GET /api/admin/lodges`; its payload is safe whole for every
+ * admin — the two values every rendered amount already shows, their provenance
+ * and the last changer's display name, no email or id — so anything added to
+ * `ClubFormatState` reaches every admin too. `PUT` stays `requireAdmin({
+ * permission: false })`, Full Admin only. An OMITTED `permission` would be
+ * wrong on both and looks right at a glance: it infers `support` from the path,
+ * refusing the read to a finance-only admin and granting the write to a
+ * support editor. The path is registered under `support` in
+ * `ROUTE_AREA_PREFIXES` only so the drift guard resolves it to a concrete area;
+ * both divergences from that map are declared in
+ * `REVIEWED_PERMISSION_DIVERGENCES`. `/api/admin/club-time-zone` and
+ * `/api/admin/environment-safety` stay Full Admin on both verbs, so this route
+ * is their twin on the write only.
  *
  * THE CONFIRMATION IS ENFORCED HERE, not only in the panel. A checkbox in a
  * browser is a courtesy to the operator, and the panel is not the only caller.
@@ -81,7 +83,7 @@ function isTransactionContentionError(error: unknown): boolean {
 }
 
 export async function GET() {
-  const guard = await requireAdmin({ permission: false });
+  const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
 
   const resolved = await resolveClubFormatWithSource();

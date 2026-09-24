@@ -29,6 +29,10 @@ import {
   calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
 } from "@/lib/club-time";
+import {
+  confirmationNightKey,
+  confirmationPromotionKey,
+} from "@/lib/booking-ledger-posting-keys";
 
 export type ConfirmationPostingBooking = {
   id: string;
@@ -110,6 +114,10 @@ export function planConfirmationChargeLines(
         ageTier: guest.ageTier,
         guestNames: guestName ? [guestName] : [],
         narration: `${guestName || "Guest"} — one night`,
+        // Makes THIS night's posting idempotent against a replay. It does not
+        // make the confirmation happen once — the settle fences that per
+        // booking, because nights can change between two settles (#3595).
+        postingKey: confirmationNightKey(booking.id, guest.id, night.stayDate),
       });
     }
   }
@@ -128,6 +136,7 @@ export function planConfirmationChargeLines(
       anchorId: booking.id,
       narration:
         sign < 0 ? "Promotion applied" : "Promotion, price raised",
+      postingKey: confirmationPromotionKey(booking.id),
     });
   }
 

@@ -661,12 +661,9 @@ jobs:
       # silently, which is worse than an error.
       #
       # Reads git and the working tree only — no network, no database, no
-      # build — and runs in well under a second, so it sits here rather than
-      # behind the slower gates.
-      - name: File-size budget ratchet
-        env:
-          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
-        run: npm run quality:budget -- --base "$BUDGET_BASE"
+      # build — and runs in well under a second. It used to run here, but #3432
+      # moved it to the end of `verify`: a quality failure must not suppress the
+      # typecheck, suite, build, or security proofs that diagnose the release.
 
       - name: Generate Prisma client
         run: npm run db:generate
@@ -722,7 +719,9 @@ jobs:
       - name: Check the build's cached-route set
         run: node scripts/ci/check-website-prerender-manifest.mjs
 
-      # LAST in this job, and both halves of that are deliberate (#2850).
+      # LAST BUILD-OUTPUT CONSUMER in this job, and both halves of that are
+      # deliberate (#2850). The source-only file-size ratchet follows it so a
+      # quality failure cannot suppress this security proof (#3432).
       #
       # It runs after the build because it needs one: it plants a `"use client"`
       # page that transitively reaches `@/lib/auth` and requires the REAL
@@ -764,6 +763,15 @@ jobs:
             echo "::error::The server-only boundary self-test exited 0 without printing its success line, so it did not actually run. A silent exit 0 must never satisfy this gate (#2850, #3186)."
             exit 1
           fi
+
+      # #3432: deliberately LAST. Keep the detailed base-selection contract
+      # above beside the full-history checkout it depends on; placing this
+      # blocking quality gate here ensures every correctness and security gate
+      # reports before a size-budget failure ends `verify`.
+      - name: File-size budget ratchet
+        env:
+          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
+        run: npm run quality:budget -- --base "$BUDGET_BASE"
 
   migration-drift:
     name: Migration drift check
