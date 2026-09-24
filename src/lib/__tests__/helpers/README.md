@@ -93,13 +93,27 @@ vi.mock("@/lib/prisma", async () => {
 mockFindUnique.mockResolvedValue({ active: true, canLogin: false, accessRoles: [...] });
 ```
 
-`honourSelect(mock)` projects every resolved fixture through the caller's
-`select` (nested relation selects included), so the code under test sees only
-the fields its query asked for — as it would with the real client. Use it in any
+`honourSelect(mock)` shapes every resolved fixture by the caller's arguments,
+so the code under test sees only the fields its query asked for. Use it in any
 test of a gate that re-reads a member. A fixture that carries a field the query
 never selected otherwise proves nothing: `requireAdmin` passed its suites for
 years without selecting `canLogin`, because every fixture carried it (#3603).
-`projectSelect(row, select)` is the same projection for a one-off.
+`projectSelect(row, select)` and `projectInclude(row, include)` are the same
+projections for a one-off.
+
+What it models, and where it stops short of the real client:
+
+- a scalar selected `true` passes through; a relation with a nested `select` is
+  projected through it;
+- a relation selected `true`, or with only `where`/`orderBy`/`take`, keeps its
+  scalar fields only, and one with `include` keeps its scalars plus the included
+  relations; a query with neither `select` nor `include` gets the row's scalars;
+- a field the query selects but the fixture lacks stays absent — the helper
+  never invents a value;
+- it cannot tell a relation from a `Json` column holding an object, so a Json
+  object selected `true` keeps only its top-level scalar members;
+- `where`, `orderBy` and `take` are not applied: the mock still decides which
+  row comes back.
 
 ## Recovery-alert focus (jsdom only)
 
