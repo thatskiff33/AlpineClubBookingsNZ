@@ -59,3 +59,15 @@ export function captureKey(paymentTransactionId: string): string {
 export function refundKey(paymentRefundId: string): string {
   return `refund:${paymentRefundId}`;
 }
+
+/**
+ * The line a source posts when it holds AGAIN after its previous line was
+ * reversed (review of #3604). A source can flip more than once — a mark-paid
+ * reversed, then the same row paid through Xero — and the base key is already
+ * taken by the first line, so the next one is keyed off the reversal that
+ * retired its predecessor. Deterministic from ledger state, so a replay of the
+ * re-posting finds its own key and posts nothing.
+ */
+export function afterReversalKey(baseKey: string, reversalLineId: string): string {
+  return `${baseKey}:after:${reversalLineId}`;
+}

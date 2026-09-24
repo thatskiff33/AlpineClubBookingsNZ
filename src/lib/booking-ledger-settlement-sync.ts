@@ -6,16 +6,19 @@
  * ledger, asks the pure planner what is missing, and writes that.
  *
  * WHERE IT RUNS. At the end of `reconcilePaymentAggregates` — the one place the
- * `Payment` mirror is derived from these same rows, and the function every
- * capture, receipt and refund writer already ends in — and from the two paths
- * that deliberately bypass it: the manual mark-paid settle and its reversal,
- * which write their rows and the payment's columns themselves (`INV-PAY-047`).
- * One function, three call sites, each named; not three definitions.
+ * `Payment` mirror is derived from these same rows — and from the three paths
+ * that write their rows and the payment's columns themselves instead: the
+ * manual mark-paid settle, its reversal (`INV-PAY-047`), and the Xero
+ * payment-received path's Internet Banking receipt. One function, four named
+ * call sites; not four definitions. The first cut claimed every writer ended
+ * at the chokepoint; review of #3604 traced every writer and found the
+ * receipt path did not.
  *
  * WHAT IS SWALLOWED AND WHAT IS NOT (the lesson of #3590's review). Planning
- * and building the rows are pure: a malformed plan throws before anything
- * reaches the database, the caller's transaction is untouched, and that throw
- * is caught and logged — the gap is C4's census to report (#3583). The reads
+ * and building the rows are pure: ANY throw there — a malformed plan, or a
+ * plain programming error such as a missing field — happens before anything
+ * reaches the database, so the caller's transaction is untouched; it is caught
+ * and logged at error level, and the gap is C4's census to report (#3583). The reads
  * and the write are statements and are NOT wrapped: a statement PostgreSQL
  * refuses has already aborted the transaction, and no `catch` brings it back.
  * The write skips, rather than refuses, a key already posted (`INV-MONEY-033`).
@@ -36,6 +39,22 @@ export async function syncBookingLedgerSettlements({
   paymentId: string;
   store: SettlementSyncStore;
 }): Promise<void> {
+  // READ ORDER IS LOAD-BEARING (review of #3604). Outside a transaction these
+  // are separate read-committed statements, and the posted LINES are read
+  // BEFORE the payment's ROWS. That way a mixed snapshot can only ever pair
+  // older lines with newer rows — which at worst re-plans a line already
+  // posted, and the key makes that a skip. Read the other way round, an older
+  // row ("not yet captured") could meet a newer line and the sync would post a
+  // permanent, wrong reversal. The booking id is immutable, so reading it first
+  // takes no part in the race.
+  const owner = await store.payment.findUnique({
+    where: { id: paymentId },
+    select: { bookingId: true },
+  });
+  if (!owner) return;
+
+  const postedLines = await findPostedSettlementLines(store, owner.bookingId);
+
   const payment = await store.payment.findUnique({
     where: { id: paymentId },
     select: {
@@ -48,8 +67,6 @@ export async function syncBookingLedgerSettlements({
     },
   });
   if (!payment) return;
-
-  const postedLines = await findPostedSettlementLines(store, payment.bookingId);
 
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {

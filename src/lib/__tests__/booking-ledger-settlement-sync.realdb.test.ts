@@ -63,6 +63,7 @@ export function assertSafeSettlementSyncRaceDbUrl(url: string): void {
 
 let prisma: PrismaClient;
 let reconcilePaymentAggregates: typeof import("@/lib/payment-transactions")["reconcilePaymentAggregates"];
+let upsertPaymentIntentTransaction: typeof import("@/lib/payment-transactions")["upsertPaymentIntentTransaction"];
 
 async function lines() {
   return prisma.bookingLedgerLine.findMany({
@@ -97,7 +98,7 @@ async function resetPayment(): Promise<void> {
       assertSafeSettlementSyncRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
-      ({ reconcilePaymentAggregates } = await import("@/lib/payment-transactions"));
+      ({ reconcilePaymentAggregates, upsertPaymentIntentTransaction } = await import("@/lib/payment-transactions"));
 
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
@@ -157,6 +158,57 @@ async function resetPayment(): Promise<void> {
       ]);
     });
 
+    it("posts through a REAL writer — the card-capture upsert the webhook uses — not only a hand-built row", async () => {
+      // Review of #3604: the suite built rows by hand and called the chokepoint
+      // directly, which is how a writer that never reaches it went unnoticed.
+      await upsertPaymentIntentTransaction({
+        paymentId: PAYMENT_ID,
+        kind: "PRIMARY",
+        paymentIntentId: "pi_race_3581_writer",
+        amountCents: 8_000,
+        status: "SUCCEEDED",
+        store: prisma,
+      });
+      // A webhook redelivery: the same upsert again.
+      await upsertPaymentIntentTransaction({
+        paymentId: PAYMENT_ID,
+        kind: "PRIMARY",
+        paymentIntentId: "pi_race_3581_writer",
+        amountCents: 8_000,
+        status: "SUCCEEDED",
+        store: prisma,
+      });
+      const posted = await lines();
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).toMatchObject({ kind: "CARD_CAPTURE", amountCents: 8_000 });
+    });
+
+    it("posts a row paid AGAIN after its mark-paid was reversed, keyed off the reversal", async () => {
+      // Review of #3604: a reversed mark-paid's row can be revived by a Xero
+      // payment; the first cut saw its key taken and posted nothing.
+      await prisma.payment.update({
+        where: { id: PAYMENT_ID },
+        data: { source: "INTERNET_BANKING", manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00.000Z"), manuallyMarkedPaidByMemberId: OFFICER_ID },
+      });
+      await prisma.paymentTransaction.create({
+        data: { id: "race-3581-txn-revived", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: 10_000, status: "SUCCEEDED", reason: "manual_mark_paid" },
+      });
+      await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
+      // The reversal.
+      await prisma.paymentTransaction.update({ where: { id: "race-3581-txn-revived" }, data: { status: "FAILED", reason: "manual_mark_paid_reversed" } });
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { manuallyMarkedPaidAt: null, manuallyMarkedPaidByMemberId: null } });
+      await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
+      // The member then pays through Xero, which revives the same row.
+      await prisma.paymentTransaction.update({ where: { id: "race-3581-txn-revived" }, data: { status: "SUCCEEDED" } });
+      await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
+      await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
+
+      const posted = await lines();
+      expect(posted.map((l) => l.kind)).toEqual(["CASH_RECORDED", "CASH_RECORDED", "BANK_RECEIPT"]);
+      expect(posted[2]?.postingKey).toMatch(/^capture:race-3581-txn-revived:after:/);
+      expect(await settledCents()).toBe(10_000);
+    });
+
     it("posts a manual mark-paid as cash, and its reversal exactly once when the row is flipped to FAILED", async () => {
       await prisma.payment.update({
         where: { id: PAYMENT_ID },
@@ -189,7 +241,7 @@ async function resetPayment(): Promise<void> {
       expect(await settledCents()).toBe(0);
     });
 
-    it("posts a recorded refund, and reverses it when the refund later fails", async () => {
+    it("posts a recorded refund, and reverses it when the refund later fails — while the mirror keeps counting it", async () => {
       await prisma.paymentTransaction.create({
         data: { id: "race-3581-txn-refunded", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: 10_000, status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_500 },
       });
@@ -199,14 +251,25 @@ async function resetPayment(): Promise<void> {
       await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
       expect((await lines()).map((l) => l.kind).sort()).toEqual(["CARD_CAPTURE", "CARD_REFUND"]);
 
+      // Only the refund's status changes. The transaction's own refunded figure
+      // is left exactly as production leaves it: every writer of that column
+      // takes a max including its previous value, so it never goes down. The
+      // first cut of this test hand-reset it to 0 — which no writer does — and
+      // so hid the divergence below (review of #3604).
       await prisma.paymentRefund.update({ where: { id: "race-3581-refund" }, data: { status: "failed" } });
-      await prisma.paymentTransaction.update({ where: { id: "race-3581-txn-refunded" }, data: { status: "SUCCEEDED", refundedAmountCents: 0 } });
-      await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
+      const mirror = await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
       const after = await lines();
       expect(after.filter((l) => l.kind === "CARD_REFUND").map((l) => l.sign).sort()).toEqual([-1, 1]);
+
+      // THE KNOWN DIVERGENCE, pinned rather than hidden: the ledger says no
+      // money went back; the mirror still says 2,500 did. INV-PAY-050 already
+      // names that column as not cash evidence, and C4 (#3583) must classify
+      // this difference, not assert an identity across it.
+      expect(await settledCents()).toBe(10_000);
+      expect(mirror?.refundedAmountCents).toBe(2_500);
     });
 
-    it("leaves the ledger's settled total equal to the mirror the same chokepoint derives", async () => {
+    it("matches the mirror's own arithmetic where both read the same rows: captures, and refunds with a refund row", async () => {
       await prisma.paymentTransaction.createMany({
         data: [
           { id: "race-3581-parity-card", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: 10_000, status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_500 },
