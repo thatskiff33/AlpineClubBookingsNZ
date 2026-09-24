@@ -38,8 +38,8 @@ Authentication and authorization currently use these mechanisms:
 
 | Mechanism | Current implementation | Main route families |
 | --- | --- | --- |
-| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic access-role refresh, email verification, and session invalidation on password change. | Member, admin, finance, lodge, booking, payment, profile routes. |
-| Active-account guard | `requireActiveSessionUser()` in `src/lib/session-guards.ts` checks `Member.active` and `forcePasswordChange`. | Most session-authenticated routes. |
+| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic access-role refresh, email verification, and session invalidation on password change, account deletion, or login being switched off (`INV-LIFE-014`, `INV-LIFE-092`). | Member, admin, finance, lodge, booking, payment, profile routes. |
+| Active-account guard | `requireActiveSessionUser()` in `src/lib/session-guards.ts` checks `Member.active`, `canLogin` (#3603) and `forcePasswordChange`. | Most session-authenticated routes. |
 | Shared admin guard | `requireAdmin()` in `src/lib/session-guards.ts` combines Auth.js session, scoped access-role bundles (`getAdminRouteRequirement` area/level resolution), and active-account checks. | Every `/api/admin/**` route — each exported method must reach `requireAdmin()` (directly, via a local helper, or via an allowlisted shared wrapper), enforced per-method by `api-route-boundaries.test.ts` (#1132). The former hand-rolled inline admin checks (#613) are fully migrated. |
 | Finance API guard | `requireFinanceViewerApiAccess()` and `requireFinanceManagerApiAccess()` in `src/lib/finance-api-auth.ts`. | `/api/finance/**`. |
 | Lodge/kiosk guard | `checkLodgeAuth()` in `src/lib/lodge-auth.ts`, including active session and hut-leader PIN session support. | `/api/lodge/**` and lodge roster/guest routes. |

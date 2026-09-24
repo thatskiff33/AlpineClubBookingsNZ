@@ -2416,9 +2416,9 @@ read-only, while every mutation (cancel, pay, modify, notes, delete, and the
 Full-Admin-only Admin tools card) stays gated on booking ownership or Full
 Admin (issue #1289). `requireAdmin()` infers the
 requested admin path and HTTP method from proxy headers and enforces
-view/edit requirements centrally, selecting assignment rows with their
-definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
-`src/lib/access-role-definitions.ts`); the admin layout precomputes the
+view/edit requirements centrally, selecting `canLogin` and the assignment rows
+with their definitions joined (`MEMBER_PRIVILEGE_CHECK_SELECT` in
+`src/lib/access-role-definitions.ts`, #3603); the admin layout precomputes the
 matrix server-side and passes it to the sidebar, because definitions cannot
 resolve client-side. Member-facing surfaces that gate on `session.user`
 (the `/bookings/[id]` detail page and the widened member-facing booking APIs
@@ -2433,6 +2433,14 @@ to every holder on their next request — `requireAdmin()` and the layouts
 re-read roles and definitions from the database, and the session-embedded
 matrix is itself recomputed from that same database join per request rather
 than trusted from an old token.
+
+**Switching off a member's login switches off all of their access (#3603,
+`INV-LIFE-092`).** The privilege checks (`hasAdminAccess`, `isFullAdmin`,
+`hasPrivilegedAccess`, `hasLodgeAccess`, `authorizationRoleFromAccessRoles` and
+every matrix check) require `canLogin`, so a member read that forgets it does
+not compile; `session.user.canLogin` carries it on a session. The token refresh
+empties the role claim and matrix for a login-disabled member and ends the
+session, one-way, with the same kill switch a deleted account gets.
 
 The seven areas and what each governs (from `ADMIN_PERMISSION_AREAS`, with the
 notable members that live under a broader-sounding prefix called out):
@@ -3171,8 +3179,9 @@ When the `(authenticated)` or `(admin)` layout guard is about to redirect to
 
 - **`no-cookie`** — normal anonymous visit: a `debug`-level pino line only.
   No `AuditLog` row, no Sentry event, no reference code.
-- **`session-invalidated`** — the session decoded but the password-change
-  revocation gate nulled it: pino `info` plus a durable `AuditLog` row
+- **`session-invalidated`** — the session decoded but a revocation gate nulled
+  it (a newer password, a deleted account, or login switched off — #2620,
+  #3603): pino `info` plus a durable `AuditLog` row
   (`action=auth.bounce`, `category=auth`, retention
   `diagnostic_high_volume`) capturing `memberId`, session issuance, the
   revoking change time, and their delta. No Sentry.
