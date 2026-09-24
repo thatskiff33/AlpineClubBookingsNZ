@@ -2,11 +2,14 @@ import type { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
   authorizationRoleFromAccessRoles,
+  hasAccessRole,
   hasAdminAccess,
   hasLodgeAccess,
   hasPrivilegedAccess,
+  isAdminOrKioskOnlyRecord,
   isFullAdmin,
   memberHoldsFullAdminRole,
+  resolveAccessRoles,
   sessionAccessRoleClaim,
 } from "@/lib/access-roles";
 import {
@@ -63,6 +66,51 @@ describe("privilege checks require canLogin (#3603)", () => {
     hasAdminAreaAccess(rowsOnly, { area: "bookings", level: "view" });
     // @ts-expect-error - canLogin is required on portal standing.
     hasAdminPortalAccess(rowsOnly);
+    // hasAccessRole is overloaded: asking about a privileged role is a
+    // privilege question, so it requires canLogin exactly as hasAdminAccess
+    // does, and cannot be used to walk around the checks above.
+    // @ts-expect-error - canLogin is required to ask about ADMIN.
+    hasAccessRole(rowsOnly, "ADMIN");
+    // @ts-expect-error - canLogin is required to ask about LODGE.
+    hasAccessRole(rowsOnly, "LODGE");
+    // @ts-expect-error - canLogin is required to ask about FINANCE_ADMIN.
+    hasAccessRole(rowsOnly, "FINANCE_ADMIN");
+  });
+
+  it("still lets a classification question go without canLogin", () => {
+    const rowsOnly = { accessRoles: [{ role: "USER" as const }] } as RowsOnlyMember;
+    // USER and ORG classify a record and grant nothing, so they compile over
+    // the optional input.
+    expect(hasAccessRole(rowsOnly, "USER")).toBe(true);
+    expect(hasAccessRole(rowsOnly, "ORG")).toBe(false);
+  });
+
+  it("classifies admin- and kiosk-only records exactly as the old expression did", () => {
+    // isAdminOrKioskOnlyRecord replaced an inline expression in the profile
+    // onboarding rule; the behaviour must be identical, canLogin included.
+    const cases: Array<{ roles: string[]; canLogin?: boolean }> = [
+      { roles: ["ADMIN"] },
+      { roles: ["LODGE"] },
+      { roles: ["ADMIN", "USER"] },
+      { roles: ["LODGE", "USER"] },
+      { roles: ["USER"] },
+      { roles: [] },
+      { roles: ["ADMIN_BOOKINGS"] },
+      { roles: ["ADMIN"], canLogin: false },
+      { roles: ["LODGE"], canLogin: true },
+    ];
+    for (const { roles, canLogin } of cases) {
+      const input = { accessRoles: roles.map((role) => ({ role })), canLogin };
+      const resolved = resolveAccessRoles(input);
+      const previous =
+        (resolved.includes("ADMIN") || resolved.includes("LODGE")) &&
+        !resolved.includes("USER");
+      expect(isAdminOrKioskOnlyRecord(input)).toBe(previous);
+    }
+    expect(isAdminOrKioskOnlyRecord({ accessRoles: [{ role: "ADMIN" }] })).toBe(true);
+    expect(
+      isAdminOrKioskOnlyRecord({ accessRoles: [{ role: "ADMIN" }], canLogin: false }),
+    ).toBe(false);
   });
 
   it("compiles over the shared select, and clears every check when login is off", () => {

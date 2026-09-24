@@ -269,8 +269,50 @@ export function accessRolesFromCompatibilityFields(
   ], { canLogin: input.canLogin });
 }
 
+/**
+ * The access roles that CLASSIFY a record rather than grant anything: a plain
+ * member (`USER`) and an organisation (`ORG`). Every other role is privileged
+ * (`isPrivilegedAccessRole`).
+ */
+type ClassificationAccessRole = Extract<AppAccessRole, "USER" | "ORG">;
+
+/**
+ * Whether the member holds `role`, with the login-disabled rule applied when
+ * the caller hands `canLogin` over.
+ *
+ * Two overloads, so the privilege type lock cannot be walked around (#3603).
+ * Asking about `USER` or `ORG` is a classification question and accepts the
+ * optional `AccessRoleInput`. Asking about any privileged role — `ADMIN`,
+ * `LODGE`, a finance or scoped admin role — is a privilege question and
+ * requires `canLogin` (`PrivilegeCheckInput`), exactly as `hasAdminAccess` does.
+ * Overloads rather than a conditional generic: a generic over the role would
+ * distribute across a union argument and accept the optional input again.
+ */
+export function hasAccessRole(
+  input: AccessRoleInput,
+  role: ClassificationAccessRole,
+): boolean;
+export function hasAccessRole(
+  input: PrivilegeCheckInput,
+  role: Exclude<AppAccessRole, ClassificationAccessRole>,
+): boolean;
 export function hasAccessRole(input: AccessRoleInput, role: AppAccessRole) {
   return resolveAccessRoles(input).includes(role);
+}
+
+/**
+ * RECORD CLASSIFICATION: an admin-only or kiosk-only account — one holding
+ * `ADMIN` or `LODGE` but not `USER`, so not a bookable member. Used to exempt
+ * such accounts from the confirm-details onboarding. It applies `canLogin`
+ * exactly as far as the caller supplies it, and admits nobody: a gate uses
+ * `hasAdminAccess` / `hasLodgeAccess`, which require it (#3603).
+ */
+export function isAdminOrKioskOnlyRecord(input: AccessRoleInput): boolean {
+  const roles = resolveAccessRoles(input);
+  return (
+    (roles.includes("ADMIN") || roles.includes("LODGE")) &&
+    !roles.includes("USER")
+  );
 }
 
 export function hasAdminAccess(input: PrivilegeCheckInput) {
