@@ -5,11 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * after login is switched back on, however its cookie is replayed (#3603,
  * owner decision D1 on PR #3608).
  *
- * This drives the REAL Auth.js session action (`Auth` from `@auth/core`, the
- * engine `next-auth` wraps) over the app's own `authConfig` callbacks, with REAL
- * encrypted session cookies (`encode`), so what is proved is what a browser
- * meets. Only the `next-auth` Next.js wrapper is stubbed, because it cannot load
- * outside Next; the session action, cookie encryption and callbacks are real.
+ * The session cookies are REAL Auth.js encrypted JWTs (`encode`/`decode` from
+ * `next-auth/jwt`), and each request runs the app's own `authConfig` jwt and
+ * session callbacks in the order the Auth.js session endpoint runs them:
+ * decrypt the presented cookie, refresh it through `jwt`, project it through
+ * `session`, and encrypt the refreshed token as the re-issued cookie. The
+ * `next-auth` Next.js wrapper is stubbed because it cannot load outside Next.
  * The refusal must hold for the ORIGINAL cookie, not only for the one the
  * endpoint re-issues: a client keeps whatever copy it likes, so any refusal that
  * lives only inside the token is a refusal the client can undo. The revocation
@@ -82,8 +83,7 @@ vi.mock("next-auth/providers/google", () => ({
   default: vi.fn((config) => ({ id: "google", type: "oidc", ...config })),
 }));
 
-import { Auth } from "@auth/core";
-import { encode } from "@auth/core/jwt";
+import { decode, encode } from "next-auth/jwt";
 import { authConfig } from "@/lib/auth";
 
 function memberRow(canLogin: boolean, sessionsRevokedAt: Date | null) {
@@ -118,23 +118,29 @@ async function sessionCookie(sessionIssuedAt: number) {
   });
 }
 
-/** One GET /api/auth/session carrying `cookie`: the session it returns, and the cookie it re-issues. */
+type SessionUser = {
+  sessionInvalidated?: boolean;
+  accessRoles?: string[];
+  canLogin?: boolean;
+};
+
+/**
+ * One GET /api/auth/session carrying `cookie`, as the Auth.js session endpoint
+ * serves it: the session it returns, and the cookie it re-issues.
+ */
 async function readSession(cookie: string) {
-  const response = await Auth(
-    new Request("http://localhost/api/auth/session", {
-      headers: { cookie: `${COOKIE}=${cookie}` },
-    }),
-    { ...authConfig, secret: SECRET, basePath: "/api/auth", providers: [] },
-  );
-  const body = (await response.json()) as {
-    user?: { sessionInvalidated?: boolean; accessRoles?: string[]; canLogin?: boolean };
-  } | null;
-  const reissued = response.headers
-    .getSetCookie()
-    .find((line) => line.startsWith(`${COOKIE}=`));
+  const token = await decode({ token: cookie, secret: SECRET, salt: COOKIE });
+  if (!token) return { user: null, reissued: null };
+  const refreshed = await authConfig.callbacks.jwt?.({ token } as never);
+  if (!refreshed) return { user: null, reissued: null };
+  const session = await authConfig.callbacks.session?.({
+    session: { user: {}, expires: "2099-01-01T00:00:00.000Z" },
+    token: refreshed,
+  } as never);
+  const reissued = await encode({ token: refreshed, secret: SECRET, salt: COOKIE });
   return {
-    user: body?.user ?? null,
-    reissued: reissued?.split(";")[0].slice(COOKIE.length + 1) ?? null,
+    user: ((session as { user?: SessionUser } | undefined)?.user ?? null) as SessionUser | null,
+    reissued,
   };
 }
 
