@@ -34,6 +34,7 @@ describe("canManageCalendarEvents", () => {
 
   it("grants a lodge-edit admin without touching the committee table", async () => {
     const result = await canManageCalendarEvents({
+      canLogin: true,
       id: "member-1",
       adminPermissionMatrix: lodgeEditMatrix,
     });
@@ -44,6 +45,7 @@ describe("canManageCalendarEvents", () => {
   it("grants a non-admin who holds an active committee assignment", async () => {
     mocks.committeeFindFirst.mockResolvedValue({ id: "assign-1" });
     const result = await canManageCalendarEvents({
+      canLogin: true,
       id: "member-2",
       adminPermissionMatrix: noAccessMatrix,
     });
@@ -54,6 +56,7 @@ describe("canManageCalendarEvents", () => {
   it("denies a plain member with no committee assignment", async () => {
     mocks.committeeFindFirst.mockResolvedValue(null);
     const result = await canManageCalendarEvents({
+      canLogin: true,
       id: "member-3",
       adminPermissionMatrix: noAccessMatrix,
     });
@@ -70,7 +73,7 @@ describe("canEditCalendarEvents", () => {
     // canEditCalendarEvents reads only the admin matrix (AdminPermissionInput);
     // it takes no member id because it never consults the committee table.
     expect(
-      canEditCalendarEvents({ adminPermissionMatrix: lodgeEditMatrix }),
+      canEditCalendarEvents({ canLogin: true, adminPermissionMatrix: lodgeEditMatrix }),
     ).toBe(true);
   });
 
@@ -79,14 +82,14 @@ describe("canEditCalendarEvents", () => {
     // admin-only — the gate must not consult the committee table at all.
     mocks.committeeFindFirst.mockResolvedValue({ id: "assign-1" });
     expect(
-      canEditCalendarEvents({ adminPermissionMatrix: noAccessMatrix }),
+      canEditCalendarEvents({ canLogin: true, adminPermissionMatrix: noAccessMatrix }),
     ).toBe(false);
     expect(mocks.committeeFindFirst).not.toHaveBeenCalled();
   });
 
   it("denies a plain member with no committee assignment", () => {
     expect(
-      canEditCalendarEvents({ adminPermissionMatrix: noAccessMatrix }),
+      canEditCalendarEvents({ canLogin: true, adminPermissionMatrix: noAccessMatrix }),
     ).toBe(false);
   });
 });

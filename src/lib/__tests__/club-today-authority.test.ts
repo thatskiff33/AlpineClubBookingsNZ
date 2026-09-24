@@ -135,7 +135,7 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
     it("bounds the reader's assignment window on the club's day", async () => {
       // A day early here withdraws a hut leader's access to the lodge's
       // operational documents while they are still on duty.
-      await canReadLodgeInstructions("member-1", { accessRoles: [] });
+      await canReadLodgeInstructions("member-1", { canLogin: true, accessRoles: [] });
 
       expect(assignmentBound().toISOString()).toBe(CLUB_DAY);
     });
@@ -143,7 +143,7 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
     it("agrees with hut-leader.ts, which its own comment requires", async () => {
       await hasActiveHutLeaderAssignment("member-1");
       const navBound = assignmentBound().toISOString();
-      await canReadLodgeInstructions("member-1", { accessRoles: [] });
+      await canReadLodgeInstructions("member-1", { canLogin: true, accessRoles: [] });
 
       expect(assignmentBound().toISOString()).toBe(navBound);
     });
