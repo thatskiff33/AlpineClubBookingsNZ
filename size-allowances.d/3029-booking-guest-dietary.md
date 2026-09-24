@@ -51,7 +51,7 @@ reason: the held booking resolves one dietary decision per planned guest
   inside the hold transaction it already opens.
 
 file: src/lib/booking-request.ts
-lines: 3031
+lines: 3032
 reason: the held-party reassignment decides carries by identity before its
   delete and per-row rewrites by occupant, and the no-hold approval seeds its
   guests; both sit inside the existing approval transaction.
@@ -77,7 +77,7 @@ reason: the cross-lodge offer rebuilds the same stay, so it captures each
   source row's value and carries it onto the new guest rows.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1221
+lines: 1235
 reason: granting a member guest's pending consent is the moment their row
   first belongs to them, so the approval fills an empty dietary note from their
   profile inside the consent transaction it already holds (#3029 S5); the
