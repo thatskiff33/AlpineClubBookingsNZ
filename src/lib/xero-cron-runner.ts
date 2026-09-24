@@ -302,7 +302,7 @@ export async function runXeroCronTaskList(
           work: async () =>
             connected
               ? await (taskDependencies.processQueuedXeroOperationRetries ??
-                  processQueuedXeroOperationRetries)()
+                  processQueuedXeroOperationRetries)(undefined, format)
               : { skipped: true, reason: "Xero not connected" },
         });
       } else if (task === "inbound") {

@@ -82,11 +82,31 @@ export type NumberShape = keyof typeof NUMBER_SHAPES;
 
 const formatters = new Map<string, Intl.NumberFormat>();
 
+/**
+ * A format that is not one is refused, not rendered (#3565 review). Without
+ * this, `{ currencyCode: "NZD" }` — a partial object that type-checks through a
+ * cast or a stale fixture — would build a formatter in the HOST's locale and
+ * memoise it under a key with an empty locale, and every later caller with the
+ * same defect would share that wrong instance. INV-CONFIG-006 is that the club's
+ * setting is the only authority; a silent fallback to the machine is the exact
+ * failure the kernel exists to remove, so it throws before the memo is touched.
+ */
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new TypeError(
+      `INV-CONFIG-006: a ClubFormat needs a non-empty \`${field}\`; got ${JSON.stringify(value)}. ` +
+        "Pass the club's resolved format — clubFormatValues() on the server, useClubFormat() in the browser.",
+    );
+  }
+  return value;
+}
+
 function formatterFor(
   key: string,
   locale: string,
   options: Intl.NumberFormatOptions,
 ): Intl.NumberFormat {
+  requireNonEmptyString(locale, "locale");
   const existing = formatters.get(key);
   if (existing) return existing;
   const created = new Intl.NumberFormat(locale, options);
@@ -105,6 +125,7 @@ export function clubMoneyFormatter(
   format: ClubFormat,
   shape: MoneyShape,
 ): Intl.NumberFormat {
+  requireNonEmptyString(format.currencyCode, "currencyCode");
   return formatterFor(
     `${shape}\u0000${format.locale}\u0000${format.currencyCode}`,
     format.locale,

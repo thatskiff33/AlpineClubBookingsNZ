@@ -2039,6 +2039,7 @@ describe("payment recovery worker", () => {
         }),
       );
       expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentId: "payment-1",
         newPaymentIntentId: "pi_recovered",

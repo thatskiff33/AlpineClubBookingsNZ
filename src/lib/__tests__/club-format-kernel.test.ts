@@ -19,6 +19,7 @@ import { formatCents, formatCentsPlain, formatSignedCents } from "@/lib/utils";
 import { stripComments } from "./support/strip-comments";
 
 import type { ClubFormat } from "@/lib/club-format";
+import { CLUB_FORMAT_TEST_OTHER } from "./support/club-format-fixture";
 
 /**
  * The money kernel (#3565, stage 3 of programme #3205). INV-CONFIG-006.
@@ -50,7 +51,8 @@ import type { ClubFormat } from "@/lib/club-format";
  */
 
 const NZ: ClubFormat = { currencyCode: "NZD", locale: "en-NZ" };
-const CH: ClubFormat = { currencyCode: "CHF", locale: "de-CH" };
+/** The house "not the default" format, shared with every other test that needs one. */
+const CH: ClubFormat = CLUB_FORMAT_TEST_OTHER;
 /** A comma-decimal locale: de-CH writes a decimal POINT, so it proves nothing there. */
 const DE: ClubFormat = { currencyCode: "EUR", locale: "de-DE" };
 /** A zero-minor-unit currency — the reason `cents` declares no fraction digits. */
@@ -243,8 +245,12 @@ describe("#3565: the format argument is required, and the compiler is the census
       const code = stripComments(
         readFileSync(path.join(process.cwd(), relative), "utf8"),
       );
+      // Both spellings of "optional": `format?: ClubFormat` and a defaulted
+      // `format: ClubFormat = …`. The @ts-expect-error lock above is the
+      // type-level instrument; this arm is kept as the source-level one because
+      // it reads the two formatter modules' text and needs no type checker.
       expect(code, `${relative} re-declares an optional format`).not.toMatch(
-        /format\?\s*:\s*ClubFormat/,
+        /format\?\s*:\s*ClubFormat|format\s*:\s*ClubFormat\s*=/,
       );
       expect(code, `${relative} names the deleted module`).not.toContain(
         "club-format-transitional",
@@ -315,6 +321,31 @@ describe("#3565 kernel: the bound API is the explicit API", () => {
         expect(bound.ratio(value)).toBe(formatFinanceRatio(value, format));
       }
     }
+  });
+});
+
+describe("#3565 kernel: a format that is not one is refused, never memoised", () => {
+  it("throws on a missing or empty locale, and on a missing currency for money", () => {
+    // The partial object the review found: type-checks through a cast, and
+    // used to render silently in the HOST locale and be memoised that way.
+    const noLocale = { currencyCode: "NZD" } as unknown as ClubFormat;
+    expect(() => clubMoneyFormatter(noLocale, "cents")).toThrow(/INV-CONFIG-006.*locale/);
+    expect(() => clubNumberFormatter(noLocale, "percent")).toThrow(/INV-CONFIG-006.*locale/);
+    expect(() =>
+      clubMoneyFormatter({ currencyCode: "NZD", locale: " " }, "cents"),
+    ).toThrow(/locale/);
+    expect(() =>
+      clubMoneyFormatter({ locale: "en-NZ" } as unknown as ClubFormat, "cents"),
+    ).toThrow(/INV-CONFIG-006.*currencyCode/);
+    expect(() =>
+      clubMoneyFormatter({ currencyCode: "", locale: "en-NZ" }, "cents"),
+    ).toThrow(/currencyCode/);
+    // A number shape has no currency to require.
+    expect(clubNumberFormatter({ locale: "en-NZ" } as unknown as ClubFormat, "percent").format(0.5)).toBe(
+      formatFinancePercent(0.5, NZ),
+    );
+    // And nothing bad was memoised: the good format still renders correctly after the refusals.
+    expect(formatCents(123456, NZ)).toBe("$1,234.56");
   });
 });
 

@@ -609,6 +609,7 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
+      format,
     });
 
   return { ...result, stripeRefundId, additionalPaymentIntentId };

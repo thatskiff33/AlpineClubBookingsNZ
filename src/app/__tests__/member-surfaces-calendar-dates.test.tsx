@@ -138,6 +138,7 @@ import {
 } from "@/lib/member-guest-consent-card";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { KioskWeekDaySummary } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 afterAll(() => {
   restoreHostTimeZone(originalHostTimeZone);
@@ -233,7 +234,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
   it("a linked non-member child's stay names its own nights", () => {
     render(
       <NonMemberGuestsSection
-        money={bindClubFormat({ currencyCode: "NZD", locale: "en-NZ" })}
+        money={bindClubFormat(CLUB_FORMAT_TEST)}
         nonOwnerAdminViewer={false}
         guests={[
           {

@@ -10,6 +10,7 @@ import {
   type NonMemberGuestChild,
 } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { bindClubFormat } from "@/lib/club-format-bound";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -49,7 +50,7 @@ function child(overrides: Partial<NonMemberGuestChild> = {}): NonMemberGuestChil
  * read the environment instead would change its expected strings the day a
  * deployment's `CURRENCY` changed.
  */
-const money = bindClubFormat({ currencyCode: "NZD", locale: "en-NZ" });
+const money = bindClubFormat(CLUB_FORMAT_TEST);
 
 describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("renders nothing when there are no children", () => {

@@ -866,7 +866,9 @@ const WAITLIST_CONFIRM_RETRY_ERROR =
  */
 export async function confirmWaitlistOffer(
   bookingId: string,
-  memberId: string
+  memberId: string,
+  /** The club's format (#3565), resolved once by the request, before any transaction. */
+  format: ClubFormat
 ): Promise<{
   success: boolean;
   newStatus?: BookingStatus;
@@ -919,7 +921,7 @@ export async function confirmWaitlistOffer(
     },
   });
   if (offerKind?.waitlistOfferedLodgeId) {
-    return confirmCrossLodgeWaitlistOffer(bookingId, memberId);
+    return confirmCrossLodgeWaitlistOffer(bookingId, memberId, format);
   }
 
   // Did the same-lodge minimum-stay check below ACTUALLY run against this offer?

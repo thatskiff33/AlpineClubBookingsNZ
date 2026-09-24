@@ -1426,7 +1426,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ parentBookingId: null }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1438,7 +1438,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ groupBookingJoin: { id: "join-1" } }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1461,7 +1461,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1480,7 +1480,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1508,7 +1508,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     mockedPaymentLinkFindFirst.mockResolvedValue(null);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     expect(mockedPaymentLinkCreate).toHaveBeenCalled();
@@ -1520,7 +1520,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       .mockResolvedValueOnce(splitChild() as never) // outer load
       .mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never); // under-lock re-read
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_payable" });
     expect(mockedPaymentLinkFindFirst).not.toHaveBeenCalled();
@@ -1535,7 +1535,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       splitChild({ noEmails: true }) as never
     );
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "withheld" });
     // The whole point: no mint, so no revoke, so no churn.
@@ -1561,7 +1561,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       id: "log-existing",
     } as never);
 
-    await issueSplitGuestPaymentLink("child-1");
+    await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(vi.mocked(prisma.emailLog.create)).not.toHaveBeenCalled();
   });
@@ -1573,7 +1573,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     mockedPaymentLinkFindFirst.mockResolvedValue(null);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     expect(mockedPaymentLinkCreate).toHaveBeenCalledWith(
@@ -1600,7 +1600,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       createdAt: new Date(Date.now() - 10_000), // 10s old — inside cooldown
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "just_sent" });
     expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
@@ -1618,7 +1618,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     } as never);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     // Revocation and mint are one atomic step under the lodge lock:
@@ -1650,7 +1650,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "BOUNCE",
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "suppressed" });
     // Post-commit revocation targets exactly the minted row by id.
@@ -1689,7 +1689,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "environment_unknown",
     } as never);
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     // 503 "try again shortly" rather than 502 "your address is undeliverable".
     expect(result).toEqual({ outcome: "transient_failure" });
@@ -1714,7 +1714,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "capture_transport_in_production",
     } as never);
 
-    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({
       outcome: "transient_failure",
     });
   });
@@ -1736,7 +1736,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       reason: "environment_non_production",
     } as never);
 
-    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({
       outcome: "withheld",
     });
   });
@@ -1751,7 +1751,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
       new Error("SES unavailable")
     );
 
-    await expect(issueSplitGuestPaymentLink("child-1")).rejects.toThrow(
+    await expect(issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).rejects.toThrow(
       "SES unavailable"
     );
     expect(mockedUpdateMany).toHaveBeenCalledWith(

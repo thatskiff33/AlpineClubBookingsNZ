@@ -65,6 +65,7 @@ import {
   processQueuedXeroOperationRetries,
   XERO_OPERATION_REQUEUE_TYPE,
 } from "@/lib/xero-operation-queue";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -176,7 +177,7 @@ describe("processQueuedXeroOperationRetries", () => {
       message: "Retried Xero booking invoice creation.",
     });
 
-    await expect(processQueuedXeroOperationRetries({ limit: 5 })).resolves.toEqual({
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
       found: 1,
       processed: 1,
       succeeded: 1,
@@ -193,7 +194,7 @@ describe("processQueuedXeroOperationRetries", () => {
         },
       })
     );
-    expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith("op_123", {
+    expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith("op_123", CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
@@ -221,7 +222,7 @@ describe("processQueuedXeroOperationRetries", () => {
       message: "Retried Xero membership cancellation credit note creation.",
     });
 
-    await expect(processQueuedXeroOperationRetries({ limit: 5 })).resolves.toEqual({
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
       found: 1,
       processed: 1,
       succeeded: 1,
@@ -229,7 +230,7 @@ describe("processQueuedXeroOperationRetries", () => {
       skipped: 0,
     });
 
-    expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith(originalOperationId, {
+    expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith(originalOperationId, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
     });
   });
@@ -241,7 +242,7 @@ describe("processQueuedXeroOperationRetries", () => {
       }),
     ]);
 
-    await expect(processQueuedXeroOperationRetries()).resolves.toEqual({
+    await expect(processQueuedXeroOperationRetries(undefined, CLUB_FORMAT_TEST)).resolves.toEqual({
       found: 1,
       processed: 1,
       succeeded: 0,
@@ -265,7 +266,7 @@ describe("processQueuedXeroOperationRetries", () => {
     mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
 
-    await expect(processQueuedXeroOperationRetries({ limit: 5 })).resolves.toEqual({
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
       found: 1,
       processed: 0,
       succeeded: 0,

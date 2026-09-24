@@ -57,14 +57,14 @@ const POPULATION_PUBLISHERS = [
 ] as const;
 
 /** The published sentence, in the one wording both publishers use. */
-// Both publishers say "<n> test files, four test helpers and one CI script
+// Both publishers say "<n> test files, five test helpers and one CI script
 // import". The middle clause is what #2975's helper forced: the KIND of importer
 // changed, not just the count, and a regex that only reached the number would
 // have gone on matching a sentence that had become false.
 // #3276 added a second helper (the shared night-writer scanner), so the clause
 // counts helpers too — still exact; #3278 adds the third shared scanner.
 const PUBLISHED_POPULATION =
-  /(\d+)\s+test files,\s+four\s+test\s+helpers and\s+one CI script import\b/;
+  /(\d+)\s+test files,\s+five\s+test\s+helpers and\s+one CI script import\b/;
 
 /*
   HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
@@ -89,8 +89,11 @@ const PUBLISHED_POPULATION =
 */
 const IMPORT_SPECIFIER =
   /(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)(["'])([^"'\n]+)\1/g;
+// `./strip-comments` is the sibling spelling a helper INSIDE `support/` uses
+// (#3565 review: `member-parent-writer-census.ts`); the old pattern required the
+// `support/` segment and so undercounted by one.
 const CANONICAL_SPECIFIER =
-  /(?:^|\/)support\/strip-comments(?:\.(?:ts|tsx|js|jsx|mjs|cjs))?$/;
+  /(?:(?:^|\/)support\/|^\.\/)strip-comments(?:\.(?:ts|tsx|js|jsx|mjs|cjs))?$/;
 
 const SCANNED_EXTENSION = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const UNSCANNED_DIRECTORY = new Set([
@@ -573,6 +576,10 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
       // #3278: the Stage 4 headline/component writer scanner reuses the same
       // canonical comment stripper for its raw-SQL escape-route check.
       "src/lib/__tests__/support/booking-money-writer-scan.ts",
+      // #3560: the parent-writer census scanner, which imports the stripper by
+      // its SIBLING path (`./strip-comments`) and was invisible to this guard
+      // until #3565 taught the specifier match that spelling.
+      "src/lib/__tests__/support/member-parent-writer-census.ts",
       // #3564: the ONE provider-mount walker, extracted so the club-time census
       // and the club-format one share it rather than growing a second copy. It
       // strips comments before deciding whether a module mounts a provider, for
@@ -589,7 +596,7 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
 
       expect(
         published,
-        `${publisher} no longer contains the sentence "<n> test files, four test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
+        `${publisher} no longer contains the sentence "<n> test files, five test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
       ).not.toBeNull();
 
       expect(

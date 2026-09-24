@@ -26,7 +26,7 @@ import logger from "@/lib/logger";
 import { revokePaymentLinkById } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
-import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
  * plus the row id so a caller whose email fails can revoke THIS link — and
@@ -163,11 +163,10 @@ export type IssueSplitGuestPaymentLinkResult =
  * second live settlement path.
  */
 export async function issueSplitGuestPaymentLink(
-  childBookingId: string
+  childBookingId: string,
+  /** The club's format (#3565), resolved once by the caller — never per child. */
+  format: ClubFormat
 ): Promise<IssueSplitGuestPaymentLinkResult> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
   const booking = await prisma.booking.findUnique({
     where: { id: childBookingId },
     include: {

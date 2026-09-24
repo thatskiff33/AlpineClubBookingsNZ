@@ -20,8 +20,9 @@
   alike, which is checked by test against the formatter that was retired.
 
   **What a club that has changed its currency will notice:** every amount, on
-  every surface, now shows the currency you recorded. Dates and times still
-  follow the server's `LOCALE` setting and move in a later release, so keep
+  every surface, now shows the currency you recorded. This release is money
+  only: dates and times still follow the server's `LOCALE` setting and move
+  in a later release (#3566), so keep
   that one matching the format you recorded until then. Nothing about how money
   is calculated, charged or refunded changes — this is entirely about how an
   amount is written out.

@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useMemo } from "react";
 
-import { bindClubFormat, type BoundClubFormat } from "@/lib/club-format-bound";
 
 import {
   CLUB_CURRENCY_FALLBACK,
@@ -72,11 +71,12 @@ import {
  * Renders money. Since #3565 every money and number rendering in
  * `src/lib/utils.ts` and `src/lib/finance-format.ts` takes the club's format as a
  * REQUIRED argument, so a component that renders an amount has to get one from
- * somewhere, and in the browser this is the only place it can. Most callers want
- * the operations rather than the values: {@link useBoundClubFormat} hands back
- * the same `BoundClubFormat` that `clubFormat()` hands a server module, so a
- * component that moves between server and client changes the line that obtains
- * it and nothing else.
+ * somewhere, and in the browser this is the only place it can. A component that
+ * renders many amounts binds once with `bindClubFormat(useClubFormat())`, which
+ * hands back the same `BoundClubFormat` that `clubFormat()` hands a server
+ * module, so a component that moves between server and client changes the line
+ * that obtains it and nothing else. (A `useBoundClubFormat` hook shipped briefly
+ * in #3565 and was removed once every call site had chosen the explicit form.)
  *
  * `club-time/intl.ts`'s locale is still the environment's; it is #3566.
  */
@@ -153,15 +153,3 @@ export function useClubFormat(): ClubFormat {
   return format;
 }
 
-/**
- * The club's money kernel with its format already bound — the browser's
- * counterpart of `clubFormat()` (#3565).
- *
- * The SAME context as {@link useClubFormat}, not a second one: this binds what
- * that returns, memoised on the provider's own memoised value, so the binding is
- * stable across renders and safe in a hook's dependency list.
- */
-export function useBoundClubFormat(): BoundClubFormat {
-  const format = useClubFormat();
-  return useMemo(() => bindClubFormat(format), [format]);
-}

@@ -1350,7 +1350,7 @@ describe("confirmWaitlistOffer", () => {
       new HostingCoverageParticipantRetryError(),
     );
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1381,7 +1381,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PAYMENT_PENDING");
@@ -1427,7 +1427,7 @@ describe("confirmWaitlistOffer", () => {
       lodgeId: "lodge-1",
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1465,7 +1465,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PENDING");
@@ -1503,7 +1503,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PAYMENT_PENDING");
@@ -1534,7 +1534,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("expired");
@@ -1558,7 +1558,7 @@ describe("confirmWaitlistOffer", () => {
         guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
       });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -1584,7 +1584,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m2");
+    const result = await confirmWaitlistOffer("booking1", "m2", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Forbidden");
@@ -1610,7 +1610,7 @@ describe("confirmWaitlistOffer", () => {
     (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: false });
     mockTx.booking.update.mockResolvedValue({});
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("no longer available");
@@ -1633,7 +1633,7 @@ describe("confirmWaitlistOffer", () => {
       guests: offerGuests(new Date("2026-07-01"), new Date("2026-07-03")),
     });
 
-    const result = await confirmWaitlistOffer("booking1", "m1");
+    const result = await confirmWaitlistOffer("booking1", "m1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("not in WAITLIST_OFFERED");

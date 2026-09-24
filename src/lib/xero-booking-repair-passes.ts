@@ -615,7 +615,7 @@ export async function applyActionsForPass(
   if (xeroConnectionAvailable) {
     const [outboxResult, retryResult] = await Promise.all([
       deps.processQueuedXeroOutboxOperations({ limit: 50 }),
-      deps.processQueuedXeroOperationRetries({ limit: 50 }),
+      deps.processQueuedXeroOperationRetries({ limit: 50 }, format),
     ]);
 
     if (

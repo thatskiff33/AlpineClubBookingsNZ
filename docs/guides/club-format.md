@@ -25,8 +25,9 @@ the club's currency, not their own.
 is where the club's currency and format are *recorded*, and every price,
 invoice figure, statement line, email total and Xero description now follows it
 as soon as you save. **Dates and times** are the part still worked out from the
-`LOCALE` value the server was started with, and move in a later change; until
-then, **keep the server's `LOCALE` in step** with the format recorded here.
+`LOCALE` value the server was started with: this change is money only, by the
+owner's decision, and the date locale moves in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566).
+Until then, **keep the server's `LOCALE` in step** with the format recorded here.
 What is already true, and permanent: nothing on this page rewrites any amount
 already recorded.
 
@@ -54,7 +55,7 @@ the setting recorded here, as soon as you save it:
 These do **not** yet, and still come from the server's `LOCALE`:
 
 - every other date and time, which go through the shared date formatters and
-  move in a later change. **Two of them sit on screens listed above**, and are
+  move in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566). **Two of them sit on screens listed above**, and are
   the only places you will see the two answers side by side: the "Last refresh"
   line at the top of the health dashboard, and the live clock on the lobby
   display. Both are written by the shared machinery rather than by their own

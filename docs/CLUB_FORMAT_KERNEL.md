@@ -117,6 +117,12 @@ optional, and the compiler can. `club-format-kernel.test.ts` pins that with a
 `@ts-expect-error` per rendering, which turns a re-added optional parameter into
 an "unused directive" compile error under `tsc -p tsconfig.test.json`.
 
+**This stage is money only**, by the owner's decision on #3565: every currency
+amount, percentage and count. The DATE locale — `club-time/intl.ts`,
+`induction-display.ts` and the stuck-states page, which still read `APP_LOCALE`
+— is [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566)'s
+to move, and nothing here touches it.
+
 The rules that make a required argument bearable, and that every call site now
 follows:
 
@@ -133,7 +139,7 @@ follows:
   parameter, or as a required property of their params object) and never look
   it up.
 - **A `"use client"` component reads the stage 2 provider** —
-  `useClubFormat()` for the values or `useBoundClubFormat()` for the
+  `useClubFormat()` for the values, or `bindClubFormat` on them for the
   operations — and never imports `club-format-server`.
 - **A `src/lib` module a client file can reach takes a parameter**, so it stays
   off the `server-only` graph.

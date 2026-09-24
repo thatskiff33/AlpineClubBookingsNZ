@@ -319,6 +319,7 @@ export async function createModificationAdditionalPaymentIntent({
     });
 
     await queueSupersededAdditionalIntentCancellations({
+      format,
       bookingId,
       paymentId: result.paymentId,
       newPaymentIntentId: pi.id,

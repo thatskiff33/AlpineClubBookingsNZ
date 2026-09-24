@@ -52,7 +52,7 @@ import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
-import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
 // helpers when a member has opted into alternate lodges: the queue-order
@@ -303,10 +303,9 @@ const CROSS_LODGE_MINIMUM_STAY_ERROR =
 export async function confirmCrossLodgeWaitlistOffer(
   bookingId: string,
   memberId: string,
+  /** The club's format (#3565), resolved once by the request, before any transaction. */
+  format: ClubFormat,
 ): Promise<CrossLodgeConfirmResult> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
   // Phase 0 — #2363 minimum stay at the OFFERED lodge, evaluated OUTSIDE any
   // transaction (the house pattern for pre-write policy checks; Phase 1 below
   // holds that lodge's capacity lock, and a policy read on a second pool

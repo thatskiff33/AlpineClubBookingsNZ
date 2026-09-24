@@ -34,7 +34,6 @@ vi.mock("@/lib/club-identity-settings", () => ({
       : {},
   })),
 }));
-vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getDefaultLodgeCapacity: vi.fn(async () => 42),
   getLodgeCapacity: vi.fn(async (lodgeId: string) =>
@@ -248,7 +247,11 @@ describe("buildEmbeddedBody", () => {
     expect(parts).toEqual([
       {
         type: "html",
-        value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD &amp; GST.</p>",
+        // `{{currency}}` is the club's STORED code since #3565 (the `club-format-server`
+        // mock above), not the environment's; a validated ISO 4217 code can never
+        // carry a character that needs escaping, so the escaping proof on this line
+        // is the club name's.
+        value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD.</p>",
       },
     ]);
   });

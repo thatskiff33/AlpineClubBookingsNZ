@@ -25,7 +25,7 @@ import {
 } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
-import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
@@ -961,11 +961,9 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 
 export async function retryXeroSyncOperation(
   operationId: string,
+  format: ClubFormat,
   options?: { createdByMemberId?: string }
 ): Promise<{ message: string }> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
   });

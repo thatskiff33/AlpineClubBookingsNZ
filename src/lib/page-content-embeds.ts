@@ -8,7 +8,6 @@ import {
   resolveInImagesRoot,
 } from "@/lib/image-storage";
 import { getClubIdentity } from "@/lib/club-identity-settings";
-import { APP_CURRENCY } from "@/config/operational";
 import {
   getDefaultLodgeCapacity,
   getLodgeCapacity,
@@ -227,6 +226,11 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
     return contentHtml;
   }
 
+  // The club's STORED currency (#3565), not the environment's: the fee tables
+  // on the same page already render in it, and `{{currency}}` must agree with
+  // them. `cache()` dedups this with the page's own read.
+  const format = await clubFormatValues();
+
   // Pre-resolve each distinct lodge-capacity parameter (the replace
   // callback below is synchronous).
   const capacityParams = new Set(
@@ -295,7 +299,7 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
         case "hut-leader-lower":
           return escapeHtmlText(clubIdentity.hutLeaderLabel.toLowerCase());
         case "currency":
-          return escapeHtmlText(APP_CURRENCY);
+          return escapeHtmlText(format.currencyCode);
         case "facebook-url":
           // Escaping keeps the value safe as visible text and attribute
           // content, but not as an href target: a javascript: scheme survives

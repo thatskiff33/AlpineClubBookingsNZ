@@ -36,7 +36,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
-import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -489,6 +489,7 @@ export async function executeEditReviewSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
+  format,
 }: {
   bookingId: string;
   taskId: string;
@@ -499,13 +500,12 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
   cancellationHandBackInvoiceId: string | null;
+  /** The club's format (#3565), resolved once by the caller, before its transaction. */
+  format: ClubFormat;
 }): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
 }> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
   let stripeRefundId: string | null = null;
 
   if (route?.kind === "stripe-refund") {

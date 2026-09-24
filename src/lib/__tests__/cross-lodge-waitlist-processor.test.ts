@@ -350,11 +350,12 @@ describe("confirmWaitlistOffer cross-lodge dispatch", () => {
       newBookingId: "booking-new",
     });
 
-    const result = await confirmWaitlistOffer("entry-a", "member-1");
+    const result = await confirmWaitlistOffer("entry-a", "member-1", CLUB_FORMAT_TEST);
 
     expect(mocks.confirmCrossLodgeWaitlistOffer).toHaveBeenCalledWith(
       "entry-a",
       "member-1",
+      CLUB_FORMAT_TEST,
     );
     expect(result).toEqual({ success: true, newBookingId: "booking-new" });
   });
@@ -363,7 +364,7 @@ describe("confirmWaitlistOffer cross-lodge dispatch", () => {
     mocks.bookingFindUnique.mockResolvedValue({ waitlistOfferedLodgeId: null });
     mocks.transaction.mockResolvedValue({ success: false, error: "Booking not found" });
 
-    const result = await confirmWaitlistOffer("entry-a", "member-1");
+    const result = await confirmWaitlistOffer("entry-a", "member-1", CLUB_FORMAT_TEST);
 
     expect(mocks.confirmCrossLodgeWaitlistOffer).not.toHaveBeenCalled();
     expect(result.success).toBe(false);

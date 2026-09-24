@@ -2806,6 +2806,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     "@/lib/booking-payment-cleanup"
   );
   await queueSupersededAdditionalIntentCancellations({
+    format,
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     newPaymentIntentId: pi.id,
@@ -3006,10 +3007,9 @@ async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
  */
 export async function runPaymentRecoveryOperationNow(
   operationId: string,
+  /** The club's format (#3565), resolved once by the caller — never per queued row. */
+  format: ClubFormat,
 ): Promise<"succeeded" | "not-claimed" | "failed"> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
   const operation = await claimPaymentRecoveryOperation(operationId).catch(
     (err) => {
       logger.error(

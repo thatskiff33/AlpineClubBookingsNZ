@@ -142,6 +142,41 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
     );
   });
 
+  /*
+    #3565 REVIEW: the refusal text used to be built inline, in three template
+    literals inside `findReconciliationMismatch`. It is now DATA (the
+    `ReconciliationMismatch` union) rendered by `describeReconciliationMismatch`
+    with the club's format. These three strings are transcribed from `main`'s
+    templates, with the amounts written out as `formatCents` rendered them there,
+    so the relocation is proven byte-identical rather than merely regex-shaped.
+  */
+  it("renders each mismatch exactly as the inline templates on main did", () => {
+    const thrown = (params: Parameters<typeof reconcilePromoAdjustmentTargets>[0]) => {
+      try {
+        reconcilePromoAdjustmentTargets(params, CLUB_FORMAT_TEST);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(
+      thrown({ ...base, allocations: [{ memberId: "booker", priceAdjustmentCents: -1400 }] }),
+    ).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: adjustment rows for member booker sum to -$15.00 but the recorded allocation is -$14.00`,
+    );
+    expect(thrown({ ...base, priceAdjustmentCents: -1600 })).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: adjustment rows sum to -$15.00 but the recorded redemption adjustment is -$16.00`,
+    );
+    expect(
+      thrown({
+        ...base,
+        targets: [{ ...TARGETS[0], amountCents: -500.5 }, TARGETS[1], TARGETS[2]],
+      }),
+    ).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: an adjustment amount is not integer cents (-500.5)`,
+    );
+  });
+
   it("treats an absent allocation as zero received, so a SET_PRICE net-zero member reconciles", () => {
     expect(() =>
       reconcilePromoAdjustmentTargets({

@@ -103,7 +103,7 @@ export async function POST(
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
 
-  const result = await confirmWaitlistOffer(bookingId, session.user.id);
+  const result = await confirmWaitlistOffer(bookingId, session.user.id, format);
 
   if (!result.success) {
     const status = result.error === "Forbidden" ? 403
