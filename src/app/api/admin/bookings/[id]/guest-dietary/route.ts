@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
-import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
+import {
+  DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+  isDietaryRequirementsWithinLimit,
+} from "@/lib/member-dietary-field";
 import {
   grantBookingAdminDietaryAccess,
   isDietaryFieldEnabled,
@@ -12,16 +15,19 @@ import { requireAdmin } from "@/lib/session-guards";
 
 /**
  * The body: exactly one guest and its new value. `dietaryRequirements` is
- * REQUIRED here (null or a blank string clears it); the shared schema carries
- * the one 500-character limit.
+ * REQUIRED here — a string, or null / a blank string to clear it — because the
+ * shared JSON schema treats an absent key as "leave it alone", and on this route
+ * an absent key would otherwise arrive as a clear. The limit is the shared one.
  */
 const guestDietarySchema = z
   .object({
     guestId: z.string().min(1),
-    dietaryRequirements: dietaryRequirementsInputSchema.refine(
-      (value) => value !== undefined,
-      { message: "dietaryRequirements is required (null clears it)" },
-    ),
+    dietaryRequirements: z
+      .string()
+      .nullable()
+      .refine(isDietaryRequirementsWithinLimit, {
+        message: DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+      }),
   })
   .strict();
 
@@ -84,7 +90,7 @@ export async function PATCH(
       {
         bookingId,
         guestId,
-        value: parsed.data.dietaryRequirements ?? null,
+        value: parsed.data.dietaryRequirements,
       },
       tx,
     );
