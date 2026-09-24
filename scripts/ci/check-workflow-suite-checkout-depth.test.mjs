@@ -453,6 +453,25 @@ describe("this repository", () => {
     expect(fullSuiteJobs).toBe(2);
   });
 
+  it("runs the file-size ratchet as verify's actual final step", () => {
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github", "workflows", "ci.yml"),
+      "utf8",
+    );
+    const verify = parseWorkflowYaml(workflow).jobs.verify;
+
+    expect(verify.steps.at(-1)).toEqual({
+      name: "File-size budget ratchet",
+      env: {
+        BUDGET_BASE:
+          "${{ (github.event_name == 'push' && github.event.created == false && " +
+          "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
+          "'origin/main' }}",
+      },
+      run: 'npm run quality:budget -- --base "$BUDGET_BASE"',
+    });
+  });
+
   it("sees the whole suite in ci.yml's `verify` and in the canary", () => {
     const read = (name) =>
       readFileSync(path.join(REPO_ROOT, ".github", "workflows", name), "utf8");

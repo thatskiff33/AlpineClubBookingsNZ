@@ -69,9 +69,18 @@ written another, with nothing flagging it. `CURRENCY` no longer affects
 anything an existing club sees; it is read only on the very first start of a
 fresh install, to seed this page.
 
-Changing either value is a **Full Administrator** job. It needs an explicit
-confirmation, and every such change is written to the audit log with who made it
-and what it was before.
+**Every administrator can see this page; only a Full Administrator can change
+it.** Any admin — a treasurer or a bookings officer checking why an amount or a
+date is written the way it is — can open the page and read both values, where
+each came from and who last changed them. Everyone who is not a Full
+Administrator sees them read-only, under a note saying so, with the Change
+button greyed out. Changing either value is a **Full Administrator** job. It
+needs an explicit confirmation, and every such change is written to the audit
+log with who made it and what it was before.
+
+This is where the page differs from its neighbours. **Club Time Zone** and
+**Environment Safety** are Full Administrator only to open as well as to change;
+this page is the same as them on changing and different on viewing.
 
 ## When you'd use it
 
@@ -140,6 +149,7 @@ is older than the currency.
 | Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |
 | Someone changed it and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_FORMAT_UPDATED`. The entry names the administrator, and the values before and after |
+| The page says "You have view-only access to this area" and **Change currency and format** is greyed out | Your admin account is not a Full Administrator. Every admin can see these values; only a Full Administrator can change them | Ask a Full Administrator to make the change |
 
 ## Related links
 

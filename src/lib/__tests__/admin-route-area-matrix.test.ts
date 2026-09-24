@@ -217,9 +217,11 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/chores/[id]": "lodge",
   "/api/admin/club-contact": "content",
   // #3563 (programme #3205): the club currency and locale maintenance API.
-  // `support` for route-map resolution only; BOTH verbs enforce Full Admin in
-  // the route itself with `requireAdmin({ permission: false })`, exactly like
-  // club-time-zone below.
+  // `support` for route-map resolution only; each verb passes its own explicit
+  // gate (#3596) — the read `requireAdmin({ permission: "any-admin" })`, WIDER
+  // than this area, and the write `requireAdmin({ permission: false })`, Full
+  // Admin like club-time-zone below. Both divergences are pinned in
+  // `admin-route-authorization-proof.test.ts`.
   "/api/admin/club-format": "support",
   "/api/admin/club-identity": "content",
   // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
