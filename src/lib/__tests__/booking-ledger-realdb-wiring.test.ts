@@ -52,6 +52,8 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "posts credit applied and a clamp give-back one line per row, summing to what the booking holds applied",
       "posts a TIERED restore for exactly what was restored, anchored on the cancellation",
       "posts a cancellation credit against its own row",
+      "posts a reduction credit against its own row",
+      "posts NO hand-back for a task on a card payment",
       "posts a completed hand-back through the REAL resolver",
     ]) {
       expect(suite).toContain(caseName);

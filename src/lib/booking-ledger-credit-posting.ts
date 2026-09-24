@@ -4,7 +4,7 @@
  *
  * Pure: it reads nothing and writes nothing. The store-facing halves are
  * `booking-ledger-credit-sync.ts` (credit rows) and
- * `booking-ledger-hand-back-posting.ts` (a completed hand-back).
+ * `booking-ledger-hand-back.ts` (a completed hand-back).
  *
  * INSERT-ONLY IS SOUND HERE, and that was checked at source rather than
  * assumed — the opposite of #3581, where a captured transaction can stop being
@@ -28,11 +28,14 @@
  * was applied, and it is one row for however many `BOOKING_APPLIED` rows the
  * booking holds. A reversal copies the line it reverses in full, so it would
  * over-state every tiered restore. A restore therefore posts `CREDIT_ISSUED`
- * for exactly what was restored, and is told apart from a cancellation credit
- * on the LINE — anchored on the `CANCELLATION` (the booking id; there is at
- * most one restore per booking, by the unique `restoredFromBookingId`) — because
- * the two differ in money terms: a cancellation credit moves the payment's
- * `refundedAmountCents`, a restore never does (`stripe-cash-refund-evidence.ts`).
+ * for exactly what was restored, and is told apart on the LINE — anchored on
+ * the `CANCELLATION` (the booking id; there is at most one restore per booking,
+ * by the unique `restoredFromBookingId`) — because it gives back credit the
+ * member already spent, where every other `CREDIT_ISSUED` converts money the
+ * booking held into credit. Do not read more into the anchor: whether a row
+ * moved the payment's `refundedAmountCents` depends on its writer (a restore
+ * never does; the Xero inbound mints and an unallocated reduction credit do
+ * not either), and C4 must not classify that difference by anchor.
  */
 import type { CreditType } from "@prisma/client";
 

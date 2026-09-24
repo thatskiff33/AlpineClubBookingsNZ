@@ -8,6 +8,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
+import { bookingAppliedCreditWhere } from "@/lib/member-credit-booking-rows";
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
@@ -357,10 +358,7 @@ export async function deriveBookingAppliedCreditCents(
   db: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<number> {
   const agg = await db.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-    },
+    where: bookingAppliedCreditWhere(bookingId),
     _sum: { amountCents: true },
   });
   return Math.max(0, -(agg._sum.amountCents ?? 0));
@@ -549,10 +547,7 @@ export async function restoreCreditFromBooking(
 
   // Find all BOOKING_APPLIED credits for this booking
   const appliedCredits = await db.memberCredit.findMany({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-    },
+    where: bookingAppliedCreditWhere(bookingId),
   });
 
   if (appliedCredits.length === 0) {

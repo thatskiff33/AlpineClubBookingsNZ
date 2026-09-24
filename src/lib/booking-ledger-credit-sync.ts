@@ -7,7 +7,8 @@
  * booking-linked credit row, straight after the row, inside the writer's own
  * transaction: the five writers in `member-credit.ts` (which between them serve
  * every cancel, restore, reduction, clamp and credit election) and the four
- * rows the Xero inbound paths write directly. "Every writer" is held by a
+ * rows the Xero inbound paths write directly. Which rows are the booking's is
+ * `member-credit-booking-rows.ts`'s, shared with `deriveBookingAppliedCreditCents`. "Every writer" is held by a
  * census rather than by this sentence: `booking-ledger-credit-writers.test.ts`
  * fails on a credit-row write in a file that never calls this. It converges the
  * whole booking each time, so a row a caller missed is posted by the next.
@@ -19,6 +20,13 @@
  * statement PostgreSQL refuses has already aborted the transaction. The write
  * skips, rather than refuses, a key already posted (`INV-MONEY-033`).
  *
+ * A WRITER WITHOUT A TRANSACTION. Three writers fall back to the singleton
+ * when handed no client (`createCancellationCredit`,
+ * `createBookingModificationCredit`, `restoreCreditFromBooking`); there the
+ * row and its line commit separately, and a crash between them leaves a row
+ * the next write for that booking posts. Every production caller passes one
+ * (all thirteen checked for #3609's review); the fallback serves tests.
+ *
  * NO READ-ORDER RACE. #3581's sync must read lines before rows because it can
  * post reversals; nothing here is ever reversed, so a mixed snapshot can only
  * re-plan a line already posted (a skip) or miss a row a later call will post.
@@ -29,6 +37,7 @@ import { planCreditLines } from "@/lib/booking-ledger-credit-posting";
 import { findPostedCreditLines } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
+import { bookingAppliedCreditWhere, bookingIssuedCreditWhere } from "@/lib/member-credit-booking-rows";
 
 export type CreditSyncStore = Pick<Prisma.TransactionClient, "booking" | "memberCredit" | "bookingLedgerLine">;
 
@@ -47,13 +56,11 @@ export async function syncBookingLedgerCredits({
 
   const postedLines = await findPostedCreditLines(store, bookingId);
   const credits = await store.memberCredit.findMany({
-    where: {
-      OR: [
-        { appliedToBookingId: bookingId, type: "BOOKING_APPLIED" },
-        { sourceBookingId: bookingId, type: { in: ["CANCELLATION_REFUND", "BOOKING_MODIFICATION_REFUND"] } },
-      ],
-    },
+    where: { OR: [bookingAppliedCreditWhere(bookingId), bookingIssuedCreditWhere(bookingId)] },
     select: { id: true, type: true, amountCents: true, restoredFromBookingId: true },
+    // One order for every writer, so two transactions posting the same
+    // not-yet-posted rows insert them in the same order (review of #3609).
+    orderBy: { id: "asc" },
   });
 
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
