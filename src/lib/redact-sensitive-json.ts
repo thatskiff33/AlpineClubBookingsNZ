@@ -1,3 +1,5 @@
+import { DIETARY_KEY_FRAGMENTS } from "@/lib/member-dietary-field";
+
 const REDACTED_SECRET = "[REDACTED]";
 
 /**
@@ -233,13 +235,12 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
   "gender",
   "occupation",
   // Dietary/allergy information (#2941, `INV-PRIV-022`): special-category
-  // data, including children's. Fragments, so `dietaryRequirements`,
-  // `guestDietary`, `allergies` and `allergyNotes` are all caught; nothing
-  // identifies such a value by its shape, so the key is the only defence. The
-  // accepted collateral is the `showDietaryRequirements` toggle boolean, the
-  // same trade as `showOccupation` above.
-  "dietary",
-  "allerg",
+  // data, including children's. Nothing identifies such a value by its shape,
+  // so the key is the only defence. The fragments are the ONE list the audit
+  // sanitizer also reads (`DIETARY_KEY_FRAGMENTS`). The accepted collateral is
+  // the `showDietaryRequirements` toggle boolean, the same trade as
+  // `showOccupation` above.
+  ...DIETARY_KEY_FRAGMENTS,
   "street",
   "postal",
   "addressline",

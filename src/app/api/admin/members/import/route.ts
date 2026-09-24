@@ -47,9 +47,11 @@ import {
 import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 import { isFullAdmin } from "@/lib/access-roles";
 import {
+  DIETARY_REQUIREMENTS_LABEL,
   DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
+  dietaryRequirementsValueSchema,
   isDietaryRequirementsWithinLimit,
-  normalizeDietaryRequirements,
+  normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
 
@@ -65,14 +67,9 @@ const importRowSchema = z
     lastName: nullableImportString(100),
     gender: nullableImportString(40),
     occupation: nullableImportString(MEMBER_IMPORT_OCCUPATION_MAX_LENGTH),
-    // #2941: judged on the normalised value, the same rule every writer uses.
-    dietaryRequirements: z
-      .string()
-      .optional()
-      .nullable()
-      .refine(isDietaryRequirementsWithinLimit, {
-        message: DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
-      }),
+    // #2941: the one shape every JSON writer shares. The 500-character rule
+    // is applied below, only when this import actually takes the column.
+    dietaryRequirements: dietaryRequirementsValueSchema,
     email: z.string().email("Invalid email address"),
     phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
     phoneCountryCode: z.string().max(5).optional().nullable(),
@@ -499,6 +496,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // #2941: the length rule applies only when this import takes the column
+    // (field ON and a membership:edit grant); otherwise the value is discarded
+    // and cannot block the row. Judged after the export's formula guard is
+    // undone, so an exported 500-character value round-trips.
+    const dietaryRequirements = importsDietaryRequirements
+      ? normalizeImportedDietaryRequirements(row.dietaryRequirements)
+      : null;
+    if (
+      importsDietaryRequirements &&
+      !isDietaryRequirementsWithinLimit(dietaryRequirements)
+    ) {
+      rowErrors.push(
+        DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE.replace(
+          DIETARY_REQUIREMENTS_LABEL,
+          `${DIETARY_REQUIREMENTS_LABEL}${getImportColumnContext(row, "dietaryRequirements")}`,
+        ),
+      );
+    }
+
     if (rowErrors.length > 0) {
       results.errors.push({ row: rowNum, errors: rowErrors });
       continue;
@@ -523,11 +539,6 @@ export async function POST(req: NextRequest) {
       flags.showOccupation && ageTier === "ADULT"
         ? row.occupation?.trim() || null
         : null;
-
-    // Any age tier (#2941); blank becomes null.
-    const dietaryRequirements = importsDietaryRequirements
-      ? normalizeDietaryRequirements(row.dietaryRequirements)
-      : null;
 
     // A cancelled member can never log in, so it is forced non-login and — key
     // interaction — it does NOT claim the login email, leaving that email free

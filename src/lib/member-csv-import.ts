@@ -10,6 +10,7 @@ import {
   DIETARY_REQUIREMENTS_LABEL,
   DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
   isDietaryRequirementsWithinLimit,
+  normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
@@ -890,6 +891,12 @@ export function buildMemberImportPreview(
    */
   todayAtClub: string,
   dateFormats: Partial<MemberImportDateFormatMapping> = {},
+  /**
+   * #2941: whether the club takes the dietary/allergy column (the field is ON).
+   * While false the column is dropped from the preview rows and its length is
+   * not judged, exactly as the server discards it; default false, fail closed.
+   */
+  options: { importsDietaryRequirements?: boolean } = {},
 ): MemberImportPreview {
   const resolvedDateFormats: MemberImportDateFormatMapping = {
     ...createDefaultMemberImportDateFormatMapping(),
@@ -948,7 +955,11 @@ export function buildMemberImportPreview(
     const title = getValue(record, "title");
     const gender = getValue(record, "gender");
     const occupation = getValue(record, "occupation");
-    const dietaryRequirements = getValue(record, "dietaryRequirements");
+    const dietaryRequirements = options.importsDietaryRequirements
+      ? (normalizeImportedDietaryRequirements(
+          getValue(record, "dietaryRequirements"),
+        ) ?? "")
+      : "";
     const phone = getValue(record, "phone");
     const phoneCountryCode = getValue(record, "phoneCountryCode");
     const phoneAreaCode = getValue(record, "phoneAreaCode");

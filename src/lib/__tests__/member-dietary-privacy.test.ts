@@ -31,8 +31,12 @@ import {
 } from "@/config/member-fields";
 import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { sanitizeAuditMetadata } from "@/lib/audit";
+import { escapeCsvCell, unescapeCsvFormulaGuard } from "@/lib/csv";
 import {
+  DIETARY_KEY_FRAGMENTS,
   DIETARY_REQUIREMENTS_MAX_LENGTH,
+  isDietaryKeyName,
+  normalizeImportedDietaryRequirements,
   dietaryRequirementsInputSchema,
   isDietaryRequirementsWithinLimit,
   normalizeDietaryRequirements,
@@ -398,5 +402,43 @@ describe("negative egress: surfaces handed the value still drop it (INV-PRIV-022
     } as unknown as Parameters<typeof buildXeroContactUpdatePayload>[0]);
     expect(JSON.stringify(payload)).not.toContain("peanut");
     expect(Object.keys(payload)).not.toContain("dietaryRequirements");
+  });
+});
+
+describe("one spelling of the dietary key, read by both redactors (INV-SSOT, INV-PRIV-022)", () => {
+  it("every fragment is redacted by the log redactor AND the audit sanitizer", () => {
+    expect(DIETARY_KEY_FRAGMENTS.length).toBeGreaterThan(0);
+    for (const fragment of DIETARY_KEY_FRAGMENTS) {
+      const key = `guest_${fragment}_notes`;
+      expect(isDietaryKeyName(key), key).toBe(true);
+      expect(JSON.stringify(redactSensitiveJson({ [key]: VALUE })), key).not.toContain(
+        "peanut",
+      );
+      expect(
+        JSON.stringify(sanitizeAuditMetadata({ [key]: VALUE })),
+        key,
+      ).not.toContain("peanut");
+    }
+  });
+
+  it("a key naming neither fragment is left to each redactor's own rules", () => {
+    expect(isDietaryKeyName("diet")).toBe(false);
+    expect(isDietaryKeyName("menuNotes")).toBe(false);
+    expect(
+      (sanitizeAuditMetadata({ menuNotes: "soup" }) as Record<string, unknown>)
+        .menuNotes,
+    ).toBe("soup");
+  });
+});
+
+describe("the CSV formula guard round-trips for the dietary column", () => {
+  it("undoes exactly the guard the export adds, and nothing else", () => {
+    for (const value of ["- no nuts", "=1+1", "+64 allergy line", "@home"]) {
+      const exported = escapeCsvCell(value);
+      expect(exported.startsWith("'")).toBe(true);
+      expect(normalizeImportedDietaryRequirements(exported)).toBe(value);
+    }
+    expect(unescapeCsvFormulaGuard("'tis fine")).toBe("'tis fine");
+    expect(unescapeCsvFormulaGuard("''=x")).toBe("''=x");
   });
 });

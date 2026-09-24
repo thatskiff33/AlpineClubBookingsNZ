@@ -12,6 +12,7 @@ import { prisma } from "./prisma";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isAuditCategory, type AuditCategory } from "./audit-categories";
+import { isDietaryKeyName } from "@/lib/member-dietary-field";
 import {
   resolveDeclaredMemberText,
   withDeclaredMemberText,
@@ -334,7 +335,7 @@ function sanitizeAuditDetails(value?: string | null): string | undefined {
  * ONE SPECIAL-CATEGORY FIELD NOW EXISTS, AND IT IS THE EXCEPTION (#2941,
  * `INV-PRIV-022`). `Member.dietaryRequirements` holds dietary and allergy
  * information, and an audit row records only THAT it changed, never what it
- * holds. Writers already record field names and booleans; `isDietaryMetadataKey`
+ * holds. Writers already record field names and booleans; `isDietaryKeyName`
  * below is the backstop that turns any string or structure left under a
  * dietary/allergy key into `[REDACTED]` while keeping the booleans that say which
  * field moved. It is a backstop, not the rule: a value under an unrelated key
@@ -385,18 +386,6 @@ function isSensitiveMetadataKey(key: string): boolean {
     normalized === "cvc" ||
     normalized === "cvv"
   );
-}
-
-/**
- * A dietary/allergy key (#2941, `INV-PRIV-022`). Unlike the credential list
- * above, the key alone does not redact: a boolean, number or null under it is
- * EVIDENCE of which field changed (`fieldGroups.dietaryRequirements: true`) and
- * is kept, while a string or a nested structure — the only shapes a value can
- * take — becomes `[REDACTED]`.
- */
-function isDietaryMetadataKey(key: string): boolean {
-  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return normalized.includes("dietary") || normalized.includes("allerg");
 }
 
 function isLongHtml(value: string): boolean {
@@ -538,8 +527,12 @@ function sanitizeMetadataValue(
       sanitizedObject[key] = REDACTED;
       continue;
     }
+    // A dietary/allergy key (#2941, `INV-PRIV-022`; the one spelling is
+    // `isDietaryKeyName`). Unlike the credential list, the key alone does not
+    // redact: a boolean, number or null under it is EVIDENCE of which field
+    // changed and is kept, while a string or structure becomes `[REDACTED]`.
     if (
-      isDietaryMetadataKey(key) &&
+      isDietaryKeyName(key) &&
       childValue !== null &&
       childValue !== undefined &&
       typeof childValue !== "boolean" &&
