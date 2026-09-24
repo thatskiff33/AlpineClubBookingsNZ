@@ -1401,8 +1401,10 @@ organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
 `20261010010000_add_member_dietary_requirements` adds an empty
 `Member.dietaryRequirements` column and a `MemberFieldsSettings` toggle that
 defaults to **off**, so nothing changes for members until the club decides to
-collect the information. It is purely additive: no row is rewritten, and rolling
-back to the previous colour simply ignores both columns.
+collect the information. It is purely additive: no row is rewritten. The previous
+colour never reads either column, but two things it does still touch the stored
+values — account deletion and member merge, listed below — so a rollback is not
+free of them.
 
 If the club wants it, turn on **Dietary/allergy information** in **Admin >
 Setup & Configuration > Membership & Members > Member Fields** (see
@@ -1416,7 +1418,7 @@ field is on, each booking copies a member's profile value when they are first
 added and keeps it for that stay; booking officers and the hut leader running
 the stay see it. Turning the field on does **not** fill in existing bookings.
 While the old colour still serves — during the drain, and again after any
-rollback to it — it does not know the column exists:
+rollback to it — it does not know either dietary column exists:
 
 - bookings it creates are not seeded, and a held party it rebuilds at approval
   loses its values (both leave an empty value a booking officer can fill in);
@@ -1424,17 +1426,26 @@ rollback to it — it does not know the column exists:
   each row's value while changing who the row is for**, so a substituted guest
   can show the previous person's note. Review the dietary card on any booking
   whose held request was approved on the old colour;
-- **an account deletion it approves anonymises the member's guest rows without
-  clearing their value;**
+- **an account deletion it approves anonymises the member — their record and
+  their guest rows — without clearing either dietary value;**
+- **a member merge it performs deletes the losing record without carrying its
+  profile value to the surviving one**, so that value is lost for good (the new
+  colour keeps it when the survivor's is blank). No query can bring it back: ask
+  the member to re-enter it on their profile;
 - **a booking change it makes that renames a non-member guest to a different
   person keeps the previous person's note** (the new colour clears it).
 
 **Write down when each old-colour window starts and ends** — the drain, and any
 rollback until the new colour is back. After each window ends:
 
-1. Clear anonymised rows the old colour left behind:
+1. Clear the values the old colour left on anonymised accounts and their
+   guest rows (`deletedAt` is the mark an approved deletion leaves,
+   `src/lib/deleted-account.ts`):
 
    ```sql
+   UPDATE "Member" SET "dietaryRequirements" = NULL
+   WHERE "deletedAt" IS NOT NULL AND "dietaryRequirements" IS NOT NULL;
+
    UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
    WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
      AND "dietaryRequirements" IS NOT NULL;
