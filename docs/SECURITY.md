@@ -112,17 +112,21 @@ this section records how it is enforced.
   for it does not carry it — including nested includes and the row an update
   returns. `src/lib/member-dietary.ts` is the only module that asks, and only for
   a caller holding a grant: the member themself (the grant takes their session),
-  their own data export, an admin whose `requireAdmin` result carries a
-  **membership** matrix, or a merge whose Full Admin the grant re-checks in the
-  database, scoped to the two members being merged.
+  their own data export, an admin whose OWN database row and access roles reach
+  **membership** (the grant re-reads them and ignores any session matrix), or a
+  merge whose Full Admin the grant re-checks in the database, scoped to the two
+  members being merged. A grant is an opaque object whose authority lives in a
+  module-private map, so a copy of one is not a grant.
 - **The type does not say so.** `src/lib/prisma.ts` keeps the plain
   `PrismaClient` type, so the compiler still shows the field on every row; a read
   outside the module gets `undefined`, never the value.
   `member-dietary-access-census.test.ts` is a TEXT scan of `src/`, `scripts/`,
   `prisma/` and `e2e/`. It fails on any other select, local omit override,
   raw-SQL read of the column, whole-row raw read or omit-less client; it confines
-  the field's spelling (in `src/`) and imports of the module to listed files,
-  none on an egress path, and refuses a re-export of a grant or reader. It does
+  the field's spelling (in `src/`), imports of the module, and calls of the merge
+  engine (which mints a scoped grant internally) to listed files, none on an
+  egress path, and refuses a re-export, exported alias or minting wrapper of a
+  grant or reader. It does
   NOT trace data flow: a listed file reading the field off an ordinary row, or
   passing a value it legitimately holds onward, stays green. Review covers that.
 - **Redaction as a backstop.** The log/Sentry redactor strips `dietary`/`allerg`

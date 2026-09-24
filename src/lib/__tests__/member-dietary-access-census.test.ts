@@ -27,9 +27,12 @@
  *     to a listed set of files.
  *  5. IMPORT: in every root, importing the canonical module is confined to a
  *     listed set of files, and no file re-exports a grant or reader.
- *  6. EGRESS: no file on either list sits on a Xero, analytics, notification,
+ *  6. EGRESS: no file on any list sits on a Xero, analytics, notification,
  *     email, roster, lodge-screen, kiosk, family, booking, finance or logging
  *     path.
+ *  7. MERGE CALLERS: the merge engine mints a scoped merge grant internally and
+ *     its preview returns both values, so calling it is confined to a listed set
+ *     of files too.
  *
  * WHAT IT CANNOT SEE, stated so nobody reads it as stronger than it is. It
  * matches text, not data flow. A listed file that reads `.dietaryRequirements`
@@ -179,10 +182,58 @@ const RAW_WILDCARD = new RegExp(
   ].join("|"),
   "im",
 );
+/**
+ * An import of the canonical module in any spelling: static, dynamic or
+ * `require`, an alias or relative path, an explicit extension, and a quoted or
+ * template-literal specifier. `member-dietary-field` is a different module and
+ * is not matched.
+ */
 const DIETARY_MODULE_IMPORT =
-  /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'](?:@\/lib\/|(?:\.{1,2}\/)+(?:[\w-]+\/)*)member-dietary["']/;
-const DIETARY_REEXPORT =
-  /export\s*\*\s*from\s*["'][^"']*member-dietary["']|export\s*\{[^}]*\b(?:grant\w*Dietary\w*|read\w*Dietary\w*|load\w*Dietary\w*|attachMergeDietary\w*)\b/;
+  /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'`](?:@\/lib\/|(?:\.{1,2}\/)+(?:[\w-]+\/)*)member-dietary(?:\.[cm]?[jt]sx?)?["'`]/;
+/** A grant, reader or merge-attach symbol of the canonical module. */
+const DIETARY_DOOR_SYMBOL =
+  String.raw`\b(?:grant\w*Dietary\w*|read\w*Dietary\w*|load\w*Dietary\w*|attachMergeDietary\w*)\b`;
+/**
+ * Passing the door on to files the importer list never saw: a re-export, an
+ * exported alias (`export const g = grantSelfDietaryAccess`), an `export
+ * default` of one, or an exported wrapper whose body mints a grant.
+ */
+const DIETARY_PASS_ON = new RegExp(
+  [
+    String.raw`export\s*\*\s*from\s*["'\`][^"'\`]*member-dietary(?:\.[cm]?[jt]sx?)?["'\`]`,
+    String.raw`export\s*\{[^}]*${DIETARY_DOOR_SYMBOL}`,
+    String.raw`export\s+(?:const|let|var|default)\b[^;]*?${DIETARY_DOOR_SYMBOL}`,
+  ].join("|"),
+);
+const DIETARY_MINTING_WRAPPER =
+  /export\s+(?:async\s+)?function\b[^{]*\{[^}]*?\b(?:grant\w*Dietary\w*|attachMergeDietary\w*)\s*\(/;
+/**
+ * Where exporting a function that mints a grant is the point rather than a
+ * leak. A Next.js route handler or page is an entry point that nothing imports;
+ * the merge engine mints its scoped merge grant internally, and its CALLERS are
+ * what rule 7 confines.
+ */
+function mayExportMintingFunction(file: string): boolean {
+  return (
+    /\/(?:route|page|layout)\.tsx?$/.test(file) || file === MERGE_ENGINE_MODULE
+  );
+}
+
+/**
+ * Rule 7: the merge engine mints a scoped merge grant from the actor id it is
+ * handed, and its preview returns both members' values in `fieldMerge`. So a
+ * file that calls it can reach the value without importing the dietary module
+ * or spelling the field. Its callers are confined here, and checked against the
+ * egress patterns like every other list.
+ */
+const MERGE_ENGINE_MODULE = "src/lib/member-merge.ts";
+const MERGE_ENGINE_ENTRY = /\b(?:buildMemberMergePreview|executeMemberMerge)\b/;
+const MERGE_ENGINE_CALLERS: Readonly<Record<string, string>> = {
+  "src/app/api/admin/members/[id]/merge/preview/route.ts":
+    "Full Admin merge preview (the engine re-checks Full Admin in the database)",
+  "src/app/api/admin/members/[id]/merge/route.ts":
+    "Full Admin merge execute (the engine re-checks Full Admin in the database)",
+};
 
 type Finding = { rule: string; file: string; detail: string };
 
@@ -268,11 +319,29 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
     });
   }
 
-  if (file !== CANONICAL_MODULE && DIETARY_REEXPORT.test(code)) {
+  if (
+    file !== CANONICAL_MODULE &&
+    (DIETARY_PASS_ON.test(code) ||
+      (DIETARY_MINTING_WRAPPER.test(code) && !mayExportMintingFunction(file)))
+  ) {
     findings.push({
       rule: "reexport",
       file,
-      detail: "re-exports a dietary grant or reader, widening the importer list unseen",
+      detail:
+        "re-exports, aliases or wraps a dietary grant or reader, widening the importer list unseen",
+    });
+  }
+
+  if (
+    file !== MERGE_ENGINE_MODULE &&
+    MERGE_ENGINE_ENTRY.test(code) &&
+    !(file in MERGE_ENGINE_CALLERS)
+  ) {
+    findings.push({
+      rule: "merge-caller",
+      file,
+      detail:
+        "calls the merge engine, which returns dietary values, but is not in MERGE_ENGINE_CALLERS",
     });
   }
 
@@ -385,6 +454,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "reach",
     "import",
     "reexport",
+    "merge-caller",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -448,10 +518,24 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     expect(harness).toContain('import "./member-dietary-omit.realdb.test";');
   });
 
-  it("no reach or importer entry is an egress surface", () => {
+  it("the merge-engine caller list is exact: every listed file still calls it", () => {
+    const callers = census()
+      .files.filter(
+        (file) =>
+          file !== MERGE_ENGINE_MODULE &&
+          MERGE_ENGINE_ENTRY.test(
+            stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")),
+          ),
+      )
+      .sort();
+    expect(callers).toEqual(Object.keys(MERGE_ENGINE_CALLERS).sort());
+  });
+
+  it("no reach, importer or merge-caller entry is an egress surface", () => {
     const egress = [
       ...Object.keys(DIETARY_REACH),
       ...Object.keys(DIETARY_MODULE_IMPORTERS),
+      ...Object.keys(MERGE_ENGINE_CALLERS),
     ].filter((file) => EGRESS_SURFACE_PATTERNS.some((pattern) => pattern.test(file)));
     expect(
       egress,
@@ -552,11 +636,48 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
     ).not.toContain("import");
   });
 
-  it("reports a re-export of a grant or reader", () => {
+  it("reports an import in every specifier spelling", () => {
+    for (const source of [
+      `import { x } from "@/lib/member-dietary.js";`,
+      `import { x } from "../lib/member-dietary.ts";`,
+      "const m = await import(`@/lib/member-dietary`);",
+      `const m = require("./member-dietary");`,
+      `export { x } from"@/lib/member-dietary";`,
+    ]) {
+      expect(rulesOf(source), source).toContain("import");
+    }
+  });
+
+  it("reports a re-export, an exported alias, an export default and a minting wrapper", () => {
+    for (const source of [
+      `export { readMemberDietaryRequirementsByIds } from "@/lib/member-dietary";`,
+      `export * from "@/lib/member-dietary";`,
+      `export const g = grantSelfDietaryAccess;`,
+      `export let r = readMemberDietaryRequirementsByIds;`,
+      `export default grantMembershipAdminDietaryAccess;`,
+      `export async function widen(db, a, m, l) { return grantMemberMergeDietaryAccess(db, { actorMemberId: a, masterId: m, loserId: l }); }`,
+    ]) {
+      expect(rulesOf(source), source).toContain("reexport");
+    }
+    // A route handler that mints a grant for its own request is an entry point.
     expect(
-      rulesOf(`export { readMemberDietaryRequirementsByIds } from "@/lib/member-dietary";`),
-    ).toContain("reexport");
-    expect(rulesOf(`export * from "@/lib/member-dietary";`)).toContain("reexport");
+      rulesOf(
+        `export async function GET() { const g = await grantMembershipAdminDietaryAccess(guard, "view"); }`,
+        "src/app/api/some/route.ts",
+      ),
+    ).not.toContain("reexport");
+  });
+
+  it("reports an unlisted caller of the merge engine", () => {
+    const source = [
+      `import { buildMemberMergePreview } from "@/lib/member-merge";`,
+      `const p = await buildMemberMergePreview({ masterId, loserId, actorMemberId });`,
+      `return p.fieldMerge;`,
+    ].join("\n");
+    expect(rulesOf(source)).toContain("merge-caller");
+    expect(
+      rulesOf(`await executeMemberMerge({})`, "src/app/api/admin/members/[id]/merge/route.ts"),
+    ).not.toContain("merge-caller");
   });
 
   it("does not mistake the settings toggle for the field", () => {
