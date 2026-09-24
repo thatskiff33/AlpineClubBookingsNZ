@@ -157,6 +157,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 // The MOCKED class — the same constructor the module under test compares
 // against, so the branch is exercised rather than approximated.
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
@@ -333,7 +334,7 @@ beforeEach(() => {
     // invoice id so it can queue the credit note. A legacy hand-back carries
     // neither route nor anchor, so nothing is queued for it - which is what the
     // legacy test below pins.
-    booking: { memberId: "member-1", status: "CANCELLED", payment: null },
+    booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
   });
   mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
   // The anchor is free unless a test says otherwise.
@@ -700,6 +701,8 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     // link to satisfy the model is exactly what owner decision D2 removed.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(result.amountCents).toBe(4500);
+    // #3599: account credit posts through its credit row's own line, never as a hand-back.
+    expect(vi.mocked(postHandBackLedgerLine)).not.toHaveBeenCalled();
 
     // #3032: the money now genuinely moves, down the canonical account-credit
     // path, keyed on the ORIGINAL edit's BookingModification (D-3032-1). Before
@@ -1073,6 +1076,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // well would consume the refundable headroom twice for one refund.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
+    // #3599: the card refund posts through its own `PaymentRefund` row (#3581),
+    // never as a hand-back.
+    expect(vi.mocked(postHandBackLedgerLine)).not.toHaveBeenCalled();
 
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1528,6 +1534,17 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: BookingEventType.REFUNDED })
     );
+    // #3599: the money handed back by hand is on the booking ledger, inside the
+    // same transaction, named as a bank transfer (`INV-PAY-101`) and the officer.
+    expect(vi.mocked(postHandBackLedgerLine)).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      lodgeId: "lodge-1",
+      manualRefundTaskId: "task-1",
+      amountCents: 9000,
+      refundMethod: "internet-banking",
+      officerMemberId: "admin-1",
+      store: tx,
+    });
   });
 
   it("raises the bank-transfer refund note for a completed cancellation hand-back on a booking with an issued invoice (INV-PAY-101, #3369)", async () => {

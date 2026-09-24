@@ -13,8 +13,10 @@ inside its own budget. Moving those predicates — and their docblock — OUT of
 file ends shorter than it started and needs no allowance.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1701
+lines: 1704
 reason: one call after the Internet Banking receipt row is written — the one
   receipt writer that sets the payment's columns itself rather than ending in
   `reconcilePaymentAggregates`, which review of #3604 found the first cut had
-  missed — plus its import and the comment that says why it is here.
+  missed — plus its import and the comment that says why it is here; and
+  #3599's two credit-sync calls after the credit rows this path mints for a
+  cancelled booking, plus that import (re-measured by #3599, stacked on this).

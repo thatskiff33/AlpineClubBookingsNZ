@@ -264,20 +264,34 @@ ledger line records money actually returned, so it converges from the row once
 the row says so. Posting it before the provider answered would record a refund
 that might never happen. The credit rows and the hand-back
 are not payment transactions and never pass through it; they post from their
-own writers in #3599.
+own writers (#3599, `INV-MONEY-035`).
+
+**Credit lines are insert-only, and a restore is not a reversal** (#3599,
+correcting the table as first written). No writer changes a `MemberCredit`
+row's amount, type or booking link — a census holds that — so each
+booking-linked row posts one line keyed by its id, with the booking-side
+amount the row's negation, and nothing is reversed. The cancel path restores
+applied credit *tiered by policy* (#1164), so a restore can be less than
+what was applied, and it is one row for however many applied rows the booking
+holds: a reversal, which copies the reversed line in full, would over-state
+every tiered restore. The restore row posts `CREDIT_ISSUED` for exactly what
+was restored instead, anchored on the `CANCELLATION` so it stays
+distinguishable from a cancellation credit (which moved
+`refundedAmountCents`; a restore never did). `creditAppliedCents` is not
+touched by a cancellation, so Σ `CREDIT_APPLIED` still equals it.
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |
 | Internet Banking invoice paid (`INV-PAY-015`, `INV-PAY-026`) | `BANK_RECEIPT` (+) for the cash evidenced, `method = INTERNET_BANKING` | `PAYMENT_TRANSACTION` | the inbound Xero reconciler's settle |
-| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row | `MEMBER_CREDIT` | the credit-election consumer (`INV-PAY-005`) |
+| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
 | Manual mark-paid (`INV-PAY-001`, `INV-PAY-038`) | `CASH_RECORDED` (+), `method = CASH`, `postedByMemberId` = the officer | `PAYMENT_TRANSACTION` | the mark-paid settle |
 | Mark-paid reversal (`INV-PAY-045`) | reversal of the `CASH_RECORDED` line | `PAYMENT_TRANSACTION` | the reversal |
 | Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |
-| Cancellation credited to account (`CANCELLATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT`, linked to the credit row | `MEMBER_CREDIT` | `booking-cancel.ts` |
-| Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | the reduction path |
-| Hand-back completed for an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529) | `BANK_REFUND` (−), `method = INTERNET_BANKING`, `postedByMemberId` = the officer | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
-| Applied credit restored on cancellation (`INV-PAY-019`) | reversal of the `CREDIT_APPLIED` line | `CANCELLATION` | `booking-cancel.ts` |
+| Cancellation credited to account (`CANCELLATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT`, linked to the credit row | `MEMBER_CREDIT` | every writer of the row (the cancel paths and the Xero inbound credit mints), through `syncBookingLedgerCredits` |
+| Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
+| Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself | `BANK_REFUND` (−), the method `refundMethodForEditReviewRoute` gives (`INTERNET_BANKING`, `INV-PAY-101`), `postedByMemberId` = the officer | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
+| Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
 | Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | nothing — no money moved; the Xero note is a rendering of `owed(b)` going to zero by reversal of the charge lines | — | — |
 
 ### 5.3 A person decides (ADJUSTMENT) and the ask
@@ -305,7 +319,7 @@ Until §7's reads switch, `Payment.amountCents`, `creditAppliedCents`,
 ```
 finalPriceCents        == charged(b) + adjusted(b)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
-creditAppliedCents     == Σ CREDIT_APPLIED (net of reversals)
+creditAppliedCents     == Σ CREDIT_APPLIED (a clamp give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone)
 refundedAmountCents    == -Σ CARD_REFUND
 changeFeeCents         == Σ CHANGE_FEE
 additionalAmountCents  == max(0, owed(b)) when an ADDITIONAL PENDING row exists, else 0
@@ -457,7 +471,7 @@ No row is "unknown". Codes:
 | 013, 014, 015 | U | Stripe and IB paths stay distinct; the line records the method, the anchor the provider |
 | 016, 017 | U | holds and hold-expiry release (§5.2: no line) |
 | 018 | C | "captured" is Σ `CARD_CAPTURE` for the booking; nothing else can be rewritten to say otherwise |
-| 019 | L | applied credit is conserved: a `CREDIT_APPLIED` line is reversed exactly once (`reversesLineId` unique) and the `MemberCredit` row stays the credit authority |
+| 019 | L | applied credit is conserved: its restore posts one `CREDIT_ISSUED` line for exactly what the tier restored, keyed by the restore row (unique per booking), and the `MemberCredit` row stays the credit authority |
 | 020, 021, 022, 059 | L | the statement reconciliation is `owed(b)`; "pay the smaller" is a derivation over `CREDIT_APPLIED` and the charge slice |
 | 023, 024 | U | how applied credit reaches Xero and Stripe (allocation, effective intent amount) |
 | 025, 026 | U | cash evidence before crediting; a `BANK_RECEIPT` posts only on that evidence |
