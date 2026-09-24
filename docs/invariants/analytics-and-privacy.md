@@ -11,6 +11,8 @@ public Analytics preferences control, the analytics route policy, anything that
 decides what leaves this application for Google, the log/Sentry redactor and what
 it strips out, or the `category` an audit writer records — which decides both the
 admin permissions a reader needs and whether the subject member sees the row.
+Read it too before anything reads, writes, exports or logs a member's
+dietary/allergy information (`INV-PRIV-022`).
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -142,7 +144,7 @@ These are two different answers on purpose, and neither is "none".
   composed spellings a route invents (`fullName`, `memberName`, `guestName`,
   `contactName`, `surname`, `familyName`); street and postal address including
   Xero's own bare `City`/`Region`/`Country`/`PostalCode`; date of birth; gender;
-  occupation; email; phone; credentials including hashed and second-factor ones;
+  occupation; dietary/allergy keys; email; phone; credentials including hashed and second-factor ones;
   and payment identifiers.
 - **A key spelling it does not know is a leak, so this list is a floor and not a
   guarantee.** Emails and phone numbers have a second, value-shaped net, so a
@@ -171,9 +173,9 @@ These are two different answers on purpose, and neither is "none".
   tokens, card numbers and long HTML but NOT person fields. Owner decision of
   9-10 Aug 2026 on #2683: an `AuditLog` row is a permission-gated,
   retention-classed evidence record whose job is to say who did what to whom, so
-  "who" has to be legible to the officer reviewing it; this schema holds no
-  special-category data (a check across all 172 models found no medical,
-  dietary, emergency-contact, next-of-kin or ethnicity field), and the file's own
+  "who" has to be legible to the officer reviewing it; the one special-category
+  field, dietary/allergy information, is recorded only as changed
+  (`INV-PRIV-022`), and the file's own
   ARCHIVE MODE note records that over-redaction had already destroyed the only
   surviving copy of a club's email wording. `src/lib/__tests__/audit.test.ts`
   pins all three fields, in both directions at once.
@@ -837,3 +839,36 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
   and is not audited as one.
 - One home, `src/lib/issue-report-screenshot-access.ts`; proof in
   `issue-report-admin-origin-screenshots.test.ts`.
+
+## INV-PRIV-022
+
+Dietary/allergy information (`Member.dietaryRequirements`, #2941) is ABSENT
+unless selected through `src/lib/member-dietary.ts` for a caller holding a
+grant. Owner-approved blueprint and decision, 20 Sep 2026, on
+[#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941).
+
+- **Absent by construction.** Every application Prisma client omits the column
+  (`PRISMA_CLIENT_GLOBAL_OMIT`); the module is the only opt-in. The client keeps
+  the plain `PrismaClient` type, so elsewhere a read yields `undefined`, never
+  the value.
+- **Stage 1 audiences, and only these:** the subject, for their own profile and
+  onboarding while ON; the subject's own data export, ON or OFF; an admin whose
+  DB-verified matrix reaches `membership`, for the member editor, create and
+  member CSV while ON; and a Full Admin merge. #3029 extends this module for
+  booking and hut-leader purposes; it adds no second rule.
+- **Everyone else is denied:** family and dependants, other members, shared and
+  lodge screens, rosters, booking and finance exports, Xero, analytics,
+  notifications, logs and raw audit metadata.
+- **OFF hides, never clears.** Collection and display stop; every writer
+  re-reads the toggle and writes nothing. Default OFF on a missing row, a read
+  failure and an upgrade.
+- **One shape.** Trimmed, blank stored as null, at most 500 characters, at every
+  writer and in CSV import.
+- **Records say THAT, never WHAT.** Audit rows name the field; the merge audit
+  redacts its values. The log redactor strips `dietary`/`allerg` keys and the
+  audit sanitizer redacts any value under one.
+- **Merge fills if blank.** The loser's value survives only when the master has
+  none.
+- Proof: `member-dietary-access-census.test.ts` (select, omit override, raw SQL,
+  whole-row raw read, omit-less client, closed reach list, no egress file),
+  `member-dietary-privacy.test.ts`, `member-dietary-routes.test.ts`.

@@ -1396,6 +1396,20 @@ If it says anything else, member email and writes into the club's Xero
 organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
 `.env` and restart.
 
+### 3.1b Dietary/allergy information arrives switched off (#2941)
+
+`20261010010000_add_member_dietary_requirements` adds an empty
+`Member.dietaryRequirements` column and a `MemberFieldsSettings` toggle that
+defaults to **off**, so nothing changes for members until the club decides to
+collect the information. It is purely additive: no row is rewritten, and rolling
+back to the previous colour simply ignores both columns.
+
+If the club wants it, turn on **Dietary/allergy information** in **Admin >
+Setup & Configuration > Membership & Members > Member Fields** (see
+[`guides/member-fields.md`](guides/member-fields.md)). Before you do, check the
+club's privacy notice covers health information, because the member CSV export
+then carries the column (`INV-PRIV-022`).
+
 ### 3.2 Re-run the audit category backfills
 
 Two data-only migrations rewrite the stored audit `category` and each wants one

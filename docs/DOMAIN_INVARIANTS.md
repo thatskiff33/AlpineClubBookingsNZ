@@ -706,6 +706,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-019` | An audit row's subject is a person; an organisation-owned booking records none |
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
+| `INV-PRIV-022` | Dietary/allergy data absent unless one granted module selects it |
 
 ## Membership Lifecycle
 
