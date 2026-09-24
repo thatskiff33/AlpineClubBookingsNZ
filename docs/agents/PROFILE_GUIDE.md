@@ -27,10 +27,11 @@ or production environment values to profile TOML.
 
 ## Effort Selection
 
-There is no fixed mapping from work to effort. Choose the profile whose effort
-you would trust on the task in front of you, as `AGENTS.md` → "Model selection"
-describes, and raise effort on evidence rather than by default. `xhigh` is the
-ceiling; never use `max`.
+The profiles exist for their sandbox, network and approval settings. The
+effort in each name is only a starting point: choose the effort for the task in
+front of you as `AGENTS.md` → "Model selection" describes, and override it at
+launch with `-c model_reasoning_effort=<level>` when the task calls for a
+different one.
 
 High and critical risk issues are not unattended coding candidates even if a
 profile permits workspace writes.

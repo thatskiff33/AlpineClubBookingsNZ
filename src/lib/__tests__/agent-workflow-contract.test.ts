@@ -51,7 +51,7 @@ describe("repository agent workflow contract", () => {
     // these files change and then gets followed literally, so the orchestrator
     // chooses the model and effort itself at every dispatch.
     expect(agentsNormalized).toContain(
-      "The model chooses, at every dispatch — there is no routing table",
+      "The model chooses, at every dispatch — there is no model routing table",
     );
     expect(agents).toContain("State the model explicitly when you dispatch a subagent");
     expect(agentsNormalized).toContain("inherits the orchestrator's model");
@@ -179,13 +179,16 @@ describe("repository agent workflow contract", () => {
     expect(issueWorkflow).toContain("Do not sweep them.");
 
     // #3614 retired the `CLAUDE.md` adapter that #2903 bounded. Claude Code
-    // loads `AGENTS.md` itself only when NO `CLAUDE.md` or `CLAUDE.local.md`
-    // exists, so re-adding one at the root silently replaces the contract for
-    // every Claude session — hence the absence is pinned, and the adapter's
-    // session controls now live in AGENTS.md.
-    expect(existsSync(resolve(process.cwd(), "CLAUDE.md"))).toBe(false);
-    expect(existsSync(resolve(process.cwd(), "CLAUDE.local.md"))).toBe(false);
-    expect(agents).not.toContain("CLAUDE.md");
+    // loads `AGENTS.md` itself only when no Claude memory file (`CLAUDE.md`,
+    // `CLAUDE.local.md` or `.claude/CLAUDE.md`) exists, so adding one silently
+    // replaces the contract for every Claude session. `.claude/` is
+    // git-ignored, so CI cannot see a local one — these checks catch it on a
+    // local run, and AGENTS.md tells a session to confirm the load.
+    for (const memoryFile of ["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"]) {
+      expect(existsSync(resolve(process.cwd(), memoryFile))).toBe(false);
+    }
+    expect(agentsNormalized).toContain("confirm \"AGENTS.md loaded\" at session start");
+    expect(agentsNormalized).toContain("never add a `CLAUDE.md`, which would replace it");
     for (const command of ["/usage", "/context", "/mcp", "/hooks", "/clear"]) {
       expect(agents).toContain(command);
     }
@@ -251,7 +254,7 @@ describe("repository agent workflow contract", () => {
     expect(codex).toContain("GitHub Actions owns the full");
     expect(codexNormalized).toContain("Run a full suite locally only to diagnose");
     expect(codex).not.toContain("Luna/Terra");
-    expect(codexNormalized).toContain("pick the tier at dispatch");
+    expect(codexNormalized).toContain("pick the model and effort at dispatch");
     expect(codexNormalized).toContain("state the model and effort when you delegate");
     expect(subagentsNormalized).toContain(
       "State the model and reasoning effort in every launch",
