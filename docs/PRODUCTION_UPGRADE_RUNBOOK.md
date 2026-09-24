@@ -1425,17 +1425,38 @@ rollback to it — it does not know the column exists:
   can show the previous person's note. Review the dietary card on any booking
   whose held request was approved on the old colour;
 - **an account deletion it approves anonymises the member's guest rows without
-  clearing their value.**
+  clearing their value;**
+- **a booking change it makes that renames a non-member guest to a different
+  person keeps the previous person's note** (the new colour clears it).
 
-After the drain completes, and again whenever the new colour returns after a
-rollback, run this once against production to clear anonymised rows the old
-colour left behind:
+**Write down when each old-colour window starts and ends** — the drain, and any
+rollback until the new colour is back. After each window ends:
 
-```sql
-UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
-WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
-  AND "dietaryRequirements" IS NOT NULL;
-```
+1. Clear anonymised rows the old colour left behind:
+
+   ```sql
+   UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
+   WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
+     AND "dietaryRequirements" IS NOT NULL;
+   ```
+
+2. List the bookings to review — held-request approvals, school approvals and
+   booking changes made inside the window, on bookings that hold a dietary
+   note — substituting the times you wrote down:
+
+   ```sql
+   SELECT DISTINCT a."metadata"->>'bookingId' AS "bookingId", a."action", a."createdAt"
+   FROM "AuditLog" a
+   JOIN "BookingGuest" g ON g."bookingId" = a."metadata"->>'bookingId'
+   WHERE a."action" IN ('booking_request.approved', 'booking_request.school_approved',
+                        'booking.modify.batch', 'booking.modify.admin_override')
+     AND a."createdAt" BETWEEN '<window start>' AND '<window end>'
+     AND g."dietaryRequirements" IS NOT NULL
+   ORDER BY a."createdAt";
+   ```
+
+   Open each booking's **Dietary/allergy information** card and correct any
+   note that belongs to somebody no longer on that row.
 
 ### 3.2 Re-run the audit category backfills
 

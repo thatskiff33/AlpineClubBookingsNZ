@@ -1523,9 +1523,13 @@ mispricing a booking.
   matches no row and is refused — never lost while audited as a success. Order:
   the approval already holds `pg_advisory_xact_lock(1)` and the lodge capacity
   key, so global -> lodge -> BookingGuest rows; rows are taken in id order.
-  `bookingId` never changes on a guest row, and every writer that could insert a
-  guest into the party takes the global key first, so no row can appear
-  unlocked between the lock and the read.
+  The in-place rewrite (same head-count) takes the same lock before it reads
+  the stored values it keeps or replaces (#3029 F1). `bookingId` never changes
+  on a guest row, and every writer that INSERTS a guest into a party takes the
+  global key first, so no row can appear unlocked between the lock and the
+  read. Member merge takes no global key; it never inserts a guest — it
+  re-points existing rows' `memberId` — and it serialises with the approval on
+  the lodge capacity key.
 
 - **Trusted legacy induction baseline** —
   `src/lib/induction-baseline.ts` (`runInductionBaseline`, #2361): apply takes
