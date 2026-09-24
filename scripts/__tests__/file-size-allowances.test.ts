@@ -40,8 +40,18 @@ describe("readSizeAllowances", () => {
     expect(isSafeAllowanceName("2991-āwhina.md")).toBe(true);
     expect(isSafeAllowanceName("2991:old.md")).toBe(false);
     expect(isSafeAllowanceName("CON.md")).toBe(false);
+    expect(isSafeAllowanceName(" 2991-old.md")).toBe(false);
     expect(isSafeAllowanceName("../outside.md")).toBe(false);
     expect(isSafeAllowanceName("2991-old.txt")).toBe(false);
+  });
+
+  it("refuses an unsafe direct-child filename through the reader", () => {
+    const root = newTree({
+      " 2991-old.md": "file: src/lib/a.ts\nlines: 1200\nreason: keep this policy beside its existing consumers.\n",
+    });
+    const { allowances, problems } = readSizeAllowances(root);
+    expect(allowances).toEqual([]);
+    expect(problems[0]?.problem).toContain("unsafe allowance filename");
   });
 
   it("reads file, length and reason, and ignores the prose around them", () => {

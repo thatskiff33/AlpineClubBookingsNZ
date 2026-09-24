@@ -39,7 +39,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { ALLOWANCE_DIR, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
+import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -190,7 +190,7 @@ export function retiredAllowancePaths(repoRoot) {
       throw new Error(`Unsafe allowance path in ${MERGED_ALLOWANCE_REF}: ${relative}`);
     }
     const name = parts[1];
-    if (RESERVED_FRAGMENT_NAMES.has(name.toLowerCase())) continue;
+    if (isReservedAllowanceName(name)) continue;
     if (!isSafeAllowanceName(name)) {
       throw new Error(`Unsafe allowance filename in ${MERGED_ALLOWANCE_REF}: ${relative}`);
     }
@@ -469,7 +469,17 @@ export function compileChangelog({
 
   try {
     fs.writeFileSync(changelogPath, composed.changelog);
-    for (const file of removalPaths) removeFile(file);
+    for (const { file, bytes } of originals) {
+      const current = fs.lstatSync(file, { throwIfNoEntry: false });
+      if (!current?.isFile() || !fs.readFileSync(file).equals(bytes)) {
+        throw new Error(`Release input changed before removal; left untouched: ${file}`);
+      }
+      try {
+        removeFile(file);
+      } catch (removeError) {
+        throw new Error(`Could not remove ${file}: ${removeError.message}`, { cause: removeError });
+      }
+    }
   } catch (error) {
     const restoreErrors = [];
     for (const { file, bytes, mode } of originals) {
@@ -505,10 +515,10 @@ export function compileChangelog({
     if (restoreErrors.length > 0) {
       throw new AggregateError(
         [error, ...restoreErrors],
-        "Release compilation failed and automatic restoration was incomplete; inspect the listed files before retrying.",
+        `Release compilation failed (${error.message}); automatic restoration was incomplete: ${restoreErrors.map((item) => item.message).join("; ")}. Inspect these files before retrying.`,
       );
     }
-    throw new Error("Release compilation failed; original files restored and the release can be retried.", {
+    throw new Error(`Release compilation failed (${error.message}); original files restored and the release can be retried.`, {
       cause: error,
     });
   }

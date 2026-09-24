@@ -45,13 +45,10 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { ALLOWANCE_DIR, isSafeAllowanceName } from "./allowance-dir.mjs";
+import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "./allowance-dir.mjs";
 
 /** Where a pull request writes its allowances. One file per pull request. */
 export { ALLOWANCE_DIR };
-
-/** Never parsed as an allowance, the same way the changelog compiler skips it. */
-const RESERVED_NAMES = new Set(["readme.md"]);
 
 /**
  * A reason has to be a reason. The owner decision is explicit that "a bare
@@ -210,7 +207,7 @@ export function readSizeAllowances(root: string): AllowanceRead {
         (entry) =>
           entry.isFile() &&
           entry.name.toLowerCase().endsWith(".md") &&
-          !RESERVED_NAMES.has(entry.name.toLowerCase()),
+          !isReservedAllowanceName(entry.name),
       )
       .map((entry) => entry.name)
       .sort();
