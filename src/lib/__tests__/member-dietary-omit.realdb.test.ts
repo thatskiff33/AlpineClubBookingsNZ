@@ -85,6 +85,7 @@ function hasKey(row: unknown): boolean {
           id: PARENT_ID,
           email: "race-2941-parent@example.invalid",
           passwordHash: "not-a-real-password",
+          canLogin: true,
           firstName: "Dietary",
           lastName: "Parent",
           ageTier: "ADULT",

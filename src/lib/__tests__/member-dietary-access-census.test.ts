@@ -243,7 +243,9 @@ function prismaConstructorStarts(code: string): number[] {
   for (const match of code.matchAll(/\bPrismaClient\s+as\s+([A-Za-z_$][\w$]*)/g)) {
     names.push(match[1]!);
   }
-  const alternation = names.map((name) => name.replace(/\$/g, "\\$")).join("|");
+  const alternation = names
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
   const pattern = new RegExp(
     String.raw`\bnew\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)*(?:${alternation})\s*\(`,
     "g",
