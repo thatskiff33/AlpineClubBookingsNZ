@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import {
   compareFragmentNames,
@@ -9,6 +10,7 @@ import {
   POINTER_NOTE_END,
   POINTER_NOTE_START,
   readFragments,
+  retiredAllowancePaths,
   todayInNewZealand,
 } from "./compile-changelog.mjs";
 
@@ -52,6 +54,30 @@ function makeRepo({ changelog = changelogWith(""), fragments = {} } = {}) {
     fs.writeFileSync(path.join(dir, name), body);
   }
   return root;
+}
+
+function git(root, ...args) {
+  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
+}
+
+function makeTrackedAllowanceRepo({ fragments = {}, allowances = {} } = {}) {
+  const root = makeRepo({ fragments });
+  const dir = path.join(root, "size-allowances.d");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, "README.md"), "# Allowance convention\n");
+  for (const [name, body] of Object.entries(allowances)) {
+    fs.writeFileSync(path.join(dir, name), body);
+  }
+  git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
+  git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "add", "--all");
+  git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "merged fixtures");
+  git(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+  return root;
+}
+
+function allowanceFiles(root) {
+  return fs.readdirSync(path.join(root, "size-allowances.d")).sort();
 }
 
 function read(root) {
@@ -324,6 +350,190 @@ describe("compile-changelog", () => {
     expect(read(root)).toBe(before);
     expect(log.text()).toContain("Nothing to compile");
     expect(log.text()).toContain("CHANGELOG.md was left unchanged");
+  });
+
+  it("retires committed allowance fragments with a real release, preserving README and untracked drafts", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: {
+        "2991-old.md": "file: src/lib/waitlist.ts\n",
+        "3031-new.md": "file: src/lib/waitlist.ts\n",
+      },
+    });
+    fs.writeFileSync(path.join(root, "size-allowances.d", "next-local.md"), "draft\n");
+    const log = silentLog();
+
+    const result = compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log });
+
+    expect(result.written).toBe(true);
+    expect(result.retiredAllowances).toEqual([
+      "size-allowances.d/2991-old.md",
+      "size-allowances.d/3031-new.md",
+    ]);
+    expect(allowanceFiles(root)).toEqual(["README.md", "next-local.md"]);
+    expect(read(root)).toContain("## 0.14.0 - 2026-08-04");
+    expect(log.text()).toContain("Retired 2 committed size-allowance fragment(s)");
+  });
+
+  it("shows allowance retirement in dry-run without changing any files", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const before = read(root);
+    const log = silentLog();
+
+    const result = compileChangelog({
+      repoRoot: root,
+      version: "0.14.0",
+      date: "2026-08-04",
+      dryRun: true,
+      log,
+    });
+
+    expect(result.written).toBe(false);
+    expect(result.retiredAllowances).toEqual(["size-allowances.d/2991-old.md"]);
+    expect(read(root)).toBe(before);
+    expect(fragmentFiles(root)).toEqual(["2452-release.md"]);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+    expect(log.text()).toContain("size-allowances.d/2991-old.md (spent allowance; would be deleted)");
+  });
+
+  it("keeps an allowance committed only on the release-prep branch", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-merged.md": "file: src/lib/waitlist.ts\n" },
+    });
+    fs.writeFileSync(path.join(root, "size-allowances.d", "9999-branch-only.md"), "branch note\n");
+    git(root, "add", "size-allowances.d/9999-branch-only.md");
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "branch-only allowance");
+
+    const result = compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    expect(result.retiredAllowances).toEqual(["size-allowances.d/2991-merged.md"]);
+    expect(allowanceFiles(root)).toEqual(["9999-branch-only.md", "README.md"]);
+  });
+
+  it("refuses to discard a merged allowance edited on the release-prep branch", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-merged.md": "original\n" },
+    });
+    fs.writeFileSync(path.join(root, "size-allowances.d", "2991-merged.md"), "branch revision\n");
+    git(root, "add", "size-allowances.d/2991-merged.md");
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "branch revision");
+    const before = read(root);
+
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/branch edits/);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["2991-merged.md", "README.md"]);
+  });
+
+  it("refuses a stale base ref before changing a release", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    fs.writeFileSync(path.join(root, "size-allowances.d", "2992-new.md"), "merged later\n");
+    git(root, "add", "size-allowances.d/2992-new.md");
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "new main");
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+    git(root, "checkout", "-q", "HEAD~1");
+    const before = read(root);
+
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/start release-prep from it/);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+  });
+
+  it("does not retire allowances when there is no changelog release to compile", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "README.md": "# Changelog convention\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const before = read(root);
+    const log = silentLog();
+
+    const result = compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log });
+
+    expect(result.written).toBe(false);
+    expect(result.retiredAllowances).toEqual([]);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+    expect(log.text()).toContain("remain until a release is compiled");
+  });
+
+  it("fails before writing the changelog if a committed allowance has local edits", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    fs.appendFileSync(path.join(root, "size-allowances.d", "2991-old.md"), "local edit\n");
+    const before = read(root);
+
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/local edits/);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+  });
+
+  it("fails closed on unsafe committed filenames before writing the changelog", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "unsafe name.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const before = read(root);
+
+    expect(() => retiredAllowancePaths(root)).toThrow(/Unsafe allowance filename/);
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/Unsafe allowance filename/);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["README.md", "unsafe name.md"]);
+  });
+
+  it("refuses a linked allowance directory before writing the changelog", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const dir = path.join(root, "size-allowances.d");
+    const realDir = path.join(root, "held-allowances");
+    fs.renameSync(dir, realDir);
+    fs.symlinkSync(realDir, dir, process.platform === "win32" ? "junction" : "dir");
+    const before = read(root);
+
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/must be a real directory/);
+    expect(read(root)).toBe(before);
+    expect(fs.existsSync(path.join(realDir, "2991-old.md"))).toBe(true);
+  });
+
+  it("refuses a symlink recorded in the merged Git tree even if the checkout materialises a file", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const blob = execFileSync("git", ["-C", root, "hash-object", "-w", "--stdin"], {
+      encoding: "utf8",
+      input: "README.md",
+    }).trim();
+    git(root, "update-index", "--add", "--cacheinfo", "120000", blob, "size-allowances.d/2991-old.md");
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "merged link");
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD");
+    const before = read(root);
+
+    expect(() =>
+      compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
+    ).toThrow(/must not be a symlink/);
+    expect(read(root)).toBe(before);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
   });
 
   it("leaves every file untouched in --dry-run and reports the plan", () => {

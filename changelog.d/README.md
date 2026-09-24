@@ -140,9 +140,15 @@ node scripts/release/compile-changelog.mjs 0.14.0             # do it
 The compiler adds `## <version> - <date>` above the existing releases, filled
 with every fragment in filename order (numeric parts compared as numbers, so
 `999-…` sorts before `2448-…`), folds in any entries still written directly
-under `## Unreleased`, deletes the fragments it consumed, and prints what it
-did. The date defaults to today in New Zealand; pass one as the second argument
-to override it. Historical sections are never rewritten.
+under `## Unreleased`, deletes the fragments it consumed, retires committed and
+clean `size-allowances.d/*.md` fragments already made inert by their merge to
+main, and prints what it did. The allowance directory's `README.md`, untracked
+drafts, branch-only commits and locally edited files are preserved; a locally
+edited merged allowance stops the compile before any write. A refreshed
+`origin/main` must be an ancestor of the release-prep checkout. Nothing is
+retired if there is no changelog release to compile. The date defaults to today
+in New Zealand; pass one as the second argument to override it. Historical
+sections are never rewritten.
 
 Two things under `## Unreleased` are **not** entries, and the compiler tells
 them apart by marker rather than by position:

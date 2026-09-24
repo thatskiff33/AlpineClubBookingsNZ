@@ -24,7 +24,10 @@
  *      The note is identified by its `<!-- changelog-pointer-note:start -->`
  *      sentinel, never by position, and is re-emitted directly under the
  *      heading every time — see the sentinel constants below for why.
- *   4. Deletes the fragments it consumed and prints exactly what it did,
+ *   4. Deletes the changelog fragments it consumed and committed, clean
+ *      `size-allowances.d/*.md` files made inert by their merge to main.
+ *      Untracked or locally edited allowance files are never deleted.
+ *   5. Prints exactly what it did,
  *      including a loud warning for anything left under `## Unreleased` that is
  *      neither the note nor an entry.
  *
@@ -35,6 +38,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
+import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -46,6 +51,8 @@ export const FRAGMENTS_DIRNAME = "changelog.d";
  * Compared case-insensitively so `readme.md` is never compiled into a release.
  */
 const RESERVED_FRAGMENT_NAMES = new Set(["readme.md", ".gitkeep"]);
+const SAFE_ALLOWANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/;
+const MERGED_ALLOWANCE_REF = "origin/main";
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -141,6 +148,77 @@ export function readFragments(dir) {
       // compiled CHANGELOG.md must stay LF-only.
       body: fs.readFileSync(path.join(dir, name), "utf8").replace(/\r\n/g, "\n"),
     }));
+}
+
+/**
+ * Release-prep starts from current origin/main. Only that ref's files have
+ * merged, even if a release-prep branch contains its own new commits. Never
+ * include untracked or locally edited drafts.
+ * Preflight the whole removal set before CHANGELOG.md is written.
+ */
+export function retiredAllowancePaths(repoRoot) {
+  const dir = path.join(repoRoot, ALLOWANCE_DIR);
+  const dirStat = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (!dirStat) return [];
+  if (!dirStat.isDirectory()) {
+    throw new Error(`${ALLOWANCE_DIR}/ must be a real directory, not a link or file.`);
+  }
+
+  let tracked;
+  try {
+    execFileSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", MERGED_ALLOWANCE_REF, "HEAD"], {
+      stdio: "ignore",
+    });
+    tracked = execFileSync(
+      "git",
+      ["-C", repoRoot, "ls-tree", "-r", "-z", MERGED_ALLOWANCE_REF, "--", ALLOWANCE_DIR],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    throw new Error(
+      `Cannot inspect merged ${ALLOWANCE_DIR}/ files: fetch ${MERGED_ALLOWANCE_REF} and start release-prep from it (${error.message}).`,
+    );
+  }
+
+  const paths = [];
+  for (const entry of tracked.split("\0").filter(Boolean)) {
+    const separator = entry.indexOf("\t");
+    if (separator < 0) throw new Error(`Malformed ${MERGED_ALLOWANCE_REF} allowance tree entry.`);
+    const [mode, type] = entry.slice(0, separator).split(" ");
+    const relative = entry.slice(separator + 1);
+    const parts = relative.split("/");
+    if (parts[0] !== ALLOWANCE_DIR || parts.length !== 2) {
+      throw new Error(`Unsafe allowance path in ${MERGED_ALLOWANCE_REF}: ${relative}`);
+    }
+    const name = parts[1];
+    if (RESERVED_FRAGMENT_NAMES.has(name.toLowerCase())) continue;
+    if (!SAFE_ALLOWANCE_NAME.test(name)) {
+      throw new Error(`Unsafe allowance filename in ${MERGED_ALLOWANCE_REF}: ${relative}`);
+    }
+    if (type !== "blob" || !["100644", "100755"].includes(mode)) {
+      throw new Error(`Committed allowance must not be a symlink: ${relative}`);
+    }
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", MERGED_ALLOWANCE_REF, "HEAD", "--", relative], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Merged allowance has branch edits; preserve it and re-run: ${relative}`);
+    }
+    const absolute = path.join(dir, name);
+    if (!fs.lstatSync(absolute).isFile()) {
+      throw new Error(`Committed allowance must be a regular file: ${relative}`);
+    }
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", "HEAD", "--", relative], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Committed allowance has local edits; preserve it and re-run: ${relative}`);
+    }
+    paths.push(relative);
+  }
+  return paths.sort((a, b) => compareFragmentNames(path.basename(a), path.basename(b)));
 }
 
 function stripBlankEdges(lines) {
@@ -350,9 +428,11 @@ export function compileChangelog({
       `Nothing to compile: ${FRAGMENTS_DIRNAME}/ holds no fragments and "## Unreleased" has no ` +
         "entries. CHANGELOG.md was left unchanged.",
     );
-    return { written: false, version, date, fragments: [], foldedLegacyEntries: false };
+    log("  Any spent allowance fragments remain until a release is compiled.");
+    return { written: false, version, date, fragments: [], retiredAllowances: [], foldedLegacyEntries: false };
   }
 
+  const retiredAllowances = retiredAllowancePaths(repoRoot);
   const names = fragments.map((fragment) => fragment.name);
   if (dryRun) {
     log(`[dry run] Would add "## ${version} - ${date}" to CHANGELOG.md with:`);
@@ -365,13 +445,19 @@ export function compileChangelog({
     for (const name of names) {
       log(`  - ${FRAGMENTS_DIRNAME}/${name} (would be deleted)`);
     }
+    for (const relative of retiredAllowances) {
+      log(`  - ${relative} (spent allowance; would be deleted)`);
+    }
     log("[dry run] No files were changed.");
-    return { written: false, version, date, fragments: names, ...composed };
+    return { written: false, version, date, fragments: names, retiredAllowances, ...composed };
   }
 
   fs.writeFileSync(changelogPath, composed.changelog);
   for (const name of names) {
     fs.rmSync(path.join(fragmentsDir, name));
+  }
+  for (const relative of retiredAllowances) {
+    fs.rmSync(path.join(repoRoot, relative));
   }
 
   log(`Added "## ${version} - ${date}" to CHANGELOG.md.`);
@@ -386,7 +472,8 @@ export function compileChangelog({
       ? `  Compiled and deleted ${names.length} fragment(s): ${names.join(", ")}`
       : "  No fragments were present.",
   );
-  return { written: true, version, date, fragments: names, ...composed };
+  log(`  Retired ${retiredAllowances.length} committed size-allowance fragment(s).`);
+  return { written: true, version, date, fragments: names, retiredAllowances, ...composed };
 }
 
 /** Parse argv into `{ version, date, dryRun }`. Exported for tests. */

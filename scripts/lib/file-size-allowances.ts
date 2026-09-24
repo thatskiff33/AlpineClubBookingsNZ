@@ -45,9 +45,10 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { ALLOWANCE_DIR } from "./allowance-dir.mjs";
 
 /** Where a pull request writes its allowances. One file per pull request. */
-export const ALLOWANCE_DIR = "size-allowances.d";
+export { ALLOWANCE_DIR };
 
 /** Never parsed as an allowance, the same way the changelog compiler skips it. */
 const RESERVED_NAMES = new Set(["readme.md"]);
