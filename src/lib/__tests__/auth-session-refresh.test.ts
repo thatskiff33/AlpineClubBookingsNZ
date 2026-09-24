@@ -158,6 +158,9 @@ describe("auth session refresh", () => {
         forcePasswordChange: true,
         emailVerified: true,
         passwordChangedAt: true,
+        // #3603 (D1): a session issued before the member's login was switched
+        // off is refused, like one issued before a newer password.
+        sessionsRevokedAt: true,
         twoFactorEnabled: true,
         twoFactorMethod: true,
         postLoginLanding: true,
@@ -649,7 +652,7 @@ describe("auth session refresh", () => {
   // `canLogin: true`.
   // ---------------------------------------------------------------------------
   describe("a member whose login is switched off (#3603)", () => {
-    function memberRow(canLogin: boolean) {
+    function memberRow(canLogin: boolean, sessionsRevokedAt: Date | null = null) {
       return {
         role: "ADMIN",
         canLogin,
@@ -657,6 +660,7 @@ describe("auth session refresh", () => {
         forcePasswordChange: false,
         emailVerified: true,
         passwordChangedAt: null,
+        sessionsRevokedAt,
         twoFactorEnabled: false,
         twoFactorMethod: null,
       };
@@ -676,13 +680,15 @@ describe("auth session refresh", () => {
       } as never);
     }
 
-    it("invalidates the session and empties the role claim and matrix", async () => {
+    it("invalidates the session and empties the role claims and matrix", async () => {
       mockFindUnique.mockResolvedValue(memberRow(false));
 
       const token = await refresh();
 
       expect(token?.sessionInvalidated).toBe(true);
       expect(token?.accessRoles).toEqual([]);
+      // The legacy role column is a claim too, and grants nothing once login is off.
+      expect(token?.role).toBe("USER");
       expect(token?.canLogin).toBe(false);
       expect(token?.adminPermissionMatrix).toEqual(ALL_NONE_MATRIX);
     });
@@ -694,28 +700,48 @@ describe("auth session refresh", () => {
 
       expect(token?.sessionInvalidated).toBe(false);
       expect(token?.accessRoles).toEqual(["ADMIN"]);
+      expect(token?.role).toBe("ADMIN");
       expect(token?.canLogin).toBe(true);
       expect(token?.adminPermissionMatrix).toEqual(
         Object.fromEntries(Object.keys(ALL_NONE_MATRIX).map((area) => [area, "edit"])),
       );
     });
 
-    it("keeps an ended session ended when login is switched back on", async () => {
-      mockFindUnique.mockResolvedValue(memberRow(false));
-      const ended = await refresh();
-      expect(ended?.sessionInvalidated).toBe(true);
+    // D1: the revocation time is read from the member row on every refresh, so
+    // the refusal holds for ANY copy of a token issued before the switch-off,
+    // whatever the token itself says. The end-to-end proof with real Auth.js
+    // cookies is `auth-session-revocation-replay.test.ts`.
+    it("refuses a session issued before the switch-off once login is back on", async () => {
+      const issuedAt = Date.now() - 60_000;
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(issuedAt + 1_000)),
+      );
 
-      mockFindUnique.mockResolvedValue(memberRow(true));
-      const later = await authConfig.callbacks.jwt?.({ token: ended } as never);
+      const token = await refresh({ sessionIssuedAt: issuedAt, sessionInvalidated: false });
 
-      expect(later?.sessionInvalidated).toBe(true);
+      expect(token?.sessionInvalidated).toBe(true);
+    });
+
+    it("keeps a session issued after the switch-off live once login is back on", async () => {
+      const issuedAt = Date.now() - 60_000;
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(issuedAt - 1_000)),
+      );
+
+      const token = await refresh({ sessionIssuedAt: issuedAt });
+
+      expect(token?.sessionInvalidated).toBe(false);
+      expect(token?.accessRoles).toEqual(["ADMIN"]);
     });
 
     it("gives a fresh sign-in a live session once login is enabled again", async () => {
-      mockFindUnique.mockResolvedValue(memberRow(true));
+      // The member was switched off a minute ago and back on since.
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(Date.now() - 60_000)),
+      );
 
       const token = await authConfig.callbacks.jwt?.({
-        token: { sessionInvalidated: true },
+        token: {},
         user: {
           id: "admin-1",
           role: "ADMIN",

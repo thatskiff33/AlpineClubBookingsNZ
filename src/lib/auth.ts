@@ -32,7 +32,7 @@ import {
   sanitizeAdminPermissionMatrix,
   type AdminPermissionMatrix,
 } from "./admin-permissions";
-import { MEMBER_ACCESS_ROLE_SELECT } from "./access-role-definitions";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "./access-role-definitions";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
@@ -69,10 +69,12 @@ const DUMMY_PASSWORD_HASH =
 
 const SESSION_MEMBER_SECURITY_SELECT = {
   role: true,
-  canLogin: true,
   forcePasswordChange: true,
   emailVerified: true,
   passwordChangedAt: true,
+  // #3603 (D1): when this member's login last went from on to off. A session
+  // issued before it is refused, the same way passwordChangedAt is.
+  sessionsRevokedAt: true,
   // #2620/#3542: refresh both canonical deletion signals so a session
   // minted before erasure dies on its next request. Neither enters the token.
   email: true,
@@ -83,10 +85,11 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   // Post-login landing preference (#2090), refreshed per request alongside the
   // security fields so a profile toggle change takes effect on the next request.
   postLoginLanding: true,
-  // Joined definitions (#1367) so the per-request token refresh can compute
-  // the merged admin-permission matrix over custom and club-edited
-  // definition-backed roles, not just the enum bundles.
-  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+  // `canLogin` with the joined definitions (#1367, #3603): the per-request
+  // token refresh computes the merged admin-permission matrix over custom and
+  // club-edited definition-backed roles, and clears it once login is off. The
+  // shared select, so the refresh reads exactly what every privilege gate does.
+  ...MEMBER_PRIVILEGE_CHECK_SELECT,
 } as const;
 
 async function loadSessionMemberSecurity(userId: string) {
@@ -620,7 +623,9 @@ export const authConfig = {
           const modules = await loadEffectiveModuleFlags();
           const twoFactorRequired = modules.twoFactor === true;
 
-          token.role = member.role;
+          // The legacy role column is a claim too (#3603): a member whose login
+          // is off carries no privileged one, whatever the column still says.
+          token.role = member.canLogin === false ? "USER" : member.role;
           // role is null for definition-backed custom-role rows, so the
           // accessRoles claim stays enum-only. Custom roles reach the
           // session through adminPermissionMatrix below (#1367). Empty once
@@ -656,26 +661,31 @@ export const authConfig = {
             );
           }
           // #3603: every sign-in provider requires `canLogin: true`, so a
-          // member whose login has since been switched off holds no session
-          // either. Same kill switch as deletion above: it covers a session
-          // minted before the change, whichever path made it.
+          // member whose login is switched off holds no session either. Two
+          // checks, both read from the database on every refresh:
+          //  - `sessionsRevokedAt` (owner decision D1): the database stamps it
+          //    whenever login goes from on to off, and a session issued before
+          //    it is refused for good, exactly like one issued before a newer
+          //    password. Re-enabling login therefore never revives a session
+          //    that started before the switch-off, however the client replays
+          //    its cookie; signing in again mints a new one.
+          //  - `canLogin === false`: refused while login is off, whatever the
+          //    revocation time says. Kept as belt and braces; it needs no
+          //    column and no clock.
           const loginDisabledSession = member.canLogin === false;
-          if (loginDisabledSession) {
+          const revokedSession =
+            member.sessionsRevokedAt instanceof Date &&
+            member.sessionsRevokedAt.getTime() > sessionIssuedAt;
+          if (loginDisabledSession || revokedSession) {
             logger.warn(
               { memberId: token.id },
-              "Invalidating session for a member whose login is disabled (#3603)",
+              "Invalidating a session that started before the member's login was switched off (#3603)",
             );
           }
-          // Once invalidated, a token stays invalidated (#3603). The login
-          // trigger is reversible, and re-enabling login must mean signing in
-          // again, not reviving the session that was ended. The other triggers
-          // were already one-way (a deletion, a newer password), so this
-          // changes nothing for them; sign-in mints a fresh token with the flag
-          // cleared.
           token.sessionInvalidated =
-            token.sessionInvalidated === true ||
             deletedAccountSession ||
             loginDisabledSession ||
+            revokedSession ||
             (member.passwordChangedAt instanceof Date &&
               member.passwordChangedAt.getTime() > sessionIssuedAt);
           token.twoFactorRequired = twoFactorRequired;
