@@ -382,9 +382,7 @@ export async function syncEditFinancialReviewChargeRequest({
   bookingId,
   bookingModificationId,
   paymentId,
-  member,
-  hasIssuedXeroInvoice,
-  format,
+  member, hasIssuedXeroInvoice, format,
 }: {
   bookingId: string;
   bookingModificationId: string;
@@ -400,8 +398,7 @@ export async function syncEditFinancialReviewChargeRequest({
    * that would carry it is already there".
    */
   hasIssuedXeroInvoice: boolean | null;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
+  format: ClubFormat; // #3565: resolved before any transaction by the caller
 }): Promise<EditReviewChargeSyncResult> {
   const totalCents = await sumEditReviewChargeSharesCents({
     bookingId,
@@ -437,8 +434,7 @@ export async function syncEditFinancialReviewChargeRequest({
       // this repository is the audit log. Written before the return, so the
       // trace exists whether or not anybody is watching a log stream.
       await recordUncollectedEditReviewChargeShare({
-        format,
-        // The CARD leg: the member's additional PaymentIntent is paid, so the
+        format, // The CARD leg: the member's additional PaymentIntent is paid, so the
         // share could not be added to it. The accounting leg has its own window
         // and its own call, and the `leg` is what tells the two apart in the
         // audit list.
@@ -533,8 +529,7 @@ export async function syncEditFinancialReviewChargeRequest({
   // (`sizeAdditionalAsk`, #3340) over this path's own figure.
   const ask = sizeReviewChargeAsk({ shareTotalCents: totalCents, payment });
   const minted = await createModificationAdditionalPaymentIntent({
-    format,
-    bookingId,
+    format, bookingId,
     result: {
       // Only the fields the minter reads. The rest of
       // `BookingModificationPaymentContext` describes a refund it will not make
@@ -614,9 +609,7 @@ export async function syncEditFinancialReviewChargeRequest({
   if (ask.carriedCents > 0) {
     // Only after a SUCCESSFUL mint: a failed one retired nothing.
     await recordCarriedEditReviewChargeBalance({
-      format,
-      bookingId,
-      bookingModificationId,
+      format, bookingId, bookingModificationId,
       memberId: member?.id ?? null,
       shareTotalCents: totalCents,
       carriedCents: ask.carriedCents,
@@ -642,15 +635,12 @@ export async function syncEditFinancialReviewChargeRequest({
  */
 export async function executeEditReviewCharge({
   bookingId,
-  taskId,
-  route,
-  format,
+  taskId, route, format,
 }: {
   bookingId: string;
   taskId: string;
   route: EditReviewChargeRoute;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
+  format: ClubFormat; // #3565: resolved before any transaction by the caller
 }): Promise<{ paymentIntentId: string | null; totalCents: number }> {
   // Derived here as well as inside the sync, because BOTH arms need it and the
   // failure arm needs it after the sync has thrown: the supplementary Xero
@@ -666,9 +656,7 @@ export async function executeEditReviewCharge({
   }
   try {
     return await syncEditFinancialReviewChargeRequest({
-      format,
-      bookingId,
-      bookingModificationId: route.bookingModificationId,
+      format, bookingId, bookingModificationId: route.bookingModificationId,
       paymentId: route.paymentId,
       member: route.member,
       hasIssuedXeroInvoice: route.hasIssuedXeroInvoice,

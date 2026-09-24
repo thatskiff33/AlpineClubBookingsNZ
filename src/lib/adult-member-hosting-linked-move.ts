@@ -645,11 +645,7 @@ export class SameOwnerCoverageLinkedMoveRequiredError extends ApiError {
   /** Bound to the stranded set alone; the key `LEAVE_UNCOVERED` must return. */
   readonly declineStateKey: string;
 
-  constructor(
-    quote: LinkedMoveQuote,
-    keys: { acceptStateKey: string; declineStateKey: string },
-    format: ClubFormat,
-  ) {
+  constructor(quote: LinkedMoveQuote, keys: { acceptStateKey: string; declineStateKey: string }, format: ClubFormat) {
     super(formatLinkedMoveOfferMessage(quote, format), 409);
     this.name = "SameOwnerCoverageLinkedMoveRequiredError";
     this.quote = quote;

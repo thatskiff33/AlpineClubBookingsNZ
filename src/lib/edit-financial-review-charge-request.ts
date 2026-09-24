@@ -350,9 +350,7 @@ export async function recordShortEditReviewChargeInvoice({
   reviewTaskId,
   memberId,
   totalCents,
-  shareCents,
-  createdByMemberId,
-  format,
+  shareCents, createdByMemberId, format,
 }: {
   outcome: XeroSupplementaryInvoiceEnqueueOutcome;
   bookingId: string;
@@ -373,8 +371,7 @@ export async function recordShortEditReviewChargeInvoice({
    */
   shareCents: number | null;
   createdByMemberId?: string;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
+  format: ClubFormat; // #3565: resolved before any transaction by the caller
 }): Promise<boolean> {
   if (outcome !== "short-sent" && outcome !== "short-in-flight") return false;
 
@@ -393,9 +390,7 @@ export async function recordShortEditReviewChargeInvoice({
 
   if (secondAsk === "raised" && shareCents !== null) {
     await recordSecondEditReviewChargeInvoice({
-      format,
-      bookingId,
-      bookingModificationId,
+      format, bookingId, bookingModificationId,
       memberId,
       derivedTotalCents: totalCents,
       shareCents,
@@ -404,8 +399,7 @@ export async function recordShortEditReviewChargeInvoice({
   }
 
   await recordUncollectedEditReviewChargeShare({
-    format,
-    leg: "xero-invoice",
+    format, leg: "xero-invoice",
     // Both short outcomes are an ask that exists and could not be raised. Which
     // one travels in `secondAsk`, because that is what changes the officer's
     // next move rather than the shape of the fact.
@@ -500,18 +494,14 @@ async function raiseSecondEditReviewChargeInvoice({
 async function recordSecondEditReviewChargeInvoice({
   bookingId,
   bookingModificationId,
-  memberId,
-  derivedTotalCents,
-  shareCents,
-  format,
+  memberId, derivedTotalCents, shareCents, format,
 }: {
   bookingId: string;
   bookingModificationId: string;
   memberId: string | null;
   derivedTotalCents: number;
   shareCents: number;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
+  format: ClubFormat; // #3565: resolved before any transaction by the caller
 }) {
   logger.info(
     { bookingId, bookingModificationId, derivedTotalCents, shareCents },
@@ -579,8 +569,7 @@ export async function recordUncollectedEditReviewChargeShare({
   memberId,
   derivedTotalCents,
   requestedTotalCents,
-  carriedAskCents = 0,
-  format,
+  carriedAskCents = 0, format,
 }: {
   leg: UncollectedEditReviewChargeLeg;
   /**
@@ -616,8 +605,7 @@ export async function recordUncollectedEditReviewChargeShare({
   /** #3371: the part of `requestedTotalCents` carried in from another edit's
    * ask. Defaulted - the Xero leg supersedes nothing, nor did any pre-#3371 row. */
   carriedAskCents?: number;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
+  format: ClubFormat; // #3565: resolved before any transaction by the caller
 }) {
   // #3371: net of anything carried in, plus the sentence that says so.
   const { requestedForThisEditCents, shortfallCents, carriedSentence } =

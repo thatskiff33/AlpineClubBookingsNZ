@@ -212,8 +212,7 @@ function asBumpSnapshot(value: unknown): BumpEventSnapshot | null {
 function buildPaidNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime,
-  format: ClubFormat,
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   const paidEvent =
     events.find(
@@ -245,8 +244,7 @@ function buildCancelledPostPaymentNarrative(
   paidEvent: NarrativeEvent,
   cancelEvent: NarrativeEvent | undefined,
   settlementEvent: NarrativeEvent | undefined,
-  club: BoundClubTime,
-  format: ClubFormat,
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   const snapshot = asCancellationSnapshot(cancelEvent?.snapshot);
   const paidAmountCents = paidEvent.amountCents ?? snapshot?.paidAmountCents ?? 0;
@@ -298,8 +296,7 @@ function buildCancelledPostPaymentNarrative(
 function buildCancelledNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime,
-  format: ClubFormat,
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   // A booking held for admin review that was rejected is cancelled via the
   // shared cancel flow; surface it as "declined" with the admin's reason.
@@ -371,10 +368,7 @@ function buildCancelledNarrative(
     );
     return buildCancelledPostPaymentNarrative(
       paidEvent,
-      cancelEvent,
-      settlementEvent,
-      club,
-      format
+      cancelEvent, settlementEvent, club, format
     );
   }
 
@@ -395,8 +389,7 @@ function buildCancelledNarrative(
 function buildPayableNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
-  now: Date,
-  format: ClubFormat,
+  now: Date, format: ClubFormat
 ): BookingNarrative {
   const range = dateRange(booking);
   const amountDue = formatCents(booking.finalPriceCents, format);
@@ -563,8 +556,7 @@ function buildFinancialReviewPendingNarrative(
 function buildPaidWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime,
-  format: ClubFormat,
+  club: BoundClubTime, format: ClubFormat,
 ): BookingNarrative {
   const paid = buildPaidNarrative(booking, events, club, format);
 
@@ -589,8 +581,7 @@ function buildPaidWithFinancialReviewNarrative(
 function buildPayableWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
-  now: Date,
-  format: ClubFormat,
+  now: Date, format: ClubFormat,
 ): BookingNarrative {
   const payable = buildPayableNarrative(booking, link, now, format);
 
@@ -623,9 +614,7 @@ export function resolveBookingNarrative({
   link,
   now = new Date(),
   financialReviewPending = false,
-}: ResolveBookingNarrativeInput,
-  format: ClubFormat,
-): BookingNarrative {
+}: ResolveBookingNarrativeInput, format: ClubFormat): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;
 
