@@ -16,8 +16,9 @@ the full local gate.
 
 ## Shared setup
 
-`vitest.config.mts` points every test file at two setup files, in order —
-`vitest.clock-setup.ts` then `vitest.setup.ts`. Between them they:
+`vitest.config.mts` points every test file at three setup files, in order —
+`vitest.clock-setup.ts`, `vitest.async-local-storage-setup.ts`, then
+`vitest.setup.ts`. Between them they:
 
 - **freeze the clock** — the rest of this page;
 - stub `server-only` (a Next.js guard with no meaning in the Node test
@@ -37,6 +38,14 @@ reads directly. It is the narrow fix: the alternative — `"type": "module"` in
 the file is now ESM, it has no `__dirname`; the `@` alias is built from
 `import.meta.dirname` instead. If you rename it again, `frozen-test-clock.test.ts`
 reads it from disk by name and will fail loudly rather than silently skip.
+
+Vitest 5 clears mock call histories before each test while keeping mock
+implementations. A test cannot assert calls made while a statically imported
+module was evaluated during collection: that history has already been cleared.
+For a module-registration assertion, call `vi.resetModules()` and dynamically
+`import()` the module inside the test, then inspect the mock calls. See
+`src/lib/__tests__/public-layout-config.test.ts` for the cache-registration
+example.
 
 ## The RTL async window is 4,000ms, not the 1,000ms default
 
