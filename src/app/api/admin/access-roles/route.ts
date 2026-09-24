@@ -56,7 +56,7 @@ export async function POST(request: Request) {
   // Role definitions grant permissions, so managing them is Full-Admin-only
   // — the area-based route requirement cannot express this, and a custom
   // role could otherwise widen itself.
-  if (!isFullAdmin({ accessRoles: session.user.accessRoles })) {
+  if (!isFullAdmin(session.user)) {
     return NextResponse.json(
       { error: "Only a Full Admin can manage access roles" },
       { status: 403 },

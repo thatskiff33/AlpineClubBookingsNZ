@@ -92,7 +92,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   AdminAccountGuardError,
@@ -800,14 +800,19 @@ export async function getAdminMemberDetail(params: {
 export async function updateAdminMember(params: {
   id: string;
   currentAdminMemberId: string;
-  currentAdminAccessRoles: AccessRoleInput["accessRoles"];
+  /**
+   * The acting admin's DB-verified access (`requireAdmin`'s session user):
+   * roles and `canLogin` travel together so the Full Admin gates below apply
+   * the login-disabled rule (#3603).
+   */
+  currentAdminAccess: PrivilegeCheckInput;
   request: NextRequest;
   data: UpdateMemberInput;
 }): Promise<JsonRouteResult> {
   const {
     id,
     currentAdminMemberId,
-    currentAdminAccessRoles,
+    currentAdminAccess,
     request: req,
     data,
   } = params;
@@ -947,7 +952,7 @@ export async function updateAdminMember(params: {
   if (
     (deactivatesTarget || deLoginsTarget) &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     memberHoldsPrivilegedRole(existing)
   ) {
     return jsonResult(
@@ -968,7 +973,7 @@ export async function updateAdminMember(params: {
     data.email !== undefined &&
     data.email.toLowerCase().trim() !== existing.email &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     hasPrivilegedAccess(existing)
   ) {
     return jsonResult(
@@ -1117,7 +1122,7 @@ export async function updateAdminMember(params: {
       );
     if (
       requiresFullAdmin &&
-      !isFullAdmin({ accessRoles: currentAdminAccessRoles })
+      !isFullAdmin(currentAdminAccess)
     ) {
       return jsonResult(
         { error: "Only a Full Admin can change member access roles" },

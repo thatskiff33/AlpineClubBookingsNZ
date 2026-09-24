@@ -13,6 +13,7 @@ import { getDefaultLodgeId } from "./lodges";
 import { AmbiguousKioskLodgeError, getStaffLodgeBinding } from "./lodge-access";
 import { requireActiveSessionUser } from "./session-guards";
 import { hasAdminAccess, hasLodgeAccess } from "@/lib/access-roles";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { prisma } from "@/lib/prisma";
 
 interface CheckLodgeAuthOptions {
@@ -110,10 +111,9 @@ export async function checkLodgeAuth(
 
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: {
-      id: true,
-      accessRoles: { select: { role: true } },
-    },
+    // `canLogin` with the rows (#3603), so the admin and lodge tiers below
+    // resolve nothing for a login-disabled member.
+    select: { id: true, ...MEMBER_PRIVILEGE_CHECK_SELECT },
   });
 
   if (!member) {
@@ -144,11 +144,13 @@ export async function checkLodgeAuth(
 
     const target = await prisma.member.findUnique({
       where: { id: previewAccountId },
-      select: { id: true, email: true, accessRoles: { select: { role: true } } },
+      select: { id: true, email: true, ...MEMBER_PRIVILEGE_CHECK_SELECT },
     });
 
     // Only a genuine kiosk (LODGE) account can be previewed — never an
-    // arbitrary member, which would leak a non-kiosk view.
+    // arbitrary member, which would leak a non-kiosk view. A kiosk account
+    // whose login is disabled cannot serve a kiosk, so it has no view to
+    // preview either (#3603).
     if (!target || !hasLodgeAccess(target)) {
       return {
         session: null,

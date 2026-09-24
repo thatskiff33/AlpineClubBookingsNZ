@@ -54,6 +54,21 @@ export const MEMBER_ACCESS_ROLE_SELECT = {
 } as const;
 
 /**
+ * The member fields a privilege decision reads (#3603): `canLogin` together
+ * with the joined access-role rows. Spread it into any member query whose
+ * result feeds `requireAdmin`-style gates, the admin permission matrix,
+ * `hasAdminAccess`, `isFullAdmin`, `hasPrivilegedAccess`, `hasLodgeAccess` or
+ * `authorizationRoleFromAccessRoles`. Those take a `PrivilegeCheckInput`, which
+ * requires `canLogin`, so a query that drops it no longer compiles into a
+ * gate — the rows alone would resolve a login-disabled member's full stored
+ * roles.
+ */
+export const MEMBER_PRIVILEGE_CHECK_SELECT = {
+  canLogin: true,
+  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+} as const;
+
+/**
  * Candidate rows for any "which admins…" query (#2548): active, able to sign
  * in, and holding at least one access-role assignment beyond the plain
  * USER/ORG classification.

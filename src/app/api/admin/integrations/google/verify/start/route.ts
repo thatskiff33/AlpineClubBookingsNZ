@@ -23,7 +23,7 @@ import logger from "@/lib/logger";
 export async function POST() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (!isFullAdmin(guard.session.user)) {
     return NextResponse.json(
       { error: "Full admin access is required." },
       { status: 403 },

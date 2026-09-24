@@ -63,6 +63,7 @@ export default async function TwoFactorVerifyPage({
     landingPreference: session.user.postLoginLanding,
     permissionInput: {
       adminPermissionMatrix: session.user.adminPermissionMatrix,
+      canLogin: session.user.canLogin,
     },
   });
 

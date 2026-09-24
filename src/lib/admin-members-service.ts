@@ -94,7 +94,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   isAccessRole,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   accessRoleAssignmentRowsFromTokens,
@@ -1265,7 +1265,7 @@ export async function listAdminMembers(
 
 export async function createAdminMember(
   data: CreateMemberInput,
-  actor: { accessRoles: AccessRoleInput["accessRoles"] },
+  actor: PrivilegeCheckInput,
 ): Promise<JsonRouteResult> {
   // Full Admin gate (issue #1012): a scoped admin (e.g. membership:edit)
   // must not be able to mint a privileged account. Evaluated canLogin-blind
@@ -1283,7 +1283,7 @@ export async function createAdminMember(
         });
   if (
     accessRoleChangeRequiresFullAdmin([], requestedGrant) &&
-    !isFullAdmin({ accessRoles: actor.accessRoles })
+    !isFullAdmin(actor)
   ) {
     return jsonResult(
       {

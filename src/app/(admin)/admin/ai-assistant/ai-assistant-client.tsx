@@ -138,7 +138,7 @@ function KeyCard({
   const clubTime = useClubTime();
   const { data: session } = useSession();
   const canWrite = session?.user
-    ? isFullAdmin({ accessRoles: session.user.accessRoles })
+    ? isFullAdmin(session.user)
     : false;
 
   const [keyState, setKeyState] = useState<AiAssistantKeyState>(initialKeyState);

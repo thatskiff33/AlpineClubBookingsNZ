@@ -659,6 +659,7 @@ export default function MemberDetailPage({
   const isSelf = session?.user?.id === id;
   const actorIsFullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   const xeroRecoveryAlert = (

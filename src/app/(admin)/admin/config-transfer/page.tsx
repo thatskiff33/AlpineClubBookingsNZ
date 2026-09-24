@@ -96,6 +96,7 @@ export default function ConfigTransferPage() {
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   const [selected, setSelected] = useState<Set<ConfigTransferCategory>>(

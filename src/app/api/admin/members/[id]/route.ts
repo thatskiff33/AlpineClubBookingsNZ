@@ -88,7 +88,7 @@ export async function PUT(
   const result = await updateAdminMember({
     id: parsedParams.data.id,
     currentAdminMemberId: guard.session.user.id,
-    currentAdminAccessRoles: guard.session.user.accessRoles,
+    currentAdminAccess: guard.session.user,
     request: req,
     data: parsedBody.data,
   });

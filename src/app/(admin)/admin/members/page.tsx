@@ -63,6 +63,7 @@ export default function MembersPage() {
   const canEditMembership = useAdminAreaEditAccess("membership")
   const actorIsFullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   })
   const {
     search,

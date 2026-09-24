@@ -8,6 +8,7 @@ export default function AccessRolesPage() {
   const { data: session } = useSession();
   const actorIsFullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   return (

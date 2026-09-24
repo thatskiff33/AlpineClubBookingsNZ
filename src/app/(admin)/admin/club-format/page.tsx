@@ -41,6 +41,7 @@ export default function ClubFormatPage() {
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   if (session && !fullAdmin) {

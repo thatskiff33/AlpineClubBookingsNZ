@@ -81,7 +81,7 @@ export function useGoogleWizardContext(
     sessionStatus === "loading"
       ? undefined
       : session
-        ? isFullAdmin({ accessRoles: session.user?.accessRoles ?? [] })
+        ? isFullAdmin({ accessRoles: session.user?.accessRoles ?? [], canLogin: session.user?.canLogin ?? false })
         : false;
 
   const [loading, setLoading] = useState(true);

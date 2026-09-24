@@ -23,6 +23,7 @@ import {
   hasAccessRole,
   isAccessRole,
   isFullAdmin,
+  sessionAccessRoleClaim,
   type AppAccessRole,
 } from "./access-roles";
 import {
@@ -109,6 +110,15 @@ declare module "next-auth" {
        * custom and club-edited roles (#1367).
        */
       accessRoles: AppAccessRole[];
+      /**
+       * Whether the member may sign in, refreshed on every request (#3603).
+       * Carried so a privilege check over `session.user` (`isFullAdmin`,
+       * `hasAdminAccess`, `authorizationRoleFromAccessRoles`, which require it)
+       * applies the login-disabled rule. A session whose member has it false is
+       * invalidated by the token refresh, so `auth()` returns such a session
+       * as null; the role claim above is empty for it as well.
+       */
+      canLogin: boolean;
       /**
        * Merged admin-permission matrix computed from the DB-joined member at
        * the per-request token refresh (#1367). Authoritative for
@@ -443,7 +453,7 @@ export const authConfig = {
         const session = await auth();
         if (
           session?.user?.id === verifyIntent.memberId &&
-          isFullAdmin({ accessRoles: session.user.accessRoles })
+          isFullAdmin(session.user)
         ) {
           await recordGoogleVerified();
           return "/admin/google/setup?googleVerified=1";
@@ -613,10 +623,10 @@ export const authConfig = {
           token.role = member.role;
           // role is null for definition-backed custom-role rows, so the
           // accessRoles claim stays enum-only. Custom roles reach the
-          // session through adminPermissionMatrix below (#1367).
-          token.accessRoles = member.accessRoles
-            .map(({ role }) => role)
-            .filter(isAccessRole);
+          // session through adminPermissionMatrix below (#1367). Empty once
+          // login is disabled (#3603), the same rule the matrix applies.
+          token.accessRoles = sessionAccessRoleClaim(member);
+          token.canLogin = member.canLogin;
           // #1367: merged admin-permission matrix over the JOINED assignment
           // rows, so definition-backed custom roles and club-edited seeded
           // definitions grant correctly through every session.user-based
@@ -645,8 +655,27 @@ export const authConfig = {
               "Invalidating session for a deleted account (#2620)",
             );
           }
+          // #3603: every sign-in provider requires `canLogin: true`, so a
+          // member whose login has since been switched off holds no session
+          // either. Same kill switch as deletion above: it covers a session
+          // minted before the change, whichever path made it.
+          const loginDisabledSession = member.canLogin === false;
+          if (loginDisabledSession) {
+            logger.warn(
+              { memberId: token.id },
+              "Invalidating session for a member whose login is disabled (#3603)",
+            );
+          }
+          // Once invalidated, a token stays invalidated (#3603). The login
+          // trigger is reversible, and re-enabling login must mean signing in
+          // again, not reviving the session that was ended. The other triggers
+          // were already one-way (a deletion, a newer password), so this
+          // changes nothing for them; sign-in mints a fresh token with the flag
+          // cleared.
           token.sessionInvalidated =
+            token.sessionInvalidated === true ||
             deletedAccountSession ||
+            loginDisabledSession ||
             (member.passwordChangedAt instanceof Date &&
               member.passwordChangedAt.getTime() > sessionIssuedAt);
           token.twoFactorRequired = twoFactorRequired;
@@ -698,6 +727,9 @@ export const authConfig = {
               typeof role === "string" && isAccessRole(role),
           )
         : [];
+      // #3603: fail closed. Only an explicit true from the per-request refresh
+      // counts; a token that could not be refreshed carries no login.
+      session.user.canLogin = token.canLogin === true;
       // #1367: the jwt callback above stamps the matrix from the DB-joined
       // member on every request BEFORE this projection runs, so this
       // fallback only fires when that refresh could not run (member row gone,

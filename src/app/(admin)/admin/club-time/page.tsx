@@ -32,6 +32,7 @@ export default function ClubTimePage() {
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   if (session && !fullAdmin) {

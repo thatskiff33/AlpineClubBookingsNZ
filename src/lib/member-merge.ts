@@ -11,7 +11,7 @@ import {
   actorIsFullAdmin,
   wouldRemoveLastFullAdmin,
 } from "@/lib/admin-account-guards";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { memberHoldsFullAdminRole } from "@/lib/access-roles";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import {
   describeChildSideDepth,
@@ -595,7 +595,10 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
-  if (hasAdminAccess({ accessRoles: loser.accessRoles })) {
+  // canLogin-blind on purpose (#3603): a duplicate whose login is already
+  // switched off still stores the Full Admin row, and merging it away would
+  // bypass the demote-first rule.
+  if (memberHoldsFullAdminRole(loser)) {
     blockers.push({
       code: "loser_is_admin",
       label: "The duplicate holds an admin access role. Demote it before merging.",

@@ -39,6 +39,7 @@ export default function EnvironmentSafetyPage() {
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
+    canLogin: session?.user?.canLogin ?? false,
   });
 
   if (session && !fullAdmin) {
