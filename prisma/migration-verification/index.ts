@@ -18,6 +18,7 @@ import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midni
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
 import relocaleProofExceptionRequestIdentities from "./20260930010000_relocale_proof_exception_request_identities";
 import addMemberSessionsRevokedAt from "./20261009010000_add_member_sessions_revoked_at";
+import backfillMemberSessionsRevokedAt from "./20261009020000_backfill_member_sessions_revoked_at";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -58,4 +59,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   backfillSchoolBookingsToOrganisations,
   addMemberParentPartnerExclusion,
   addMemberSessionsRevokedAt,
+  backfillMemberSessionsRevokedAt,
 ];

@@ -2,17 +2,16 @@ import type { DataMigrationVerification } from "./types";
 
 /**
  * #3603 (owner decision D1 on PR #3608): session revocation is stored on the
- * server. The migration adds `Member.sessionsRevokedAt`, a trigger that stamps
- * it whenever `canLogin` goes from true to false, and a backfill for members
- * whose login is already off. The token refresh refuses any session issued
- * before the stamp (INV-LIFE-092).
+ * server. This migration adds `Member.sessionsRevokedAt` and the trigger that
+ * stamps it whenever `canLogin` goes from true to false; the backfill for
+ * members whose login is already off is the next migration, with its own
+ * fixture. The token refresh refuses any session issued before the stamp
+ * (INV-LIFE-092).
  *
- * Two things must hold, and each case pins one:
- *   - the backfill stamps exactly the members whose login is off, and no one
- *     else, with a UTC value;
- *   - the trigger stamps a true-to-false write and nothing else: not an update
- *     that leaves `canLogin` alone, not true-to-true, not false-to-false, and
- *     not a re-enable, which must keep the earlier revocation time.
+ * The trigger must stamp a true-to-false write and nothing else: not an update
+ * that leaves `canLogin` alone, not true-to-true, not false-to-false, and not a
+ * re-enable, which must keep the earlier revocation time. And it must not
+ * rewrite any existing row itself: that is the backfill's job.
  */
 
 const MEMBERS = (rows: string) => `
@@ -37,40 +36,24 @@ const EARLIER = "2020-01-01 00:00:00.000";
 const verification: DataMigrationVerification = {
   migration: "20261009010000_add_member_sessions_revoked_at",
   intent:
-    "Add Member.sessionsRevokedAt, stamp it in explicit UTC for every member whose login is already off, and install a trigger that stamps it on every canLogin true-to-false update and on no other write.",
+    "Add Member.sessionsRevokedAt and install a trigger that stamps it in explicit UTC on every canLogin true-to-false update and on no other write, rewriting no existing row.",
   executionMode: "isolated_database",
   idempotentReRun: false,
   cases: [
     {
-      name: "the backfill stamps exactly the members whose login is already off",
+      name: "the migration itself stamps no existing member",
       seed: MEMBERS(`
         ('dmv-revoke-a-login', 'dmv-revoke-a@example.invalid', 'x', 'Login', 'On', true, now()),
-        ('dmv-revoke-b-nologin', 'dmv-revoke-b@example.invalid', 'x', 'Login', 'Off', false, now()),
-        ('dmv-revoke-c-nologin', 'dmv-revoke-c@example.invalid', 'x', 'Never', 'Had', false, now())
+        ('dmv-revoke-b-nologin', 'dmv-revoke-b@example.invalid', 'x', 'Login', 'Off', false, now())
       `),
       expectations: [
         {
-          claim:
-            "login-disabled members are stamped and a login-enabled member is not",
+          claim: "no row is stamped until a real switch-off or the backfill",
           sql: REVOKED_STATE,
           rows: [
             { id: "dmv-revoke-a-login", canLogin: true, revoked: false },
-            { id: "dmv-revoke-b-nologin", canLogin: false, revoked: true },
-            { id: "dmv-revoke-c-nologin", canLogin: false, revoked: true },
+            { id: "dmv-revoke-b-nologin", canLogin: false, revoked: false },
           ],
-        },
-        {
-          claim:
-            "the backfilled time is the migration's own UTC time, not a session-local or fixed value",
-          sql: `
-            SELECT COUNT(*)::integer AS "stampedNearNow"
-            FROM "Member"
-            WHERE "id" LIKE 'dmv-revoke-%'
-              AND "sessionsRevokedAt" BETWEEN
-                timezone('UTC', clock_timestamp()) - interval '1 hour'
-                AND timezone('UTC', clock_timestamp()) + interval '1 minute'
-          `,
-          rows: [{ stampedNearNow: 2 }],
         },
       ],
     },
@@ -136,22 +119,6 @@ const verification: DataMigrationVerification = {
     },
   ],
   mutants: [
-    {
-      name: "backfill every member rather than the login-disabled ones",
-      harm:
-        "Every member's sessions are revoked at deploy, signing the whole club out, and the column no longer says whose login was switched off.",
-      find: `WHERE "canLogin" = false;`,
-      replace: `WHERE true;`,
-    },
-    {
-      name: "skip the backfill",
-      harm:
-        "A session minted before the release for a member whose login was already off revives the moment their login is switched back on.",
-      find: `UPDATE "Member"
-SET "sessionsRevokedAt" = timezone('UTC', statement_timestamp())
-WHERE "canLogin" = false;`,
-      replace: `SELECT 1;`,
-    },
     {
       name: "stamp on every write that sets canLogin false, including false-to-false",
       harm:
