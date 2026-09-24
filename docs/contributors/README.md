@@ -14,9 +14,8 @@ is required reading to deploy the product.
 the only entry point you need. It carries the always-read core, the routing
 table that names what to read for the change you are about to make, the safety
 rules, the orchestration model, and the merge gate. Read it first and let its
-routing table bring you back here.
-[`../../CLAUDE.md`](../../CLAUDE.md) is the compact Claude Code adapter over the
-same contract.
+routing table bring you back here. It is the only agent file: Claude Code,
+Codex and other agents all load it directly.
 
 **Humans:** read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for local
 setup, the development rules and the pull-request contract, then

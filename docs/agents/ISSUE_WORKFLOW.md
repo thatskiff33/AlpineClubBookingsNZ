@@ -434,8 +434,8 @@ from enforcement, and the owner's gate is the `epic → main` merge.
 ## Risk And Attendance
 
 High and critical issues are not suitable for unattended coding runs. They can
-be planned, mapped, or reviewed with xhigh/high effort, but implementation needs
-human review of the plan and resulting PR before merge.
+be planned, mapped, or reviewed, but implementation needs human review of the
+plan and resulting PR before merge.
 
 Low and medium issues may be suitable for an autonomous local run only when the
 issue has complete scope and validation commands and does not touch money
