@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { ClubFormatProvider } from "@/components/club-format-provider";
-import { getClubFormat } from "@/lib/club-format-settings";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { DisplayScreen } from "./display-screen";
 import "./display.css";
@@ -85,9 +85,16 @@ export const dynamic = "force-dynamic";
   chrome mount is unchanged and is stated above: its sibling `error.tsx` is
   held at zero data dependencies, and no mount on this route could ever cover
   it.
+
+  THE READER IS `clubFormatValues()` AND NOT THE RAW `getClubFormat()` (#3565).
+  Stage 2 wrote the raw reader because stage 1 cached nothing and said so; stage
+  3 chose the caching contract — React `cache()` — and a `cache()` memo is per
+  FUNCTION IDENTITY, so a surface still calling the unwrapped reader gets its own
+  entry and reads the one-row table a second time in the same render pass. The
+  values are exactly what this mount hands the provider.
 */
 export default async function DisplayPage() {
-  const [zone, format] = await Promise.all([clubTimeZone(), getClubFormat()]);
+  const [zone, format] = await Promise.all([clubTimeZone(), clubFormatValues()]);
   return (
     <ClubFormatProvider
       currencyCode={format.currencyCode}

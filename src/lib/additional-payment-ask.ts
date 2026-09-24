@@ -75,6 +75,7 @@
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** The two `Payment` columns that record the one live ask. */
 export interface AdditionalAskPayment {
@@ -451,14 +452,16 @@ export function describeBookingLedgerResidual(params: {
   label: string;
   row: BookingLedgerIdentityRow;
   residualCents: number;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const terms = BOOKING_LEDGER_IDENTITY_TERMS.map(
     (term) =>
       `  ${term.sign === 1 ? "+" : "-"} ${term.ts(params.row)}  ${term.label}`,
   ).join("\n");
   return [
     `INV-PAY-047: ${params.label} does not balance.`,
-    `Residual ${formatCents(params.residualCents)} is money the price says is owed that no ask is collecting (#3340).`,
+    `Residual ${formatCents(params.residualCents, format)} is money the price says is owed that no ask is collecting (#3340).`,
     terms,
   ].join("\n");
 }

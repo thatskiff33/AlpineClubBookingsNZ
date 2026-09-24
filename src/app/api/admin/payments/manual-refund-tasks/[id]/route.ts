@@ -17,6 +17,7 @@ import {
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
@@ -165,6 +166,10 @@ export async function POST(
     );
   }
 
+  // The club's format (#3565), resolved once per request, before the
+  // resolution's transaction.
+  const format = await clubFormatValues();
+
   try {
     const result = await resolveManualRefundTask(
       parsed.data.resolution === "completed"
@@ -184,6 +189,7 @@ export async function POST(
             actingMemberId: guard.session.user.id,
             recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           },
+      format,
     );
     revalidatePath("/admin/payments");
     revalidatePath("/admin/bookings/[id]", "page");

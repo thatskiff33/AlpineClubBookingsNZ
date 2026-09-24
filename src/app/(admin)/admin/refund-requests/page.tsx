@@ -36,6 +36,7 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
+import { useClubFormat } from "@/components/club-format-provider"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -136,6 +137,7 @@ function formatStayDay(value: string) {
 }
 
 export default function RefundRequestsPage() {
+  const format = useClubFormat()
   const clubTime = useClubTime()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -500,19 +502,19 @@ export default function RefundRequestsPage() {
                             <>
                               <div>
                                 <span className="text-muted-foreground">Paid:</span>{" "}
-                                {formatCents(payment.amountCents)}
+                                {formatCents(payment.amountCents, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Remaining:</span>{" "}
-                                {formatCents(maxRefundable)}
+                                {formatCents(maxRefundable, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">To card:</span>{" "}
-                                {formatCents(settlement?.refundToOriginalMethodCents ?? 0)}
+                                {formatCents(settlement?.refundToOriginalMethodCents ?? 0, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">As credit:</span>{" "}
-                                {formatCents(settlement?.accountCreditCents ?? 0)}
+                                {formatCents(settlement?.accountCreditCents ?? 0, format)}
                               </div>
                             </>
                           )}
@@ -521,14 +523,14 @@ export default function RefundRequestsPage() {
                         {settlement && settlement.restoredAppliedCreditCents > 0 && (
                           <p className="text-sm text-muted-foreground">
                             Restored prior credit:{" "}
-                            {formatCents(settlement.restoredAppliedCreditCents)}
+                            {formatCents(settlement.restoredAppliedCreditCents, format)}
                           </p>
                         )}
 
                         {req.requestedAmountCents && (
                           <p className="text-sm">
                             <span className="text-muted-foreground">Requested amount:</span>{" "}
-                            <strong>{formatCents(req.requestedAmountCents)}</strong>
+                            <strong>{formatCents(req.requestedAmountCents, format)}</strong>
                           </p>
                         )}
 
@@ -546,7 +548,7 @@ export default function RefundRequestsPage() {
                             {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
                               <p className="text-sm">
                                 <span className="text-muted-foreground">Refunded:</span>{" "}
-                                <strong>{formatCents(req.approvedAmountCents)}</strong>
+                                <strong>{formatCents(req.approvedAmountCents, format)}</strong>
                               </p>
                             )}
                             {req.adminNotes && (
@@ -594,7 +596,7 @@ export default function RefundRequestsPage() {
                                 className="w-40"
                               />
                               <p className="text-xs text-muted-foreground">
-                                Max refundable: {formatCents(maxRefundable)}
+                                Max refundable: {formatCents(maxRefundable, format)}
                               </p>
                             </div>
                             <div className="space-y-2">
@@ -711,7 +713,7 @@ export default function RefundRequestsPage() {
                               }
                             >
                               {request.amountCents > 0 ? "+" : ""}
-                              {formatCents(request.amountCents)}
+                              {formatCents(request.amountCents, format)}
                             </span>
                           </div>
                           <div>

@@ -9,6 +9,8 @@ import {
   NonMemberGuestsSection,
   type NonMemberGuestChild,
 } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
+import { bindClubFormat } from "@/lib/club-format-bound";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -42,10 +44,18 @@ function child(overrides: Partial<NonMemberGuestChild> = {}): NonMemberGuestChil
   };
 }
 
+/**
+ * The club's format, PINNED rather than inherited (#3565). The component now
+ * takes the binding the page resolves from the persisted setting; a test that
+ * read the environment instead would change its expected strings the day a
+ * deployment's `CURRENCY` changed.
+ */
+const money = bindClubFormat(CLUB_FORMAT_TEST);
+
 describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("renders nothing when there are no children", () => {
     const { container } = render(
-      <NonMemberGuestsSection guests={[]} nonOwnerAdminViewer={false} />,
+      <NonMemberGuestsSection guests={[]} money={money} nonOwnerAdminViewer={false} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -53,6 +63,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("shows the owner heading and a link to each child booking", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child()]}
         nonOwnerAdminViewer={false}
       />,
@@ -68,7 +79,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
 
   it("uses third-person copy for a non-owner admin viewer", () => {
     render(
-      <NonMemberGuestsSection guests={[child()]} nonOwnerAdminViewer />,
+      <NonMemberGuestsSection guests={[child()]} money={money} nonOwnerAdminViewer />,
     );
     expect(
       screen.getByText("The member's non-member guests"),
@@ -83,6 +94,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("says nothing about a child's stored money when the verdict was withheld", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ moneyReconciliation: { visibility: "WITHHELD" } })]}
         nonOwnerAdminViewer={false}
       />,
@@ -95,6 +107,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("qualifies an unreconciled child amount without changing it", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[
           child({
             moneyReconciliation: {
@@ -117,6 +130,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("renders the child's own status badge (e.g. a PENDING child under a PAID parent)", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ status: "PENDING" as BookingStatus })]}
         nonOwnerAdminViewer={false}
       />,
@@ -127,6 +141,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("shows a cancelled child's status", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ status: "CANCELLED" as BookingStatus })]}
         nonOwnerAdminViewer={false}
       />,
@@ -141,6 +156,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
     // reason — the assertion is about whether the dates appear at all.
     const { rerender } = render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ datesDiffer: false })]}
         nonOwnerAdminViewer={false}
       />,
@@ -149,6 +165,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
 
     rerender(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ datesDiffer: true })]}
         nonOwnerAdminViewer={false}
       />,
@@ -159,6 +176,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("lists multiple children each with its own link and status", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[
           child({ id: "child-1", status: "PENDING" as BookingStatus }),
           child({ id: "child-2", status: "BUMPED" as BookingStatus }),
@@ -177,6 +195,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("swaps to no-longer-active intro copy when every child is cancelled/bumped", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[
           child({ id: "child-1", status: "CANCELLED" as BookingStatus }),
           child({ id: "child-2", status: "BUMPED" as BookingStatus }),
@@ -200,6 +219,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("uses the third-person no-longer-active copy for an admin viewer when all children are cancelled", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ status: "CANCELLED" as BookingStatus })]}
         nonOwnerAdminViewer
       />,
@@ -214,6 +234,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("keeps the held intro copy when at least one child is still live", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[
           child({ id: "child-1", status: "CANCELLED" as BookingStatus }),
           child({ id: "child-2", status: "PENDING" as BookingStatus }),
@@ -232,6 +253,7 @@ describe("NonMemberGuestsSection (#1975 parent detail section)", () => {
   it("uses the singular noun for a single guest", () => {
     render(
       <NonMemberGuestsSection
+        money={money}
         guests={[child({ guestCount: 1 })]}
         nonOwnerAdminViewer={false}
       />,

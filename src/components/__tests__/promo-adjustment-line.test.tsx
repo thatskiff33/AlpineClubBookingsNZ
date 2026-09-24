@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { PromoCodeInput } from "@/components/promo-code-input";
 import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";

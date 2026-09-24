@@ -59,6 +59,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { PATCH } from "@/app/api/admin/bookings/[id]/review/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -277,6 +278,7 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
       "admin1",
       "ADMIN",
       expect.anything(),
+      CLUB_FORMAT_TEST,
       "card",
     );
   });
@@ -405,6 +407,7 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
       "admin1",
       "ADMIN",
       expect.any(String),
+      CLUB_FORMAT_TEST,
       "card",
     );
     expect(mocks.sendRejectedEmail).toHaveBeenCalled();

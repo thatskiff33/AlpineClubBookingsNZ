@@ -5,6 +5,7 @@ import {
   formatClubDate,
 } from "@/lib/club-time";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
@@ -82,8 +83,8 @@ export type PublicCancellationPolicy = {
 
 type PublicCancellationRuleInput = Parameters<typeof normalizeCancellationRule>[0];
 
-function money(amountCents: number): PublicMoney {
-  return { amountCents, label: formatCents(amountCents) };
+function money(amountCents: number, format: ClubFormat): PublicMoney {
+  return { amountCents, label: formatCents(amountCents, format) };
 }
 
 type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "annualFees" | "bookingPolicySummary" | "cancellationPolicy";
@@ -121,10 +122,10 @@ function sentenceCase(value: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function describeCancellationTerms(rawRule: PublicCancellationRuleInput): string {
+function describeCancellationTerms(rawRule: PublicCancellationRuleInput, format: ClubFormat): string {
   const rule = normalizeCancellationRule(rawRule);
-  const cardFee = rule.fixedFeeCents > 0 ? ` less a ${money(rule.fixedFeeCents).label} fee` : "";
-  const creditFee = rule.creditFixedFeeCents > 0 ? ` less a ${money(rule.creditFixedFeeCents).label} fee` : "";
+  const cardFee = rule.fixedFeeCents > 0 ? ` less a ${money(rule.fixedFeeCents, format).label} fee` : "";
+  const creditFee = rule.creditFixedFeeCents > 0 ? ` less a ${money(rule.creditFixedFeeCents, format).label} fee` : "";
   const differs = rule.refundPercentage !== rule.creditRefundPercentage || rule.fixedFeeCents !== rule.creditFixedFeeCents;
   return differs
     ? `${rule.refundPercentage}% card refund${cardFee}; ${rule.creditRefundPercentage}% credit refund${creditFee}`
@@ -138,6 +139,7 @@ function describeCancellationTerms(rawRule: PublicCancellationRuleInput): string
  */
 export function describePublicCancellationRules(
   rawRules: PublicCancellationRuleInput[],
+  format: ClubFormat,
 ): Array<{ description: string }> {
   const rules = rawRules
     .map(normalizeCancellationRule)
@@ -159,7 +161,7 @@ export function describePublicCancellationRules(
     const range = !previous
       ? `${rule.daysBeforeStay} or more days before check-in`
       : `${rule.daysBeforeStay}–${Math.max(rule.daysBeforeStay, previous.daysBeforeStay - 1)} days before check-in`;
-    return { description: `${range}: ${describeCancellationTerms(rule)}` };
+    return { description: `${range}: ${describeCancellationTerms(rule, format)}` };
   });
   const lowest = reachableRules.at(-1)?.daysBeforeStay;
   if (lowest !== undefined && lowest > 0) {
@@ -226,6 +228,7 @@ export type PublicJoiningFeeOptions = { typeKey?: string; byAge?: boolean };
  * or unlisted `typeKey` yields the empty state (never another type's data).
  */
 export async function loadPublicJoiningFees(
+  format: ClubFormat,
   options: PublicJoiningFeeOptions = {},
 ): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("entranceFees"))) return [];
@@ -273,7 +276,7 @@ export async function loadPublicJoiningFees(
     for (const cell of cells) {
       const key = cell.tier ?? "FLAT";
       const group = byTier.get(key) ?? { tier: cell.tier, rows: [] };
-      group.rows.push({ label: cell.typeName, fee: money(cell.amountCents) });
+      group.rows.push({ label: cell.typeName, fee: money(cell.amountCents, format) });
       byTier.set(key, group);
     }
     return [...byTier.values()]
@@ -286,7 +289,7 @@ export async function loadPublicJoiningFees(
   const order: string[] = [];
   for (const cell of cells) {
     if (!byType.has(cell.typeName)) { byType.set(cell.typeName, []); order.push(cell.typeName); }
-    byType.get(cell.typeName)!.push({ label: ageLabel(tiers, cell.tier), fee: money(cell.amountCents) });
+    byType.get(cell.typeName)!.push({ label: ageLabel(tiers, cell.tier), fee: money(cell.amountCents, format) });
   }
   return order.map((typeName) => ({
     heading: typeName,
@@ -320,6 +323,7 @@ export type PublicAnnualFeeOptions = { typeKey?: string; components?: boolean };
  * double-opt-in (D-R4). Unknown/unlisted `typeKey` → empty state.
  */
 export async function loadPublicAnnualFees(
+  format: ClubFormat,
   options: PublicAnnualFeeOptions = {},
 ): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("annualFees"))) return [];
@@ -392,8 +396,8 @@ export async function loadPublicAnnualFees(
       .map((cell) => ({
         heading: rowLabel(cell),
         rows: (cell.components.length > 0
-          ? cell.components.map((component) => ({ label: component.label, fee: money(component.amountCents) }))
-          : [{ label: "Annual membership fee", fee: money(cell.amountCents) }]),
+          ? cell.components.map((component) => ({ label: component.label, fee: money(component.amountCents, format) }))
+          : [{ label: "Annual membership fee", fee: money(cell.amountCents, format) }]),
       }))
       .filter((group) => group.rows.length > 0);
   }
@@ -401,7 +405,7 @@ export async function loadPublicAnnualFees(
   // Default: a single group of "Type — TierLabel" → total rows.
   return [{
     heading: "Annual membership fees",
-    rows: cells.map((cell) => ({ label: rowLabel(cell), fee: money(cell.amountCents) })),
+    rows: cells.map((cell) => ({ label: rowLabel(cell), fee: money(cell.amountCents, format) })),
   }];
 }
 
@@ -414,6 +418,7 @@ function hutFeeTable(
   heading: string,
   columns: HutFeeColumn[],
   tiers: AgeTierLabels,
+  format: ClubFormat,
 ): PublicFeeTable | null {
   if (columns.length === 0) return null;
   const tierKeys = [...new Set(columns.flatMap((column) => [...column.prices.keys()]))]
@@ -428,7 +433,7 @@ function hutFeeTable(
       label: ageLabel(tiers, tier),
       cells: columns.map((column) => {
         const cents = column.prices.get(tier);
-        return cents === undefined ? null : money(cents);
+        return cents === undefined ? null : money(cents, format);
       }),
     })),
   };
@@ -487,6 +492,7 @@ function transposeFeeTable(table: PublicFeeTable): PublicFeeTable {
  * since it is harmless and rejecting it would need a new failure mode.
  */
 export async function loadPublicHutFees(
+  format: ClubFormat,
   slug?: string,
   options: PublicHutFeeOptions = {},
 ): Promise<PublicFeeTable[]> {
@@ -543,8 +549,8 @@ export async function loadPublicHutFees(
       const columns = collapseHutFeeColumns([...byType.values()]);
       if (columns.length === 0) continue;
       const built = splitByType
-        ? columns.map((column) => hutFeeTable(`${seasonTitle} · ${column.heading}`, [column], tiers))
-        : [hutFeeTable(seasonTitle, columns, tiers)];
+        ? columns.map((column) => hutFeeTable(`${seasonTitle} · ${column.heading}`, [column], tiers, format))
+        : [hutFeeTable(seasonTitle, columns, tiers, format)];
       for (const table of built) {
         if (!table) continue;
         tables.push(byAge ? transposeFeeTable(table) : table);
@@ -722,7 +728,7 @@ function publicAdultMemberHostingCopy(
         "confirmed until it is corrected or the club decides otherwise.";
 }
 
-export async function loadPublicCancellationPolicy(slug?: string): Promise<PublicCancellationPolicy | null> {
+export async function loadPublicCancellationPolicy(format: ClubFormat, slug?: string): Promise<PublicCancellationPolicy | null> {
   if (!(await isPublicContentEnabled("cancellationPolicy"))) return null;
   const lodge = slug === undefined ? null : await findPublicLodge(slug);
   if (slug !== undefined && !lodge) return null;
@@ -753,12 +759,12 @@ export async function loadPublicCancellationPolicy(slug?: string): Promise<Publi
   const effectivePeriods = (lodge ? resolvePolicyRowsForLodge(periods, lodge.id) : periods).filter((period) => period.endDate >= today);
   return {
     lodge: lodge ? { name: lodge.name, slug: lodge.slug } : null,
-    tiers: describePublicCancellationRules(effectiveRows),
+    tiers: describePublicCancellationRules(effectiveRows, format),
     periods: effectivePeriods.map((period) => ({
       name: period.name,
       dateRange: dateRange(period.startDate, period.endDate),
       tiers: Array.isArray(period.cancellationRules)
-        ? describePublicCancellationRules(period.cancellationRules as unknown as PublicCancellationRuleInput[])
+        ? describePublicCancellationRules(period.cancellationRules as unknown as PublicCancellationRuleInput[], format)
         : [],
     })),
   };

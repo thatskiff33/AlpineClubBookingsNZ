@@ -12,6 +12,7 @@ import {
   snapshotBookingNightAdjustments,
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const loggerMocks = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
@@ -123,7 +124,7 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
   const base = { targets: TARGETS, allocations: REDEMPTION.allocations, priceAdjustmentCents: -1500, context: "test" };
 
   it("passes rows that sum to the recorded allocation and redemption totals", () => {
-    expect(() => reconcilePromoAdjustmentTargets(base)).not.toThrow();
+    expect(() => reconcilePromoAdjustmentTargets(base, CLUB_FORMAT_TEST)).not.toThrow();
   });
 
   it("refuses when a beneficiary's rows do not sum to their allocation, naming the invariant", () => {
@@ -131,13 +132,48 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
       reconcilePromoAdjustmentTargets({
         ...base,
         allocations: [{ memberId: "booker", priceAdjustmentCents: -1400 }],
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*booker.*-\\$15\\.00.*-\\$14\\.00`));
   });
 
   it("refuses when the rows sum to the allocations but not to the redemption total", () => {
-    expect(() => reconcilePromoAdjustmentTargets({ ...base, priceAdjustmentCents: -1600 })).toThrow(
+    expect(() => reconcilePromoAdjustmentTargets({ ...base, priceAdjustmentCents: -1600 }, CLUB_FORMAT_TEST)).toThrow(
       new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*-\\$15\\.00.*-\\$16\\.00`),
+    );
+  });
+
+  /*
+    #3565 REVIEW: the refusal text used to be built inline, in three template
+    literals inside `findReconciliationMismatch`. It is now DATA (the
+    `ReconciliationMismatch` union) rendered by `describeReconciliationMismatch`
+    with the club's format. These three strings are transcribed from `main`'s
+    templates, with the amounts written out as `formatCents` rendered them there,
+    so the relocation is proven byte-identical rather than merely regex-shaped.
+  */
+  it("renders each mismatch exactly as the inline templates on main did", () => {
+    const thrown = (params: Parameters<typeof reconcilePromoAdjustmentTargets>[0]) => {
+      try {
+        reconcilePromoAdjustmentTargets(params, CLUB_FORMAT_TEST);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(
+      thrown({ ...base, allocations: [{ memberId: "booker", priceAdjustmentCents: -1400 }] }),
+    ).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: adjustment rows for member booker sum to -$15.00 but the recorded allocation is -$14.00`,
+    );
+    expect(thrown({ ...base, priceAdjustmentCents: -1600 })).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: adjustment rows sum to -$15.00 but the recorded redemption adjustment is -$16.00`,
+    );
+    expect(
+      thrown({
+        ...base,
+        targets: [{ ...TARGETS[0], amountCents: -500.5 }, TARGETS[1], TARGETS[2]],
+      }),
+    ).toBe(
+      `${NIGHT_ADJUSTMENT_INVARIANT}: test: an adjustment amount is not integer cents (-500.5)`,
     );
   });
 
@@ -151,7 +187,7 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
         allocations: [],
         priceAdjustmentCents: 0,
         context: "test",
-      }),
+      }, CLUB_FORMAT_TEST),
     ).not.toThrow();
   });
 
@@ -162,7 +198,7 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
         allocations: [{ memberId: "ghost", priceAdjustmentCents: -100 }],
         priceAdjustmentCents: -100,
         context: "test",
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*ghost`));
   });
 
@@ -179,13 +215,13 @@ describe("reconcilePromoAdjustmentTargets (INV-MONEY-029)", () => {
         ],
         priceAdjustmentCents: -1299,
         context: "test",
-      }),
+      }, CLUB_FORMAT_TEST),
     ).not.toThrow();
   });
 
   it("refuses a non-integer amount", () => {
     expect(() =>
-      reconcilePromoAdjustmentTargets({ ...base, targets: [{ ...TARGETS[0], amountCents: -1500.5 }] }),
+      reconcilePromoAdjustmentTargets({ ...base, targets: [{ ...TARGETS[0], amountCents: -1500.5 }] }, CLUB_FORMAT_TEST),
     ).toThrow(new RegExp(`${NIGHT_ADJUSTMENT_INVARIANT}.*integer`));
   });
 });
@@ -265,6 +301,7 @@ describe("recordBookingNightAdjustments", () => {
   it("writes one row per target against the resolved night (or guest), reading everything before it writes anything", async () => {
     const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: NIGHTS });
     await recordBookingNightAdjustments(tx, {
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       guestIds: ["guest-a", "guest-b"],
       targets: TARGETS,
@@ -287,6 +324,7 @@ describe("recordBookingNightAdjustments", () => {
   it("with no promotion on the booking, clears the booking's rows and writes none (nothing was taken off)", async () => {
     const { tx, recorded } = fakeTx({ redemption: null, nights: NIGHTS });
     await recordBookingNightAdjustments(tx, {
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       guestIds: ["guest-a"],
       targets: [],
@@ -303,6 +341,7 @@ describe("recordBookingNightAdjustments", () => {
     });
     await expect(
       recordBookingNightAdjustments(tx, {
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         guestIds: ["guest-a", "guest-b"],
         targets: TARGETS,
@@ -316,6 +355,7 @@ describe("recordBookingNightAdjustments", () => {
     const { tx, recorded } = fakeTx({ redemption: null, nights: NIGHTS });
     await expect(
       recordBookingNightAdjustments(tx, {
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         guestIds: ["guest-a", "guest-b"],
         targets: TARGETS,
@@ -329,6 +369,7 @@ describe("recordBookingNightAdjustments", () => {
     const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: [NIGHTS[0], NIGHTS[2]] });
     await expect(
       recordBookingNightAdjustments(tx, {
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         guestIds: ["guest-a", "guest-b"],
         targets: TARGETS,
@@ -343,6 +384,7 @@ describe("recordBookingNightAdjustments", () => {
     const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: [NIGHTS[2]] });
     loggerMocks.warn.mockClear();
     await recordBookingNightAdjustments(tx, {
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       guestIds: ["guest-a", "guest-b"],
       targets: TARGETS,
@@ -370,6 +412,7 @@ describe("recordBookingNightAdjustments", () => {
       const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: NIGHTS });
       await expect(
         recordBookingNightAdjustments(tx, {
+          format: CLUB_FORMAT_TEST,
           bookingId: "booking-1",
           guestIds: ["guest-a", "guest-b"],
           targets: [target],
@@ -385,6 +428,7 @@ describe("recordBookingNightAdjustments", () => {
     const { tx, recorded } = fakeTx({ redemption: REDEMPTION, nights: NIGHTS });
     await expect(
       recordBookingNightAdjustments(tx, {
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         guestIds: ["guest-a", null],
         targets: [],

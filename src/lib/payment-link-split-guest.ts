@@ -26,6 +26,7 @@ import logger from "@/lib/logger";
 import { revokePaymentLinkById } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
  * plus the row id so a caller whose email fails can revoke THIS link — and
@@ -162,7 +163,9 @@ export type IssueSplitGuestPaymentLinkResult =
  * second live settlement path.
  */
 export async function issueSplitGuestPaymentLink(
-  childBookingId: string
+  childBookingId: string,
+  /** The club's format (#3565), resolved once by the caller — never per child. */
+  format: ClubFormat
 ): Promise<IssueSplitGuestPaymentLinkResult> {
   const booking = await prisma.booking.findUnique({
     where: { id: childBookingId },
@@ -322,7 +325,7 @@ export async function issueSplitGuestPaymentLink(
       bookingReference: booking.id,
       expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
-    });
+    }, format);
   } catch (err) {
     // The raw token dies with this request; clear the sentinel so a retry
     // (button or cron) re-mints instead of pointing at an unreachable link.

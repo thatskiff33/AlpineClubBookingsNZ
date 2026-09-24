@@ -485,6 +485,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     // last night write and the redemption write. With no promotion the targets
     // are empty and RECORDED says exactly that: nothing was taken off.
     await recordBookingNightAdjustments(tx, {
+      format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
       targets: promoAdjustmentTargets,
@@ -576,7 +577,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         status: newBooking.status,
         reviewReason: newBooking.adminReviewReason,
         memberJustification: newBooking.memberReviewJustification,
-      }).catch((err) => logger.error({ err }, "Failed to send admin alert for awaiting-review draft"));
+      }, input.format).catch((err) => logger.error({ err }, "Failed to send admin alert for awaiting-review draft"));
     }
   }
 
@@ -987,6 +988,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           ? await getMemberCreditBalance(effectiveMemberId, tx)
           : 0;
       const { creditAppliedCents, effectivePriceCents } = calculateBookingCreditApplication({
+        format: input.format,
         requestedCreditCents: review.blockForReview ? 0 : (applyCreditCents ?? 0),
         creditBalanceCents: creditBalance,
         finalPriceCents,
@@ -1137,6 +1139,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // last night write and the redemption write. With no promotion the targets
       // are empty and RECORDED says exactly that: nothing was taken off.
       await recordBookingNightAdjustments(tx, {
+        format: input.format,
         bookingId: newBooking.id,
         guestIds: newBooking.guests.map((guest) => guest.id),
         targets: promoAdjustmentTargets,
@@ -1144,7 +1147,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       });
 
       if (creditAppliedCents > 0) {
-        await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx);
+        await applyCreditToBooking(effectiveMemberId, creditAppliedCents, newBooking.id, tx, input.format);
       }
 
       // Zero-dollar (or fully credit-covered) PAYMENT_PENDING booking:
@@ -1396,6 +1399,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // #3276: the split child carries no promotion (one redemption per party,
         // on the member booking), so its nights record that nothing came off.
         await recordBookingNightAdjustments(tx, {
+          format: input.format,
           bookingId: childBooking.id,
           guestIds: childBooking.guests.map((guest) => guest.id),
           targets: [],
@@ -1591,6 +1595,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
               fullBooking.checkOut,
               fullBooking.guests.length,
               fullBooking.finalPriceCents,
+              input.format,
               {
                 lodgeId: fullBooking.lodgeId,
                 ...(provisionalGuests ? { provisionalGuests } : {}),
@@ -1686,7 +1691,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         status: booking.status,
         reviewReason: booking.adminReviewReason,
         memberJustification: booking.memberReviewJustification,
-      }).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
+      }, input.format).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
     }
 
   };
@@ -1995,6 +2000,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     // last night write and the redemption write. With no promotion the targets
     // are empty and RECORDED says exactly that: nothing was taken off.
     await recordBookingNightAdjustments(tx, {
+      format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
       targets: promoAdjustmentTargets,
@@ -2066,7 +2072,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       status: newBooking.status,
       reviewReason: newBooking.adminReviewReason,
       memberJustification: newBooking.memberReviewJustification,
-    }).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
+    }, input.format).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
   }
 
   logAudit({

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -810,6 +811,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "m1", role: "USER" },
@@ -865,6 +867,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       const result = await modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         actor: { id: "m1", role: "USER" },
@@ -965,6 +968,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "officer-1", role: "ADMIN" },
@@ -4068,6 +4072,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -4088,6 +4093,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -4179,6 +4185,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       return modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         // ADMIN, because the other-lodge election below is officer-only. The fence
@@ -4344,6 +4351,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         "@/lib/booking-batch-modification-service"
       );
       return modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "bk1",
         actor: { id: "officer-1", role: "ADMIN" },

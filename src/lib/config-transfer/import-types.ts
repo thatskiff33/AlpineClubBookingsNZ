@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { PrismaClient, Prisma } from "@prisma/client";
 
+import type { ClubFormat } from "@/lib/club-format";
 import type { ConfigTransferCategory, ConfigTransferManifest } from "./manifest";
 
 // Import-side contracts: plan (dry-run) and apply. Categories are upsert-only
@@ -272,6 +273,11 @@ export interface PlanContext {
   db: ReadDb;
   files: Map<string, Uint8Array>;
   manifest: ConfigTransferManifest;
+  /**
+   * The club's format (#3565), resolved once by the import entry point before
+   * any transaction; a category's validation messages name amounts with it.
+   */
+  format: ClubFormat;
   /** Drives the per-field change preview: merge ignores blank fields. */
   mode: ImportMode;
   /** Admin-chosen key-weak match resolutions, keyed by resolutionKey(). */
@@ -297,6 +303,8 @@ export interface ApplyContext {
   tx: TxDb;
   files: Map<string, Uint8Array>;
   manifest: ConfigTransferManifest;
+  /** The club's format (#3565), resolved once by the import entry point before the transaction. */
+  format: ClubFormat;
   /** merge (blank fields keep existing) vs overwrite (blank fields clear). */
   mode: ImportMode;
   /** Admin-chosen key-weak match resolutions, keyed by resolutionKey(). */

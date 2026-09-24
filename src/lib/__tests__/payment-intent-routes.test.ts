@@ -146,6 +146,7 @@ import {
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
 import { POST as createSetupIntentRoute } from "@/app/api/payments/create-setup-intent/route";
 import { POST as confirmPaymentRoute } from "@/app/api/bookings/[id]/confirm-payment/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -564,6 +565,7 @@ describe("payment intent routes", () => {
       paymentIntentId: "pi_existing",
       amountCents: 12500,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -1362,6 +1364,7 @@ describe("payment intent routes", () => {
       paymentIntentId: "pi_success",
       amountCents: 12500,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -1441,6 +1444,7 @@ describe("confirm-payment route: booking confirmation email (issue #772)", () =>
       expect.any(Date),
       2,
       12500,
+      CLUB_FORMAT_TEST,
       // Multi-lodge phase 8: the options now carry the booking's lodge so
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).

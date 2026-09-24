@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
+// The shared helper mounts the club-format provider the panel now reads (#3565).
+import { act, cleanup, render, screen, fireEvent } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
   #2690 — four behaviours the refactor moved across a file boundary that nothing
@@ -220,11 +222,11 @@ describe("a superseded quote can never overwrite the current one (#2690)", () =>
     // price from an edit they have already moved on from. Delete it and the
     // panel quotes 111.00 for a stay it is no longer proposing.
     expect(
-      screen.queryByText(formatCents(11100)),
+      screen.queryByText(formatCents(11100, CLUB_FORMAT_TEST)),
       "a superseded quote overwrote the current one; the monotonic request-id " +
         "guard in fetchQuote is gone",
     ).not.toBeInTheDocument();
-    expect(screen.getByText(formatCents(22200))).toBeInTheDocument();
+    expect(screen.getByText(formatCents(22200, CLUB_FORMAT_TEST))).toBeInTheDocument();
     unmount();
   });
 });

@@ -22,6 +22,7 @@ import {
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
 import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * "Request Booking Officer approval" — the member's submission screen (#2562).
@@ -210,6 +211,7 @@ export function RequestOfficerApprovalCard({
   onSubmit,
   requestAreaHref = "/bookings#booking-rule-requests",
 }: RequestOfficerApprovalCardProps) {
+  const format = useClubFormat();
   const [memberMessage, setMemberMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -409,7 +411,7 @@ export function RequestOfficerApprovalCard({
               {proposal.priceImpact ? (
                 <>
                   {proposal.priceImpact.label}:{" "}
-                  {formatCents(proposal.priceImpact.amountCents)}{" "}
+                  {formatCents(proposal.priceImpact.amountCents, format)}{" "}
                   <span className="text-muted-foreground">
                     (the club&apos;s quote for this proposal as it stands; it is
                     worked out again if a Booking Officer approves it, and nothing

@@ -40,6 +40,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/booking-requests/[id]/release-hold/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeRequest() {
   return new NextRequest(
@@ -131,6 +132,7 @@ describe("POST /api/admin/booking-requests/[id]/release-hold", () => {
       "admin1",
       "ADMIN",
       "203.0.113.9",
+      CLUB_FORMAT_TEST,
       "card",
       // #1406: opt-in guard so the shared cancel path refuses (409, no side
       // effect) if a concurrent quote-accept flipped the hold to PENDING.

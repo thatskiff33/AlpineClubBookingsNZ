@@ -129,6 +129,7 @@ import {
 
 import { divergentClubZone } from "./helpers/club-time-zone";
 import { blankLiterals } from "./support/strip-comments";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** A check-in comfortably after the repository's frozen `2026-07-01T00:00Z`. */
 const CHECK_IN_DAY = "2026-08-01";
@@ -344,7 +345,7 @@ describe("the mint stores the CLUB's end of the check-in day", () => {
       .mockResolvedValueOnce(splitChild())
       .mockResolvedValueOnce({ status: BookingStatus.PENDING });
 
-    const result = await issueSplitGuestPaymentLink("child-1");
+    const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "sent" });
     const stored = mocks.paymentLinkCreate.mock.calls[0]?.[0]?.data?.expiresAt;
@@ -414,7 +415,7 @@ describe("no zone read happens under a held lock", () => {
       .mockResolvedValueOnce(splitChild())
       .mockResolvedValueOnce({ status: BookingStatus.PENDING });
 
-    await issueSplitGuestPaymentLink("child-1");
+    await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
     expect(mocks.clubTimeSettingsFindUnique).toHaveBeenCalledTimes(1);
     expect(readsInsideTransaction).toBe(0);

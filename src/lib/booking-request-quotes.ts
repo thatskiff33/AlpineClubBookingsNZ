@@ -74,6 +74,7 @@ import {
 } from "@/lib/school-booking-request";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -906,6 +907,9 @@ export async function sendBookingRequestQuote(input: {
    */
   childCounts?: SchoolChildCounts;
 }) {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const quote = await prisma.bookingRequestQuote.findFirst({
     where: {
       bookingRequestId: input.requestId,
@@ -1116,7 +1120,7 @@ export async function sendBookingRequestQuote(input: {
       options,
       message: quote.message,
       expiresAt,
-    });
+    }, format);
     /*
       A WITHHELD QUOTE IS NOT A DELIVERED ONE (#3035). `sendEmail` returns rather
       than throws when nothing was transmitted — the environment-safety boundary,

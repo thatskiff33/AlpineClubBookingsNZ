@@ -83,6 +83,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 import { APP_TIME_ZONE } from "@/config/operational";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { MemberSummaryStrip } from "@/app/(admin)/admin/members/[id]/_components/member-summary-strip";
 import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
 import type { MemberDetail } from "@/app/(admin)/admin/members/[id]/_types";
@@ -121,14 +122,16 @@ function memberFixture(): MemberDetail {
 
 function renderStripUnderClubZone(zone: string) {
   return render(
-    <ClubTimeProvider zone={zone}>
-      <MemberSummaryStrip
-        member={memberFixture()}
-        membershipLabel="Full"
-        creditBalance={0}
-        creditLoading={false}
-      />
-    </ClubTimeProvider>,
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={zone}>
+        <MemberSummaryStrip
+          member={memberFixture()}
+          membershipLabel="Full"
+          creditBalance={0}
+          creditLoading={false}
+        />
+      </ClubTimeProvider>
+    </ClubFormatTestProvider>,
   );
 }
 

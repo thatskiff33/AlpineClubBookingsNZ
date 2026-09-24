@@ -28,6 +28,7 @@ import {
   bookingMoneyReviewSuffix,
   type BookingMoneyReconciliationView,
 } from "@/lib/booking-money-reconciliation-audience";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -111,6 +112,7 @@ export function OrganiserGroupBookingCard({
    */
   lodgeName?: string | null;
 }) {
+  const format = useClubFormat();
   const [group, setGroup] = useState<OrganiserGroupState | null>(initialGroup);
 
   // Create-group form state.
@@ -471,7 +473,7 @@ export function OrganiserGroupBookingCard({
                   <span className="flex items-center gap-2">
                     {j.priceCents != null ? (
                       <span className="text-muted-foreground">
-                        {formatCents(j.priceCents)}
+                        {formatCents(j.priceCents, format)}
                         {bookingMoneyReviewSuffix(j.moneyReconciliation)}
                       </span>
                     ) : null}
@@ -500,7 +502,7 @@ export function OrganiserGroupBookingCard({
                 <p className="text-sm font-medium">
                   Paid in full
                   {group.settlement
-                    ? ` — ${formatCents(group.settlement.amountCents)}`
+                    ? ` — ${formatCents(group.settlement.amountCents, format)}`
                     : ""}
                   . Everyone in your group is confirmed.
                 </p>
@@ -512,7 +514,7 @@ export function OrganiserGroupBookingCard({
                   <p className="text-sm font-medium">
                     Invoice emailed
                     {settleAmountCents != null
-                      ? ` — ${formatCents(settleAmountCents)}`
+                      ? ` — ${formatCents(settleAmountCents, format)}`
                       : ""}
                     .
                   </p>
@@ -538,7 +540,7 @@ export function OrganiserGroupBookingCard({
             ) : settleClientSecret && settleAmountCents != null ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Combined total: <strong>{formatCents(settleAmountCents)}</strong>
+                  Combined total: <strong>{formatCents(settleAmountCents, format)}</strong>
                 </p>
                 {settleComplete ? (
                   <div className="flex items-start gap-2 text-success-11">
@@ -564,7 +566,7 @@ export function OrganiserGroupBookingCard({
                   Pay for every joiner&apos;s beds in one combined payment. Their spots are
                   confirmed and held while you settle.
                   {outstandingCents > 0
-                    ? ` Estimated total: ${formatCents(outstandingCents)}.`
+                    ? ` Estimated total: ${formatCents(outstandingCents, format)}.`
                     : ""}
                 </p>
 

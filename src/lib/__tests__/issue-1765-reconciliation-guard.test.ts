@@ -109,6 +109,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -186,6 +187,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
 
     await expect(
       markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         // Same-price replay: without the guard this settles the booking at
         // zero net cash (the amount check passes at 9000 === 9000).
@@ -211,6 +213,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
 
     await expect(
       markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_partial",
         amountCents: 9000,
@@ -234,6 +237,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_replayed",
       amountCents: 9000,
@@ -253,6 +257,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_stuck",
       amountCents: 9000,
@@ -286,6 +291,7 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
     mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_fresh",
       amountCents: 9000,

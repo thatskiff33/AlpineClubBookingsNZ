@@ -34,6 +34,7 @@ import type {
   SeasonalMembershipAssignmentSummary,
 } from "../_types";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
@@ -142,6 +143,7 @@ function BookingSummaryBlock({
   title: string;
   summary: PreviewBookingSummary;
 }) {
+  const format = useClubFormat();
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex items-center justify-between gap-3">
@@ -159,7 +161,7 @@ function BookingSummaryBlock({
               </span>{" "}
               - {booking.status} - {booking.guestCount} guest
               {booking.guestCount === 1 ? "" : "s"} -{" "}
-              {formatCents(booking.finalPriceCents)}
+              {formatCents(booking.finalPriceCents, format)}
               {booking.waitlistPosition
                 ? ` - position ${booking.waitlistPosition}`
                 : ""}

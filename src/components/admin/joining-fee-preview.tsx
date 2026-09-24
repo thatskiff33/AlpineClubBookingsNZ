@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { formatCents } from "@/lib/utils"
+import { useClubFormat } from "@/components/club-format-provider"
 
 export interface JoiningFeePreviewResult {
   defaultAmountCents: number | null
@@ -88,6 +89,7 @@ export function useJoiningFeePreview(params: {
  * Rendered under the override fields so overriding is an informed choice.
  */
 export function JoiningFeePreviewHint({ state }: { state: JoiningFeePreviewState }) {
+  const format = useClubFormat()
   if (state.loading) {
     return <p className="text-xs text-muted-foreground">Resolving the default joining fee…</p>
   }
@@ -108,7 +110,7 @@ export function JoiningFeePreviewHint({ state }: { state: JoiningFeePreviewState
   }
   return (
     <p className="text-xs text-muted-foreground">
-      Default: <span className="font-medium">{formatCents(preview.defaultAmountCents)}</span> ·
+      Default: <span className="font-medium">{formatCents(preview.defaultAmountCents, format)}</span> ·
       narration “{preview.defaultNarration}”. Leave the fields as prefilled to use the default, or edit to override.
     </p>
   )

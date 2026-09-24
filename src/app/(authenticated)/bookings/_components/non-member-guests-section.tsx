@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { BookingStatus } from "@prisma/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   bookingMoneyReviewSuffix,
   type BookingMoneyReconciliationView,
@@ -37,9 +37,11 @@ export interface NonMemberGuestChild {
 // guest portion nested. Presentation only; no pricing/capacity/settlement here.
 export function NonMemberGuestsSection({
   guests,
+  money,
   nonOwnerAdminViewer,
 }: {
   guests: NonMemberGuestChild[];
+  money: BoundClubFormat;
   nonOwnerAdminViewer: boolean;
 }) {
   if (guests.length === 0) return null;
@@ -83,7 +85,7 @@ export function NonMemberGuestsSection({
                     <p className="text-sm font-medium text-muted-foreground">
                       {child.guestCount} non-member guest
                       {child.guestCount === 1 ? "" : "s"} &middot;{" "}
-                      {formatCents(child.finalPriceCents)}
+                      {money.cents(child.finalPriceCents)}
                       {bookingMoneyReviewSuffix(child.moneyReconciliation)}
                     </p>
                     {child.datesDiffer ? (

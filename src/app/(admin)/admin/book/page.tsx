@@ -50,6 +50,7 @@ import {
 
 import { formatCents, formatSignedCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
 
@@ -116,6 +117,7 @@ interface SelectedMember {
 }
 
 export default function AdminBookPage() {
+  const format = useClubFormat();
   const clubTime = useClubTime();
   const router = useRouter();
   // Booking on behalf writes POST /api/bookings, which admits only a
@@ -1255,7 +1257,7 @@ export default function AdminBookPage() {
                       {g.isMember ? "Member" : "Non-member"})
                     </span>
                     <span className="font-medium">
-                      {formatCents(priceQuote.guests[i]?.priceCents || 0)}
+                      {formatCents(priceQuote.guests[i]?.priceCents || 0, format)}
                     </span>
                   </div>
                 ))}
@@ -1265,23 +1267,23 @@ export default function AdminBookPage() {
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
-                    <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                    <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
                   <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
                     <span>Promo adjustment ({appliedPromo.code})</span>
-                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
+                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
                   </div>
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>
-                      <span>-{formatCents(appliedCreditCents)}</span>
+                      <span>-{formatCents(appliedCreditCents, format)}</span>
                     </div>
                   )}
                   <div className="flex justify-between font-bold text-lg">
                     <span>
                       {appliedCreditCents > 0 ? "Remaining to pay" : "Total"}
                     </span>
-                    <span>{formatCents(remainingToPay)}</span>
+                    <span>{formatCents(remainingToPay, format)}</span>
                   </div>
                 </>
               ) : (
@@ -1290,11 +1292,11 @@ export default function AdminBookPage() {
                     <>
                       <div className="border-t pt-4 flex justify-between text-sm">
                         <span>Subtotal</span>
-                        <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                        <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                       </div>
                       <div className="flex justify-between text-sm text-success-11">
                         <span>Account credit</span>
-                        <span>-{formatCents(appliedCreditCents)}</span>
+                        <span>-{formatCents(appliedCreditCents, format)}</span>
                       </div>
                     </>
                   )}
@@ -1304,7 +1306,7 @@ export default function AdminBookPage() {
                     <span>
                       {appliedCreditCents > 0 ? "Remaining to pay" : "Total"}
                     </span>
-                    <span>{formatCents(remainingToPay)}</span>
+                    <span>{formatCents(remainingToPay, format)}</span>
                   </div>
                 </>
               )}
@@ -1313,7 +1315,7 @@ export default function AdminBookPage() {
                 <div className="rounded-md bg-success-3 border border-success-6 p-4 mt-2">
                   <p className="text-sm text-success-11 mb-2">
                     {selectedMember.firstName} has{" "}
-                    <strong>{formatCents(availableCreditCents)}</strong> in account
+                    <strong>{formatCents(availableCreditCents, format)}</strong> in account
                     credit
                   </p>
                   <label className="flex items-center gap-2 text-sm text-success-11 cursor-pointer">

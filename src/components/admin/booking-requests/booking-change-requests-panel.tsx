@@ -22,6 +22,7 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -190,6 +191,7 @@ export function BookingChangeRequestsPanel({
   showHeading = true,
   canEdit = true,
 }: BookingChangeRequestsPanelProps) {
+  const format = useClubFormat();
   const formatDateTime = useInstantFormatter();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -451,12 +453,12 @@ export function BookingChangeRequestsPanel({
                     </div>
                     <div>
                       <span className="text-muted-foreground">Booking total:</span>{" "}
-                      {formatCents(request.booking.finalPriceCents)}
+                      {formatCents(request.booking.finalPriceCents, format)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Payment:</span>{" "}
                       {request.booking.payment
-                        ? `${request.booking.payment.status} (${formatCents(request.booking.payment.amountCents)})`
+                        ? `${request.booking.payment.status} (${formatCents(request.booking.payment.amountCents, format)})`
                         : "No payment"}
                     </div>
                   </div>
@@ -663,7 +665,7 @@ export function BookingChangeRequestsPanel({
                             {request.linkedModification.id}
                           </span>{" "}
                           ({request.linkedModification.modificationType},{" "}
-                          {formatCents(request.linkedModification.priceDiffCents)}{" "}
+                          {formatCents(request.linkedModification.priceDiffCents, format)}{" "}
                           delta)
                         </p>
                       ) : request.status === "APPROVED" ? (

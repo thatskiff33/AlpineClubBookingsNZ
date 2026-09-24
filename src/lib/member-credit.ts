@@ -15,6 +15,8 @@ import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
 import { formatCents } from "@/lib/utils";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
 import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -485,14 +487,22 @@ export async function applyCreditToBooking(
   memberId: string,
   amountCents: number,
   bookingId: string,
-  tx: Prisma.TransactionClient, options?: { description?: string },
+  tx: Prisma.TransactionClient,
+  /**
+   * The club's format, for the insufficient-balance message. A PARAMETER
+   * because this runs inside the caller's transaction, under the member's
+   * ledger lock, and the format is resolved before that transaction opens
+   * (#3565).
+   */
+  format: ClubFormat,
+  options?: { description?: string },
 ): Promise<void> {
   validateCreditApplicationAmount(amountCents);
 
   await lockMemberCreditLedger(memberId, tx);
 
   const balance = await getMemberCreditBalance(memberId, tx);
-  validateCreditApplicationAgainstBalance(amountCents, balance);
+  validateCreditApplicationAgainstBalance(amountCents, balance, format);
 
   await tx.memberCredit.create({
     data: {
@@ -706,11 +716,12 @@ export async function lockMemberCreditLedger(
 async function validateNegativeAdjustmentBalance(
   memberId: string,
   amountCents: number,
+  format: ClubFormat,
   tx?: Prisma.TransactionClient
 ) {
   if (amountCents < 0) {
     const balance = await getMemberCreditBalance(memberId, tx);
-    validateNegativeAdjustmentAgainstBalance(amountCents, balance);
+    validateNegativeAdjustmentAgainstBalance(amountCents, balance, format);
   }
 }
 
@@ -773,6 +784,11 @@ export async function createAdminAdjustmentRequest(
     };
   }
 
+  // Resolved BEFORE the transaction opens (#3565): a settings read has no
+  // business inside it, and the balance check and the audit line below both
+  // render money.
+  const format = await clubFormatValues();
+
   try {
     const request = await prisma.$transaction(async (tx) => {
       const createdRequest = await tx.adminCreditAdjustmentRequest.create({
@@ -786,7 +802,7 @@ export async function createAdminAdjustmentRequest(
         select: adminAdjustmentRequestSelect,
       });
 
-      await validateNegativeAdjustmentBalance(memberId, amountCents, tx);
+      await validateNegativeAdjustmentBalance(memberId, amountCents, format, tx);
 
       await createAuditLog(
         {
@@ -796,7 +812,7 @@ export async function createAdminAdjustmentRequest(
           entityId: createdRequest.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents)}. Reason: ${description}`,
+          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents, format)}. Reason: ${description}`,
           ipAddress,
         },
         tx
@@ -862,6 +878,9 @@ export async function reviewAdminAdjustmentRequest(
   adminId: string,
   ipAddress?: string
 ) {
+  // Before the transaction and its ledger lock (#3565).
+  const format = await clubFormatValues();
+
   const result = await prisma.$transaction(async (tx) => {
     await lockMemberCreditLedger(memberId, tx);
 
@@ -887,6 +906,7 @@ export async function reviewAdminAdjustmentRequest(
       await validateNegativeAdjustmentBalance(
         request.memberId,
         request.amountCents,
+        format,
         tx
       );
     }
@@ -921,7 +941,7 @@ export async function reviewAdminAdjustmentRequest(
           entityId: request.id,
           memberId: adminId,
           targetId: memberId,
-          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
           ipAddress,
         },
         tx
@@ -954,7 +974,7 @@ export async function reviewAdminAdjustmentRequest(
         entityId: request.id,
         memberId: adminId,
         targetId: memberId,
-        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents, format)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
         // #2695 (`INV-PRIV-018`) — DECLARED MEMBER-FACING, owner decision of
         // 9 August 2026. The only explanation a member ever gets for why their
         // credit balance moved, which is why both fixes the issue originally
@@ -976,8 +996,8 @@ export async function reviewAdminAdjustmentRequest(
           visibility: "member-facing",
           text:
             request.amountCents >= 0
-              ? `Credit of ${formatCents(request.amountCents)} added to your account. Reason: ${request.description}`
-              : `Credit of ${formatCents(Math.abs(request.amountCents))} deducted from your account. Reason: ${request.description}`,
+              ? `Credit of ${formatCents(request.amountCents, format)} added to your account. Reason: ${request.description}`
+              : `Credit of ${formatCents(Math.abs(request.amountCents), format)} deducted from your account. Reason: ${request.description}`,
         },
         ipAddress,
       },

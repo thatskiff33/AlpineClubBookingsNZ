@@ -71,6 +71,7 @@ import {
   resolveBookingGuestDietarySeeding,
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2526 — the REAL {@link PolicyExceptionApprovalHooks} the admin approval route
@@ -426,6 +427,12 @@ export interface PolicyExceptionApprovalContext {
    */
   todayAtClub: CalendarDate;
   /**
+   * The club's format (#3565), resolved by the route with `todayAtClub` and for
+   * the same reason: both executors render money inside the approval's
+   * transaction, under both locks.
+   */
+  format: ClubFormat;
+  /**
    * The batch modification's own pre-transaction work, resolved by the route for
    * exactly the reason `todayAtClub` above is (#3232, `INV-LOCK-004`).
    *
@@ -687,6 +694,7 @@ export function buildPolicyExceptionApprovalHooks(
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },
+        context.format,
       );
       void request;
     },
@@ -807,6 +815,7 @@ async function executeApprovedModification(args: {
       ? { hostingCoverageOverride: context.hostingCoverageOverride }
       : {}),
     todayAtClub: context.todayAtClub,
+    format: context.format,
     tx,
     // #3232, `INV-LOCK-004`: resolved by the route before this transaction was
     // opened. Without it the service would read the club's settings and reach
@@ -883,6 +892,7 @@ async function executeApprovedNewBooking(args: {
   outcome: PolicyExceptionApprovalOutcome;
 }): Promise<{ deferredPostCommit: () => Promise<void> }> {
   const { tx, request, snapshot, override, overrideReason, context, outcome } = args;
+  const { format } = context;
   const execution = context.newBookingExecution;
   if (!execution) {
     throw new PolicyExceptionUnverifiedExecutionError(
@@ -1011,6 +1021,7 @@ async function executeApprovedNewBooking(args: {
   const memberGuestEntries = consentPlan.entriesByMemberId;
 
   const created = await createConfirmedBooking({
+    format,
     // #3123 review — the club day the route resolved before this transaction
     // opened, shared with the modification executor above (`INV-LOCK-004`).
     todayAtClub: context.todayAtClub,
