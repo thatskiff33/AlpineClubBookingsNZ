@@ -152,6 +152,23 @@ row, so you never have to delete an assignment to change its bed:
 > ends every unlock made with the old one at once. See
 > [Lodge Kiosk → When a hut leader unlocks the kiosk with their PIN](lodge.md#when-a-hut-leader-unlocks-the-kiosk-with-their-pin).
 
+### Dietary and allergy notes on the kiosk
+
+When the club collects **Dietary/allergy information**, the lodge kiosk's day
+list shows each present guest's value for **that stay** under their name — but
+only to the **hut leader** running the stay (signed in on their own account, or
+unlocked with their PIN on the lodge device) and to a full admin. The value is
+the booking's own copy, not the member's profile; booking officers can correct
+it on the booking page (see
+[Bookings](bookings.md#dietaryallergy-information-for-a-stay)).
+
+The unattended **lodge** screen, a guest staying at the lodge, the lobby wall,
+the chore roster and an admin previewing a kiosk account never receive the
+values at all. **While a hut leader's PIN unlock is live on the shared device,
+anyone standing at that device can read them** — the same exposure the PIN
+unlock already has for guests' phone numbers. Press **Lock** when you walk
+away.
+
 ## Settings reference
 
 | Control | What it does | Notes / constraints |
@@ -179,6 +196,7 @@ row, so you never have to delete an assignment to change its bed:
 | "This member overlaps an existing assignment" | The range overlaps another leader's by more than a day. A school group's teacher assignments are excluded and never cause this | Shorten the range or delete the conflicting assignment |
 | The label says "Custodian"/"Warden", not "Hut Leader" | The club renamed the hut-leader label in its identity settings | Expected — this page, the allocation board's band and every refusal message on screen all follow the club's label |
 | The **lodge TV** says "Custodian" even though we renamed the role | Deliberate: the wall uses one fixed word for every club, so a visitor reads it without knowing the club's vocabulary | Expected. Only the public screen does this; every admin surface uses your label |
+| The kiosk shows no dietary notes | The field is switched off under **Member Fields**, the kiosk is on the plain lodge screen (not a hut leader's unlock), or no guest has a value for this stay | Unlock with the hut leader's PIN; check the field is on; a booking officer can fill values in on the booking page |
 | A leader's PIN doesn't work on the kiosk | Their PIN was reset (old one revoked), or their kiosk account is ambiguous | Reset the PIN again; check the [Lodge Kiosk](lodge.md) account binding |
 | The **Hold a bed** step is missing | The `bedAllocation` module is off, so the lodge has no rooms or beds to hold | Enable it under **Admin → Setup → Modules**, or leave the assignment role-only |
 | "That bed already has guests allocated on …" | A guest is placed on that bed on one or more of the covered nights | Clear those nights on [Bed Allocation](bed-allocation.md) first, then set the bed here. Nothing is ever displaced automatically |

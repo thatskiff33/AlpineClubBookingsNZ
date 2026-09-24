@@ -1929,3 +1929,34 @@ single line, the reason under `requestPayload.priceLines`. Never a partial set.
 Pinned by the `booking-modification-lines`, `booking-modification-document-lines`
 and `xero-modification-line-items` suites, one sum assertion per edit site, and
 the supplementary-invoice and refund-document suites.
+
+## INV-MOD-059
+
+A booking guest's dietary/allergy value (`BookingGuest.dietaryRequirements`,
+#3029) is a SNAPSHOT of one stay, not a mirror of the profile. Who may read it is
+`INV-PRIV-022`; this is its lifecycle.
+
+- **Seeded once**, when the guest row is first created, from the linked member's
+  CURRENT profile value, and only while the field toggle is ON. The toggle is
+  read before the booking transaction and passed in; the profile read uses the
+  caller's `tx` (`INV-LOCK-004`). A non-member starts empty. Turning the toggle
+  ON backfills nothing.
+- **Independent afterwards.** A profile edit never rewrites it. Editing it (one
+  admin route, `bookings:edit`) never writes the profile and is not a booking
+  modification (`INV-MOD-001`).
+- **Preserved by every modification.** Date moves, guest removal, waitlist
+  promotion, school renames, consent, price repair and arrive/depart never name
+  the column.
+- **Rebuilds carry by identity, never by position.** A held party recreated at
+  approval carries a value only to the same member id, or the same non-member
+  first name, last name and age tier, unique on both sides. A party rewritten in
+  place keeps the same occupant's value, seeds a substituted member from their
+  own profile, and clears a row that became a non-member. The cross-lodge offer
+  carries every row; an admin copy re-seeds (`INV-GUEST-011`). A placeholder
+  newly linked to a member is filled only if empty.
+- **Limits.** A request correction's new hold does not inherit a value entered
+  on the cancelled hold; during a blue-green drain the old colour neither seeds
+  nor carries across its rebuild.
+
+Pinned by `member-dietary-booking-lifecycle.test.ts` and the writer census in
+`member-dietary-access-census.test.ts`.

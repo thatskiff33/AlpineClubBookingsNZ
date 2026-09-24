@@ -235,6 +235,7 @@ These flows are the "Public quote requester" and "School contact" journeys in
 | Non-member guests (Members First) | Held provisionally, charged around the hold deadline, bumped if no bed remains |
 | Non-member guests (First Paid, First In) | Booked and paid with the rest of the party |
 | Group trip | Each joiner holds their own bed; you choose each-pays-own or you pay one bill |
+| Dietary/allergy notes | If your club collects them, each member you add to a booking — you included — brings the note from their own profile, copied once for this stay. The booking form does not ask for them. To change a note for this trip only, or to add one for a guest without a login, contact the club: booking officers can edit the stay's copy without touching anyone's profile. Only booking officers and the hut leader running the stay see them |
 | Naming your party | Where a booking was set up from a headcount rather than a list of names — a whole-lodge or a school/organisation booking — the club emails you as check-in approaches asking you to fill the real names in, more often in the last couple of days. The names are what the lodge chore list and arrival roster print. Renaming somebody does not change their age group or the price. **It never holds up your stay:** come whether or not you got to it, and tell the lodge on arrival |
 
 Prices are shown in dollars (formatted from the cents the club stores). The

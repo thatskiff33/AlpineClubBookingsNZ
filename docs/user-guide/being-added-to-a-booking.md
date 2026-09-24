@@ -141,6 +141,13 @@ contact the club.
   changes for them.
 - **A held bed is only a held bed.** Until you say yes you are not on the chore
   roster, the arrivals list, or a bed plan, and no arrival email names you.
+- **Your dietary/allergy note comes with you, privately.** If your club collects
+  dietary/allergy information and you have recorded some on your profile, the
+  booking copies it when you are added, so the hut leader knows. That copy is
+  for this stay only: changing your profile later does not change it (ask the
+  club if this trip is different). The person who made the booking and the
+  other guests never see it — only the club's booking officers and the hut
+  leader running the stay.
 - **Saying yes covers the booking, not just the version you saw.** If the person
   who made the booking later moves the dates, adds nights, changes lodge or
   changes who else is coming, you are not asked again and you are not told. Your

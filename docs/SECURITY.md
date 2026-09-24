@@ -102,8 +102,9 @@ uses, so it is reasoned rather than observed.
 
 Audience: Developer, Agent, Operator.
 
-`Member.dietaryRequirements` (#2941) holds health-related personal information,
-children's included. The rule is `INV-PRIV-022` in
+`Member.dietaryRequirements` (#2941) and each stay's
+`BookingGuest.dietaryRequirements` (#3029) hold health-related personal
+information, children's included. The rule is `INV-PRIV-022` in
 [`invariants/analytics-and-privacy.md`](invariants/analytics-and-privacy.md#inv-priv-022);
 this section records how it is enforced.
 
@@ -115,8 +116,17 @@ this section records how it is enforced.
   their own data export, an admin whose OWN database row and access roles reach
   **membership** (the grant re-reads them and ignores any session matrix), or a
   merge whose Full Admin the grant re-checks in the database, scoped to the two
-  members being merged. A grant is an opaque object whose authority lives in a
-  module-private map, so a copy of one is not a grant.
+  members being merged. A booking value is read by an admin whose own rows reach
+  **bookings** (view; edit to change one row through
+  `PATCH /api/admin/bookings/[id]/guest-dietary`), by the kiosk's `admin` and
+  `hut-leader` tiers for that day's present guests only, and by the subject's
+  own export for their own guest rows. A booking grant cannot read a profile,
+  nor a profile grant a booking. A grant is an opaque object whose authority
+  lives in a module-private map, so a copy of one is not a grant.
+- **The booking write side hands out tokens, not values.** Every guest create
+  site takes a required dietary decision from the module, and the held-party
+  planners carry a value only by unique identity, never by position
+  (`INV-MOD-059`); a writer never holds the value in readable form.
 - **The type does not say so.** `src/lib/prisma.ts` keeps the plain
   `PrismaClient` type, so the compiler still shows the field on every row; a read
   outside the module gets `undefined`, never the value.
@@ -125,15 +135,18 @@ this section records how it is enforced.
   raw-SQL read of the column, whole-row raw read or omit-less client; it confines
   the field's spelling (in `src/`), imports of the module, and calls of the merge
   engine (which mints a scoped grant internally) to listed files, none on an
-  egress path, and refuses a re-export, exported alias or minting wrapper of a
-  grant or reader. It does
+  egress path (a booking-value entry may be allowed, by name, onto the booking
+  or kiosk family only), and refuses a re-export, exported alias or minting
+  wrapper of a grant or reader, a booking writer that names a grant or reader,
+  and any writer but the module naming the column. It does
   NOT trace data flow: a listed file reading the field off an ordinary row, or
   passing a value it legitimately holds onward, stays green. Review covers that.
 - **Redaction as a backstop.** The log/Sentry redactor strips `dietary`/`allerg`
   keys, and the audit sanitizer redacts any string or structure under such a key
   while keeping the booleans that record which field changed.
-- **The AI diagnostics role cannot read it.** Its Member grant is a column
-  allowlist (`provision-role.ts`) that does not include the column.
+- **The AI diagnostics role cannot read it.** Its Member and BookingGuest
+  grants are column allowlists (`provision-role.ts`) that include neither
+  column.
 - **Backups contain it**, like every other column; see
   [`guides/backups.md`](guides/backups.md).
 

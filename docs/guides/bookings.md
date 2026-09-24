@@ -293,6 +293,36 @@ no screen calls it outstanding.
    refused outright with an explanation rather than silently withheld. Turn the
    switch off first if the member should hear from the club.
 
+### Dietary/allergy information for a stay
+
+When the club collects **Dietary/allergy information** (see
+[Member Fields](member-fields.md#dietaryallergy-information-is-privacy-sensitive)),
+each booking keeps its own copy for that stay, and a **Dietary/allergy
+information** card on the booking page lists every guest on the booking —
+members and non-members alike.
+
+- **Where the value comes from.** When a member is first added to a booking, the
+  booking copies their profile value at that moment. A non-member guest starts
+  empty. A copy is made only while the field is switched on.
+- **It belongs to this stay.** A member changing their profile later does not
+  change the booking, and changing the booking does not change their profile.
+  Use it for a one-off trip requirement, or to record a non-member's needs.
+- **Who sees it.** Booking officers with **bookings view** see the card;
+  **bookings edit** adds an **Edit** button on each guest. The hut leader
+  running the stay sees the values on the lodge kiosk. The member who made the
+  booking, the other guests, the booking and finance exports, reports, emails
+  and Xero never see it.
+- **Editing.** Click **Edit** on a guest, change the text (up to 500
+  characters; clearing it removes the value) and **Save**. Saving is not a
+  booking change: nothing is repriced, nobody is emailed and nothing goes to
+  Xero. The audit log records that a guest's value was changed or cleared,
+  never what it says.
+- **What keeps it.** Changing dates, removing a guest, a waitlist promotion or
+  arrival and departure at the lodge leave each guest's value exactly as it
+  was. An approval that swaps a held party keeps each person's own value and
+  never moves one person's note onto somebody else. **Copy booking** starts a
+  new stay, so its guests are copied afresh from their current profiles.
+
 ### Turn off all emails for one booking
 
 Sometimes you are already dealing with a member directly — over the phone, in
@@ -426,6 +456,9 @@ lives in [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 | The booking warns **The Xero invoice completed only in part** | Something did reach Xero, but a later step of the same operation did not finish | *Do not repeat the action.* Check the invoice in Xero first, then resolve the operation from this booking's Xero activity — the same rule as everywhere else on the [Xero Sync](xero.md) page. No **Retry** is offered here, on purpose |
 | A **Xero invoice email** appears in the withheld-emails banner but the booking shows **no** Xero warning | Correct, and the distinction matters: the email was **withheld on purpose** — by the **No emails** switch, or by **Create without emailing**. Neither is a failure | Nothing is broken and there is nothing to retry. The invoice itself is in Xero. Relay it to the member by hand if they should have it. A warning only ever appears when something genuinely failed |
 | On a copy of the real site, an invoice email appears **nowhere** — no warning, and nothing in the withheld-emails banner either | Correct. A non-production installation never asks Xero to email an invoice, and that is not recorded as a withheld email: nobody decided to silence the member, and on a copy there is no member to relay anything to. Only the server log notes it | Nothing to do. On the real site the same booking would email the member normally |
+| The **Dietary/allergy information** card is missing | The field is switched off under **Member Fields**, or your admin role has no bookings access | Turn the field on (membership edit), or ask a full admin for bookings view access |
+| The dietary card has no **Edit** buttons | Your role can view bookings but not edit them, or the booking is deleted | Ask a full admin for bookings edit access |
+| A guest's dietary value is empty although their profile has one | The booking was made while the field was off, or the member added it to their profile after joining the booking | Expected — a booking copies the profile once, when the guest is added. Fill it in with **Edit** |
 | A booking officer cannot see any of these warnings | The whole provider block on the Admin tools card is full-admin-only, and always has been | Ask a full admin to look, or grant full admin access |
 
 ## Related links

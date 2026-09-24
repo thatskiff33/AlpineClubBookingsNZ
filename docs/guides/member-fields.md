@@ -44,7 +44,7 @@ membership **edit** to save.
 | Title | Salutation (Mr, Ms, Mrs, …) on the record, onboarding, and CSV | On | — |
 | Gender | Gender on the record, onboarding, and CSV | On | Turn off if the club does not collect it |
 | Occupation | Free-text occupation | On | Adult members only; onboarding + profile |
-| Dietary/allergy information | Free-text dietary needs and allergies, up to 500 characters | **Off** | Any age tier; onboarding, profile, the admin member editor, and member CSV import/export. Privacy-sensitive — see below |
+| Dietary/allergy information | Free-text dietary needs and allergies, up to 500 characters | **Off** | Any age tier; onboarding, profile, the admin member editor, member CSV import/export, and each booking's copy for that stay. Privacy-sensitive — see below |
 
 When a field is off it is hidden everywhere it would otherwise appear (the member
 editor, dependent dialog, onboarding, profile, and CSV import/export). **Existing
@@ -57,11 +57,21 @@ it behaves differently from the other three:
 
 - **It is off until you turn it on.** A new installation and an upgraded one
   both start with it off.
-- **Who can see a value:** the member themself (on their own profile and during
-  onboarding) and admins with **membership** access (the member editor, the
-  member CSV, and member merge). Nobody else — not other family members, not
-  hut leaders or lodge screens, not the booking or finance exports — sees it.
-  A later release adds hut leaders for the members on their own stay.
+- **Who can see a profile value:** the member themself (on their own profile
+  and during onboarding) and admins with **membership** access (the member
+  editor, the member CSV, and member merge).
+- **Each booking keeps its own copy.** While the field is on, a member's profile
+  value is copied onto a booking when they are first added to it. From then on
+  the booking's copy belongs to that stay: a later profile change does not
+  change it, and changing it on the booking does not change the profile. A
+  non-member guest can have a booking value too. **Booking officers** (bookings
+  view to read, bookings edit to change) see and edit it on the booking page,
+  and the **hut leader running the stay** sees it on the lodge kiosk's day list
+  — see [Bookings](bookings.md#dietaryallergy-information-for-a-stay) and
+  [Hut Leaders](hut-leaders.md#dietary-and-allergy-notes-on-the-kiosk).
+- **Nobody else** — not other members (including the people on the same
+  booking), family members, the unattended lodge screen or lobby wall, rosters,
+  or the booking and finance exports and reports — sees either value.
 - **It never leaves for Xero**, the analytics tag, notifications or logs.
 - **The member CSV export contains it while the field is on.** Treat that file
   as sensitive: store and share it only as your club's privacy policy allows.
@@ -69,9 +79,12 @@ it behaves differently from the other three:
 - **A member's own data export** (Profile → download my data) always includes
   their stored value, even while the field is off, because that export promises
   everything held about them.
-- Turning it off hides it everywhere else but keeps what members recorded, so
-  turning it back on shows it again. To delete a value, clear it on the member's
-  record while the field is on.
+- Turning it off hides it everywhere else — on profiles and on bookings — but
+  keeps what was recorded, so turning it back on shows it again. While it is off
+  new bookings copy nothing. **Turning it on does not fill in bookings made while
+  it was off**: those stay empty until a booking officer fills them in. To delete
+  a profile value, clear it on the member's record while the field is on; a
+  booking's copy is cleared on the booking page.
 
 ## Troubleshooting
 
@@ -83,6 +96,8 @@ it behaves differently from the other three:
 | Members cannot see the dietary field | It is off by default | Turn **Dietary/allergy information** on and save |
 | The member CSV has no dietary column | The field is off, or your admin role lacks membership access | Turn the field on; ask a full admin for membership access |
 | A field I turned off still shows old data somewhere | Turning a field off hides the input but does not erase stored values | This is expected; the data reappears if you turn the field back on |
+| A booking shows no dietary value although the member has one | The booking was made while the field was off, or the member added it to their profile after joining the booking | Expected: a booking copies the profile once, when the guest is added. A booking officer can fill it in on the booking page |
+| A member changed their profile but the booking still shows the old note | The booking keeps its own copy for that stay | Expected. Change it on the booking page if it should change for this stay |
 
 ## Related links
 
@@ -92,4 +107,6 @@ it behaves differently from the other three:
 - Reference: CSV field behaviour in
   [`CONFIGURATION.md`](../../CONFIGURATION.md#member-import-and-addresses).
 - The privacy rule for dietary/allergy information:
-  [`INV-PRIV-022`](../invariants/analytics-and-privacy.md#inv-priv-022).
+  [`INV-PRIV-022`](../invariants/analytics-and-privacy.md#inv-priv-022); how a
+  booking's copy is seeded and kept:
+  [`INV-MOD-059`](../invariants/booking-modifications.md#inv-mod-059).

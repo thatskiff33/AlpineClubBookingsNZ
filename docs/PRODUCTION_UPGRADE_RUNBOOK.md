@@ -1410,6 +1410,15 @@ Setup & Configuration > Membership & Members > Member Fields** (see
 club's privacy notice covers health information, because the member CSV export
 then carries the column (`INV-PRIV-022`).
 
+`20261011010000_add_booking_guest_dietary_requirements` (#3029) adds an empty
+`BookingGuest.dietaryRequirements` column in the same additive way. While the
+field is on, each booking copies a member's profile value when they are first
+added and keeps it for that stay; booking officers and the hut leader running
+the stay see it. Turning the field on does **not** fill in existing bookings.
+During the blue-green drain, bookings the old colour creates are not seeded and
+an approval it performs that rebuilds a held party leaves that party's values
+empty — never somebody else's; a booking officer can fill them in afterwards.
+
 ### 3.2 Re-run the audit category backfills
 
 Two data-only migrations rewrite the stored audit `category` and each wants one
