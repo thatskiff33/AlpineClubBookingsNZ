@@ -17,10 +17,7 @@ import { BookingLinkedPartySections } from "./_components/booking-linked-party-s
 import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
-import {
-  BookingGuestDietaryCard,
-  type BookingGuestDietaryRow,
-} from "./_components/booking-guest-dietary-card";
+import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
@@ -49,54 +46,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 // than a hand-rolled filter. Folding it into the import below would satisfy the
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
-import {
-  grantBookingAdminDietaryAccess,
-  isDietaryFieldEnabled,
-  readBookingGuestDietaryForAdmin,
-} from "@/lib/member-dietary";
-import type { BookingDetailViewer } from "./_lib/booking-detail-viewer";
-import type { BookingDetailRecord } from "./_lib/load-booking-detail";
-
-/**
- * The stay's dietary/allergy values for a BOOKING ADMINISTRATOR, or null for
- * every other viewer (#3029, `INV-PRIV-022`).
- *
- * Null is the whole privacy answer: the owner, a linked guest and a member
- * browsing their own booking get no key at all in this page's payload, because
- * `booking.guests` never carried the column (the client-wide omit) and this is
- * the only read that asks for it. The grant re-reads the viewer's access from
- * the database; the viewer flag only saves the read for somebody who plainly
- * cannot hold it. Kept here, in the page, so the grant is minted by the entry
- * point that renders it and passed nowhere else.
- */
-async function loadGuestDietaryForBookingAdmin(input: {
-  sessionUserId: string;
-  booking: BookingDetailRecord;
-  viewer: BookingDetailViewer;
-}): Promise<{ canEdit: boolean; guests: BookingGuestDietaryRow[] } | null> {
-  if (!input.viewer.canViewAsAdmin) return null;
-  const enabled = await isDietaryFieldEnabled();
-  if (!enabled) return null;
-  const guard = { ok: true as const, session: { user: { id: input.sessionUserId } } };
-  const editGrant =
-    input.viewer.canAdminEditBookings && !input.booking.deletedAt
-      ? await grantBookingAdminDietaryAccess(guard, "edit", { enabled })
-      : null;
-  const grant =
-    editGrant ?? (await grantBookingAdminDietaryAccess(guard, "view", { enabled }));
-  if (!grant) return null;
-  const values = await readBookingGuestDietaryForAdmin(grant, input.booking.id);
-  return {
-    canEdit: editGrant !== null,
-    guests: input.booking.guests.map((guest) => ({
-      id: guest.id,
-      firstName: guest.firstName,
-      lastName: guest.lastName,
-      isMember: guest.isMember,
-      dietaryRequirements: values.get(guest.id) ?? null,
-    })),
-  };
-}
+import { loadBookingDetailGuestDietary } from "./_lib/booking-detail-guest-dietary";
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -289,7 +239,7 @@ export default async function BookingDetailPage({
     payment,
   });
 
-  const guestDietary = await loadGuestDietaryForBookingAdmin({
+  const guestDietary = await loadBookingDetailGuestDietary({
     sessionUserId: session.user.id,
     booking,
     viewer,

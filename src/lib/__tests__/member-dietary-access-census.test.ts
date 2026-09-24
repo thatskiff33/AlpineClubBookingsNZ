@@ -1,12 +1,14 @@
 /**
- * The member dietary/allergy access census (#2941, `INV-PRIV-022`).
+ * The member dietary/allergy access census (#2941, #3029, `INV-PRIV-022`).
  *
- * WHAT THIS GATE IS FOR. `Member.dietaryRequirements` is special-category
- * personal data, children's included. It is protected by RUNTIME absence, not
- * by a filter: every application Prisma client is constructed with
- * `omit: PRISMA_CLIENT_GLOBAL_OMIT`, so a Member read that does not ask for the
- * column never carries it, and `src/lib/member-dietary.ts` is the one module
- * that asks, for a caller holding a grant.
+ * WHAT THIS GATE IS FOR. `Member.dietaryRequirements` and, since #3029, the
+ * per-stay `BookingGuest.dietaryRequirements` are special-category personal
+ * data, children's included. They are protected by RUNTIME absence, not by a
+ * filter: every application Prisma client is constructed with
+ * `omit: PRISMA_CLIENT_GLOBAL_OMIT`, so a Member or BookingGuest read that does
+ * not ask for the column never carries it, and `src/lib/member-dietary.ts` is
+ * the one module that asks, for a caller holding a grant — or, on the booking
+ * write side, hands a writer an opaque decision it cannot read.
  *
  * `src/lib/prisma.ts` TYPES the client as the plain `PrismaClient` (an omit-typed
  * client is not assignable to `Prisma.TransactionClient`, and re-typing ~160
@@ -29,10 +31,17 @@
  *     listed set of files, and no file re-exports a grant or reader.
  *  6. EGRESS: no file on any list sits on a Xero, analytics, notification,
  *     email, roster, lodge-screen, kiosk, family, booking, finance or logging
- *     path.
+ *     path — except that a #3029 entry may be ALLOWED, by name, onto the booking
+ *     or kiosk family, which is where the booking value is meant to be read.
+ *     No entry can ever be allowed onto Xero, analytics, notifications, email,
+ *     rosters or the lobby, family views, finance or logging.
  *  7. MERGE CALLERS: the merge engine mints a scoped merge grant internally and
  *     its preview returns both values, so calling it is confined to a listed set
  *     of files too.
+ *  8. WRITE SIDE (#3029): a booking writer that imports the module may import
+ *     only its write half — never a grant, reader or loader — and no file but
+ *     the module writes the column by name. Every BookingGuest create site is on
+ *     a closed list and hands its builder a dietary decision (`INV-MOD-060`).
  *
  * WHAT IT CANNOT SEE, stated so nobody reads it as stronger than it is. It
  * matches text, not data flow. A listed file that reads `.dietaryRequirements`
@@ -52,16 +61,71 @@ import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const INVARIANT_ID = "INV-PRIV-022";
+const LIFECYCLE_INVARIANT_ID = "INV-MOD-060";
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
 const CANONICAL_MODULE = "src/lib/member-dietary.ts";
 const OMIT_CONSTANT_MODULE = "src/lib/prisma-global-omit.ts";
 
 /**
+ * Rule 6's surfaces, by family. Stage 1 listed them as one set; #3029 names the
+ * families so a booking-value entry can be allowed onto `booking` or `kiosk`
+ * (where the value is meant to be read) without being allowed onto anything
+ * else. The kiosk family was split out of the lodge-screen one for exactly
+ * that: the kiosk day list is an authorised audience, the roster and the lobby
+ * wall are not.
+ */
+const EGRESS_SURFACES = {
+  xero: /xero/i,
+  analytics: /analytics|gtag|telemetry/i,
+  notification: /notification|email|mailer|\bmail\b/i,
+  "lodge-screen": /roster|lodge-screen|lobby/i,
+  kiosk: /kiosk|hut-leader/i,
+  family: /family/i,
+  booking: /booking/i,
+  finance: /finance|payment|invoice/i,
+  logging: /sentry|logger/i,
+} as const;
+type EgressFamily = keyof typeof EGRESS_SURFACES;
+
+/** The ONLY families an entry may be allowed onto. */
+const ALLOWABLE_EGRESS_FAMILIES = ["booking", "kiosk"] as const;
+type AllowableEgressFamily = (typeof ALLOWABLE_EGRESS_FAMILIES)[number];
+
+/**
+ * A list entry: a reason, or (#3029) a reason plus the named families it may
+ * sit on, and — for an importer — whether it takes the module's write half
+ * only. A `write` importer may not name a grant, reader or loader at all.
+ */
+type CensusEntry =
+  | string
+  | {
+      readonly reason: string;
+      readonly allow: readonly AllowableEgressFamily[];
+      readonly side?: "write" | "read";
+    };
+
+function allowedFamilies(entry: CensusEntry | undefined): readonly string[] {
+  return typeof entry === "object" ? entry.allow : [];
+}
+
+/** The families a path sits on, minus the ones its entry is allowed onto. */
+function unallowedEgress(file: string, entry: CensusEntry | undefined): EgressFamily[] {
+  const allow = allowedFamilies(entry);
+  return (Object.keys(EGRESS_SURFACES) as EgressFamily[]).filter(
+    (family) => EGRESS_SURFACES[family].test(file) && !allow.includes(family),
+  );
+}
+
+const BOOKING = { allow: ["booking"] } as const;
+const KIOSK = { allow: ["kiosk"] } as const;
+const WRITE_SIDE = { allow: ["booking"], side: "write" } as const;
+
+/**
  * Rule 4's list: every application file allowed to SPELL
  * `dietaryRequirements` outside a comment, and why.
  */
-const DIETARY_REACH: Readonly<Record<string, string>> = {
+const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   [CANONICAL_MODULE]: "the one door: grants, selects and the write patch",
   [OMIT_CONSTANT_MODULE]: "the client-wide omission itself",
   "src/components/member-dietary-requirements-field.tsx":
@@ -92,6 +156,25 @@ const DIETARY_REACH: Readonly<Record<string, string>> = {
     "member CSV import writer, ON and membership:edit only",
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
+  // #3029: the booking value's readers. None WRITES the column by name (rule 8).
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary.ts": {
+    reason: "booking-admin reader (R1): mints the grant, returns rows to the page",
+    ...BOOKING,
+  },
+  "src/app/(authenticated)/bookings/[id]/_components/booking-guest-dietary-card.tsx": {
+    reason: "booking-admin card: displays and edits one stay's values",
+    ...BOOKING,
+  },
+  "src/app/api/admin/bookings/[id]/guest-dietary/route.ts": {
+    reason: "the one booking-value edit route (R4), bookings:edit",
+    ...BOOKING,
+  },
+  "src/app/api/lodge/guests/[date]/route.ts":
+    "kiosk day list (R2): the key exists only for the admin and hut-leader tiers",
+  "src/app/(lodge)/lodge/kiosk/page.tsx": {
+    reason: "kiosk day list display; the key is absent for every denied tier",
+    ...KIOSK,
+  },
 };
 
 /**
@@ -101,7 +184,7 @@ const DIETARY_REACH: Readonly<Record<string, string>> = {
  * confined too, and every entry here is also checked against the egress
  * patterns.
  */
-const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, string>> = {
+const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/app/(authenticated)/profile/page.tsx": "self display grant",
   "src/app/api/profile/route.ts": "self write (profile and onboarding)",
   "src/app/api/member/onboarding/route.ts": "self display grant",
@@ -115,6 +198,45 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, string>> = {
   "src/lib/admin-member-detail-service.ts": "admin detail read and edit",
   "src/lib/admin-members-service.ts": "admin create write",
   "src/lib/member-merge.ts": "merge: attach through the scoped merge grant, redact the audit",
+  // #3029 READERS of the booking value.
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary.ts": {
+    reason: "booking-admin grant (bookings:view/edit, DB-verified) for R1",
+    ...BOOKING,
+    side: "read",
+  },
+  "src/app/api/admin/bookings/[id]/guest-dietary/route.ts": {
+    reason: "booking-admin edit grant for R4",
+    ...BOOKING,
+    side: "read",
+  },
+  "src/app/api/lodge/guests/[date]/route.ts": {
+    reason: "kiosk grant (admin + hut-leader tiers, present guests only) for R2",
+    allow: [],
+    side: "read",
+  },
+  // #3029 WRITERS: the write half only (seeding, resolver, carries, planners,
+  // the create/update fragments). Rule 8 refuses a grant or reader here.
+  "src/app/api/bookings/route.ts": { reason: "W1/W2/W4 seeding read", ...WRITE_SIDE },
+  "src/app/api/bookings/[id]/guests/route.ts": { reason: "W10 add guest", ...WRITE_SIDE },
+  "src/lib/admin-booking-copy.ts": { reason: "W19 copy re-seeds", ...WRITE_SIDE },
+  "src/lib/booking-batch-modification-service.ts": {
+    reason: "seeding read with the pre-transaction work (W11/W12/W15)",
+    ...WRITE_SIDE,
+  },
+  "src/lib/booking-create-guests.ts": { reason: "the create-data builder", ...WRITE_SIDE },
+  "src/lib/booking-create-types.ts": { reason: "seeding/carry types", ...WRITE_SIDE },
+  "src/lib/booking-create.ts": { reason: "W1/W2/W3/W4 resolver", ...WRITE_SIDE },
+  "src/lib/booking-exception-approval.ts": {
+    reason: "W2 policy-exception approval seeding read",
+    ...WRITE_SIDE,
+  },
+  "src/lib/booking-modify-plan.ts": { reason: "W11/W12 resolver, W15 fill", ...WRITE_SIDE },
+  "src/lib/booking-request-quotes.ts": { reason: "W6 held booking", ...WRITE_SIDE },
+  "src/lib/booking-request-shared.ts": { reason: "the pipeline create shaper", ...WRITE_SIDE },
+  "src/lib/booking-request.ts": { reason: "W7 approval, W13/W14 held party", ...WRITE_SIDE },
+  "src/lib/group-booking.ts": { reason: "W2 group join, W5 non-member joiner", ...WRITE_SIDE },
+  "src/lib/school-booking-request.ts": { reason: "W8 school, W9 whole-lodge", ...WRITE_SIDE },
+  "src/lib/waitlist-cross-lodge.ts": { reason: "W18 cross-lodge offer carries", ...WRITE_SIDE },
 };
 
 /**
@@ -123,16 +245,7 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, string>> = {
  * widening either list onto an egress surface is refused rather than
  * rubber-stamped.
  */
-const EGRESS_SURFACE_PATTERNS: readonly RegExp[] = [
-  /xero/i,
-  /analytics|gtag|telemetry/i,
-  /notification|email|mailer|\bmail\b/i,
-  /roster|lodge-screen|lobby|kiosk|hut-leader/i,
-  /family/i,
-  /booking/i,
-  /finance|payment|invoice/i,
-  /sentry|logger/i,
-];
+const EGRESS_SURFACE_PATTERNS: readonly RegExp[] = Object.values(EGRESS_SURFACES);
 
 /** Rule 2's exemption: the only whole-row raw read, and why it is safe. */
 const RAW_WILDCARD_EXEMPT: Readonly<Record<string, string>> = {
@@ -215,9 +328,22 @@ const DIETARY_MINTING_WRAPPER =
  */
 function mayExportMintingFunction(file: string): boolean {
   return (
-    /\/(?:route|page|layout)\.tsx?$/.test(file) || file === MERGE_ENGINE_MODULE
+    /\/(?:route|page|layout)\.tsx?$/.test(file) ||
+    file === MERGE_ENGINE_MODULE ||
+    file in MINTING_LOADERS
   );
 }
+
+/**
+ * Page loaders that mint a grant for the SESSION USER and return rows, never the
+ * grant (#3029). Importing one hands a caller nothing it could not get by being
+ * that user on that page, so exporting it is not a widening — but the list is
+ * closed, so a new one is seen.
+ */
+const MINTING_LOADERS: Readonly<Record<string, string>> = {
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary.ts":
+    "the booking detail page's booking-admin loader (R1)",
+};
 
 /**
  * Rule 7: the merge engine mints a scoped merge grant from the actor id it is
@@ -347,8 +473,46 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
     });
   }
 
+  const importerEntry = DIETARY_MODULE_IMPORTERS[file];
+  if (
+    typeof importerEntry === "object" &&
+    importerEntry.side === "write" &&
+    new RegExp(DIETARY_DOOR_SYMBOL).test(code)
+  ) {
+    findings.push({
+      rule: "write-side-door",
+      file,
+      detail:
+        "is a booking WRITER (write half only) but names a dietary grant, reader or loader",
+    });
+  }
+
+  if (
+    file !== CANONICAL_MODULE &&
+    BOOKING_GUEST_WRITE_CALL.test(code) &&
+    IDENTIFIER.test(code)
+  ) {
+    findings.push({
+      rule: "writer-names-column",
+      file,
+      detail:
+        "writes BookingGuest rows and names dietaryRequirements; only the canonical module writes the column",
+    });
+  }
+
   return findings;
 }
+
+/** A BookingGuest write call in any spelling a writer uses (`INV-MOD-060`). */
+const BOOKING_GUEST_WRITE_CALL =
+  /\bbookingGuest\s*\.\s*(?:create|createMany|update|updateMany|upsert)\s*\(/;
+/** A NESTED guest create inside a booking create (`guests: { create: … }`). */
+const NESTED_GUEST_CREATE = /\bguests\s*:\s*\{\s*create\s*:/;
+/** A direct BookingGuest create (`tx.bookingGuest.create(`, createMany, upsert). */
+const DIRECT_GUEST_CREATE = /\bbookingGuest\s*\.\s*(?:create|createMany|upsert)\s*\(/;
+/** What a create site hands its builder: the dietary decision, in one of three spellings. */
+const DIETARY_CREATE_DECISION =
+  /\b(?:bookingGuestDietaryCreateData|buildGuestCreateData|toPipelineGuestCreateData)\s*\(/;
 
 /** The text between a constructor's opening paren and its matching close. */
 function constructorArguments(code: string, start: number): string {
@@ -442,9 +606,10 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     expect(files).toContain(CANONICAL_MODULE);
   });
 
-  it("the client-wide omission names Member.dietaryRequirements", () => {
+  it("the client-wide omission names Member and BookingGuest dietaryRequirements", () => {
     expect(PRISMA_CLIENT_GLOBAL_OMIT).toEqual({
       member: { dietaryRequirements: true },
+      bookingGuest: { dietaryRequirements: true },
     });
   });
 
@@ -457,6 +622,8 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "import",
     "reexport",
     "merge-caller",
+    "write-side-door",
+    "writer-names-column",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -533,16 +700,124 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     expect(callers).toEqual(Object.keys(MERGE_ENGINE_CALLERS).sort());
   });
 
-  it("no reach, importer or merge-caller entry is an egress surface", () => {
+  it("no reach, importer or merge-caller entry is an egress surface it was not allowed onto", () => {
     const egress = [
-      ...Object.keys(DIETARY_REACH),
-      ...Object.keys(DIETARY_MODULE_IMPORTERS),
-      ...Object.keys(MERGE_ENGINE_CALLERS),
-    ].filter((file) => EGRESS_SURFACE_PATTERNS.some((pattern) => pattern.test(file)));
+      ...Object.entries(DIETARY_REACH),
+      ...Object.entries(DIETARY_MODULE_IMPORTERS),
+      ...Object.entries(MERGE_ENGINE_CALLERS),
+    ].flatMap(([file, entry]) =>
+      unallowedEgress(file, entry).map((family) => `${file} (${family})`),
+    );
     expect(
       egress,
-      `${INVARIANT_ID}: dietary/allergy data must not reach Xero, analytics, notifications, email, rosters, lodge screens, family views, booking or finance exports, or logs.`,
+      `${INVARIANT_ID}: dietary/allergy data must not reach Xero, analytics, notifications, email, rosters, lodge screens, family views, booking or finance exports, or logs; only a named booking-value entry may sit on the booking or kiosk family.`,
     ).toEqual([]);
+    // Every pattern is a family (nothing was dropped when they were named).
+    expect(EGRESS_SURFACE_PATTERNS).toHaveLength(9);
+  });
+
+  it("an allowance names only the booking or kiosk family, never a provider, message, roster, finance or log surface", () => {
+    const allowances = [
+      ...Object.values(DIETARY_REACH),
+      ...Object.values(DIETARY_MODULE_IMPORTERS),
+    ].flatMap((entry) => allowedFamilies(entry));
+    for (const family of allowances) {
+      expect(ALLOWABLE_EGRESS_FAMILIES as readonly string[], family).toContain(family);
+    }
+  });
+});
+
+/**
+ * The BookingGuest WRITER census (#3029, `INV-MOD-060`). Text over `src/`, same
+ * honesty as above: it proves that every create site is on this list and hands
+ * its builder a dietary decision, and that the listed never-name writers leave
+ * the column alone; the behaviour of each decision is proven in
+ * `member-dietary-booking-lifecycle.test.ts`.
+ */
+const BOOKING_GUEST_CREATE_SITES: Readonly<Record<string, string>> = {
+  "src/lib/booking-create.ts": "W1 draft, W2 confirmed, W3 split child, W4 waitlisted",
+  "src/lib/group-booking.ts": "W5 non-member group joiner",
+  "src/lib/booking-request-quotes.ts": "W6 public/school held booking",
+  "src/lib/booking-request.ts": "W7 approval without a hold, W13 held-party rebuild",
+  "src/lib/school-booking-request.ts": "W8 school approval, W9 member whole-lodge",
+  "src/app/api/bookings/[id]/guests/route.ts": "W10 add a guest",
+  "src/lib/booking-modify-plan.ts": "W11 in-progress add, W12 modification add",
+};
+
+/**
+ * Writers that change a guest row and must NEVER name the column: leaving it
+ * alone is how a date move, a removal, a promotion, a rename, a consent answer,
+ * a price repair or an arrival preserves the value.
+ */
+const NEVER_NAME_WRITERS: Readonly<Record<string, string>> = {
+  "src/lib/booking-date-modification-service.ts": "date modification",
+  "src/lib/booking-guest-removal-service.ts": "guest removal",
+  "src/lib/waitlist.ts": "waitlist promotion",
+  "src/lib/school-attendee-confirmation.ts": "school attendee rename",
+  "src/lib/member-guest-consent-service.ts": "consent",
+  "src/lib/stored-night-price-repair-store.ts": "night-price repair",
+  "src/app/api/lodge/guests/[date]/arrive/route.ts": "lodge arrive",
+  "src/app/api/lodge/guests/[date]/depart/route.ts": "lodge depart",
+};
+
+describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () => {
+  const code = (file: string) =>
+    stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8"));
+
+  it("every BookingGuest create site is on the closed list", () => {
+    const sites = census()
+      .files.filter((file) => file.startsWith("src/") && file !== CANONICAL_MODULE)
+      .filter((file) => {
+        const text = code(file);
+        return NESTED_GUEST_CREATE.test(text) || DIRECT_GUEST_CREATE.test(text);
+      })
+      .sort();
+    expect(
+      sites,
+      `${LIFECYCLE_INVARIANT_ID}: a new BookingGuest create site must be listed here and hand its builder a dietary decision.`,
+    ).toEqual(Object.keys(BOOKING_GUEST_CREATE_SITES).sort());
+  });
+
+  it("every create site hands its builder a dietary decision", () => {
+    const missing = Object.keys(BOOKING_GUEST_CREATE_SITES).filter(
+      (file) => !DIETARY_CREATE_DECISION.test(code(file)),
+    );
+    expect(missing, `${LIFECYCLE_INVARIANT_ID}: create site without a dietary decision`).toEqual([]);
+  });
+
+  it("both shared builders spread the module's create fragment", () => {
+    for (const file of ["src/lib/booking-create-guests.ts", "src/lib/booking-request-shared.ts"]) {
+      expect(code(file), `${LIFECYCLE_INVARIANT_ID}: ${file}`).toMatch(
+        /\.\.\.bookingGuestDietaryCreateData\(/,
+      );
+    }
+  });
+
+  it("no site creates guests in bulk, where a per-row decision cannot ride", () => {
+    const bulk = census()
+      .files.filter((file) => file.startsWith("src/"))
+      .filter((file) => /\bbookingGuest\s*\.\s*createMany\s*\(/.test(code(file)));
+    expect(bulk, LIFECYCLE_INVARIANT_ID).toEqual([]);
+  });
+
+  it("the never-name writers neither spell the column nor import the module", () => {
+    const offenders = Object.keys(NEVER_NAME_WRITERS).filter((file) => {
+      const text = code(file);
+      return IDENTIFIER.test(text) || DIETARY_MODULE_IMPORT.test(text);
+    });
+    expect(offenders, `${LIFECYCLE_INVARIANT_ID}: these writers must leave the value alone`).toEqual([]);
+    // And each still writes guest rows, so the list cannot go stale unnoticed.
+    const stale = Object.keys(NEVER_NAME_WRITERS).filter(
+      (file) => !BOOKING_GUEST_WRITE_CALL.test(code(file)) && !/bookingGuest\s*\.\s*delete/.test(code(file)),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it("account anonymisation clears the guest rows' value in the same update (W16)", () => {
+    const route = code("src/app/api/admin/deletion-requests/[id]/route.ts");
+    const block = route.slice(route.indexOf("tx.bookingGuest.updateMany("));
+    const call = block.slice(0, block.indexOf("});") + 3);
+    expect(call, `${INVARIANT_ID}: W16`).toMatch(/memberId: null,[\s\S]*\.\.\.DIETARY_ERASURE_PATCH/);
   });
 });
 
@@ -684,5 +959,40 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
 
   it("does not mistake the settings toggle for the field", () => {
     expect(rulesOf(`const on = flags.showDietaryRequirements;`)).toEqual([]);
+  });
+
+  it("reports a booking writer that reaches for a grant or reader (#3029)", () => {
+    const writer = "src/lib/booking-create.ts";
+    expect(
+      rulesOf(
+        `import { resolveBookingGuestDietary } from "@/lib/member-dietary";\nconst w = await resolveBookingGuestDietary(tx, s, g);`,
+        writer,
+      ),
+    ).not.toContain("write-side-door");
+    expect(
+      rulesOf(
+        `import { readKioskGuestDietaryRequirements } from "@/lib/member-dietary";\nawait readKioskGuestDietaryRequirements(g, ids);`,
+        writer,
+      ),
+    ).toContain("write-side-door");
+  });
+
+  it("reports a file that writes BookingGuest rows naming the column (#3029)", () => {
+    expect(
+      rulesOf(`await tx.bookingGuest.update({ where: { id }, data: { dietaryRequirements: v } });`),
+    ).toContain("writer-names-column");
+    expect(
+      rulesOf(`await tx.bookingGuest.updateMany({ where: { id }, data: { ...DIETARY_ERASURE_PATCH } });`),
+    ).not.toContain("writer-names-column");
+  });
+
+  it("refuses an egress family the entry was not allowed onto (#3029)", () => {
+    expect(unallowedEgress("src/lib/booking-xero-sync.ts", { reason: "x", allow: ["booking"] })).toEqual([
+      "xero",
+    ]);
+    expect(unallowedEgress("src/app/(lodge)/lodge/kiosk/page.tsx", "stage 1 entry")).toEqual(["kiosk"]);
+    expect(unallowedEgress("src/lib/lodge-roster.ts", { reason: "x", allow: ["kiosk"] })).toEqual([
+      "lodge-screen",
+    ]);
   });
 });
