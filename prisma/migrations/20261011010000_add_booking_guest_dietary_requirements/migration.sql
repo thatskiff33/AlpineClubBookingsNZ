@@ -1,5 +1,5 @@
 -- Booking-guest dietary/allergy snapshot (#3029, stage 2 of epic #3021;
--- INV-PRIV-022, INV-MOD-060).
+-- INV-PRIV-022, INV-MOD-059).
 --
 -- PURELY ADDITIVE EXPAND. One new nullable column, nothing renamed, retyped,
 -- dropped or repurposed. See docs/BLUE_GREEN_MIGRATION_SAFETY.tsv for the

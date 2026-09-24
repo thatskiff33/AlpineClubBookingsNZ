@@ -20,7 +20,7 @@
  * THE BOOKING VALUE (stage 2, #3029). `BookingGuest.dietaryRequirements` is the
  * same kind of data for one stay: a snapshot seeded once from the linked
  * member's profile when the guest row is first created, then independent
- * (`INV-MOD-060`). This module extends to it rather than a second one beside it:
+ * (`INV-MOD-059`). This module extends to it rather than a second one beside it:
  *  - an admin holding `bookings` access ({@link grantBookingAdminDietaryAccess}),
  *    to view (`bookings:view`) or edit (`bookings:edit`) a booking's values;
  *  - the kiosk's `admin` and `hut-leader` tiers ({@link grantKioskDietaryAccess}),
@@ -435,7 +435,7 @@ export function dietaryRequirementsChanged(
 //
 // `BookingGuest.dietaryRequirements` is one stay's dietary/allergy note. Who
 // may read it is `INV-PRIV-022` (extended in place, not a second rule); what
-// happens to it over the booking's life is `INV-MOD-060`:
+// happens to it over the booking's life is `INV-MOD-059`:
 //  - it is seeded ONCE, when the guest row is first created, from the linked
 //    member's CURRENT profile value, and only while the field is ON;
 //  - it never writes back to the profile, and a later profile edit never
@@ -652,7 +652,7 @@ export type BookingGuestDietaryEditResult =
 /**
  * The ONE direct edit of a stored booking value: one guest row, matched on BOTH
  * its booking and its own id, on a booking that is not deleted. It never touches
- * the member profile (`INV-MOD-060`) and it is not a booking modification — no
+ * the member profile (`INV-MOD-059`) and it is not a booking modification — no
  * reprice, no email, no Xero (`INV-MOD-001`). Last writer wins; the caller's
  * audit row records each edit, never the value.
  */
@@ -791,7 +791,7 @@ async function readProfileValues(
 }
 
 /**
- * Decide what each NEW guest row carries, in input order (`INV-MOD-060`):
+ * Decide what each NEW guest row carries, in input order (`INV-MOD-059`):
  *  - a carried value, as it is (null included), whatever the toggle says;
  *  - otherwise, while seeding is ON, a linked member's CURRENT profile value;
  *  - otherwise nothing (a non-member, or seeding OFF).
@@ -834,7 +834,7 @@ export function bookingGuestDietaryCreateData(
   const value = write ? WRITE_VALUES.get(write) : undefined;
   if (value === undefined) {
     throw new Error(
-      "A new booking guest row needs a dietary decision from resolveBookingGuestDietary (INV-MOD-060)",
+      "A new booking guest row needs a dietary decision from resolveBookingGuestDietary (INV-MOD-059)",
     );
   }
   return value === null ? {} : { dietaryRequirements: value };
@@ -971,7 +971,7 @@ export function bookingGuestDietaryUpdateData(
   const value = update ? UPDATE_VALUES.get(update) : undefined;
   if (value === undefined) {
     throw new Error(
-      "A rewritten booking guest row needs a dietary decision from planHeldPartyRewriteDietary (INV-MOD-060)",
+      "A rewritten booking guest row needs a dietary decision from planHeldPartyRewriteDietary (INV-MOD-059)",
     );
   }
   return value === UNTOUCHED ? {} : { dietaryRequirements: value };

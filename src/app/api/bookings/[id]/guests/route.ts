@@ -289,7 +289,7 @@ export async function POST(
   // add-guest edit be admitted under one day and priced under another.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
-  // #3029 (W10, `INV-MOD-060`) — whether an added linked member is seeded from
+  // #3029 (W10, `INV-MOD-059`) — whether an added linked member is seeded from
   // their dietary/allergy profile. The toggle, read HERE for the same reason.
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 

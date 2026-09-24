@@ -161,7 +161,7 @@ export type PricedGuest = {
  * no priced nights falls back to the booking range. Every guest — contiguous or
  * not — gets per-night rows so the data model is uniform.
  *
- * `dietary` is REQUIRED and index-aligned with `guests` (#3029, `INV-MOD-060`):
+ * `dietary` is REQUIRED and index-aligned with `guests` (#3029, `INV-MOD-059`):
  * what each new row carries, as `resolveBookingGuestDietary` decided it inside
  * the caller's transaction. Required so a new create site cannot forget to seed,
  * and opaque so this builder never holds the value itself.

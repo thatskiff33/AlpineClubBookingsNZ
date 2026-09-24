@@ -1,5 +1,5 @@
 /**
- * The booking-guest dietary/allergy SNAPSHOT lifecycle (#3029, `INV-MOD-060`).
+ * The booking-guest dietary/allergy SNAPSHOT lifecycle (#3029, `INV-MOD-059`).
  *
  * Seeded once, when a guest row is first created, from the linked member's
  * CURRENT profile value and only while the field is ON; carried as it is where
@@ -31,7 +31,7 @@ import { buildGuestCreateData } from "@/lib/booking-create-guests";
 import { toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { reassignHeldBookingGuests } from "@/lib/booking-request";
 
-const ID = "INV-MOD-060";
+const ID = "INV-MOD-059";
 const ON = bookingGuestDietarySeeding(true);
 const OFF = bookingGuestDietarySeeding(false);
 const PROFILE = "Coeliac";

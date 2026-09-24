@@ -25,7 +25,7 @@ export type BookingGuestDietaryRow = {
 
 /**
  * THE STAY'S DIETARY/ALLERGY INFORMATION, for booking administrators only
- * (#3029, `INV-PRIV-022`, `INV-MOD-060`).
+ * (#3029, `INV-PRIV-022`, `INV-MOD-059`).
  *
  * The page renders this ONLY when it holds a booking-admin dietary grant — the
  * field is ON and the viewer holds `bookings:view`, re-read from the database —

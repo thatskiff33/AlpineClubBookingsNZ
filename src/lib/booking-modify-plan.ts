@@ -2617,7 +2617,7 @@ export async function applyGuestChanges(
      */
     otherLodgeRatedGuestIds?: ReadonlySet<string>;
     /**
-     * #3029 (`INV-MOD-060`): the dietary seeding toggle, read before the
+     * #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the
      * transaction. REQUIRED: an added linked member is seeded from their
      * profile, and a placeholder newly linked to a member is filled from theirs
      * only if the row holds no value yet. Nothing else here names the value —

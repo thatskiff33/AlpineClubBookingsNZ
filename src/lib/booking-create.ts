@@ -406,7 +406,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoAdjustmentCents,
     });
     const hasNonMembers = guests.some((g) => !g.isMember);
-    // #3029 (`INV-MOD-060`): each new guest row's dietary/allergy snapshot, from
+    // #3029 (`INV-MOD-059`): each new guest row's dietary/allergy snapshot, from
     // the linked members' CURRENT profiles through this transaction's client.
     const guestDietary = await resolveBookingGuestDietary(
       tx,
@@ -1104,7 +1104,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
               price,
               checkIn,
               checkOut,
-              // #3029 (`INV-MOD-060`): carried values (the cross-lodge offer) as
+              // #3029 (`INV-MOD-059`): carried values (the cross-lodge offer) as
               // they are; linked members seeded from their current profiles.
               await resolveBookingGuestDietary(
                 tx,
@@ -1935,7 +1935,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       // shared with the promotion's validity window — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
     });
-    // #3029 (`INV-MOD-060`): the waitlisted guest rows are the rows a later
+    // #3029 (`INV-MOD-059`): the waitlisted guest rows are the rows a later
     // promotion keeps, so they are seeded here, when they are first created.
     const guestDietary = await resolveBookingGuestDietary(
       tx,

@@ -214,7 +214,7 @@ describe("the subject's own data export reads only their own guest rows (INV-PRI
   });
 });
 
-describe("the one booking-value edit (INV-PRIV-022, INV-MOD-060)", () => {
+describe("the one booking-value edit (INV-PRIV-022, INV-MOD-059)", () => {
   it("matches the row on booking AND guest on a live booking, normalises, and reports a change", async () => {
     const grant = await grantBookingAdminDietaryAccess(bookingAdmin("edit"), "edit", { enabled: true });
     mocks.bookingGuestFindFirst.mockResolvedValue({ dietaryRequirements: null });

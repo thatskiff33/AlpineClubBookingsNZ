@@ -1844,7 +1844,7 @@ export async function holdBookingRequestSlots(input: {
   }));
 
   let capacityFullNights: string[] | null = null;
-  // #3029 (W6, `INV-MOD-060`): a linked member on the held party is seeded from
+  // #3029 (W6, `INV-MOD-059`): a linked member on the held party is seeded from
   // their profile when the held row is created. Read before the transaction
   // (`INV-LOCK-004`). The public request itself carries no dietary field, so
   // there is nothing further to preserve.

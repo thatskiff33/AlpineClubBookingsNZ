@@ -42,7 +42,7 @@ export interface BookingGuestInput extends MemberGuestConsentGuestFields {
   // are the derived min/max envelope.
   nights?: ReadonlyArray<GuestNightInput> | null;
   /**
-   * #3029 (`INV-MOD-060`): a value captured from the row this guest REPLACES,
+   * #3029 (`INV-MOD-059`): a value captured from the row this guest REPLACES,
    * carried as it is instead of being seeded afresh. Set only where a booking
    * rebuilds the same stay (the cross-lodge waitlist offer); absent everywhere
    * else, which seeds a linked member from their current profile.
@@ -94,7 +94,7 @@ interface BaseInput {
   subscriptionLockoutMode?: SubscriptionLockoutMode;
   /**
    * Whether new linked-member guest rows are seeded from the member's dietary/
-   * allergy profile (#3029, `INV-MOD-060`): the field toggle, read by the caller
+   * allergy profile (#3029, `INV-MOD-059`): the field toggle, read by the caller
    * BEFORE any transaction opens (`INV-LOCK-004`). REQUIRED, unlike the lockout
    * mode above, because there is no safe fallback read: `createConfirmedBooking`
    * may already be inside the caller's transaction, and a create path that

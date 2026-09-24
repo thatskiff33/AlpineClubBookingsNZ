@@ -687,7 +687,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   // standard creation path. It re-acquires that lodge's capacity lock and
   // re-checks capacity itself, so the tiny window since phase 1 is safe.
   //
-  // #3029 (W18, `INV-MOD-060`): this is the SAME stay rebuilt at another lodge,
+  // #3029 (W18, `INV-MOD-059`): this is the SAME stay rebuilt at another lodge,
   // so every guest row carries its source row's dietary/allergy value as it is
   // — null included, and even while the field is OFF. Carrying preserves; only
   // a genuinely new guest is seeded, and there is none here.

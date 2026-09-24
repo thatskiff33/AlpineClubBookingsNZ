@@ -1,6 +1,6 @@
 /**
  * PATCH /api/admin/bookings/[id]/guest-dietary (#3029, `INV-PRIV-022`,
- * `INV-MOD-060`): the one write of a stored booking value.
+ * `INV-MOD-059`): the one write of a stored booking value.
  *
  * `bookings:edit` (route guard AND a database-verified grant), refused while the
  * field is OFF, one row matched on booking + guest, the shared 500 limit, an
@@ -66,7 +66,7 @@ beforeEach(() => {
   mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
 });
 
-describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-060)", () => {
+describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-059)", () => {
   it("asks requireAdmin for bookings:edit", async () => {
     await patch({ guestId: "g1", dietaryRequirements: VALUE });
     expect(mocks.requireAdmin).toHaveBeenCalledWith({

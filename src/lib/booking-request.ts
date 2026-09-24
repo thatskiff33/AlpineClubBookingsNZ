@@ -1710,7 +1710,7 @@ export async function reassignHeldBookingGuests(
   guestCreates: HeldBookingGuestInput[],
   memberGuest: ReassignMemberGuestContext,
   /**
-   * #3029 (`INV-MOD-060`): whether a guest who is NEW to the party is seeded from
+   * #3029 (`INV-MOD-059`): whether a guest who is NEW to the party is seeded from
    * their dietary/allergy profile — the toggle, read by the caller before its
    * transaction. REQUIRED for the same reason `memberGuest` is: both branches
    * below rewrite who is on a row, and a missing answer could only mean leaving
@@ -2162,7 +2162,7 @@ export async function approveBookingRequest(input: {
     displacedMemberGuestIds: string[];
   };
 
-  // #3029 (W7/W13/W14, `INV-MOD-060`): read before the transaction below
+  // #3029 (W7/W13/W14, `INV-MOD-059`): read before the transaction below
   // (`INV-LOCK-004`) and handed to every guest write it makes.
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 

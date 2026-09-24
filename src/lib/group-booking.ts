@@ -1069,7 +1069,7 @@ export async function joinGroupBookingAsMember(
     // raises + emails the Xero invoice when internet_banking is chosen.
     paymentMethod: effectivePaymentMethod,
     internetBankingSettings,
-    // #3029 (`INV-MOD-060`): the joiner's guest rows are new, so a linked member
+    // #3029 (`INV-MOD-059`): the joiner's guest rows are new, so a linked member
     // is seeded from their current profile. Read here, outside every transaction.
     guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });

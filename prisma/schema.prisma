@@ -2136,7 +2136,7 @@ model BookingGuest {
   // Member.dietaryRequirements when the row is first created (and only while
   // MemberFieldsSettings.showDietaryRequirements is ON), then independent — a
   // later profile edit never rewrites it and an edit here never writes back to
-  // the profile (INV-MOD-060). A non-member guest may carry one too. Same
+  // the profile (INV-MOD-059). A non-member guest may carry one too. Same
   // privacy rules as the profile value: the primary Prisma client OMITS it
   // globally and only src/lib/member-dietary.ts may select or write it by name
   // (INV-PRIV-022). Blank normalises to null; at most 500 characters.

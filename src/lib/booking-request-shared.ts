@@ -494,7 +494,7 @@ export async function planBookingRequestGuestConsent<
  * in `src/lib/__tests__/booking-request-guest-nights.test.ts`, which fails
  * `npm run typecheck` if the field ever goes back to optional.
  *
- * `dietary` IS REQUIRED for the same reason (#3029, `INV-MOD-060`): the new
+ * `dietary` IS REQUIRED for the same reason (#3029, `INV-MOD-059`): the new
  * row's dietary/allergy snapshot, as `resolveBookingGuestDietary` decided it for
  * this guest inside the pipeline's transaction. A pipeline that maps guests
  * straight through (`.map(toPipelineGuestCreateData)`) would hand the array

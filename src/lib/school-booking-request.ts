@@ -937,7 +937,7 @@ export async function approveSchoolBookingRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
-  // #3029 (`INV-MOD-060`): the dietary seeding toggle, read before the same
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
   // transaction for the same reason (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
@@ -2345,7 +2345,7 @@ export async function approveMemberWholeLodgeRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
-  // #3029 (`INV-MOD-060`): the dietary seeding toggle, read before the same
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
   // transaction for the same reason (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 

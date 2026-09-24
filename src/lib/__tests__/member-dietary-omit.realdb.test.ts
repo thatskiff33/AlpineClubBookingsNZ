@@ -297,7 +297,7 @@ function hasKey(row: unknown): boolean {
       expect(hasKey(updated)).toBe(false);
     });
 
-    it("the booking-admin grant reads and edits it, and the profile is never touched (INV-MOD-060)", async () => {
+    it("the booking-admin grant reads and edits it, and the profile is never touched (INV-MOD-059)", async () => {
       await prisma.memberAccessRole.create({
         data: { memberId: PARENT_ID, role: "ADMIN" },
       });

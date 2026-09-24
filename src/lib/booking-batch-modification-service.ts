@@ -458,7 +458,7 @@ interface BatchModificationPreparation {
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
   readonly xeroLockDates: XeroLockDateFacts;
   /**
-   * #3029 (`INV-MOD-060`): whether a guest this edit ADDS, or a placeholder it
+   * #3029 (`INV-MOD-059`): whether a guest this edit ADDS, or a placeholder it
    * links to a member, is seeded from the member's dietary/allergy profile —
    * the field toggle, a settings read that belongs out here with the others.
    */
@@ -1606,7 +1606,7 @@ export async function modifyBookingBatch({
         pricingResult.kind === "priced"
           ? pricingResult.otherLodgeRatedGuestIds
           : new Set<string>(),
-      // #3029 (`INV-MOD-060`): resolved with the rest of the pre-transaction
+      // #3029 (`INV-MOD-059`): resolved with the rest of the pre-transaction
       // work, so an added linked member is seeded and a placeholder newly
       // linked to a member is filled only if empty.
       guestDietarySeeding: preparation.guestDietarySeeding,

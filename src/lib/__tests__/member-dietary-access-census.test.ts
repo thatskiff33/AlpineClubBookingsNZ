@@ -41,7 +41,7 @@
  *  8. WRITE SIDE (#3029): a booking writer that imports the module may import
  *     only its write half — never a grant, reader or loader — and no file but
  *     the module writes the column by name. Every BookingGuest create site is on
- *     a closed list and hands its builder a dietary decision (`INV-MOD-060`).
+ *     a closed list and hands its builder a dietary decision (`INV-MOD-059`).
  *
  * WHAT IT CANNOT SEE, stated so nobody reads it as stronger than it is. It
  * matches text, not data flow. A listed file that reads `.dietaryRequirements`
@@ -61,7 +61,7 @@ import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const INVARIANT_ID = "INV-PRIV-022";
-const LIFECYCLE_INVARIANT_ID = "INV-MOD-060";
+const LIFECYCLE_INVARIANT_ID = "INV-MOD-059";
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
 const CANONICAL_MODULE = "src/lib/member-dietary.ts";
@@ -503,7 +503,7 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
   return findings;
 }
 
-/** A BookingGuest write call in any spelling a writer uses (`INV-MOD-060`). */
+/** A BookingGuest write call in any spelling a writer uses (`INV-MOD-059`). */
 const BOOKING_GUEST_WRITE_CALL =
   /\bbookingGuest\s*\.\s*(?:create|createMany|update|updateMany|upsert)\s*\(/;
 /** A NESTED guest create inside a booking create (`guests: { create: … }`). */
@@ -728,7 +728,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
 });
 
 /**
- * The BookingGuest WRITER census (#3029, `INV-MOD-060`). Text over `src/`, same
+ * The BookingGuest WRITER census (#3029, `INV-MOD-059`). Text over `src/`, same
  * honesty as above: it proves that every create site is on this list and hands
  * its builder a dietary decision, and that the listed never-name writers leave
  * the column alone; the behaviour of each decision is proven in

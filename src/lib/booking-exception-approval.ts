@@ -493,7 +493,7 @@ export interface PolicyExceptionApprovalContext {
      */
     memberGuestPolicy: MemberGuestAddPolicy;
     /**
-     * #3029 (`INV-MOD-060`): whether the created booking's linked-member guest
+     * #3029 (`INV-MOD-059`): whether the created booking's linked-member guest
      * rows are seeded from their dietary/allergy profiles — the toggle, read on
      * the module client before the transaction opened, for the same reason.
      */

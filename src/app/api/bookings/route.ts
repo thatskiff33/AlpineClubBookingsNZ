@@ -849,7 +849,7 @@ export async function POST(request: NextRequest) {
   // requirement below cannot branch on different answers if an admin saves the
   // setting mid-request.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
-  // #3029 (`INV-MOD-060`) — whether the new guest rows are seeded from the
+  // #3029 (`INV-MOD-059`) — whether the new guest rows are seeded from the
   // members' dietary/allergy profiles: the toggle, read ONCE here, before any
   // create service opens its transaction (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();

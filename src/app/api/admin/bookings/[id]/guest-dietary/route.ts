@@ -33,7 +33,7 @@ const guestDietarySchema = z
 
 /**
  * PATCH /api/admin/bookings/[id]/guest-dietary (#3029, `INV-PRIV-022`,
- * `INV-MOD-060`).
+ * `INV-MOD-059`).
  *
  * Changes ONE guest's dietary/allergy information for THIS stay. It is the
  * only write of a stored booking value, and it is deliberately narrow:
