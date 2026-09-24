@@ -37,6 +37,29 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     expect(suite).toContain("posts a row paid AGAIN after its mark-paid was reversed");
   });
 
+  it("carries #3599's credit and hand-back proof into the same harness", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./booking-ledger-credit-sync.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-credit-sync.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "posts credit applied and a clamp give-back one line per row, summing to what the booking holds applied",
+      "posts a TIERED restore for exactly what was restored, anchored on the cancellation",
+      "posts a cancellation credit against its own row",
+      "posts a reduction credit against its own row",
+      "posts NO hand-back for a task on a card payment",
+      "posts a completed hand-back through the REAL resolver",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = readFileSync(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),

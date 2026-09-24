@@ -512,6 +512,35 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   (#3583) classifies those as known divergences. A line whose source amount
   later changes is reported, not corrected.
 
+## INV-MONEY-035
+
+- **Every credit row a booking owns, and every hand-back, posts exactly one
+  settlement line, inside its writer's transaction** (#3599). Credit rows
+  have no chokepoint, so each writer calls `syncBookingLedgerCredits`; which
+  rows are the booking's is `member-credit-booking-rows.ts`'s, shared with
+  `deriveBookingAppliedCreditCents`. `booking-ledger-credit-writers.test.ts`
+  fails a credit write with no sync after it.
+
+  **Insert-only, because credit rows are.** No code changes a row's amount,
+  type or booking link — the census fails one that tries; only deleting a
+  booking nulls the link, and its lines go with it — so each row posts one
+  line keyed `credit:<id>`, never reversed, for the row's negation: applied
+  credit `CREDIT_APPLIED` (a give-back is negative), minted credit
+  `CREDIT_ISSUED`. While a booking's applied rows net to zero or less — every
+  current writer keeps them so — Σ `CREDIT_APPLIED` equals
+  `deriveBookingAppliedCreditCents`.
+
+  **A restore is not a reversal.** Restores are tiered by policy, so one can
+  be less than was applied; it posts `CREDIT_ISSUED` for exactly the restore,
+  anchored on the `CANCELLATION` because it returns credit already spent.
+
+  **A hand-back posts `BANK_REFUND`** when a task completes on the
+  `local-allocation` route, keyed `handback:<taskId>`, naming the officer, by
+  internet banking (#3529's wording decision, `INV-PAY-101`) — except on a
+  card payment, whose refund posts from its refund row.
+  `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
+  writers and the real resolver.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and
