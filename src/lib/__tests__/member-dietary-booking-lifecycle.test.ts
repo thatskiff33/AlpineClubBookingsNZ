@@ -18,10 +18,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  applyGuestMemberLinkDietary,
   bookingGuestDietaryCreateData,
   bookingGuestDietarySeeding,
   bookingGuestDietaryUpdateData,
-  captureBookingGuestDietaryCarries,
+  carryBookingGuestDietaryFrom,
   fillBookingGuestDietaryFromProfileIfEmpty,
   isSameBookingGuestOccupant,
   planGuestRenameDietary,
@@ -100,30 +101,46 @@ describe(`seeding a new guest row (${ID})`, () => {
   });
 
   it("a carried value wins over the profile, is written even while OFF, and a carried null writes nothing", async () => {
-    const source = profileDb({}, [
+    const carries = carryBookingGuestDietaryFrom("bk-old", ["old-1", "old-2", "gone"]);
+    const db = profileDb({ "m-1": PROFILE, "m-2": PROFILE, "m-3": PROFILE }, [
       { id: "old-1", dietaryRequirements: "Trip-specific: no dairy" },
       { id: "old-2", dietaryRequirements: null },
     ]);
-    const carries = await captureBookingGuestDietaryCarries(source, "bk-old", ["old-1", "old-2"]);
-    // S3: the capture is scoped to its source booking.
-    expect(source.bookingGuest.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ["old-1", "old-2"] }, bookingId: "bk-old" },
-      select: { id: true, dietaryRequirements: true },
-    });
-    const db = profileDb({ "m-1": PROFILE, "m-2": PROFILE });
     expect(
       await createData(db, OFF, [
         { memberId: "m-1", carriedDietary: carries.get("old-1") },
         { memberId: "m-2", carriedDietary: carries.get("old-2") },
       ]),
     ).toEqual([{ dietaryRequirements: "Trip-specific: no dairy" }, {}]);
+    // S3: the read is scoped to its source booking, through the caller's client.
+    expect(db.bookingGuest.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["old-1", "old-2"] }, bookingId: "bk-old" },
+      select: { id: true, dietaryRequirements: true },
+    });
     expect(db.member.findMany).not.toHaveBeenCalled();
+    // A source row gone by then carries nothing, so its guest is seeded.
+    const later = profileDb({ "m-3": PROFILE }, []);
+    expect(await createData(later, ON, [{ memberId: "m-3", carriedDietary: carries.get("gone") }])).toEqual([
+      { dietaryRequirements: PROFILE },
+    ]);
+  });
+
+  it("naming the carry reads nothing: the value is read when the row is written, not before (W18)", async () => {
+    const values = [{ id: "old-1", dietaryRequirements: "Before" }];
+    const db = profileDb({}, values);
+    const carries = carryBookingGuestDietaryFrom("bk-old", ["old-1"]);
+    expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
+    // An admin edit committed after the carry was named, before the create.
+    values[0] = { id: "old-1", dietaryRequirements: "Edited since" };
+    expect(await createData(db, OFF, [{ carriedDietary: carries.get("old-1") }])).toEqual([
+      { dietaryRequirements: "Edited since" },
+    ]);
   });
 
   it("refuses a hand-made carry or write token", async () => {
     await expect(
       resolveBookingGuestDietary(profileDb({}), ON, [{ carriedDietary: {} as never }]),
-    ).rejects.toThrow(/captureBookingGuestDietaryCarries/);
+    ).rejects.toThrow(/carryBookingGuestDietaryFrom/);
     expect(() => bookingGuestDietaryCreateData({} as never)).toThrow(ID);
     expect(() => bookingGuestDietaryCreateData(undefined)).toThrow(ID);
   });
@@ -420,8 +437,105 @@ describe(`the held-party rebuild locks the party first (C3, ${ID})`, () => {
   });
 });
 
-describe(`a placeholder newly linked to a member (W15, ${ID})`, () => {
-  it("fills only while ON, only an empty row, and never from an empty profile", async () => {
+describe(`a row newly linked to a member (W15, ${ID})`, () => {
+  const linkOf = (
+    guestId: string,
+    previous: ReturnType<typeof person>,
+    memberId: string,
+    linkedName: { firstName: string | null; lastName: string | null; ageTier?: AgeTier | null },
+    extra: object = {},
+  ) => ({ guestId, memberId, previous, linkedName, ...extra });
+  const bob = { firstName: "Bob", lastName: "Jones", ageTier: AgeTier.ADULT };
+
+  it("a NAMED non-member linked to a DIFFERENT member has the other person's note replaced from the member's profile", async () => {
+    // "Guest 3" was named Alice Smith and an officer recorded Alice's allergy;
+    // an admin then links member Bob onto that row.
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    const alice = { ...person("Alice"), lastName: "Smith" };
+    await applyGuestMemberLinkDietary(db, ON, [linkOf("r3", alice, "m-bob", bob)]);
+    expect(db.bookingGuest.updateMany, `${ID}: Alice's note must not stay on Bob's row`).toHaveBeenCalledTimes(1);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r3", memberId: "m-bob" },
+      data: { dietaryRequirements: "Bob's profile" },
+    });
+  });
+
+  it("...and clears it while seeding is OFF, when the member's consent is pending, or from an empty profile", async () => {
+    const alice = { ...person("Alice"), lastName: "Smith" };
+    for (const [seeding, values, extra] of [
+      [OFF, { "m-bob": "Bob's profile" }, {}],
+      [ON, { "m-bob": "Bob's profile" }, PENDING],
+      [ON, { "m-bob": null }, {}],
+    ] as const) {
+      const db = profileDb(values);
+      await applyGuestMemberLinkDietary(db, seeding, [linkOf("r3", alice, "m-bob", bob, extra)]);
+      expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+        where: { id: "r3", memberId: "m-bob" },
+        data: { dietaryRequirements: null },
+      });
+    }
+  });
+
+  it("a placeholder linked keeps an admin-entered note: only an EMPTY row is filled", async () => {
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    const placeholder = { ...person("Guest"), lastName: "3" };
+    await applyGuestMemberLinkDietary(db, ON, [linkOf("r3", placeholder, "m-bob", bob)]);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r3", memberId: "m-bob", dietaryRequirements: null },
+      data: { dietaryRequirements: "Bob's profile" },
+    });
+    // While OFF nothing is written at all: the admin's note stays.
+    const off = profileDb({ "m-bob": "Bob's profile" });
+    await applyGuestMemberLinkDietary(off, OFF, [linkOf("r3", placeholder, "m-bob", bob)]);
+    expect(off.bookingGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a row already named as the member (or a spelling fix of it) is the same person and keeps its note", async () => {
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    await applyGuestMemberLinkDietary(db, OFF, [
+      linkOf("r1", { ...person("Bob"), lastName: "Jones" }, "m-bob", bob),
+      linkOf("r2", { ...person("Bbo"), lastName: "Jones" }, "m-bob", bob),
+    ]);
+    expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a CHILD row named like the ADULT member linked onto it is somebody else: the member's own tier decides", async () => {
+    // A child "Sam Lee" with a recorded note is linked to adult member Sam Lee
+    // (say, the parent). The link never rewrites the row's tier, so comparing the
+    // row against itself would keep the child's note on the adult's row.
+    const db = profileDb({ "m-sam": "Sam's profile" });
+    const child = { ...person("Sam", null, AgeTier.CHILD), lastName: "Lee" };
+    await applyGuestMemberLinkDietary(db, ON, [
+      linkOf("r4", child, "m-sam", { firstName: "Sam", lastName: "Lee", ageTier: AgeTier.ADULT }),
+    ]);
+    expect(db.bookingGuest.updateMany, `${ID}: the child's note must not stay on the adult's row`).toHaveBeenCalledWith({
+      where: { id: "r4", memberId: "m-sam" },
+      data: { dietaryRequirements: "Sam's profile" },
+    });
+    // An unknown member tier proves nothing either, unless the row is a placeholder.
+    const unknown = profileDb({ "m-sam": null });
+    await applyGuestMemberLinkDietary(unknown, ON, [
+      linkOf("r4", child, "m-sam", { firstName: "Sam", lastName: "Lee", ageTier: null }),
+    ]);
+    expect(unknown.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r4", memberId: "m-sam" },
+      data: { dietaryRequirements: null },
+    });
+  });
+
+  it("a named row linked to a member with no name on record is treated as somebody else", async () => {
+    const db = profileDb({ "m-x": null });
+    await applyGuestMemberLinkDietary(db, ON, [
+      linkOf("r1", { ...person("Alice"), lastName: "Smith" }, "m-x", { firstName: null, lastName: null }),
+    ]);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r1", memberId: "m-x" },
+      data: { dietaryRequirements: null },
+    });
+  });
+
+  it("the consent-grant fill: only while ON, only an empty row, and never from an empty profile (S5)", async () => {
     const db = profileDb({ "m-1": PROFILE, "m-2": null });
     await fillBookingGuestDietaryFromProfileIfEmpty(db, OFF, [{ guestId: "g1", memberId: "m-1" }]);
     expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();
@@ -444,13 +558,13 @@ describe(`the rebuild and copy writers (W18, W19, ${ID})`, () => {
 
   it("the cross-lodge offer carries every source row's value (W18)", () => {
     const text = source("src/lib/waitlist-cross-lodge.ts");
-    expect(text).toMatch(/captureBookingGuestDietaryCarries\(/);
+    expect(text).toMatch(/carryBookingGuestDietaryFrom\(/);
     expect(text).toMatch(/carriedDietary: carriedDietary\.get\(guest\.id\)/);
   });
 
   it("an admin copy re-seeds and carries nothing from the source booking (W19)", () => {
     const text = source("src/lib/admin-booking-copy.ts");
     expect(text).toMatch(/guestDietarySeeding: await resolveBookingGuestDietarySeeding\(\)/);
-    expect(text).not.toMatch(/carriedDietary|captureBookingGuestDietaryCarries/);
+    expect(text).not.toMatch(/carriedDietary|carryBookingGuestDietaryFrom/);
   });
 });

@@ -24,7 +24,9 @@
   somebody else, and copying a booking starts the notes afresh from current
   profiles. A member asked to agree to being on somebody else's booking has
   nothing copied until they agree; renaming a non-member guest to a different
-  person clears their note, while a spelling fix or naming a "Guest 3"
-  placeholder keeps it. A hut leader signed in on their own account now sees
+  person — on a booking change or a school's attendee list — clears their
+  note, while a spelling fix or naming a "Guest 3" placeholder keeps it, and
+  linking a guest already named as somebody else to a member replaces that
+  person's note with the member's own. A hut leader signed in on their own account now sees
   only the lodge whose assignment covers the date they opened. Backups now hold
   these booking notes as well as the profile values.

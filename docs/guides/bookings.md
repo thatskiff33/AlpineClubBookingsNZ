@@ -326,10 +326,15 @@ members and non-members alike.
   arrival and departure at the lodge leave each guest's value exactly as it
   was. Correcting the spelling of a non-member's name, or naming a "Guest 3" or
   "School Child 3" placeholder, keeps the value; renaming a non-member to a
-  different person clears it, because the note belonged to the person who
-  left. An approval that swaps a held party keeps each person's own value and
-  never moves one person's note onto somebody else. **Copy booking** starts a
-  new stay, so its guests are copied afresh from their current profiles.
+  different person — here or on a school's attendee list — clears it, because
+  the note belonged to the person who left. Linking a placeholder to a member
+  keeps a note already on it (an empty one is filled from their profile);
+  linking a guest already named as somebody else replaces that person's note
+  with the member's own profile value, or clears it while the field is off or
+  the member has not yet agreed. An approval that swaps a held party keeps each
+  person's own value and never moves one person's note onto somebody else.
+  **Copy booking** starts a new stay, so its guests are copied afresh from
+  their current profiles.
 
 ### Turn off all emails for one booking
 

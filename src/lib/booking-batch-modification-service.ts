@@ -1212,6 +1212,7 @@ export async function modifyBookingBatch({
             memberId: link.memberId,
             firstName: name?.firstName ?? null,
             lastName: name?.lastName ?? null,
+            ageTier: name?.ageTier ?? null,
             consentColumns: guestPlan.guestMemberLinkColumns.get(link.guestId),
           },
         ];

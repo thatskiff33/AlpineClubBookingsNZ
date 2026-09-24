@@ -25,7 +25,7 @@ reason: the create route reads the seeding toggle once, beside the lockout
   mode it already resolves, and hands it to the three create services.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2602
+lines: 2603
 reason: the seeding toggle joins the pre-transaction preparation that already
   holds every settings read on this path, and is handed to applyGuestChanges.
 
@@ -41,9 +41,10 @@ reason: the approval's new-booking execution parameters, resolved before its
   transaction, carry the seeding toggle to the create it executes.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3114
+lines: 3142
 reason: applyGuestChanges takes the seeding toggle; its two add-guest creates
-  spread a decision and its two placeholder-link writes fill an empty value.
+  spread a decision and its two member-link writes hand the linked row's prior
+  identity to the one same-person rule, so another person's note never stays.
 
 file: src/lib/booking-request-quotes.ts
 lines: 2155
@@ -72,9 +73,10 @@ reason: the school and whole-lodge approvals read the toggle before their
   transactions and resolve one decision per guest at their creates.
 
 file: src/lib/waitlist-cross-lodge.ts
-lines: 998
-reason: the cross-lodge offer rebuilds the same stay, so it captures each
-  source row's value and carries it onto the new guest rows.
+lines: 1001
+reason: the cross-lodge offer rebuilds the same stay, so it names each source
+  row and the create transaction carries that row's value onto the new guest
+  rows.
 
 file: src/lib/member-guest-consent-service.ts
 lines: 1259

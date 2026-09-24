@@ -259,6 +259,11 @@ const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/lib/booking-request-shared.ts": { reason: "the pipeline create shaper", ...WRITE_SIDE },
   "src/lib/booking-request.ts": { reason: "W7 approval, W13/W14 held party", ...WRITE_SIDE },
   "src/lib/group-booking.ts": { reason: "W2 group join, W5 non-member joiner", ...WRITE_SIDE },
+  "src/lib/school-attendee-confirmation.ts": {
+    reason: "S2: a school attendee renamed to somebody else loses the previous child's note",
+    allow: [],
+    side: "write",
+  },
   "src/lib/school-booking-request.ts": { reason: "W8 school, W9 whole-lodge", ...WRITE_SIDE },
   "src/lib/waitlist-cross-lodge.ts": { reason: "W18 cross-lodge offer carries", ...WRITE_SIDE },
   "src/lib/member-guest-consent-service.ts": {
@@ -877,14 +882,14 @@ const BOOKING_GUEST_CREATE_SITES: Readonly<Record<string, string>> = {
 
 /**
  * Writers that change a guest row and must NEVER name the column: leaving it
- * alone is how a date move, a removal, a promotion, a rename, a consent answer,
- * a price repair or an arrival preserves the value.
+ * alone is how a date move, a removal, a promotion, a price repair or an
+ * arrival preserves the value. (A rename is not here: a rename to somebody else
+ * clears the value, so both rename writers decide through the write half.)
  */
 const NEVER_NAME_WRITERS: Readonly<Record<string, string>> = {
   "src/lib/booking-date-modification-service.ts": "date modification",
   "src/lib/booking-guest-removal-service.ts": "guest removal",
   "src/lib/waitlist.ts": "waitlist promotion",
-  "src/lib/school-attendee-confirmation.ts": "school attendee rename",
   "src/lib/stored-night-price-repair-store.ts": "night-price repair",
   "src/app/api/lodge/guests/[date]/arrive/route.ts": "lodge arrive",
   "src/app/api/lodge/guests/[date]/depart/route.ts": "lodge depart",
