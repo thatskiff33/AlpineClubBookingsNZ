@@ -8,7 +8,7 @@ lines: 1292
 reason: the create-only dietary input and its request key sit beside the occupation field they mirror; the form has no other seam to host them.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 692
+lines: 694
 reason: one gated read through the dietary door and two props; the page is the server boundary that decides whether the key reaches the client, so it cannot move out.
 
 file: src/app/api/admin/members/export/route.ts
@@ -68,5 +68,5 @@ lines: 876
 reason: the preview must know whether the club takes the dietary column, so the dialog passes the member-fields flag it already fetches; five lines at the one preview call.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1291
+lines: 1296
 reason: account erasure must null dietary/allergy information in the same anonymising update as the rest of the person; one import and one spread of the dietary module's erasure patch. Re-measured for #3029, which spreads the same patch into the guest-row anonymisation so a booking's copy goes with the profile.
