@@ -1944,15 +1944,15 @@ lifecycle.
 - **Independent afterwards.** A profile edit never rewrites it; the one admin
   edit (`bookings:edit`, matched to the occupant the editor saw) never writes the
   profile and is not a booking modification (`INV-MOD-001`).
-- **Preserved** by date moves, removal, promotion, school renames, price
-  repair and arrive/depart, which never name the column.
+- **Preserved** by date moves, removal, promotion, price repair and
+  arrive/depart, which never name the column.
 - **One same-occupant rule** (`isSameBookingGuestOccupant`): the same member id;
   for a non-member, a generated placeholder being named, or the same name or an
-  unambiguous spelling correction at the same age tier. A non-member renamed to
-  anybody else, or a held-party row rewritten for a different person, loses the
-  value; a substituted member is seeded from their own profile. A non-member row
-  becoming a member who passes the same name test, a placeholder linked to a
-  member, and a granted consent fill only an empty row.
+  unambiguous spelling correction at the same age tier. A non-member renamed
+  (modification or school list), rewritten or linked to anybody else loses the
+  value; a member now on the row is seeded from their own profile. A row that
+  passes keeps its value, and one becoming a member's is filled only if empty,
+  as a granted consent is.
 - **Rebuilds carry by identity, never position.** An approval that rebuilds
   or rewrites a held party locks its rows first; a rebuild carries a value only
   on a member id, or an exact non-member name and tier, unique on both sides.
