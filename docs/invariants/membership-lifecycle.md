@@ -344,32 +344,35 @@ member could not previously hold an `ADMIN` row.
 A member whose `canLogin` is false holds no access and keeps no session,
 whatever access-role rows it still stores (#3603). Every sign-in provider
 already refuses such a member; this rule covers a session minted before the
-change, which the family login-holder transfer, member edit, cancellation and
-archive all produce.
+switch-off.
 
-Three layers enforce it. **The type:** `hasAdminAccess`, `isFullAdmin`,
-`hasPrivilegedAccess`, `hasLodgeAccess`, `authorizationRoleFromAccessRoles` and
-every `AdminPermissionInput` matrix check take a `PrivilegeCheckInput`, on which
-`canLogin` is required, so a gate whose member read forgot the field does not
-compile. Select it with `MEMBER_PRIVILEGE_CHECK_SELECT`
-(`src/lib/access-role-definitions.ts`); a session carries it as
-`session.user.canLogin`. **The gates:** `requireAdmin`, the finance loader, the
-lodge kiosk gate and help-chat re-read the member with that select, and hand on
-the cleared roles and matrix; `requireActiveSessionUser` refuses the member
-outright. **The session:** the token refresh in `src/lib/auth.ts` empties the
-role claim and sets `sessionInvalidated`, the kill switch INV-LIFE-014 uses for
-a deleted account, so `auth()` returns null. The invalidation is one-way:
-switching login back on means signing in again, never reviving the old session.
+**The type:** `hasAdminAccess`, `isFullAdmin`, `hasPrivilegedAccess`,
+`hasLodgeAccess`, `authorizationRoleFromAccessRoles`, `hasAccessRole` for any
+privileged role, and every `AdminPermissionInput` matrix check take a
+`PrivilegeCheckInput`, on which `canLogin` is required, so a gate whose member
+read forgot it does not compile. Select it with `MEMBER_PRIVILEGE_CHECK_SELECT`;
+a session carries it as `session.user.canLogin`. **The gates:** `requireAdmin`,
+the finance loader, the lodge kiosk gate, help-chat and both member-facing
+layouts re-read it; `requireActiveSessionUser` refuses the member outright.
+**The session:** the database trigger `Member_stamp_sessions_revoked_at` stamps
+`Member.sessionsRevokedAt` on every true-to-false write, whichever path makes
+it, and the token refresh in `src/lib/auth.ts` refuses any session issued
+before that time, as it does one issued before `passwordChangedAt`. The time
+lives on the row, so re-enabling login never revives such a session, whatever
+cookie is replayed. The refresh also refuses while `canLogin` is false, and
+empties the role claims.
 
-Record-classification helpers (`resolveAccessRoles`, `hasAccessRole`,
-`deriveUserType`, the USER/ORG checks) keep an optional `canLogin`: they label a
-record rather than admit anyone. A blocker that must see a dormant role says so
-by name: `memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole` are
-canLogin-blind on purpose, so a login-disabled Full Admin still cannot be merged
-away or hard-deleted (INV-LIFE-012). Guard tests project fixtures through the
-query's `select` (`honourSelect` in `src/lib/__tests__/helpers/prisma-mocks.ts`),
-because a fixture carrying a field its query never selected is how the gap went
-unseen.
+A hut leader's PIN is a separate assignment credential, governed by `active`
+rather than by this rule: hut leaders can be members who never had a login.
+
+Record-classification helpers (`resolveAccessRoles`, `hasAccessRole` for `USER`
+or `ORG`, `isAdminOrKioskOnlyRecord`, `deriveUserType`) keep an optional
+`canLogin`. A blocker that must see a dormant role says so by name:
+`memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole` ignore `canLogin`,
+so a login-disabled Full Admin still cannot be merged away or hard-deleted
+(INV-LIFE-012). Guard tests project fixtures through the query's `select`
+(`honourSelect`), because a fixture carrying an unselected field is how the gap
+went unseen.
 
 ## INV-LIFE-017
 

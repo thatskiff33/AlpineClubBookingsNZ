@@ -648,9 +648,10 @@ export const authConfig = {
           // #2620: an account an approved deletion request has anonymised holds
           // no session, full stop — whatever `active` currently says. This is the
           // defence-in-depth backstop behind the provider refusals above: it
-          // covers a session minted BEFORE the deletion (nothing revokes tokens
-          // on deletion today) and a session minted after someone flipped
-          // `active` back directly in the database. Same kill-switch as a
+          // covers a session minted BEFORE the deletion (which also switches
+          // login off, so the revocation time below refuses it too, #3603) and
+          // a session minted after someone flipped `active` back directly in the
+          // database. Same kill-switch as a
           // revoking password change: auth() nulls any session carrying it, so
           // every server touch reads as logged-out.
           const deletedAccountSession = isDeletedAccountRecord(member);

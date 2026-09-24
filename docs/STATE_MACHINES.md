@@ -3208,8 +3208,11 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
     lastLoginAt bump hits P2025 (member row gone -> id would dangle) -> refuse -> /login?error=google_failed
     eligible -> allow -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
   jwt callback (every request): token.id resolves to NO member row -> sessionInvalidated=true
-    member deleted (#2620) or canLogin=false (#3603) -> sessionInvalidated=true, and it stays
-      true: re-enabling login means signing in again (INV-LIFE-014, INV-LIFE-092)
+    member deleted (#2620), canLogin=false, or sessionsRevokedAt later than the session's
+      issue time (#3603) -> sessionInvalidated=true (INV-LIFE-014, INV-LIFE-092). The database
+      stamps sessionsRevokedAt when login goes on -> off, so a session from before a switch-off
+      is refused after login is switched back on too, whichever cookie is presented; the
+      member signs in again for a new one
     -> auth() reads null everywhere -> single redirect to /login rendering the form
        (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```

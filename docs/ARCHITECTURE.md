@@ -2436,11 +2436,16 @@ than trusted from an old token.
 
 **Switching off a member's login switches off all of their access (#3603,
 `INV-LIFE-092`).** The privilege checks (`hasAdminAccess`, `isFullAdmin`,
-`hasPrivilegedAccess`, `hasLodgeAccess`, `authorizationRoleFromAccessRoles` and
-every matrix check) require `canLogin`, so a member read that forgets it does
-not compile; `session.user.canLogin` carries it on a session. The token refresh
-empties the role claim and matrix for a login-disabled member and ends the
-session, one-way, with the same kill switch a deleted account gets.
+`hasPrivilegedAccess`, `hasLodgeAccess`, `authorizationRoleFromAccessRoles`,
+`hasAccessRole` for any privileged role, and every matrix check) require
+`canLogin`, so a member read that forgets it does not compile;
+`session.user.canLogin` carries it on a session. The database trigger
+`Member_stamp_sessions_revoked_at` records `Member.sessionsRevokedAt` whenever
+login goes from on to off, and the token refresh refuses any session issued
+before it, exactly as it refuses one issued before `passwordChangedAt`. Because
+that time is stored on the server, switching login back on never revives an
+earlier session. A hut leader's PIN is a separate assignment credential,
+governed by `active`.
 
 The seven areas and what each governs (from `ADMIN_PERMISSION_AREAS`, with the
 notable members that live under a broader-sounding prefix called out):
