@@ -8246,6 +8246,19 @@ model BookingLedgerLine {
   /// What a person reads. Narration only: no reader may take money from it.
   narration String
 
+  /// THE POSTING'S IDEMPOTENCY KEY (#3595, INV-MONEY-033). Deterministic from
+  /// the event the line records, built only in `booking-ledger-posting-keys.ts`,
+  /// so the same event posted twice produces the same key and the second write
+  /// is a no-op (`ON CONFLICT DO NOTHING`) rather than a duplicate line or a
+  /// refused statement that would abort the caller's transaction. A key makes
+  /// one EVENT idempotent; a booking's confirmation is fenced once per booking
+  /// in the settle as well, because its nights can change between two settles.
+  ///
+  /// Nullable in the DATABASE only, so a draining colour's inserts that omit
+  /// it still succeed; the write door REQUIRES it, so no new code can post
+  /// without one. Postgres treats NULLs as distinct under a unique index.
+  postingKey String? @unique
+
   lodgeId String @default(dbgenerated("default_lodge_id()"))
 
   booking    Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
