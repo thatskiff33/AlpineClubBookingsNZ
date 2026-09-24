@@ -35,6 +35,12 @@ export interface MemberContactEditForm extends MemberAddressValues {
   dateOfBirth: string
   joinedDate: string
   occupation: string
+  /**
+   * #2941: present only when the detail response carried the key — i.e. the
+   * admin holds a membership dietary grant and the club has the field ON. Absent
+   * means the Contact save sends nothing and the stored value is untouched.
+   */
+  dietaryRequirements?: string
   comments: string
   ageTier: string
   postalSameAsPhysical: boolean
@@ -64,6 +70,7 @@ interface MemberContactSource {
   dateOfBirth: string | null
   joinedDate: string | null
   occupation: string | null
+  dietaryRequirements?: string | null
   comments: string | null
   ageTier: string
   streetAddressLine1: string | null
@@ -110,6 +117,9 @@ export function buildContactEditForm(
     dateOfBirth: toDateInputValue(member.dateOfBirth),
     joinedDate: toDateInputValue(member.joinedDate),
     occupation: member.occupation ?? "",
+    ...("dietaryRequirements" in member
+      ? { dietaryRequirements: member.dietaryRequirements ?? "" }
+      : {}),
     comments: member.comments || "",
     ageTier: member.ageTier,
     streetAddressLine1: member.streetAddressLine1 || "",
@@ -159,6 +169,9 @@ export function buildContactPayload(
     dateOfBirth: form.dateOfBirth || null,
     joinedDate: form.joinedDate || null,
     occupation: form.occupation || null,
+    ...(form.dietaryRequirements !== undefined
+      ? { dietaryRequirements: form.dietaryRequirements || null }
+      : {}),
     comments: form.comments || null,
     // Age tier: a real person tier is always sent. NOT_APPLICABLE is normally
     // server-managed (#1440) — organisations get it forced, and a member

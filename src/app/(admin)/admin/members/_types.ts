@@ -90,6 +90,12 @@ export interface MemberForm {
   lastName: string;
   gender: Gender | "";
   occupation: string;
+  /**
+   * #2941: collected only when CREATING a member while the club has the field
+   * ON. Editing from the list never carries it — the list DTO holds no dietary
+   * value (INV-PRIV-022) — so an edit leaves the stored value alone.
+   */
+  dietaryRequirements: string;
   email: string;
   phoneCountryCode: string;
   phoneAreaCode: string;
