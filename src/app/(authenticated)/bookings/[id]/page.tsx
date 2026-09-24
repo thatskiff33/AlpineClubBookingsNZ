@@ -57,10 +57,12 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   // consent is being asked for; the request email deep-links to #consent.
   { id: "consent", label: "Consent" },
   { id: "non-member-guests", label: "Non-member Guests" },
-  // #3029: booking administrators only, and filtered out server-side for
-  // everybody else like "Bed Allocation" below — see `guestDietary`.
-  { id: "dietary", label: "Dietary/Allergy" },
   { id: "group", label: "Group Booking" },
+  // #3029: booking administrators only, and filtered out server-side for
+  // everybody else like "Bed Allocation" below — see `guestDietary`. Declared
+  // here because the card renders straight after the linked-party sections
+  // (which hold "non-member-guests" and "group") and before stay preferences.
+  { id: "dietary", label: "Dietary/Allergy" },
   { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
   /*
