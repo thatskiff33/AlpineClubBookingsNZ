@@ -74,6 +74,7 @@ const REVIEWED_WRITERS = [
   "src/lib/payment-reconciliation.ts|booking|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload||4",
+  "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
   "src/lib/school-booking-request.ts|booking|create,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "src/lib/school-booking-request.ts|bookingGuest|create||2",
   "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload||2",
@@ -187,6 +188,17 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     {
       reason: "consent lifecycle only",
       sourceShape: /data:[\s\S]*?consentStatus:/,
+    },
+  ],
+  [
+    // #3029: the school attendee rename. It became opaque only because it now
+    // spreads the rename's dietary decision (`INV-MOD-059`); it still writes
+    // names and nothing that holds money.
+    "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "attendee name and the rename's dietary decision only",
+      sourceShape:
+        /data:\s*\{\s*firstName:\s*update\.firstName,\s*lastName:\s*update\.lastName,\s*\.\.\.bookingGuestDietaryUpdateData\(renameDietary\(update\.guestId\)\),\s*\}/,
     },
   ],
   [
