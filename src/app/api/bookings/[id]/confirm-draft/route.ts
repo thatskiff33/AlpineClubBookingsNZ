@@ -34,10 +34,7 @@ import {
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
-import {
-  authorizationRoleFromAccessRoles,
-  hasAdminAccess,
-} from "@/lib/access-roles";
+import { authorizationRoleFromAccessRoles, hasAdminAccess } from "@/lib/access-roles";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
   hostingCoverageActorOptions,
