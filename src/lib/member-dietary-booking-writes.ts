@@ -14,8 +14,9 @@
  * necessarily return the plain value for Prisma to write. So the real fence is
  * WHO may import this file: `member-dietary-access-census.test.ts` confines that
  * to a closed list of booking writers, refuses any of them naming a grant or
- * reader, allows the two builders only as the operand of a `...` spread, and
- * confines the seeding constructor to this file. It is a text scan: a listed
+ * reader, allows the two builders only as the operand of a `...` spread,
+ * refuses renaming anything imported from here, and confines the seeding
+ * constructor to this file. It is a text scan: a listed
  * writer that spread a fragment into an object it then logged would stay green.
  * Carries are scoped to the booking they are read from, which stops an
  * ACCIDENTAL cross-booking capture; it does not stop a listed writer that

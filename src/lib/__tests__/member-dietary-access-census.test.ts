@@ -558,6 +558,16 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
         });
       }
     }
+    for (const match of code.matchAll(WRITES_NAMED_IMPORT)) {
+      if (/\bas\b/.test(match[1] ?? "")) {
+        findings.push({
+          rule: "writes-import-alias",
+          file,
+          detail:
+            "renames a symbol imported from the booking write half, which would hide it from the spread and seeding rules",
+        });
+      }
+    }
     if (SEEDING_CONSTRUCTION.test(code)) {
       findings.push({
         rule: "seeding-constructor",
@@ -579,6 +589,16 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
 const FRAGMENT_BUILDER = /\bbookingGuestDietary(?:Create|Update)Data\b/g;
 const IMPORT_DECLARATION = /\bimport\s*(?:type\s*)?\{[^}]*\}\s*from\s*["'`][^"'`]+["'`]\s*;?/g;
 const SEEDING_CONSTRUCTION = /\bbookingGuestDietarySeeding\s*\(|\bseedFromProfile\b/;
+/**
+ * N2: a named import (or re-export) from the write half, capturing its braces.
+ * An `as` rename inside them is refused. A namespace import (`import * as W`)
+ * is allowed on purpose: `W.bookingGuestDietaryCreateData(` is not a `...`
+ * operand and `W.bookingGuestDietarySeeding(` still spells the constructor, so
+ * both rules above still see it; a destructuring rename leaves the builder name
+ * followed by `:` rather than `(`, which the spread rule refuses too.
+ */
+const WRITES_NAMED_IMPORT =
+  /\b(?:import|export)\s*(?:type\s*)?\{([^}]*)\}\s*from\s*["'`][^"'`]*member-dietary-booking-writes(?:\.[cm]?[jt]sx?)?["'`]/g;
 
 /** A BookingGuest write call in any spelling a writer uses (`INV-MOD-059`). */
 const BOOKING_GUEST_WRITE_CALL =
@@ -720,6 +740,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "writes-import",
     "fragment-outside-spread",
     "seeding-constructor",
+    "writes-import-alias",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -1111,6 +1132,29 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
     expect(
       rulesOf(`import { bookingGuestDietaryCreateData } from "@/lib/member-dietary-booking-writes";`, writer),
     ).not.toContain("fragment-outside-spread");
+  });
+
+  it("reports a renamed import from the write half, and sees through a namespace import (N2)", () => {
+    const writer = "src/lib/booking-create.ts";
+    for (const source of [
+      `import { bookingGuestDietaryCreateData as b } from "@/lib/member-dietary-booking-writes";\nconst v = b(w);`,
+      `import { bookingGuestDietarySeeding as s } from "@/lib/member-dietary-booking-writes";\nconst x = s(true);`,
+      `import {\n  resolveBookingGuestDietary,\n  bookingGuestDietaryUpdateData as u,\n} from "@/lib/member-dietary-booking-writes";`,
+    ]) {
+      expect(rulesOf(source, writer), source).toContain("writes-import-alias");
+    }
+    expect(
+      rulesOf(`import * as W from "@/lib/member-dietary-booking-writes";\nconst v = W.bookingGuestDietaryCreateData(w);`, writer),
+    ).toContain("fragment-outside-spread");
+    expect(
+      rulesOf(`import * as W from "@/lib/member-dietary-booking-writes";\nconst x = W.bookingGuestDietarySeeding(true);`, writer),
+    ).toContain("seeding-constructor");
+    expect(
+      rulesOf(`const { bookingGuestDietaryCreateData: b } = await import("@/lib/member-dietary-booking-writes");`, writer),
+    ).toContain("fragment-outside-spread");
+    expect(
+      rulesOf(`import { type BookingGuestDietarySeeding, resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";`, writer),
+    ).not.toContain("writes-import-alias");
   });
 
   it("reports hand-made seeding outside the write half (S3)", () => {

@@ -130,8 +130,11 @@ this section records how it is enforced.
   source booking. Its two fragment builders necessarily return the plain value
   for Prisma to write, so what holds is the census: a closed list of booking
   writers may import it, none may name a grant or reader, the builders may
-  appear only as a `...` spread operand, and seeding may only come from the
-  toggle. That is a text scan and holds no stronger than one. Every guest create
+  appear only as a `...` spread operand, nothing imported from it may be
+  renamed, and seeding may only come from the toggle. Its carries are scoped to
+  their source booking, which stops an accidental cross-booking capture, not a
+  deliberate one. That is a text scan and holds no stronger than one; the
+  importer list plus review is the fence. Every guest create
   site takes a required dietary decision from it, and the held-party
   planners carry a value only by unique identity, never by position
   (`INV-MOD-059`); a writer never holds the value in readable form.
