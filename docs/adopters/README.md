@@ -240,8 +240,9 @@ procedure.
   only, confirmed and audited, and it rewrites nothing already recorded.
 - [Club Currency & Locale](../guides/club-format.md) — the currency the club
   charges in and the way it writes numbers and dates, recorded in-app rather
-  than taken from the server's settings. Full Administrator only, confirmed and
-  audited, and it re-denominates no amount already recorded.
+  than taken from the server's settings. Every administrator can view it; only
+  a Full Administrator can change it, confirmed and audited, and it
+  re-denominates no amount already recorded.
 - [Environment Safety](../guides/environment-role.md) — whether this
   installation is the club's live site or a copy of it, declared explicitly and
   never inferred. What "not configured" means, why a copy of the live database is

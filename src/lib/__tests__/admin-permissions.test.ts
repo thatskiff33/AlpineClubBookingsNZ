@@ -869,14 +869,51 @@ describe("admin route requirements", () => {
    * (`REVIEWED_PERMISSION_DIVERGENCES`, `SIDE_EFFECTING_GETS`); the carve-out
    * that IS a permission decision must not be the one that is not.
    *
-   * A second entry is therefore a deliberate edit here, argued against
-   * ADR-002 §1 rather than merged quietly. Note the prefix form: any future
-   * page under `src/app/(admin)/admin/ai-diagnostics/**` inherits any-admin
-   * admission without touching this list, which is why the reason below is
-   * about the SHELL rather than about one page.
+   * A new entry is therefore a deliberate edit here, each one resting on its
+   * own owner decision rather than merged quietly:
+   *
+   *  - `/admin/ai-diagnostics` — ADR-002 §1, owner-ratified on #2370. Note the
+   *    prefix form: any future page under
+   *    `src/app/(admin)/admin/ai-diagnostics/**` inherits any-admin admission
+   *    without touching this list, which is why the reason is about the SHELL
+   *    rather than about one page.
+   *  - `/admin/club-format` — owner decision on #3596: any admin may VIEW the
+   *    club's currency and locale, only a Full Admin may change them. The page
+   *    renders read-only for everyone else, and the API's own gates
+   *    (`"any-admin"` read, Full Admin write) are what enforce it; the same
+   *    prefix caveat applies to anything added beneath it.
    */
-  it("pins the any-admin admission carve-out to exactly the ADR-002 shell (#2975)", () => {
-    expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual(["/admin/ai-diagnostics"]);
+  /**
+   * The nav link and the page must answer the same question (#3596). The
+   * sidebar and command palette filter through `canViewAdminHrefWithMatrix`,
+   * and before this it never consulted the admission list, so each admission
+   * page had to hand-copy the rule onto its sidebar entry — and one that forgot
+   * could be opened by an admin who never saw the way in. Iterating the list
+   * itself means a future entry is covered without editing this test.
+   */
+  it("shows every admission path to exactly the admins it admits (#3596)", () => {
+    const financeOnly = getAdminPermissionMatrix({
+      accessRoles: ["FINANCE_USER" as const],
+    });
+    const noArea = getAdminPermissionMatrix({ accessRoles: [] });
+    for (const pathname of ANY_ADMIN_ADMISSION_PATHS) {
+      expect(
+        canViewAdminHrefWithMatrix(financeOnly, pathname),
+        `${pathname}: a finance-only admin is admitted, so must see the link`,
+      ).toBe(canOpenAdminPath({ accessRoles: ["FINANCE_USER" as const] }, pathname));
+      expect(canViewAdminHrefWithMatrix(financeOnly, pathname)).toBe(true);
+      expect(
+        canViewAdminHrefWithMatrix(noArea, pathname),
+        `${pathname}: a matrix with no admin area must not see the link`,
+      ).toBe(false);
+    }
+  });
+
+  it("pins the any-admin admission carve-out to exactly the owner-decided pages (#2975, #3596)", () => {
+    expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual([
+      "/admin/ai-diagnostics",
+      "/admin/club-format",
+    ]);
   });
 
   /**
@@ -903,11 +940,17 @@ describe("admin route requirements", () => {
         `${pathname} is outside finance and is not the ADR-002 shell, so a finance-only grid must be refused`,
       ).toBe(false);
     }
-    // ...and the three it legitimately opens, so the loop above is not vacuous:
-    // its own area, the bookings-OR-finance fee console, and the carve-out.
+    // ...and the four it legitimately opens, so the loop above is not vacuous:
+    // its own area, the bookings-OR-finance fee console, and the two carve-outs.
     expect(canOpenAdminPath(financeOnly, "/admin/payments")).toBe(true);
     expect(canOpenAdminPath(financeOnly, "/admin/fees")).toBe(true);
     expect(canOpenAdminPath(financeOnly, "/admin/ai-diagnostics")).toBe(true);
+    // #3596: a `support` page in the route map, opened on admission instead.
+    // Its two neighbours on the same `support` list stay refused, which is
+    // what shows the carve-out is this page and not the area.
+    expect(canOpenAdminPath(financeOnly, "/admin/club-format")).toBe(true);
+    expect(canOpenAdminPath(financeOnly, "/admin/club-time")).toBe(false);
+    expect(canOpenAdminPath(financeOnly, "/admin/environment")).toBe(false);
   });
 
   it("maps mutating admin API methods to edit access", () => {

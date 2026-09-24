@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { isFullAdmin } from "@/lib/access-roles";
 import {
   hasAdminAreaAccess,
   type AdminPermissionArea,
@@ -58,6 +59,29 @@ export function useAdminAreaEditAccess(
     area,
     level: "edit",
   });
+}
+
+/**
+ * Tri-state FULL ADMIN gate, for a section every admin may VIEW whose write
+ * route is `requireAdmin({ permission: false })` rather than an area level
+ * (#3596, `/admin/club-format`).
+ *
+ * The same contract as {@link useAdminAreaEditAccess} — `undefined` while the
+ * session resolves, so `ViewOnlyActionButton` and `AdminViewOnlySectionBanner`
+ * stay neutral; `true` for a Full Admin; `false` for every other admin — because
+ * an area-edit check here would describe the wrong permission: an admin holding
+ * every area at `edit` is still not a Full Admin, and the route still refuses
+ * them. Client-side it only decides what the screen OFFERS; the route decides
+ * what is allowed.
+ */
+export function useFullAdminEditAccess(): boolean | undefined {
+  const { data: session, status } = useSession();
+
+  if (status === "loading") return undefined;
+
+  if (!session?.user) return false;
+
+  return isFullAdmin({ accessRoles: session.user.accessRoles ?? [] });
 }
 
 /**

@@ -327,8 +327,13 @@ const FIGURES = {
    * DEFAULT `describeReason`, like every other control on that surface: the
    * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
    * buttons explains its own view-only state.
+   *
+   * 362 -> 364 (#3596): the club currency and locale page's Change and Save,
+   * now that any admin may view it and only a Full Admin may change it. Cancel
+   * is a plain Button, as on the Retention section, and is only reachable once
+   * Change has opened the editor. MEASURED by re-running this census.
    */
-  callSites: 362,
+  callSites: 364,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -349,8 +354,10 @@ const FIGURES = {
    * out — each of its two sections heads itself with its own banner.
    *
    * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
+   *
+   * 308 -> 310 (#3596): so do the club currency and locale page's two.
    */
-  optOuts: 308,
+  optOuts: 310,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -395,8 +402,14 @@ const FIGURES = {
    *
    * 272 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
    * file with its own banner, so its two are static rather than vouched.
+   *
+   * 274 -> 276 (#3596): the club currency and locale panel heads its own file
+   * with its own banner, so its Change and Save are static. Like the Video
+   * meetings pair above, both also pass `ADMIN_FULL_ADMIN_ONLY_ACTION_REASON`,
+   * and for the same reason: the banner already names Full Admin, and a future
+   * render outside this file would still state the narrower rule.
    */
-  staticOptOuts: 274,
+  staticOptOuts: 276,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -466,8 +479,12 @@ const FIGURES = {
    * mounted above its loading early-return. Its sibling on the same lodge — the
    * lobby display card — keeps its own, because the two are separate sections
    * on separate sub-pages and neither is ever rendered inside the other.
+   *
+   * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
+   * without one because every visitor was a Full Admin. #3596 gave it a view
+   * tier. Mounted in all three of its branches (load failed, loading, loaded).
    */
-  bannerComponents: 97,
+  bannerComponents: 98,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

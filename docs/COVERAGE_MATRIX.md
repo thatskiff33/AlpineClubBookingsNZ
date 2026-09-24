@@ -65,7 +65,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
 | `chores` | lodge | — | [guide](guides/chores.md) | 3 |
-| `club-format` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-006`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-format.md) | — (#3563, programme #3205; postdates #2050) |
+| `club-format` | support (route map); page and read open to **any admin** (#3596), change **Full Admin** — both enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-006`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-format.md) | — (#3563, programme #3205; postdates #2050) |
 | `club-time` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-002`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-time.md) | — (CT-1 #2989, epic #2988; postdates #2050) |
 | `environment` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-003`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/environment-role.md) | — (ENV-SAFETY 1 #3034, epic #2986; postdates #2050) |
 | `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | [guide](guides/committee.md) | 2 |
