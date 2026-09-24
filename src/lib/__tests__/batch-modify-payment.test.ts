@@ -668,6 +668,7 @@ const TX_MODE_PRE_TRANSACTION = {
   memberGuestPolicy: { enabled: false, requiresConsent: false },
   subscriptionLockoutMode: "off",
   xeroLockDates: { kind: "not-applicable" },
+  guestDietarySeeding: { seedFromProfile: false },
 } as never;
 
 describe("PUT /api/bookings/[id]/modify", () => {

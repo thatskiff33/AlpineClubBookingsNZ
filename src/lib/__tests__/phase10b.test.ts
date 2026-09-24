@@ -30,6 +30,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingGuest: {
       updateMany: vi.fn(),
+      // #3029: the data export's own-guest-rows read (none in these fixtures).
+      findMany: vi.fn().mockResolvedValue([]),
     },
     choreAssignment: {
       findMany: vi.fn(),

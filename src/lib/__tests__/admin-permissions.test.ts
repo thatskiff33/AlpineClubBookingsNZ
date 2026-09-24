@@ -644,8 +644,11 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
     // so the entry is filtered out before it is ever sent.
     const source = bookingPageSource();
 
+    // #3029 adds a second admin-only entry ("dietary") under the same rule, so
+    // the filter now joins two server-side clauses; the bed-allocation clause
+    // is still pinned verbatim, and so is the dietary one.
     expect(source).toMatch(
-      /sections=\{BOOKING_SECTIONS\.filter\(\s*\(section\) =>\s*section\.id !== "bed-allocation" \|\| showBedAllocationPanel,\s*\)\}/,
+      /sections=\{BOOKING_SECTIONS\.filter\(\s*\(section\) =>\s*\(section\.id !== "bed-allocation" \|\| showBedAllocationPanel\) &&\s*\(section\.id !== "dietary" \|\| guestDietary !== null\),\s*\)\}/,
     );
   });
 

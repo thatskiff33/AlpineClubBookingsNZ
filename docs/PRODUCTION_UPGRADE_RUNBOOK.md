@@ -1410,6 +1410,54 @@ Setup & Configuration > Membership & Members > Member Fields** (see
 club's privacy notice covers health information, because the member CSV export
 then carries the column (`INV-PRIV-022`).
 
+`20261011010000_add_booking_guest_dietary_requirements` (#3029) adds an empty
+`BookingGuest.dietaryRequirements` column in the same additive way. While the
+field is on, each booking copies a member's profile value when they are first
+added and keeps it for that stay; booking officers and the hut leader running
+the stay see it. Turning the field on does **not** fill in existing bookings.
+While the old colour still serves — during the drain, and again after any
+rollback to it — it does not know the column exists:
+
+- bookings it creates are not seeded, and a held party it rebuilds at approval
+  loses its values (both leave an empty value a booking officer can fill in);
+- **a held-request approval it performs that rewrites the party in place keeps
+  each row's value while changing who the row is for**, so a substituted guest
+  can show the previous person's note. Review the dietary card on any booking
+  whose held request was approved on the old colour;
+- **an account deletion it approves anonymises the member's guest rows without
+  clearing their value;**
+- **a booking change it makes that renames a non-member guest to a different
+  person keeps the previous person's note** (the new colour clears it).
+
+**Write down when each old-colour window starts and ends** — the drain, and any
+rollback until the new colour is back. After each window ends:
+
+1. Clear anonymised rows the old colour left behind:
+
+   ```sql
+   UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
+   WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
+     AND "dietaryRequirements" IS NOT NULL;
+   ```
+
+2. List the bookings to review — held-request approvals, school approvals and
+   booking changes made inside the window, on bookings that hold a dietary
+   note — substituting the times you wrote down:
+
+   ```sql
+   SELECT DISTINCT a."metadata"->>'bookingId' AS "bookingId", a."action", a."createdAt"
+   FROM "AuditLog" a
+   JOIN "BookingGuest" g ON g."bookingId" = a."metadata"->>'bookingId'
+   WHERE a."action" IN ('booking_request.approved', 'booking_request.school_approved',
+                        'booking.modify.batch', 'booking.modify.admin_override')
+     AND a."createdAt" BETWEEN '<window start>' AND '<window end>'
+     AND g."dietaryRequirements" IS NOT NULL
+   ORDER BY a."createdAt";
+   ```
+
+   Open each booking's **Dietary/allergy information** card and correct any
+   note that belongs to somebody no longer on that row.
+
 ### 3.2 Re-run the audit category backfills
 
 Two data-only migrations rewrite the stored audit `category` and each wants one

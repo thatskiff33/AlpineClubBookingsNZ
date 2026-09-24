@@ -1104,13 +1104,17 @@ export async function POST(
         actorMemberId: session.user.id,
       });
 
-      // 5. Anonymise BookingGuest names for this member's guest appearances
+      // 5. Anonymise BookingGuest names for this member's guest appearances —
+      // and their per-stay dietary/allergy snapshot with them (#3029, W16,
+      // `INV-PRIV-022`): the same erasure patch as the profile value, whatever
+      // the toggle says, in the same update.
       await tx.bookingGuest.updateMany({
         where: { memberId: member.id },
         data: {
           firstName: "Deleted",
           lastName: "Member",
           memberId: null,
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 

@@ -1816,17 +1816,23 @@ describe("approveBookingRequest", () => {
     // booking's Member rows: real production behaviour on this path that was
     // invisible here until #2619, because the double carries no `$queryRaw` and
     // the fence used to hand back an UNLOCKED proof rather than take the lock.
+    //
+    // #3029 F1 adds a third, between them: the in-place guest rewrite locks the
+    // held party's BookingGuest rows FOR UPDATE before reading the dietary
+    // values it keeps or replaces (`lockBookingGuestRowsForUpdate`).
     const rawStatements = vi.mocked(prisma.$executeRaw).mock.calls;
-    expect(rawStatements).toHaveLength(2);
+    expect(rawStatements).toHaveLength(3);
     expect(JSON.stringify(rawStatements[0][0])).toContain(
       "pg_advisory_xact_lock"
     );
+    expect(JSON.stringify(rawStatements[1][0])).toContain('FROM \\"BookingGuest\\"');
+    expect(JSON.stringify(rawStatements[1][0])).toContain("FOR UPDATE");
     // Pin the fence's own statement too. This is the one assertion across the
     // widened suites that would FAIL if the lock were deleted from
     // acquireHostingCoverageQueueParticipantProof — the rest model what the
     // fence reads without asserting that it locked, so without this the seam
     // could be gutted and stay green.
-    expect(JSON.stringify(rawStatements[1][0])).toContain(
+    expect(JSON.stringify(rawStatements[2][0])).toContain(
       "FOR KEY SHARE NOWAIT"
     );
     expect(

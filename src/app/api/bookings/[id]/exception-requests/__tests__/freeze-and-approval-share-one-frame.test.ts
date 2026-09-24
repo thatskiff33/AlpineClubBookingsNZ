@@ -224,6 +224,7 @@ function approvalHooks() {
       memberGuestPolicy: { enabled: false, requiresConsent: false },
       subscriptionLockoutMode: "off",
       xeroLockDates: { kind: "not-applicable" },
+      guestDietarySeeding: { seedFromProfile: false },
     } as unknown as BatchModificationPreTransaction,
     requestId: "bcr-1",
     actorMemberId: "officer-1",

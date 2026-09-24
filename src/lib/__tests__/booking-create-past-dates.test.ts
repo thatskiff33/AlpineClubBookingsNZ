@@ -8,6 +8,7 @@
  * OverCapacityConfirmationRequiredError keeps working with `instanceof`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import {
   OverCapacityConfirmationRequiredError,
@@ -256,6 +257,7 @@ function baseInput(
     shouldBePending: hasNonMembers,
     holdDays: 7,
     lodgeId: "lodge-1",
+    guestDietarySeeding: bookingGuestDietarySeeding(false),
     todayAtClub: FIXTURE_CLUB_DAY,
     ...overrides,
   };

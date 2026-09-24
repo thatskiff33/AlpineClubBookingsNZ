@@ -1,5 +1,6 @@
 /**
- * Real-PostgreSQL proof of the dietary/allergy omission (#2941, `INV-PRIV-022`).
+ * Real-PostgreSQL proof of the dietary/allergy omission (#2941, #3029,
+ * `INV-PRIV-022`).
  *
  * Every other dietary test mocks Prisma, so none of them can show that the
  * application client really leaves `Member.dietaryRequirements` out. This suite
@@ -11,7 +12,10 @@
  *  3. a read inside an interactive transaction;
  *  4. the rows `create` and `update` hand back;
  *
- * and PRESENT through `src/lib/member-dietary.ts`'s explicit select.
+ * and PRESENT through `src/lib/member-dietary.ts`'s explicit select. #3029
+ * repeats every one of those proofs for `BookingGuest.dietaryRequirements`,
+ * including the booking→guests nesting every booking reader uses, and proves the
+ * booking-admin grant reads and edits it while the profile stays untouched.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL that `concurrency-lock-races.realdb.test.ts` provisions
@@ -27,6 +31,15 @@ const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const PARENT_ID = "race-2941-parent";
 const CHILD_ID = "race-2941-child";
 const VALUE = "Severe peanut allergy";
+const BOOKING_ID = "race-3029-booking";
+const GUEST_ID = "race-3029-guest";
+const GUEST_VALUE = "Coeliac — this trip only";
+const OCCUPANT = {
+  memberId: PARENT_ID,
+  firstName: "Dietary",
+  lastName: "Parent",
+  ageTier: "ADULT" as const,
+};
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeDietaryOmitRaceDbUrl(url: string): void {
@@ -56,6 +69,7 @@ let prisma: PrismaClient;
 let dietary: typeof import("@/lib/member-dietary");
 
 async function clear(): Promise<void> {
+  await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
   await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [PARENT_ID, CHILD_ID] } } });
   await prisma.member.deleteMany({ where: { id: CHILD_ID } });
   await prisma.member.deleteMany({ where: { id: PARENT_ID } });
@@ -188,6 +202,202 @@ function hasKey(row: unknown): boolean {
       ]);
       expect(values.get(PARENT_ID)).toBe(VALUE);
       expect(values.get(CHILD_ID)).toBeNull();
+    });
+  },
+);
+
+(RUN ? describe : describe.skip)(
+  "the application client omits booking-guest dietary/allergy data in PostgreSQL itself (#3029, INV-PRIV-022)",
+  () => {
+    let createdBooking: { guests: unknown[] } | undefined;
+
+    beforeAll(async () => {
+      assertSafeDietaryOmitRaceDbUrl(RACE_DB_URL);
+      process.env.DATABASE_URL = RACE_DB_URL;
+      ({ prisma } = await import("@/lib/prisma"));
+      dietary = await import("@/lib/member-dietary");
+      await clear();
+      await prisma.member.create({
+        data: {
+          id: PARENT_ID,
+          email: "race-2941-parent@example.invalid",
+          passwordHash: "not-a-real-password",
+          firstName: "Dietary",
+          lastName: "Parent",
+          ageTier: "ADULT",
+          // An admin role grants nothing to a non-login member (the permission
+          // matrix requires canLogin), and the column defaults to false.
+          canLogin: true,
+          dietaryRequirements: VALUE,
+        },
+      });
+      createdBooking = await prisma.booking.create({
+        data: {
+          id: BOOKING_ID,
+          memberId: PARENT_ID,
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          checkOut: new Date("2026-08-03T00:00:00.000Z"),
+          totalPriceCents: 0,
+          finalPriceCents: 0,
+          guests: {
+            create: [
+              {
+                id: GUEST_ID,
+                firstName: "Dietary",
+                lastName: "Parent",
+                ageTier: "ADULT",
+                isMember: true,
+                memberId: PARENT_ID,
+                stayStart: new Date("2026-08-01T00:00:00.000Z"),
+                stayEnd: new Date("2026-08-03T00:00:00.000Z"),
+                priceCents: 0,
+                dietaryRequirements: GUEST_VALUE,
+              },
+            ],
+          },
+        },
+        include: { guests: true },
+      });
+    });
+
+    afterAll(async () => {
+      if (!prisma) return;
+      await clear();
+    });
+
+    it("the value really is stored", async () => {
+      const rows = await prisma.$queryRaw<{ value: string | null }[]>`
+        SELECT "dietaryRequirements" AS value FROM "BookingGuest" WHERE id = ${GUEST_ID}`;
+      expect(rows[0]?.value).toBe(GUEST_VALUE);
+    });
+
+    it("a top-level guest read with no select carries no key", async () => {
+      const row = await prisma.bookingGuest.findUnique({ where: { id: GUEST_ID } });
+      expect(row?.id).toBe(GUEST_ID);
+      expect(hasKey(row)).toBe(false);
+    });
+
+    it("booking -> guests carries no key, through include, a nested select and a transaction", async () => {
+      const included = await prisma.booking.findUnique({
+        where: { id: BOOKING_ID },
+        include: { guests: true },
+      });
+      expect(included?.guests).toHaveLength(1);
+      expect(included!.guests.some(hasKey)).toBe(false);
+
+      const selected = await prisma.booking.findUnique({
+        where: { id: BOOKING_ID },
+        select: { id: true, guests: true },
+      });
+      expect(selected!.guests.some(hasKey)).toBe(false);
+
+      const inTx = await prisma.$transaction(async (tx) =>
+        tx.booking.findUnique({ where: { id: BOOKING_ID }, include: { guests: true } }),
+      );
+      expect(inTx!.guests.some(hasKey)).toBe(false);
+    });
+
+    it("the rows create and update hand back carry no key", async () => {
+      expect(createdBooking!.guests.some(hasKey)).toBe(false);
+      const updated = await prisma.bookingGuest.update({
+        where: { id: GUEST_ID },
+        data: { lastName: "Parent" },
+      });
+      expect(hasKey(updated)).toBe(false);
+    });
+
+    it("the booking-admin grant reads and edits it, and the profile is never touched (INV-MOD-059)", async () => {
+      await prisma.memberAccessRole.create({
+        data: { memberId: PARENT_ID, role: "ADMIN" },
+      });
+      const viewGrant = await dietary.grantBookingAdminDietaryAccess(
+        { ok: true, session: { user: { id: PARENT_ID } } },
+        "view",
+        { enabled: true },
+      );
+      expect(viewGrant).not.toBeNull();
+      const values = await dietary.readBookingGuestDietaryForAdmin(viewGrant!, BOOKING_ID);
+      expect(values.get(GUEST_ID)).toBe(GUEST_VALUE);
+
+      const editGrant = await dietary.grantBookingAdminDietaryAccess(
+        { ok: true, session: { user: { id: PARENT_ID } } },
+        "edit",
+        { enabled: true },
+      );
+      await expect(
+        dietary.updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: BOOKING_ID,
+          guestId: GUEST_ID,
+          value: "  Vegetarian  ",
+          occupant: OCCUPANT,
+        }),
+      ).resolves.toMatchObject({ status: "updated", changed: true, value: "Vegetarian" });
+      // A guest id paired with the wrong booking matches no row.
+      await expect(
+        dietary.updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: "race-3029-other",
+          guestId: GUEST_ID,
+          value: "x",
+          occupant: OCCUPANT,
+        }),
+      ).resolves.toEqual({ status: "not-found" });
+      // C2: the right row, but not the person the editor was shown.
+      await expect(
+        dietary.updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: BOOKING_ID,
+          guestId: GUEST_ID,
+          value: "x",
+          occupant: { ...OCCUPANT, firstName: "Somebody", memberId: null },
+        }),
+      ).resolves.toEqual({ status: "occupant-changed" });
+      const profile = await prisma.$queryRaw<{ value: string | null }[]>`
+        SELECT "dietaryRequirements" AS value FROM "Member" WHERE id = ${PARENT_ID}`;
+      expect(profile[0]?.value).toBe(VALUE);
+    });
+
+    it("an admin edit racing a held-party rebuild waits on the row lock and is refused, never lost (C3)", async () => {
+      await prisma.memberAccessRole.upsert({
+        where: { memberId_role: { memberId: PARENT_ID, role: "ADMIN" } },
+        create: { memberId: PARENT_ID, role: "ADMIN" },
+        update: {},
+      });
+      const editGrant = await dietary.grantBookingAdminDietaryAccess(
+        { ok: true, session: { user: { id: PARENT_ID } } },
+        "edit",
+        { enabled: true },
+      );
+      const { lockBookingGuestRowsForUpdate } = await import("@/lib/booking-guest-row-lock");
+      let signalLocked!: () => void;
+      const locked = new Promise<void>((resolve) => (signalLocked = resolve));
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const rebuild = prisma.$transaction(
+        async (tx) => {
+          await lockBookingGuestRowsForUpdate(tx, BOOKING_ID);
+          signalLocked();
+          await gate;
+          await tx.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
+        },
+        { timeout: 20_000 },
+      );
+      await locked;
+      let settled = false;
+      const edit = dietary
+        .updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: BOOKING_ID,
+          guestId: GUEST_ID,
+          value: "Entered while the party was being rebuilt",
+          occupant: { ...OCCUPANT, lastName: "Parent" },
+        })
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // The edit's UPDATE is blocked on the rebuild's row lock.
+      expect(settled).toBe(false);
+      release();
+      await rebuild;
+      await expect(edit).resolves.toEqual({ status: "not-found" });
     });
   },
 );

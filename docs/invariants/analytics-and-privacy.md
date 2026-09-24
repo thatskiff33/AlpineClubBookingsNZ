@@ -842,34 +842,36 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
 
 ## INV-PRIV-022
 
-Dietary/allergy information (`Member.dietaryRequirements`, #2941) is ABSENT
-unless selected through `src/lib/member-dietary.ts` for a caller holding a
-grant. Owner-approved blueprint and decision, 20 Sep 2026, on
-[#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941).
+Dietary/allergy information — the profile's `Member.dietaryRequirements`
+(#2941) and each stay's `BookingGuest.dietaryRequirements` (#3029) — is ABSENT
+unless `src/lib/member-dietary.ts` selects it for a grant holder.
+Decisions: 20 Sep 2026 on
+[#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941); the
+[#3029](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3029) body.
 
-- **Absent by construction.** Every application Prisma client omits the column
-  (`PRISMA_CLIENT_GLOBAL_OMIT`); the module is the only opt-in. The client keeps
-  the plain `PrismaClient` type, so elsewhere a read yields `undefined`, never
-  the value.
-- **Stage 1 audiences, and only these:** the subject, for their own profile and
-  onboarding while ON; the subject's own data export, ON or OFF; an admin whose
-  DB-verified matrix reaches `membership`, for the member editor, create and
-  member CSV while ON; and a Full Admin merge. #3029 extends this module for
-  booking and hut-leader purposes; it adds no second rule.
-- **Everyone else is denied:** family and dependants, other members, shared and
-  lodge screens, rosters, booking and finance exports, Xero, analytics,
-  notifications, logs and raw audit metadata.
-- **OFF hides, never clears.** Collection and display stop; every writer
-  re-reads the toggle and writes nothing. Default OFF on a missing row, a read
-  failure and an upgrade.
-- **One shape.** Trimmed, blank stored as null, at most 500 characters, at every
-  writer and in CSV import.
-- **Records say THAT, never WHAT.** Audit rows name the field; the merge audit
-  redacts its values. The log redactor strips `dietary`/`allerg` keys and the
-  audit sanitizer redacts any value under one.
-- **Merge fills if blank.** The loser's value survives only when the master has
-  none. **Erasure clears it:** an approved account deletion nulls it.
-- Proof: `member-dietary-access-census.test.ts`, a text scan (no other select,
-  omit override, raw read or omit-less client; spelling and imports confined to
-  listed non-egress files; no data-flow tracing), plus the privacy, routes,
-  writers and real-database tests.
+- **Absent by construction.** Every application Prisma client omits both columns
+  (`PRISMA_CLIENT_GLOBAL_OMIT`). The write half
+  (`member-dietary-booking-writes.ts`) mints no grant; its fence is its closed
+  importer list, and its fragment builders, which return the plain value, may
+  appear only as a spread operand.
+- **Profile audiences:** the subject (profile, onboarding) while ON; their own
+  data export, ON or OFF; a DB-verified `membership` admin while ON; a Full
+  Admin merge.
+- **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
+  change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
+  lodge's present guests that day, both while ON; the subject's export, for
+  their own rows. So an admin who adds a member as a guest sees that member's
+  current profile value there, audited. Grants never cross profile and booking.
+- **Everyone else is denied, absent from the payload:** members (own booking,
+  linked guests, the #2942 roster), family, other kiosk tiers and preview,
+  rosters, the lobby, exports, reports, Xero, Stripe, analytics, notifications,
+  logs and raw audit metadata.
+- **OFF hides, never clears.** Only the export grant is issued; writers write
+  nothing new. Default OFF, including on a read failure.
+- **One shape.** Trimmed, blank null, at most 500 characters.
+- **Records say THAT, never WHAT.** Audit rows name the field; the log redactor
+  and audit sanitizer strip `dietary`/`allerg` values.
+- **Merge fills if blank.** **Erasure clears** the profile and the subject's
+  guest rows.
+- Proof: `member-dietary-access-census.test.ts`, a text scan (no data-flow
+  tracing), plus privacy, kiosk, route and real-database tests.

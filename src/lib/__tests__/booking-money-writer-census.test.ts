@@ -36,6 +36,7 @@ const REVIEWED_WRITERS = [
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts|booking|opaquePayload||1",
   "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts|booking|opaquePayload||1",
   "src/app/api/admin/bookings/[id]/review/route.ts|booking|opaquePayload||2",
+  "src/app/api/admin/deletion-requests/[id]/route.ts|bookingGuest|opaquePayload||1",
   "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuest|create|priceCents|1",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuestNight|create||1",
@@ -127,6 +128,16 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     {
       reason: "review closure only",
       sourceShape: /data:\s*\{[\s\S]*?adminReviewStatus:/,
+    },
+  ],
+  [
+    // #3029: the account-erasure anonymisation of the member's guest rows. It
+    // became opaque only because it now spreads the dietary erasure patch
+    // (`INV-PRIV-022`); it still names no money column.
+    "src/app/api/admin/deletion-requests/[id]/route.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "anonymisation: name, member link and the dietary erasure patch only",
+      sourceShape: /firstName:\s*"Deleted",[\s\S]*?memberId:\s*null,\s*\.\.\.DIETARY_ERASURE_PATCH/,
     },
   ],
   [

@@ -56,6 +56,6 @@ export const MEMBER_FIELD_DEFINITIONS: Record<
     key: "showDietaryRequirements",
     label: "Dietary/allergy information",
     description:
-      "Free-text dietary and allergy information, for members of any age. Collected at onboarding, editable in the member's profile and by membership admins, and included in member CSV import and export. Privacy-sensitive: nobody else sees it. Off by default; turning it off hides it without deleting what is stored.",
+      "Free-text dietary and allergy information, for members of any age. Collected at onboarding, editable in the member's profile and by membership admins, and included in member CSV import and export. Each new booking copies it for that stay, where only booking officers and the stay's hut leader see it. Privacy-sensitive: nobody else sees it. Off by default; turning it off hides it without deleting what is stored.",
   },
 };

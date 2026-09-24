@@ -130,9 +130,11 @@ than with a screenshot:
   comments (a privileged member's login email is Full-Admin-only to change), and
   — only while the club has it on and you hold membership access —
   **Dietary/allergy information**. It is never sent to Xero, and editing it
-  records only that it changed. Creating a member collects it too; the quick
-  editor opened from the member list does not show it, and saving there leaves
-  it untouched.
+  records only that it changed. Editing it here changes the profile only: a
+  booking the member is already on keeps its own copy for that stay (see
+  [Bookings](bookings.md#dietaryallergy-information-for-a-stay)). Creating a
+  member collects it too; the quick editor opened from the member list does not
+  show it, and saving there leaves it untouched.
 - **Account & Access** — user type, login, access roles, status, induction, and
   lodge access. Only one member per email address can sign in, so ticking **Can
   Login** here is refused with "A member with this email already exists" when the

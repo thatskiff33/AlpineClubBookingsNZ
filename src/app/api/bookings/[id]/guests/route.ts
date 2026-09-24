@@ -9,6 +9,11 @@ import {
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  bookingGuestDietaryCreateData,
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
@@ -284,6 +289,9 @@ export async function POST(
   // add-guest edit be admitted under one day and priced under another.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+  // #3029 (W10, `INV-MOD-059`) — whether an added linked member is seeded from
+  // their dietary/allergy profile. The toggle, read HERE for the same reason.
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -742,6 +750,13 @@ export async function POST(
         firstNight: Date;
       };
       const newGuestNightRates: PartyGuestNightRate[] = [];
+      // #3029: each added row's snapshot, from the linked members' CURRENT
+      // profiles through this transaction's client.
+      const newGuestDietary = await resolveBookingGuestDietary(
+        tx,
+        guestDietarySeeding,
+        normalizedNewGuests,
+      );
       for (const [newGuestIndex, newGuest] of normalizedNewGuests.entries()) {
         const priced = pricedPartyMember(
           booking.guests.length + newGuestIndex
@@ -765,6 +780,7 @@ export async function POST(
             // family-scope or non-member guest writes exactly what it wrote
             // before.
             ...(newGuest.memberGuestConsent ?? {}),
+            ...bookingGuestDietaryCreateData(newGuestDietary[newGuestIndex]),
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,

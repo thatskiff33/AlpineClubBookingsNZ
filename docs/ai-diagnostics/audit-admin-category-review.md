@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  487
+row-producing sites:  488
 uncategorised:        0
-category values: admin 108, booking 104, xero 37, family 35, payment 48,
+category values: admin 108, booking 105, xero 37, family 35, payment 48,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -725,6 +725,13 @@ night prices from the rate table, every guest total unchanged. `payment` beside
 the officer night-price repair it mirrors, and `important` because it is the
 only place the per-night rewrite shows; it carries every strand's before and
 after vectors.
+
+#3029 then added one more (`booking` 104 -> 105, 487 -> 488, RE-MEASURED with
+`npm run audit:census`): `booking.guest_dietary.updated` / `.cleared`, the record
+that a booking officer changed or cleared one guest's dietary/allergy note for a
+stay. `booking` because that note is booking data read by booking officers; the
+row carries the guest id and a changed flag and never the note itself
+(`INV-PRIV-022`).
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

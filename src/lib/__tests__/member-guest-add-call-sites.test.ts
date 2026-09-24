@@ -18,6 +18,7 @@
 //     "it wrote the wrong thing" is not something a passing quote can reveal.
 // For those, reading the source is not a shortcut; it is the only honest test.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -510,6 +511,7 @@ describe("applyGuestChanges persists the planned consent columns", () => {
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: NEW_CHECK_IN,
         newCheckOut: NEW_CHECK_OUT,
@@ -545,6 +547,7 @@ describe("applyGuestChanges persists the planned consent columns", () => {
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: NEW_CHECK_IN,
         newCheckOut: NEW_CHECK_OUT,

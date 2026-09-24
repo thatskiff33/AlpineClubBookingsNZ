@@ -143,6 +143,14 @@ import {
   type BatchModifyInput,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
+import {
+  bookingGuestDietaryCreateData,
+  bookingGuestDietaryUpdateData,
+  fillBookingGuestDietaryFromProfileIfEmpty,
+  planGuestRenameDietary,
+  resolveBookingGuestDietary,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 
 type ProposedGuestPricingInput = {
   bookingGuestId?: string | null;
@@ -2554,6 +2562,7 @@ export async function applyGuestChanges(
     inProgressPlan,
     otherLodgeElection,
     otherLodgeRatedGuestIds,
+    guestDietarySeeding,
   }: {
     bookingId: string;
     newCheckIn: Date;
@@ -2609,6 +2618,14 @@ export async function applyGuestChanges(
      * which is correct for the existing unit tests that pass no election either.
      */
     otherLodgeRatedGuestIds?: ReadonlySet<string>;
+    /**
+     * #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the
+     * transaction. REQUIRED: an added linked member is seeded from their
+     * profile, and a placeholder newly linked to a member is filled from theirs
+     * only if the row holds no value yet. Nothing else here names the value —
+     * a date change, a rename or a reprice leaves it exactly as it was.
+     */
+    guestDietarySeeding: BookingGuestDietarySeeding;
   },
 ): Promise<{ createdGuests: BookingGuest[] }> {
   const createdGuests: BookingGuest[] = [];
@@ -2616,6 +2633,21 @@ export async function applyGuestChanges(
     (guestNameUpdates ?? []).map((update) => [update.guestId, update]),
   );
   const linkByGuestId = guestMemberLinks ?? new Map();
+  // #3029 S2 (`INV-MOD-059`): a non-member rename to somebody else clears the
+  // predecessor's dietary note; a spelling fix or a placeholder being named
+  // keeps it — the same same-occupant rule the held-party rewrite uses.
+  const guestRowsById = new Map(
+    [...remainingGuests, ...(inProgressPlan?.proposedExistingGuests ?? []).map((entry) => entry.guest)]
+      .map((guest) => [guest.id, guest]),
+  );
+  const renameDietary = planGuestRenameDietary(
+    (guestNameUpdates ?? []).flatMap((update) => {
+      const row = guestRowsById.get(update.guestId);
+      return row
+        ? [{ guestId: update.guestId, previous: row, next: update }]
+        : [];
+    }),
+  );
 
   type BreakdownGuest = {
     nightDates: Date[];
@@ -2790,6 +2822,7 @@ export async function applyGuestChanges(
                 lastName: nameUpdate.lastName,
               }
             : {}),
+          ...bookingGuestDietaryUpdateData(renameDietary(entry.guest.id)),
           ...(link
             ? {
                 isMember: true,
@@ -2809,6 +2842,12 @@ export async function applyGuestChanges(
       });
     }
 
+    // #3029 (W11): an added guest's snapshot, seeded once, here.
+    const addedDietary = await resolveBookingGuestDietary(
+      tx,
+      guestDietarySeeding,
+      inProgressPlan.proposedAddedGuests.map((entry) => entry.guest),
+    );
     for (const [a, entry] of inProgressPlan.proposedAddedGuests.entries()) {
       const g = entry.guest;
       const guest = await tx.bookingGuest.create({
@@ -2829,6 +2868,7 @@ export async function applyGuestChanges(
           // `buildMemberGuestConsentWrite` and spread only when present, so a
           // family-scope or non-member guest writes exactly what it wrote before.
           ...(g.memberGuestConsent ?? {}),
+          ...bookingGuestDietaryCreateData(addedDietary[a]),
         },
       });
       const envelope = await syncGuestNights(
@@ -2849,6 +2889,18 @@ export async function applyGuestChanges(
       createdGuests.push(guest);
     }
 
+    // #3029 (W15): a placeholder row this edit linked to a member.
+    await fillBookingGuestDietaryFromProfileIfEmpty(
+      tx,
+      guestDietarySeeding,
+      inProgressPlan.proposedExistingGuests.flatMap((entry) => {
+        const link = linkByGuestId.get(entry.guest.id);
+        return link
+          ? [{ guestId: entry.guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
+          : [];
+      }),
+    );
+
     return { createdGuests };
   }
 
@@ -2862,6 +2914,8 @@ export async function applyGuestChanges(
 
   const addedGuestStartIndex = remainingGuests.length;
   const addList = normalizedAddGuests ?? [];
+  // #3029 (W12): each added guest's snapshot, seeded once, here.
+  const addedDietary = await resolveBookingGuestDietary(tx, guestDietarySeeding, addList);
   for (const [i, g] of addList.entries()) {
     const guestPriceIndex = addedGuestStartIndex + i;
     const bg = priceBreakdown.guests[guestPriceIndex];
@@ -2891,6 +2945,7 @@ export async function applyGuestChanges(
           .rateMembershipTypeId,
         // Member-guest consent (MG2 #2307) — see the in-progress branch above.
         ...(g.memberGuestConsent ?? {}),
+        ...bookingGuestDietaryCreateData(addedDietary[i]),
       },
     });
     const envelope = await syncGuestNights(
@@ -2944,6 +2999,7 @@ export async function applyGuestChanges(
               lastName: nameUpdate.lastName,
             }
           : {}),
+        ...bookingGuestDietaryUpdateData(renameDietary(remainingGuest.id)),
         ...(link
           ? {
               isMember: true,
@@ -3005,6 +3061,19 @@ export async function applyGuestChanges(
       },
     });
   }
+
+  // #3029 (W15): a placeholder row this edit linked to a member is filled from
+  // that member's profile only if it holds no value yet (an admin's entry wins).
+  await fillBookingGuestDietaryFromProfileIfEmpty(
+    tx,
+    guestDietarySeeding,
+    remainingGuests.flatMap((guest) => {
+      const link = linkByGuestId.get(guest.id);
+      return link
+        ? [{ guestId: guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
+        : [];
+    }),
+  );
 
   return { createdGuests };
 }

@@ -415,6 +415,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-056` | Operation-grain provenance governs edits and review re-bases |
 | `INV-MOD-057` | Cancellable statuses have one home; member doors read a named subset |
 | `INV-MOD-058` | An edit stores its delta as lines; every reader reads those rows |
+| `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 
 ### Adult-member hosting
 
@@ -706,7 +707,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-019` | An audit row's subject is a person; an organisation-owned booking records none |
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
-| `INV-PRIV-022` | Dietary/allergy data absent unless one granted module selects it |
+| `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 
 ## Membership Lifecycle
 

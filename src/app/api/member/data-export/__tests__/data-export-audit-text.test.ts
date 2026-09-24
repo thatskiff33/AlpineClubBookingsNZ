@@ -62,6 +62,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: mocks.memberFindUnique },
     booking: { findMany: mocks.bookingFindMany },
+    // #3029: the export's own-guest-rows read.
+    bookingGuest: { findMany: vi.fn(async () => []) },
     choreAssignment: { findMany: mocks.choreFindMany },
     memberSubscription: { findMany: mocks.subscriptionFindMany },
     auditLog: { findMany: mocks.auditFindMany },

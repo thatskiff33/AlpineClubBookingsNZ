@@ -9,6 +9,7 @@
  * PENDING booking holding nothing.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { BookingStatus, AgeTier } from "@prisma/client";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import { BookingMemberNightConflictError } from "@/lib/booking-member-night-conflicts";
@@ -240,6 +241,7 @@ function baseInput(
     shouldBePending: hasNonMembers,
     holdDays: 7,
     lodgeId: "lodge-1",
+    guestDietarySeeding: bookingGuestDietarySeeding(false),
     todayAtClub: FIXTURE_CLUB_DAY,
     ...overrides,
   };

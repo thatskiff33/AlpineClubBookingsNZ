@@ -220,6 +220,11 @@ vi.mock("@/lib/xero-organisation", () => ({
   // and falls back to the club default, so these tests stay about date gating.
   getXeroFinancialYearEndMonth: vi.fn(async () => null),
 }));
+// #3029: the route reads the dietary seeding toggle before any create service
+// runs; the real module reaches access-role definitions this file mocks.
+vi.mock("@/lib/member-dietary-booking-writes", () => ({
+  resolveBookingGuestDietarySeeding: vi.fn(async () => ({ seedFromProfile: false })),
+}));
 vi.mock("@/lib/booking-create", async () => {
   // Re-export the REAL constant (the factory is hoisted, so it cannot see the
   // top-level import): the route must enforce the same value the test asserts.

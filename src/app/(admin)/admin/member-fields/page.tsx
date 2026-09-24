@@ -259,9 +259,11 @@ export default function AdminMemberFieldsPage() {
               When a field is off it is hidden from the member editor, member
               onboarding and profile, and is excluded from CSV import and export.
               Existing data already stored is not deleted. Dietary/allergy
-              information is privacy-sensitive: when it is on, only the member
-              themself and membership administrators can see it, and the member
-              CSV export then contains it.
+              information is privacy-sensitive: when it is on, a profile value
+              is seen only by the member themself and membership administrators
+              (the member CSV export then contains it), and each new booking
+              keeps its own copy for that stay, seen only by booking officers
+              and the hut leader running the stay.
             </p>
           </div>
         </div>

@@ -30,7 +30,8 @@ in the environment.
 
 A backup is a copy of the **whole** database, so it holds everything members
 have recorded — including dietary/allergy information once your club turns that
-field on ([Member Fields](member-fields.md)). That is health-related personal
+field on ([Member Fields](member-fields.md)), both on member profiles and on
+each booking's guests for their stay. That is health-related personal
 information: keep the S3 bucket and any local copy private, and restrict who can
 download a backup, exactly as you already do for addresses and dates of birth.
 
