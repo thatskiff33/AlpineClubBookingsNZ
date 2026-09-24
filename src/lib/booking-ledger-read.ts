@@ -12,6 +12,9 @@
  */
 import type { Prisma } from "@prisma/client";
 
+import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
+import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
+
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
 
 /**
@@ -38,4 +41,52 @@ export async function bookingHasConfirmationLines(
     select: { id: true },
   });
   return existing !== null;
+}
+
+/**
+ * The settlement lines already posted for one booking's payment transactions
+ * and refunds, with everything a reversal must copy (#3581). The settlement
+ * sync reads these to know what is already there and what it may need to
+ * reverse; no figure anyone sees comes from it.
+ */
+export async function findPostedSettlementLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedSettlementLine[]> {
+  const rows = await store.bookingLedgerLine.findMany({
+    where: { bookingId, anchorKind: { in: ["PAYMENT_TRANSACTION", "PAYMENT_REFUND"] } },
+    select: {
+      id: true,
+      postingKey: true,
+      reversesLineId: true,
+      kind: true,
+      sign: true,
+      quantity: true,
+      unitCents: true,
+      anchorKind: true,
+      anchorId: true,
+      settlementMethod: true,
+      narration: true,
+    },
+  });
+  // The column is an Int; the database's CHECK makes any value but 1 or -1
+  // unrepresentable (`BookingLedgerLine_sign_is_a_direction`), so this narrows
+  // the type to what the table already guarantees rather than casting past it.
+  return rows.map((row) => ({ ...row, sign: row.sign === -1 ? -1 : 1 }));
+}
+
+/**
+ * The account-credit lines already posted for one booking (#3599): the key and
+ * the figure, which is all an insert-only planner needs to know what is there.
+ * Read by kind rather than anchor, because a restore is anchored on the
+ * CANCELLATION and every other credit line on its `MemberCredit` row.
+ */
+export async function findPostedCreditLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedCreditLine[]> {
+  return store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
+    select: { postingKey: true, amountCents: true },
+  });
 }

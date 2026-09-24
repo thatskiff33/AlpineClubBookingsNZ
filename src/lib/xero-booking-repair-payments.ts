@@ -26,7 +26,7 @@ const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
 ]);
 
 /**
- * "Captured" is `isCapturedTransactionStatus` (`payment-transactions.ts`), the
+ * "Captured" is `isCapturedTransactionStatus` (`payment-transaction-status.ts`), the
  * same predicate the live settlement's own guards ask (`INV-SSOT`).
  *
  * This module used to carry a byte-identical private `Set` of its own. The

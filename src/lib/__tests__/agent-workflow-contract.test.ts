@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function readRepoFile(path: string): string {
@@ -8,8 +8,8 @@ function readRepoFile(path: string): string {
 describe("repository agent workflow contract", () => {
   it("keeps AGENTS.md as the single authority for Codex and Claude/Hopper", () => {
     const agents = readRepoFile("AGENTS.md");
-    const claude = readRepoFile("CLAUDE.md");
     const codex = readRepoFile("docs/agents/CODEX_WORKFLOW.md");
+    const profiles = readRepoFile("docs/agents/PROFILE_GUIDE.md");
     const subagents = readRepoFile("docs/agents/SUBAGENT_GUIDE.md");
     const scopedContext = readRepoFile("docs/agents/SCOPED_CONTEXT.md");
     const issueWorkflow = readRepoFile("docs/agents/ISSUE_WORKFLOW.md");
@@ -18,7 +18,7 @@ describe("repository agent workflow contract", () => {
     const packageJson = readRepoFile("package.json");
     const gitignore = readRepoFile(".gitignore");
     const lockGuard = readRepoFile("src/lib/__tests__/advisory-lock-guard.test.ts");
-    const agentGuides = [agents, claude, codex, subagents].map((guide) =>
+    const agentGuides = [agents, codex, subagents].map((guide) =>
       guide.replace(/\s+/g, " "),
     );
     const agentsNormalized = agents.replace(/\s+/g, " ");
@@ -45,12 +45,14 @@ describe("repository agent workflow contract", () => {
     expect(agents).toContain("Two identical failures trip a circuit breaker");
     expect(agents).toContain("`xhigh` remains the ceiling");
 
-    // #2910: model routing states the decision, not the model. A named default
-    // goes stale faster than this file changes and then gets followed
-    // literally, so the guidance has to prompt the orchestrator's judgement at
-    // dispatch instead of answering it here. Product names survive only as a
-    // dated example attached to the security floor below.
-    expect(agents).toContain("Choose the tier at dispatch");
+    // #2910 made model routing state the decision, not the model; #3614 went
+    // the rest of the way and retired the dated routing table too (owner
+    // decision, 24 Sep 2026). A table of product names goes stale faster than
+    // these files change and then gets followed literally, so the orchestrator
+    // chooses the model and effort itself at every dispatch.
+    expect(agentsNormalized).toContain(
+      "The model chooses, at every dispatch — there is no model routing table",
+    );
     expect(agents).toContain("State the model explicitly when you dispatch a subagent");
     expect(agentsNormalized).toContain("inherits the orchestrator's model");
     expect(agentsNormalized).toContain("Can a deterministic command answer this exactly?");
@@ -63,32 +65,26 @@ describe("repository agent workflow contract", () => {
       "security stays on Opus at `xhigh`",
       "Default subagents to the strongest generally-capable model (Opus)",
       "Default routine and mechanical work to the cost-efficient tier",
+      "Never route security work to the top Mythos-class tier",
     ]) {
       expect(agents).not.toContain(instruction);
     }
 
-    // The safety floors stay concrete: they are failure modes, not preferences.
-    expect(agents).toContain(
-      "Never route security work to the top Mythos-class tier",
-    );
-    expect(agentsNormalized).toContain(
-      "strongest generally-capable model at `xhigh` reasoning effort",
-    );
+    // The safety floors stay concrete: they are failure modes, not preferences,
+    // and neither names a model.
+    expect(agents).toContain("A refusal is a failure, not a pass.");
     expect(agents).toContain('`stop_reason: "refusal"` on an HTTP 200');
     expect(agents).toContain("never use `max`, on any lane");
 
-    // A model product name may survive in AGENTS.md only as the dated example
-    // on that security floor — one line, explicitly marked "at the time of
-    // writing". Anywhere else and the name has become the instruction again,
-    // which is what #2910 removed. Counting lines rather than banning the words
-    // keeps the floor's concrete example legal without reopening the door.
-    const modelNameLines = agents
-      .split(/\r?\n/)
-      .filter((line) => /\b(?:Sonnet|Haiku|Opus|Fable|Terra|Luna)\b/.test(line));
-    expect(modelNameLines).toHaveLength(1);
-    expect(agentsNormalized).toContain(
-      "At the time of writing that means Fable is excluded and Opus is the right choice, but the rule is the shape, not the names.",
-    );
+    // No model product name survives in any agent guide: once written down, the
+    // name becomes the instruction again, which is what #2910 and #3614 removed.
+    for (const guide of [agents, codex, subagents, profiles]) {
+      const modelNameLines = guide
+        .split(/\r?\n/)
+        .filter((line) => /\b(?:Sonnet|Haiku|Opus|Fable|Terra|Luna|Mythos)\b/.test(line));
+      expect(modelNameLines).toEqual([]);
+      expect(guide).not.toContain("Model routing table");
+    }
 
     // #2691: the merge gate's only human check is an on-repo owner comment, so
     // the rules that refuse agent-authored authorisation are pinned verbatim. A
@@ -129,7 +125,6 @@ describe("repository agent workflow contract", () => {
     expect(agents).not.toContain("Recommended: give agents a separate GitHub identity");
     // #2691: "per repo convention" pointed at a convention defined nowhere.
     expect(agents).not.toContain("CLAIM comment per repo convention");
-    expect(claude).not.toContain("CLAIM comment per repo convention");
     expect(issueWorkflow).toContain("## Claiming, and talking between lanes");
     expect(issueWorkflow).toContain("### `CLAIM:`");
     expect(issueWorkflow).toContain("### `LANE-SYNC:`");
@@ -183,29 +178,20 @@ describe("repository agent workflow contract", () => {
     expect(issueWorkflow).toContain("The rule binds new writing only.");
     expect(issueWorkflow).toContain("Do not sweep them.");
 
-    // #2903: Claude imports the shared authority once. Its adapter is bounded
-    // and carries only interface-specific controls; removed normative rules
-    // survive in AGENTS.md rather than being copied into two homes again.
-    expect(claude.match(/^@AGENTS\.md$/gm)).toHaveLength(1);
-    expect(claude.split(/\r?\n/).length).toBeLessThanOrEqual(100);
-    expect(claude.length).toBeLessThanOrEqual(8_000);
-    expect(agents).not.toContain("CLAUDE.md");
-    expect(claude).toContain("/usage");
-    expect(claude).toContain("/context");
-    expect(claude).toContain("/mcp");
-    expect(claude).toContain("/hooks");
-    expect(claude).toContain("/clear");
-    // #2910: the Claude adapter names no default model either, and it carries
-    // the interface-specific half of the inheritance rule.
-    expect(claude).toContain("Decide the model when you dispatch");
-    expect(claude).toContain("inherits this session's");
-    expect(claude).not.toContain("Use Sonnet or local tooling");
-    for (const model of ["Sonnet", "Haiku", "Opus", "Fable", "Terra", "Luna"]) {
-      expect(claude).not.toContain(model);
+    // #3614 retired the `CLAUDE.md` adapter that #2903 bounded. Claude Code
+    // loads `AGENTS.md` itself only when no Claude memory file (`CLAUDE.md`,
+    // `CLAUDE.local.md` or `.claude/CLAUDE.md`) exists, so adding one silently
+    // replaces the contract for every Claude session. `.claude/` is
+    // git-ignored, so CI cannot see a local one — these checks catch it on a
+    // local run, and AGENTS.md tells a session to confirm the load.
+    for (const memoryFile of ["CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"]) {
+      expect(existsSync(resolve(process.cwd(), memoryFile))).toBe(false);
     }
-    expect(claude).not.toContain("## Completion and Merge");
-    expect(claude).not.toContain("## Local validation");
-    expect(claude).not.toContain("changelog.d/<pr-number>-<slug>.md");
+    expect(agentsNormalized).toContain("confirm \"AGENTS.md loaded\" at session start");
+    expect(agentsNormalized).toContain("never add a `CLAUDE.md`, which would replace it");
+    for (const command of ["/usage", "/context", "/mcp", "/hooks", "/clear"]) {
+      expect(agents).toContain(command);
+    }
     expect(agents).toContain("changelog.d/<pr-number>-<slug>.md");
     expect(agentsNormalized).toContain("a body edit does not re-run Actions");
     expect(agents).toContain("npm run pr:check");
@@ -268,7 +254,7 @@ describe("repository agent workflow contract", () => {
     expect(codex).toContain("GitHub Actions owns the full");
     expect(codexNormalized).toContain("Run a full suite locally only to diagnose");
     expect(codex).not.toContain("Luna/Terra");
-    expect(codexNormalized).toContain("pick the tier at dispatch");
+    expect(codexNormalized).toContain("pick the model and effort at dispatch");
     expect(codexNormalized).toContain("state the model and effort when you delegate");
     expect(subagentsNormalized).toContain(
       "State the model and reasoning effort in every launch",
@@ -340,8 +326,8 @@ describe("repository agent workflow contract", () => {
       pull request that says what it removed and why the trade is worth it —
       not in a one-line edit made to get a suite green.
 
-      `CLAUDE.md` carries its own smaller ceiling above (#2903); this is the
-      same discipline applied to the file that actually holds the rules.
+      `CLAUDE.md` carried its own smaller ceiling (#2903) until #3614 retired
+      it; this is the same discipline applied to the file that holds the rules.
 
       RAISED 10,200 -> 10,400 BY #3126 (owner decision, 27 Aug 2026), and this
       block is the pull request saying what was traded and why, because the

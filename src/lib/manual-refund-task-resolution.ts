@@ -7,6 +7,7 @@ import {
   ManualRefundTaskStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
@@ -16,6 +17,7 @@ import {
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
+import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { createBookingModificationCredit, requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -155,6 +157,7 @@ export async function resolveManualRefundTask(
         booking: {
           select: {
             memberId: true,
+            lodgeId: true,
             // #3170: the CHARGE direction mints an additional PaymentIntent
             // through the same helper every ordinary price increase uses, and
             // that helper needs a Stripe customer. Read here, under the same
@@ -469,6 +472,19 @@ export async function resolveManualRefundTask(
           throw new ManualBookingPaymentError(error.message, error.status);
         }
         throw error;
+      }
+      // #3599: the money the club handed back by hand, on the booking ledger.
+      if (settlementRoute.kind === "local-allocation") {
+        await postHandBackLedgerLine({
+          bookingId: task.bookingId,
+          lodgeId: task.booking.lodgeId,
+          manualRefundTaskId: task.id,
+          amountCents: settlement.amountCents,
+          refundMethod: refundMethodForEditReviewRoute(settlementRoute),
+          paymentSource: task.payment?.source ?? null,
+          officerMemberId: actingMemberId,
+          store: tx,
+        });
       }
     }
 

@@ -127,6 +127,18 @@ import "./migration-lock-timeout.realdb.test";
 // Its describe stays skipped unless RUN_CONCURRENCY_RACE_TESTS=1, and it owns
 // and cleans its own `race-3595-` fixtures.
 import "./booking-ledger-posting-key.realdb.test";
+// #3581 reuses this guarded database to prove the booking ledger's settlement
+// lines converge at the real chokepoint (`reconcilePaymentAggregates`): one line
+// per captured transaction and recorded refund, a mark-paid reversal reversed
+// exactly once, a failed refund reversed, and the settled total equal to the
+// mirror the same function derives. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3581-` fixtures.
+import "./booking-ledger-settlement-sync.realdb.test";
+// #3599 reuses it to prove account-credit and hand-back lines from the REAL
+// writers — credit applied and clamped, a tiered restore, a cancellation
+// credit, and a hand-back completed through the real resolver. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3599-` fixtures.
+import "./booking-ledger-credit-sync.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

@@ -250,7 +250,7 @@ Other linking rules:
 - Run `npm run docs:indexcheck` too. The link checker proves a link you wrote
   goes somewhere; this one proves somebody can get to your page at all — every
   `docs/` page must be reachable by following links from `README.md`,
-  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` or `docs/README.md`. It also
+  `AGENTS.md`, `CONTRIBUTING.md` or `docs/README.md`. It also
   checks the invariant identifiers: every `INV-*` quoted anywhere in the
   repository must resolve to a real rule under `docs/invariants/`, and every
   rule must have exactly one row in `docs/DOMAIN_INVARIANTS.md`. It runs in the

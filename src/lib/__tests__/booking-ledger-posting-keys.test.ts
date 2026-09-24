@@ -5,8 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  captureKey,
   confirmationNightKey,
   confirmationPromotionKey,
+  refundKey,
   reversalKey,
 } from "@/lib/booking-ledger-posting-keys";
 
@@ -17,6 +19,8 @@ describe("booking-ledger posting keys", () => {
     expect(confirmationNightKey("b1", "g1", NIGHT)).toBe("confirmation:b1:night:g1:2026-08-01");
     expect(confirmationPromotionKey("b1")).toBe("confirmation:b1:promotion");
     expect(reversalKey("line-9")).toBe("reversal:line-9");
+    expect(captureKey("txn-1")).toBe("capture:txn-1");
+    expect(refundKey("ref-1")).toBe("refund:ref-1");
   });
 
   it("reads a stored night as the calendar day it encodes, whatever the host zone", () => {
