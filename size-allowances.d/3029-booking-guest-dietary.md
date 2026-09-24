@@ -25,7 +25,7 @@ reason: the create route reads the seeding toggle once, beside the lockout
   mode it already resolves, and hands it to the three create services.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2602
+lines: 2603
 reason: the seeding toggle joins the pre-transaction preparation that already
   holds every settings read on this path, and is handed to applyGuestChanges.
 
@@ -41,7 +41,7 @@ reason: the approval's new-booking execution parameters, resolved before its
   transaction, carry the seeding toggle to the create it executes.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3138
+lines: 3142
 reason: applyGuestChanges takes the seeding toggle; its two add-guest creates
   spread a decision and its two member-link writes hand the linked row's prior
   identity to the one same-person rule, so another person's note never stays.
