@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { MemberDietaryRequirementsField } from "@/components/member-dietary-requirements-field";
 import { DIETARY_REQUIREMENTS_LABEL } from "@/lib/member-dietary-field";
+import type { AgeTier } from "@prisma/client";
 
 /** One guest row as the page's booking-admin loader hands it over. */
 export type BookingGuestDietaryRow = {
@@ -20,6 +21,8 @@ export type BookingGuestDietaryRow = {
   firstName: string;
   lastName: string;
   isMember: boolean;
+  memberId: string | null;
+  ageTier: AgeTier;
   dietaryRequirements: string | null;
 };
 
@@ -103,7 +106,17 @@ function GuestDietaryRow({
       const res = await fetch(`/api/admin/bookings/${bookingId}/guest-dietary`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guestId: guest.id, dietaryRequirements: draft }),
+        body: JSON.stringify({
+          guestId: guest.id,
+          // C2: who this row showed; the server refuses if it is somebody else now.
+          occupant: {
+            memberId: guest.memberId,
+            firstName: guest.firstName,
+            lastName: guest.lastName,
+            ageTier: guest.ageTier,
+          },
+          dietaryRequirements: draft,
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;

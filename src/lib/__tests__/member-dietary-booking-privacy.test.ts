@@ -57,6 +57,7 @@ import { redactSensitiveJson } from "@/lib/redact-sensitive-json";
 import { loadBookingDetailGuestDietary } from "@/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary";
 
 const VALUE = "Severe peanut allergy — carries an EpiPen";
+const OCCUPANT = { memberId: "m-1", firstName: "Aroha", lastName: "Guest", ageTier: "ADULT" as const };
 const ALL_TIERS: KioskTier[] = ["admin", "hut-leader", "lodge", "staying-guest", "none"];
 
 /** The access role whose bundle gives exactly this `bookings` level. */
@@ -102,7 +103,7 @@ describe("booking-admin grants are judged from the database (INV-PRIV-022)", () 
     expect(values.get("g1")).toBe(VALUE);
     // A view grant cannot write.
     await expect(
-      updateBookingGuestDietaryRequirements(view!, { bookingId: "bk-1", guestId: "g1", value: "x" }),
+      updateBookingGuestDietaryRequirements(view!, { bookingId: "bk-1", guestId: "g1", value: "x", occupant: OCCUPANT }),
     ).rejects.toThrow(/cannot read or edit/);
   });
 
@@ -228,9 +229,10 @@ describe("the one booking-value edit (INV-PRIV-022, INV-MOD-059)", () => {
       bookingId: "bk-1",
       guestId: "g1",
       value: "  Vegan\r\n  ",
+      occupant: OCCUPANT,
     });
     expect(result).toEqual({ status: "updated", changed: true, cleared: false, value: "Vegan" });
-    const where = { id: "g1", bookingId: "bk-1", booking: { deletedAt: null } };
+    const where = { id: "g1", bookingId: "bk-1", booking: { deletedAt: null }, ...OCCUPANT };
     expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
       where,
       data: { dietaryRequirements: "Vegan" },
@@ -239,11 +241,22 @@ describe("the one booking-value edit (INV-PRIV-022, INV-MOD-059)", () => {
     expect(mocks.memberFindMany).not.toHaveBeenCalled();
   });
 
+  it("reports occupant-changed when the row now holds somebody else (C2)", async () => {
+    const grant = await grantBookingAdminDietaryAccess(bookingAdmin("edit"), "edit", { enabled: true });
+    mocks.bookingGuestFindFirst
+      .mockResolvedValueOnce({ dietaryRequirements: null })
+      .mockResolvedValueOnce({ id: "g1" });
+    mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      updateBookingGuestDietaryRequirements(grant!, { bookingId: "bk-1", guestId: "g1", value: "x", occupant: OCCUPANT }),
+    ).resolves.toEqual({ status: "occupant-changed" });
+  });
+
   it("returns not-found for a guest of another booking or a deleted booking, and refuses over 500", async () => {
     const grant = await grantBookingAdminDietaryAccess(bookingAdmin("edit"), "edit", { enabled: true });
     mocks.bookingGuestFindFirst.mockResolvedValue(null);
     await expect(
-      updateBookingGuestDietaryRequirements(grant!, { bookingId: "bk-2", guestId: "g1", value: "x" }),
+      updateBookingGuestDietaryRequirements(grant!, { bookingId: "bk-2", guestId: "g1", value: "x", occupant: OCCUPANT }),
     ).resolves.toEqual({ status: "not-found" });
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
     await expect(
@@ -251,6 +264,7 @@ describe("the one booking-value edit (INV-PRIV-022, INV-MOD-059)", () => {
         bookingId: "bk-1",
         guestId: "g1",
         value: "x".repeat(501),
+        occupant: OCCUPANT,
       }),
     ).rejects.toThrow(/500 characters/);
   });

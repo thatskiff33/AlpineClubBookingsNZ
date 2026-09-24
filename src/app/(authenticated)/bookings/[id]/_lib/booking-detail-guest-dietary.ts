@@ -44,6 +44,8 @@ export async function loadBookingDetailGuestDietary(input: {
       firstName: guest.firstName,
       lastName: guest.lastName,
       isMember: guest.isMember,
+      memberId: guest.memberId,
+      ageTier: guest.ageTier,
       dietaryRequirements: values.get(guest.id) ?? null,
     })),
   };

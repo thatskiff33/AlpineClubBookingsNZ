@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -22,6 +23,16 @@ import { requireAdmin } from "@/lib/session-guards";
 const guestDietarySchema = z
   .object({
     guestId: z.string().min(1),
+    // C2: the occupant the editor was shown. The write matches it, so a row
+    // rewritten in place since the page loaded is refused, not overwritten.
+    occupant: z
+      .object({
+        memberId: z.string().min(1).nullable(),
+        firstName: z.string(),
+        lastName: z.string(),
+        ageTier: z.nativeEnum(AgeTier),
+      })
+      .strict(),
     dietaryRequirements: z
       .string()
       .nullable()
@@ -91,6 +102,7 @@ export async function PATCH(
         bookingId,
         guestId,
         value: parsed.data.dietaryRequirements,
+        occupant: parsed.data.occupant,
       },
       tx,
     );
@@ -118,6 +130,12 @@ export async function PATCH(
     return edited;
   });
 
+  if (result.status === "occupant-changed") {
+    return NextResponse.json(
+      { error: "This guest has changed since the page loaded. Reload and try again." },
+      { status: 409 },
+    );
+  }
   if (result.status === "not-found") {
     return NextResponse.json({ error: "Guest not found on this booking" }, { status: 404 });
   }

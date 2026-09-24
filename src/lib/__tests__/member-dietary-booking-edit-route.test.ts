@@ -41,6 +41,7 @@ import { PATCH } from "@/app/api/admin/bookings/[id]/guest-dietary/route";
 import { routeParams } from "@/lib/__tests__/helpers/requests";
 
 const VALUE = "Anaphylactic to shellfish";
+const OCCUPANT = { memberId: "m-1", firstName: "Aroha", lastName: "Guest", ageTier: "ADULT" };
 
 function patch(body: unknown, bookingId = "bk-1") {
   return PATCH(
@@ -68,18 +69,18 @@ beforeEach(() => {
 
 describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-059)", () => {
   it("asks requireAdmin for bookings:edit", async () => {
-    await patch({ guestId: "g1", dietaryRequirements: VALUE });
+    await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE });
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: { area: "bookings", level: "edit" },
     });
   });
 
   it("saves one row on booking + guest, audits without the value, and never touches the profile", async () => {
-    const res = await patch({ guestId: "g1", dietaryRequirements: `  ${VALUE}  ` });
+    const res = await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: `  ${VALUE}  ` });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ guestId: "g1", dietaryRequirements: VALUE });
     expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
-      where: { id: "g1", bookingId: "bk-1", booking: { deletedAt: null } },
+      where: { id: "g1", bookingId: "bk-1", booking: { deletedAt: null }, ...OCCUPANT },
       data: { dietaryRequirements: VALUE },
     });
     expect(mocks.memberUpdate).not.toHaveBeenCalled();
@@ -92,7 +93,7 @@ describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-059)", () => {
 
   it("records a clear as a clear, and writes no audit row when nothing changed", async () => {
     mocks.bookingGuestFindFirst.mockResolvedValue({ dietaryRequirements: VALUE });
-    await patch({ guestId: "g1", dietaryRequirements: "  " });
+    await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: "  " });
     expect(JSON.stringify(mocks.auditLogCreate.mock.calls[0]![0])).toContain(
       "booking.guest_dietary.cleared",
     );
@@ -106,13 +107,13 @@ describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-059)", () => {
     mocks.settingsFindUnique.mockResolvedValue({ showDietaryRequirements: true });
     mocks.bookingGuestFindFirst.mockResolvedValue({ dietaryRequirements: VALUE });
     mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
-    await patch({ guestId: "g1", dietaryRequirements: VALUE });
+    await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE });
     expect(mocks.auditLogCreate).not.toHaveBeenCalled();
   });
 
   it("refuses while the field is OFF, without touching a stored value", async () => {
     mocks.settingsFindUnique.mockResolvedValue({ showDietaryRequirements: false });
-    const res = await patch({ guestId: "g1", dietaryRequirements: VALUE });
+    const res = await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE });
     expect(res.status).toBe(409);
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
   });
@@ -123,23 +124,40 @@ describe("PATCH guest-dietary (INV-PRIV-022, INV-MOD-059)", () => {
       canLogin: true,
       accessRoles: [{ role: "ADMIN_READONLY", roleDefinition: null }],
     });
-    const res = await patch({ guestId: "g1", dietaryRequirements: VALUE });
+    const res = await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE });
     expect(res.status).toBe(403);
+    expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("409s when the row now holds somebody other than the guest the editor saw (C2)", async () => {
+    // The row exists, but the occupant-matched update touches nothing.
+    mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.bookingGuestFindFirst
+      .mockResolvedValueOnce({ dietaryRequirements: null })
+      .mockResolvedValueOnce({ id: "g1" });
+    const res = await patch({ guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE });
+    expect(res.status).toBe(409);
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("400s without the occupant the editor saw (C2)", async () => {
+    const res = await patch({ guestId: "g1", dietaryRequirements: VALUE });
+    expect(res.status).toBe(400);
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
   });
 
   it("404s a guest of another booking or a deleted booking", async () => {
     mocks.bookingGuestFindFirst.mockResolvedValue(null);
-    const res = await patch({ guestId: "g-other", dietaryRequirements: VALUE });
+    const res = await patch({ guestId: "g-other", occupant: OCCUPANT, dietaryRequirements: VALUE });
     expect(res.status).toBe(404);
     expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
   });
 
   it("400s over 500 characters, a missing value and an unknown key", async () => {
     for (const body of [
-      { guestId: "g1", dietaryRequirements: "x".repeat(501) },
-      { guestId: "g1" },
-      { guestId: "g1", dietaryRequirements: VALUE, memberId: "m-1" },
+      { guestId: "g1", occupant: OCCUPANT, dietaryRequirements: "x".repeat(501) },
+      { guestId: "g1", occupant: OCCUPANT },
+      { guestId: "g1", occupant: OCCUPANT, dietaryRequirements: VALUE, memberId: "m-1" },
     ]) {
       const res = await patch(body);
       expect(res.status, JSON.stringify(body).slice(0, 60)).toBe(400);

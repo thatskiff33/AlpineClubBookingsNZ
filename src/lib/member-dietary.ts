@@ -46,7 +46,7 @@
  */
 import "server-only";
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { AgeTier, Prisma, PrismaClient } from "@prisma/client";
 import { actorIsFullAdmin } from "@/lib/admin-account-guards";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
@@ -646,59 +646,52 @@ export async function readOwnBookingGuestDietaryForExport(
     select: { stayStart: true, stayEnd: true, dietaryRequirements: true },
     orderBy: [{ stayStart: "asc" }, { id: "asc" }],
   });
-  return rows.flatMap((row) =>
-    row.dietaryRequirements
-      ? [
-          {
-            stayStart: row.stayStart,
-            stayEnd: row.stayEnd,
-            dietaryRequirements: row.dietaryRequirements,
-          },
-        ]
-      : [],
+  return rows.flatMap(({ stayStart, stayEnd, dietaryRequirements }) =>
+    dietaryRequirements ? [{ stayStart, stayEnd, dietaryRequirements }] : [],
   );
 }
 
 export type BookingGuestDietaryEditResult =
   | { status: "updated"; changed: boolean; cleared: boolean; value: string | null }
-  | { status: "not-found" };
+  | { status: "not-found" }
+  | { status: "occupant-changed" };
+
+/** Who the editor saw on the row; the write is refused if it is not them now. */
+export type BookingGuestOccupant = {
+  memberId: string | null;
+  firstName: string;
+  lastName: string;
+  ageTier: AgeTier;
+};
 
 /**
- * The ONE direct edit of a stored booking value: one guest row, matched on BOTH
- * its booking and its own id, on a booking that is not deleted. It never touches
- * the member profile (`INV-MOD-059`) and it is not a booking modification — no
- * reprice, no email, no Xero (`INV-MOD-001`). Last writer wins; the caller's
- * audit row records each edit, never the value.
+ * The ONE direct edit of a stored booking value: one guest row, matched on its
+ * booking, its own id AND the occupant the editor was shown (C2) — so a row
+ * rewritten in place since the page loaded (a held-party substitution, a
+ * placeholder link, an erasure) is refused as "occupant-changed", never written
+ * onto somebody else. It never touches the member profile (`INV-MOD-059`) and is
+ * not a booking modification (`INV-MOD-001`). The caller audits each edit,
+ * never the value.
  */
 export async function updateBookingGuestDietaryRequirements(
   grant: DietaryAccessGrant,
-  input: { bookingId: string; guestId: string; value: string | null },
+  input: { bookingId: string; guestId: string; value: string | null; occupant: BookingGuestOccupant },
   db: BookingGuestDb = prisma,
 ): Promise<BookingGuestDietaryEditResult> {
   bookingGuestGrantRecord(grant, ["booking-admin-edit"]);
-  if (!isDietaryRequirementsWithinLimit(input.value)) {
-    throw new Error(DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE);
-  }
+  if (!isDietaryRequirementsWithinLimit(input.value)) throw new Error(DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE);
   const value = normalizeDietaryRequirements(input.value);
-  const where = {
-    id: input.guestId,
-    bookingId: input.bookingId,
-    booking: { deletedAt: null },
-  };
-  const before = await db.bookingGuest.findFirst({
-    where,
-    select: { dietaryRequirements: true },
-  });
+  const where = { id: input.guestId, bookingId: input.bookingId, booking: { deletedAt: null } };
+  const before = await db.bookingGuest.findFirst({ where, select: { dietaryRequirements: true } });
   if (!before) return { status: "not-found" };
   const updated = await db.bookingGuest.updateMany({
-    where,
+    where: { ...where, ...input.occupant },
     data: { dietaryRequirements: value },
   });
-  if (updated.count !== 1) return { status: "not-found" };
-  return {
-    status: "updated",
-    changed: (before.dietaryRequirements ?? null) !== value,
-    cleared: value === null,
-    value,
-  };
+  if (updated.count !== 1) {
+    const still = await db.bookingGuest.findFirst({ where, select: { id: true } });
+    return { status: still ? "occupant-changed" : "not-found" };
+  }
+  const changed = (before.dietaryRequirements ?? null) !== value;
+  return { status: "updated", changed, cleared: value === null, value };
 }

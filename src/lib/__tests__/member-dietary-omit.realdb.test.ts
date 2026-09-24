@@ -34,6 +34,12 @@ const VALUE = "Severe peanut allergy";
 const BOOKING_ID = "race-3029-booking";
 const GUEST_ID = "race-3029-guest";
 const GUEST_VALUE = "Coeliac — this trip only";
+const OCCUPANT = {
+  memberId: PARENT_ID,
+  firstName: "Dietary",
+  lastName: "Parent",
+  ageTier: "ADULT" as const,
+};
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeDietaryOmitRaceDbUrl(url: string): void {
@@ -97,9 +103,6 @@ function hasKey(row: unknown): boolean {
           firstName: "Dietary",
           lastName: "Parent",
           ageTier: "ADULT",
-          // An admin role grants nothing to a non-login member (the permission
-          // matrix requires canLogin), and the column defaults to false.
-          canLogin: true,
           dietaryRequirements: VALUE,
         },
       });
@@ -326,6 +329,7 @@ function hasKey(row: unknown): boolean {
           bookingId: BOOKING_ID,
           guestId: GUEST_ID,
           value: "  Vegetarian  ",
+          occupant: OCCUPANT,
         }),
       ).resolves.toMatchObject({ status: "updated", changed: true, value: "Vegetarian" });
       // A guest id paired with the wrong booking matches no row.
@@ -334,8 +338,18 @@ function hasKey(row: unknown): boolean {
           bookingId: "race-3029-other",
           guestId: GUEST_ID,
           value: "x",
+          occupant: OCCUPANT,
         }),
       ).resolves.toEqual({ status: "not-found" });
+      // C2: the right row, but not the person the editor was shown.
+      await expect(
+        dietary.updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: BOOKING_ID,
+          guestId: GUEST_ID,
+          value: "x",
+          occupant: { ...OCCUPANT, firstName: "Somebody", memberId: null },
+        }),
+      ).resolves.toEqual({ status: "occupant-changed" });
       const profile = await prisma.$queryRaw<{ value: string | null }[]>`
         SELECT "dietaryRequirements" AS value FROM "Member" WHERE id = ${PARENT_ID}`;
       expect(profile[0]?.value).toBe(VALUE);
