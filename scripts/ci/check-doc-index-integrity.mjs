@@ -180,13 +180,12 @@ export const CITATION_EXEMPT_FILES = new Set([
  * The repository's front doors, for the reachability walk.
  *
  * `docs/README.md` is the documentation hub named by the house rule ("every doc
- * must be reachable from a hub"); the other four are the entry points a reader
+ * must be reachable from a hub"); the other three are the entry points a reader
  * or an agent actually starts from, and each links into `docs/` directly.
  */
 export const REACHABILITY_ROOTS = [
   "README.md",
   "AGENTS.md",
-  "CLAUDE.md",
   "CONTRIBUTING.md",
   "docs/README.md",
 ];
