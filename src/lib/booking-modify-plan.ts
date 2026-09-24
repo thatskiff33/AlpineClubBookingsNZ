@@ -660,7 +660,7 @@ export type GuestPlan = {
    */
   guestMemberLinkNames: Map<
     string,
-    { firstName: string | null; lastName: string | null }
+    { firstName: string | null; lastName: string | null; ageTier: AgeTier | null }
   >;
   /**
    * The resolved reciprocal other-club rate election (Other Lodges epic).
@@ -934,7 +934,7 @@ export async function prepareGuestPlan(
   // same `linkedMembers` the boundary machinery produced.
   const guestMemberLinkNames = new Map<
     string,
-    { firstName: string | null; lastName: string | null }
+    { firstName: string | null; lastName: string | null; ageTier: AgeTier | null }
   >(
     guestMemberLinks.map((link) => {
       const member = linkedMembers.get(link.memberId);
@@ -943,6 +943,8 @@ export async function prepareGuestPlan(
         {
           firstName: member?.firstName ?? null,
           lastName: member?.lastName ?? null,
+          // #3029: the dietary link rule compares the MEMBER's tier with the row's.
+          ageTier: member?.ageTier ?? null,
         },
       ];
     }),
@@ -2560,6 +2562,7 @@ function guestMemberLinkDietary(
     memberId: string;
     firstName?: string | null;
     lastName?: string | null;
+    ageTier?: AgeTier | null;
     consentColumns?: MemberGuestConsentColumns;
   },
 ) {
@@ -2568,7 +2571,7 @@ function guestMemberLinkDietary(
     memberId: link.memberId,
     memberGuestConsent: link.consentColumns,
     previous: guest,
-    linkedName: { firstName: link.firstName, lastName: link.lastName },
+    linkedName: { firstName: link.firstName, lastName: link.lastName, ageTier: link.ageTier },
   };
 }
 
@@ -2610,6 +2613,7 @@ export async function applyGuestChanges(
         memberId: string;
         firstName?: string | null;
         lastName?: string | null;
+        ageTier?: AgeTier | null;
         consentColumns?: MemberGuestConsentColumns;
       }
     >;

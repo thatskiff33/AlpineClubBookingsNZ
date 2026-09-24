@@ -442,10 +442,10 @@ describe(`a row newly linked to a member (W15, ${ID})`, () => {
     guestId: string,
     previous: ReturnType<typeof person>,
     memberId: string,
-    linkedName: { firstName: string | null; lastName: string | null },
+    linkedName: { firstName: string | null; lastName: string | null; ageTier?: AgeTier | null },
     extra: object = {},
   ) => ({ guestId, memberId, previous, linkedName, ...extra });
-  const bob = { firstName: "Bob", lastName: "Jones" };
+  const bob = { firstName: "Bob", lastName: "Jones", ageTier: AgeTier.ADULT };
 
   it("a NAMED non-member linked to a DIFFERENT member has the other person's note replaced from the member's profile", async () => {
     // "Guest 3" was named Alice Smith and an officer recorded Alice's allergy;
@@ -498,6 +498,30 @@ describe(`a row newly linked to a member (W15, ${ID})`, () => {
       linkOf("r2", { ...person("Bbo"), lastName: "Jones" }, "m-bob", bob),
     ]);
     expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a CHILD row named like the ADULT member linked onto it is somebody else: the member's own tier decides", async () => {
+    // A child "Sam Lee" with a recorded note is linked to adult member Sam Lee
+    // (say, the parent). The link never rewrites the row's tier, so comparing the
+    // row against itself would keep the child's note on the adult's row.
+    const db = profileDb({ "m-sam": "Sam's profile" });
+    const child = { ...person("Sam", null, AgeTier.CHILD), lastName: "Lee" };
+    await applyGuestMemberLinkDietary(db, ON, [
+      linkOf("r4", child, "m-sam", { firstName: "Sam", lastName: "Lee", ageTier: AgeTier.ADULT }),
+    ]);
+    expect(db.bookingGuest.updateMany, `${ID}: the child's note must not stay on the adult's row`).toHaveBeenCalledWith({
+      where: { id: "r4", memberId: "m-sam" },
+      data: { dietaryRequirements: "Sam's profile" },
+    });
+    // An unknown member tier proves nothing either, unless the row is a placeholder.
+    const unknown = profileDb({ "m-sam": null });
+    await applyGuestMemberLinkDietary(unknown, ON, [
+      linkOf("r4", child, "m-sam", { firstName: "Sam", lastName: "Lee", ageTier: null }),
+    ]);
+    expect(unknown.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r4", memberId: "m-sam" },
+      data: { dietaryRequirements: null },
+    });
   });
 
   it("a named row linked to a member with no name on record is treated as somebody else", async () => {

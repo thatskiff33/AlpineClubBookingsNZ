@@ -529,16 +529,31 @@ export async function applyGuestMemberLinkDietary(
     guestId: string;
     memberId: string;
     previous: OccupantIdentity;
-    linkedName: { firstName?: string | null; lastName?: string | null };
+    linkedName: {
+      firstName?: string | null;
+      lastName?: string | null;
+      // The LINKED MEMBER's age tier. The link never rewrites the row's tier,
+      // so comparing the row against itself would always pass: a child row named
+      // like the adult member linked onto it would keep the child's note.
+      ageTier?: OccupantIdentity["ageTier"] | null;
+    };
   })[],
 ): Promise<void> {
-  const samePerson = (link: (typeof links)[number]) =>
-    becomesSamePersonAsMember(link.previous, {
+  const samePerson = (link: (typeof links)[number]) => {
+    const memberAgeTier = link.linkedName.ageTier;
+    // An unknown member tier cannot prove the same person; only a generated
+    // placeholder (which says nothing about who it is) is still the same.
+    if (!memberAgeTier && !isPlaceholderGuestName({ ...link.previous, memberId: null })) {
+      return false;
+    }
+    return becomesSamePersonAsMember(link.previous, {
       ...link.previous,
       memberId: link.memberId,
       firstName: link.linkedName.firstName ?? "",
       lastName: link.linkedName.lastName ?? "",
+      ageTier: memberAgeTier ?? link.previous.ageTier,
     });
+  };
   await fillBookingGuestDietaryFromProfileIfEmpty(db, seeding, links.filter(samePerson));
   const replaced = links.filter((link) => !samePerson(link));
   if (replaced.length === 0) return;
