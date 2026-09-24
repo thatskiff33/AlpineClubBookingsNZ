@@ -588,7 +588,12 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
  */
 const FRAGMENT_BUILDER = /\bbookingGuestDietary(?:Create|Update)Data\b/g;
 const IMPORT_DECLARATION = /\bimport\s*(?:type\s*)?\{[^}]*\}\s*from\s*["'`][^"'`]+["'`]\s*;?/g;
-const SEEDING_CONSTRUCTION = /\bbookingGuestDietarySeeding\s*\(|\bseedFromProfile\b/;
+// Any appearance of the constructor's NAME outside the write half, not only a
+// call: a destructuring rename, a namespace member read or a bracket lookup all
+// spell it without a following `(` (#3029 P1). Case-sensitive, so the type
+// `BookingGuestDietarySeeding` and `resolveBookingGuestDietarySeeding` are not it.
+const SEEDING_CONSTRUCTION =
+  /(?<![\w$])bookingGuestDietarySeeding(?![\w$])|\bseedFromProfile\b/;
 /**
  * N2: a named import (or re-export) from the write half, capturing its braces.
  * An `as` rename inside them is refused. A namespace import (`import * as W`)
@@ -1161,8 +1166,19 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
     for (const source of [
       `const s = bookingGuestDietarySeeding(true);`,
       `const s = { seedFromProfile: true } as never;`,
+      // P1: the name without a following call, which a call-only rule missed.
+      `const { bookingGuestDietarySeeding: s } = await import("@/lib/member-dietary-booking-writes");\ns(true);`,
+      `import * as W from "@/lib/member-dietary-booking-writes";\nconst s = W.bookingGuestDietarySeeding;\ns(true);`,
+      `import * as W from "@/lib/member-dietary-booking-writes";\nW["bookingGuestDietarySeeding"](true);`,
     ]) {
       expect(rulesOf(source, "src/lib/booking-create.ts"), source).toContain("seeding-constructor");
+    }
+    // The type and the toggle-reading resolver share a stem but are not it.
+    for (const source of [
+      `import { type BookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";`,
+      `const seeding = await resolveBookingGuestDietarySeeding();`,
+    ]) {
+      expect(rulesOf(source, "src/lib/booking-create.ts"), source).not.toContain("seeding-constructor");
     }
   });
 

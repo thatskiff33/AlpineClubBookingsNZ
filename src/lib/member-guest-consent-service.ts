@@ -379,11 +379,26 @@ async function recordBlockedConsentTransition(params: {
   respondedByMemberId: string | null;
   now: Date;
   refusal: ConsentRemovalRefusal;
+  /**
+   * The member the refused removal was about. This claim runs in a fresh
+   * transaction after the rollback, so a held-party approval may have rewritten
+   * the row to someone else in between (#3029 P2); matching the member keeps
+   * that other person's row from being claimed on this one's answer.
+   */
+  expectedMemberId: string;
 }): Promise<MemberGuestConsentOutcome> {
-  const { db, guestId, status, respondedByMemberId, now, refusal } = params;
+  const { db, guestId, status, respondedByMemberId, now, refusal, expectedMemberId } =
+    params;
 
   const claimed = await db.$transaction((tx) =>
-    claimConsentTransition(tx, guestId, status, respondedByMemberId, now),
+    claimConsentTransition(
+      tx,
+      guestId,
+      status,
+      respondedByMemberId,
+      now,
+      expectedMemberId,
+    ),
   );
   if (!claimed) return { outcome: "ALREADY_RESOLVED" };
 
@@ -591,6 +606,7 @@ export async function respondToMemberGuestConsent(params: {
       respondedByMemberId: actorMemberId,
       now,
       refusal: err,
+      expectedMemberId: targetMemberId,
     });
   }
 }
@@ -628,6 +644,9 @@ export async function expireMemberGuestConsent(params: {
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
 
+  // The member the expiry was judged for, read under the lock below; the
+  // blocked-claim fallback runs after the rollback and must match it (#3029 P2).
+  let expiringMemberId: string | null = null;
   try {
     return await db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -647,6 +666,7 @@ export async function expireMemberGuestConsent(params: {
       if (!guest || guest.memberId === null || guest.consentStatus !== "PENDING") {
         return { outcome: "ALREADY_RESOLVED" } as const;
       }
+      expiringMemberId = guest.memberId;
 
       await acquireLodgeCapacityLock(
         tx,
@@ -715,6 +735,7 @@ export async function expireMemberGuestConsent(params: {
       respondedByMemberId: null,
       now,
       refusal: err,
+      expectedMemberId: expiringMemberId,
     });
   }
 }
