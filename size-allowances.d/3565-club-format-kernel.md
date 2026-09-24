@@ -28,48 +28,51 @@ migration that adds an argument to it.
 
 file: src/app/(admin)/admin/bookings/page.tsx
 lines: 834
-reason: 1 line: `const format = await clubFormatValues()` once per render pass in the page,
-  before its data loads, and the club's format threaded to the helpers and child
-  props beneath it. The page is where the request is; the file was several times
-  its ceiling before this change added the argument.
+reason: 1 line: `const money = await clubFormat()` once at the top of the page, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this page; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/(authenticated)/dashboard/page.tsx
 lines: 989
-reason: 5 lines: `const format = await clubFormatValues()` once per render pass in the page,
-  before its data loads, and the club's format threaded to the helpers and child
-  props beneath it. The page is where the request is; the file was several times
-  its ceiling before this change added the argument.
+reason: 5 lines: `const money = await clubFormat()` once at the top of the page, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this page; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/(authenticated)/profile/page.tsx
 lines: 680
-reason: 2 lines: `const format = await clubFormatValues()` once per render pass in the page,
-  before its data loads, and the club's format threaded to the helpers and child
-  props beneath it. The page is where the request is; the file was several times
-  its ceiling before this change added the argument.
+reason: 2 lines: `const money = await clubFormat()` once at the top of the page, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this page; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/api/admin/bookings/[id]/mark-paid/route.ts
 lines: 255
-reason: 4 lines: `const format = await clubFormatValues()` once at the top of each handler
-  that renders money, before its transaction or lock, and the argument threaded
-  into the service, email and formatter calls below it. The handler is where the
-  request is, so the resolution cannot move into a helper without losing the
-  request-scoped memo; the debt here predates this change by hundreds of lines.
+reason: 4 lines: `const money = await clubFormat()` once at the top of the handler, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this handler; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
 lines: 475
-reason: 2 lines: `const format = await clubFormatValues()` once at the top of each handler
-  that renders money, before its transaction or lock, and the argument threaded
-  into the service, email and formatter calls below it. The handler is where the
-  request is, so the resolution cannot move into a helper without losing the
-  request-scoped memo; the debt here predates this change by hundreds of lines.
+reason: 2 lines: `const money = await clubFormat()` once at the top of the handler, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this handler; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/api/bookings/[id]/refund-request/route.ts
 lines: 260
-reason: 1 line: `const format = await clubFormatValues()` once at the top of each handler
-  that renders money, before its transaction or lock, and the argument threaded
-  into the service, email and formatter calls below it. The handler is where the
-  request is, so the resolution cannot move into a helper without losing the
-  request-scoped memo; the debt here predates this change by hundreds of lines.
+reason: 1 line: `const money = await clubFormat()` once at the top of the handler, beside
+  the club-time binding it already opens with, and `money.cents(...)` or the
+  bound format threaded to each amount and local helper below it. The binding
+  has to be taken where the request is, which is this handler; lifting it out
+  would lose the request-scoped memo. The debt here predates this change.
 
 file: src/app/(admin)/admin/book/page.tsx
 lines: 1686
@@ -200,8 +203,8 @@ reason: 5 lines: `const format = await clubFormatValues()` once at the top of ea
   request-scoped memo; the debt here predates this change by hundreds of lines.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1287
-reason: 4 lines: `const format = await clubFormatValues()` once at the top of each handler
+lines: 1288
+reason: 5 lines: `const format = await clubFormatValues()` once at the top of each handler
   that renders money, before its transaction or lock, and the argument threaded
   into the service, email and formatter calls below it. The handler is where the
   request is, so the resolution cannot move into a helper without losing the
@@ -514,7 +517,7 @@ reason: 3 lines: a `format: ClubFormat` parameter on the functions that render m
   the file's debt predates this change by hundreds of lines.
 
 file: src/lib/payment-reconciliation.ts
-lines: 3024
+lines: 3046
 reason: 15 lines: a `format: ClubFormat` parameter on the functions that render money, threaded
   to each formatter, template and Xero call, so this module never reads the setting
   for itself — never inside a transaction and never per amount. The argument is
@@ -522,8 +525,8 @@ reason: 15 lines: a `format: ClubFormat` parameter on the functions that render 
   the file's debt predates this change by hundreds of lines.
 
 file: src/lib/payment-recovery.ts
-lines: 3183
-reason: 24 lines: this module's entry points — a cron run, a webhook, a job or a request-
+lines: 3184
+reason: 25 lines: this module's entry points — a cron run, a webhook, a job or a request-
   facing service — each call `await clubFormatValues()` ONCE at the top, before any
   transaction or lock, and thread the result to every formatter, template and Xero
   call below; the helpers inside it take `format` as a parameter and never read the

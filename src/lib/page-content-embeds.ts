@@ -34,6 +34,7 @@ import {
 } from "@/lib/public-page-content-tokens";
 import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -219,17 +220,24 @@ function safeTokenUrl(token: string, value: string, fallbackUrl: string): string
 // Replacement values are HTML-escaped via escapeHtmlText and URL-bearing
 // tokens are additionally scheme-validated via safeTokenUrl, so this stays
 // safe to run after sanitisation.
-export async function resolveTextTokens(contentHtml: string): Promise<string> {
+export async function resolveTextTokens(
+  contentHtml: string,
+  /**
+   * The club's STORED format (#3565), resolved ONCE by the caller. A parameter
+   * rather than a read of its own: in a route handler `cache()` does not memoise,
+   * so a read here cost one query per call — three per lodge-instructions
+   * request, one per key — and `buildEmbeddedBody` already holds it.
+   */
+  format: ClubFormat,
+): Promise<string> {
   TEXT_TOKEN_REGEX.lastIndex = 0;
   const matches = Array.from(contentHtml.matchAll(TEXT_TOKEN_REGEX));
   if (matches.length === 0) {
     return contentHtml;
   }
 
-  // The club's STORED currency (#3565), not the environment's: the fee tables
-  // on the same page already render in it, and `{{currency}}` must agree with
-  // them. `cache()` dedups this with the page's own read.
-  const format = await clubFormatValues();
+  // `{{currency}}` renders the club's STORED code (#3565), the one the fee
+  // tables on the same page render in, never the environment's.
 
   // Pre-resolve each distinct lodge-capacity parameter (the replace
   // callback below is synchronous).
@@ -457,7 +465,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
   // The club's format (#3565), resolved once per render pass and shared with
   // the page through `cache()`; every fee token below renders with it.
   const format = await clubFormatValues();
-  const htmlWithTextTokens = await resolveTextTokens(contentHtml);
+  const htmlWithTextTokens = await resolveTextTokens(contentHtml, format);
   const matches = Array.from(htmlWithTextTokens.matchAll(EMBED_TOKEN_REGEX));
   const hasInlineGalleryToken = matches.some((match) => {
     const parsed = parseTokenMatch(match);

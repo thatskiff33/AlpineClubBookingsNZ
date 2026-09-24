@@ -261,8 +261,9 @@ export async function runXeroCronTaskList(
     } as XeroCronRunnerPayload & { skipped: true; reason: string };
   }
 
-  // The club's format (#3565), resolved once per run and passed to the two
-  // tasks that render money — never per report row.
+  // The club's format (#3565), resolved once per run and passed to the three
+  // tasks that render money — the retry worker, the reconciliation report and
+  // the credit-sync check — never per row.
   const format = await clubFormatValues();
   const connected = await isConnected();
   payload.connected = connected;

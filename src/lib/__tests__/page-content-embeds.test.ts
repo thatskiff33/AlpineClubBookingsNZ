@@ -74,6 +74,7 @@ import {
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("buildEmbeddedBody", () => {
   it("maps every public data token, including lodge variants, through the shared registry", async () => {
@@ -341,6 +342,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -354,6 +356,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -369,6 +372,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Contact</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe('<a href="mailto:social@example.org">Contact</a>');
@@ -378,6 +382,7 @@ describe("resolveTextTokens URL scheme validation", () => {
   it("falls back to the public URL when no facebook URL is configured", async () => {
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -390,9 +395,11 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const first = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
     const second = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(first).toBe('<a href="https://club.example.org">Facebook</a>');
@@ -407,6 +414,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe('<a href="#">Facebook</a>');
@@ -425,7 +433,7 @@ describe("resolveTextTokens URL scheme validation", () => {
     // Mirrors renderFooterSection in site-content.ts: sanitise the stored
     // HTML first, then resolve text tokens on the sanitised output.
     const sanitised = sanitizePageContentHtml(storedFooterHtml);
-    const resolved = await resolveTextTokens(sanitised);
+    const resolved = await resolveTextTokens(sanitised, CLUB_FORMAT_TEST);
 
     expect(resolved).not.toContain("javascript:");
     expect(resolved).toContain('href="https://club.example.org"');
@@ -437,6 +445,7 @@ describe("resolveTextTokens URL scheme validation", () => {
     for (const section of starterSiteContent) {
       const resolved = await resolveTextTokens(
         sanitizePageContentHtml(section.contentHtml),
+        CLUB_FORMAT_TEST,
       );
       expect(resolved).not.toContain("{{");
       expect(resolved).not.toMatch(/RMCA|Ruapehu|Federated Mountain Clubs/i);

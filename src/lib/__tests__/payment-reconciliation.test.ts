@@ -358,6 +358,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_second_settle",
       amountCents: 10000,

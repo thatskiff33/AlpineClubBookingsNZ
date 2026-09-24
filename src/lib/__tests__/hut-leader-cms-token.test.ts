@@ -36,6 +36,7 @@ vi.mock("@/lib/lodge-capacity", () => ({
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 beforeEach(() => {
   identityState.hutLeaderLabel = "Hut Leader";
@@ -71,25 +72,25 @@ describe("hut-leader CMS token resolution (#1320 follow-up)", () => {
   });
 
   it("resolves the standalone token to the configured label", async () => {
-    expect(await resolveTextTokens("{{hut-leader}}")).toBe("Hut Leader");
-    expect(await resolveTextTokens("{{hut-leader-lower}}")).toBe("hut leader");
+    expect(await resolveTextTokens("{{hut-leader}}", CLUB_FORMAT_TEST)).toBe("Hut Leader");
+    expect(await resolveTextTokens("{{hut-leader-lower}}", CLUB_FORMAT_TEST)).toBe("hut leader");
 
     identityState.hutLeaderLabel = "Duty Manager";
-    expect(await resolveTextTokens("{{hut-leader}}")).toBe("Duty Manager");
-    expect(await resolveTextTokens("{{hut-leader-lower}}")).toBe(
+    expect(await resolveTextTokens("{{hut-leader}}", CLUB_FORMAT_TEST)).toBe("Duty Manager");
+    expect(await resolveTextTokens("{{hut-leader-lower}}", CLUB_FORMAT_TEST)).toBe(
       "duty manager",
     );
   });
 
   it("is case-insensitive and whitespace tolerant like other text tokens", async () => {
     identityState.hutLeaderLabel = "Warden";
-    expect(await resolveTextTokens("{{ HUT-LEADER }}")).toBe("Warden");
-    expect(await resolveTextTokens("{{ Hut-Leader-Lower }}")).toBe("warden");
+    expect(await resolveTextTokens("{{ HUT-LEADER }}", CLUB_FORMAT_TEST)).toBe("Warden");
+    expect(await resolveTextTokens("{{ Hut-Leader-Lower }}", CLUB_FORMAT_TEST)).toBe("warden");
   });
 
   it("HTML-escapes the resolved label", async () => {
     identityState.hutLeaderLabel = "Warden & Guide";
-    expect(await resolveTextTokens("{{hut-leader}}")).toBe(
+    expect(await resolveTextTokens("{{hut-leader}}", CLUB_FORMAT_TEST)).toBe(
       "Warden &amp; Guide",
     );
   });
