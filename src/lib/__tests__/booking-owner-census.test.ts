@@ -479,7 +479,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/refund-request/route.ts:227",
   "src/app/api/bookings/[id]/refund-request/route.ts:43",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
-  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:66",
+  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
   "src/app/api/payments/create-payment-intent/route.ts:141",
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:117",
@@ -500,10 +500,10 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/kiosk-access.ts:232",
   "src/lib/manual-refund-task-queue-payload.ts:188",
   "src/lib/requested-room-write.ts:62",
-  "src/lib/waitlist-cross-lodge.ts:339",
-  "src/lib/waitlist-cross-lodge.ts:527",
-  "src/lib/waitlist.ts:1086",
-  "src/lib/waitlist.ts:944",
+  "src/lib/waitlist-cross-lodge.ts:338",
+  "src/lib/waitlist-cross-lodge.ts:526",
+  "src/lib/waitlist.ts:1088",
+  "src/lib/waitlist.ts:946",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 

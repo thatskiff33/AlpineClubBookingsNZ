@@ -140,6 +140,7 @@ import { POST as triggerMissingInvoices } from "@/app/api/admin/xero/missing-inv
 import { POST as retryAllFailedOperations } from "@/app/api/admin/xero/operations/retry-all/route";
 import { POST as forceSync } from "@/app/api/admin/xero/force-sync/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function adminSession() {
   return { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
@@ -316,7 +317,7 @@ describe("Xero admin bulk routes", () => {
     expect(mocks.enqueueXeroSyncOperationRetry).toHaveBeenNthCalledWith(2, "op-2", {
       createdByMemberId: "admin-1",
     });
-    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 });
+    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 }, CLUB_FORMAT_TEST);
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_OPERATION_RETRY_ALL",
       category: "xero",

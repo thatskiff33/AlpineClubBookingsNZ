@@ -146,6 +146,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
     // …and the supersede is told which intent NOT to retire, so the row written
     // a moment earlier cannot select itself.
     expect(mocks.queueSuperseded).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       paymentId: "payment_1",
       newPaymentIntentId: "pi_new",
