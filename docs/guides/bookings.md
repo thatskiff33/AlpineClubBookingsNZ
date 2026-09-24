@@ -303,7 +303,12 @@ members and non-members alike.
 
 - **Where the value comes from.** When a member is first added to a booking, the
   booking copies their profile value at that moment. A non-member guest starts
-  empty. A copy is made only while the field is switched on.
+  empty. A copy is made only while the field is switched on. A member who has
+  been asked to agree to being on somebody else's booking gets nothing copied
+  until they agree; when they do, their current profile value is copied if the
+  booking's entry is still empty. If you add a member as a guest yourself, you
+  will see their current profile value on the booking — that is expected, and
+  your view of the booking is audited like any other.
 - **It belongs to this stay.** A member changing their profile later does not
   change the booking, and changing the booking does not change their profile.
   Use it for a one-off trip requirement, or to record a non-member's needs.
@@ -319,7 +324,10 @@ members and non-members alike.
   never what it says.
 - **What keeps it.** Changing dates, removing a guest, a waitlist promotion or
   arrival and departure at the lodge leave each guest's value exactly as it
-  was. An approval that swaps a held party keeps each person's own value and
+  was. Correcting the spelling of a non-member's name, or naming a "Guest 3" or
+  "School Child 3" placeholder, keeps the value; renaming a non-member to a
+  different person clears it, because the note belonged to the person who
+  left. An approval that swaps a held party keeps each person's own value and
   never moves one person's note onto somebody else. **Copy booking** starts a
   new stay, so its guests are copied afresh from their current profiles.
 
@@ -458,6 +466,7 @@ lives in [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 | On a copy of the real site, an invoice email appears **nowhere** — no warning, and nothing in the withheld-emails banner either | Correct. A non-production installation never asks Xero to email an invoice, and that is not recorded as a withheld email: nobody decided to silence the member, and on a copy there is no member to relay anything to. Only the server log notes it | Nothing to do. On the real site the same booking would email the member normally |
 | The **Dietary/allergy information** card is missing | The field is switched off under **Member Fields**, or your admin role has no bookings access | Turn the field on (membership edit), or ask a full admin for bookings view access |
 | The dietary card has no **Edit** buttons | Your role can view bookings but not edit them, or the booking is deleted | Ask a full admin for bookings edit access |
+| Saving a dietary note says "This guest has changed since the page loaded" | Somebody changed who that row is for (a held request was approved, a placeholder was linked to a member, or an account was deleted) after you opened the page | Reload the booking and check which guest you are editing, then save again |
 | A guest's dietary value is empty although their profile has one | The booking was made while the field was off, or the member added it to their profile after joining the booking | Expected — a booking copies the profile once, when the guest is added. Fill it in with **Edit** |
 | A booking officer cannot see any of these warnings | The whole provider block on the Admin tools card is full-admin-only, and always has been | Ask a full admin to look, or grant full admin access |
 

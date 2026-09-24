@@ -1415,9 +1415,27 @@ then carries the column (`INV-PRIV-022`).
 field is on, each booking copies a member's profile value when they are first
 added and keeps it for that stay; booking officers and the hut leader running
 the stay see it. Turning the field on does **not** fill in existing bookings.
-During the blue-green drain, bookings the old colour creates are not seeded and
-an approval it performs that rebuilds a held party leaves that party's values
-empty — never somebody else's; a booking officer can fill them in afterwards.
+While the old colour still serves — during the drain, and again after any
+rollback to it — it does not know the column exists:
+
+- bookings it creates are not seeded, and a held party it rebuilds at approval
+  loses its values (both leave an empty value a booking officer can fill in);
+- **a held-request approval it performs that rewrites the party in place keeps
+  each row's value while changing who the row is for**, so a substituted guest
+  can show the previous person's note. Review the dietary card on any booking
+  whose held request was approved on the old colour;
+- **an account deletion it approves anonymises the member's guest rows without
+  clearing their value.**
+
+After the drain completes, and again whenever the new colour returns after a
+rollback, run this once against production to clear anonymised rows the old
+colour left behind:
+
+```sql
+UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
+WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
+  AND "dietaryRequirements" IS NOT NULL;
+```
 
 ### 3.2 Re-run the audit category backfills
 

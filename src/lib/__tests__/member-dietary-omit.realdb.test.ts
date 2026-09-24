@@ -354,5 +354,50 @@ function hasKey(row: unknown): boolean {
         SELECT "dietaryRequirements" AS value FROM "Member" WHERE id = ${PARENT_ID}`;
       expect(profile[0]?.value).toBe(VALUE);
     });
+
+    it("an admin edit racing a held-party rebuild waits on the row lock and is refused, never lost (C3)", async () => {
+      await prisma.memberAccessRole.upsert({
+        where: { memberId_role: { memberId: PARENT_ID, role: "ADMIN" } },
+        create: { memberId: PARENT_ID, role: "ADMIN" },
+        update: {},
+      });
+      const editGrant = await dietary.grantBookingAdminDietaryAccess(
+        { ok: true, session: { user: { id: PARENT_ID } } },
+        "edit",
+        { enabled: true },
+      );
+      const { lockBookingGuestRowsForUpdate } = await import("@/lib/booking-guest-row-lock");
+      let signalLocked!: () => void;
+      const locked = new Promise<void>((resolve) => (signalLocked = resolve));
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const rebuild = prisma.$transaction(
+        async (tx) => {
+          await lockBookingGuestRowsForUpdate(tx, BOOKING_ID);
+          signalLocked();
+          await gate;
+          await tx.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
+        },
+        { timeout: 20_000 },
+      );
+      await locked;
+      let settled = false;
+      const edit = dietary
+        .updateBookingGuestDietaryRequirements(editGrant!, {
+          bookingId: BOOKING_ID,
+          guestId: GUEST_ID,
+          value: "Entered while the party was being rebuilt",
+          occupant: { ...OCCUPANT, lastName: "Parent" },
+        })
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // The edit's UPDATE is blocked on the rebuild's row lock.
+      expect(settled).toBe(false);
+      release();
+      await rebuild;
+      await expect(edit).resolves.toEqual({ status: "not-found" });
+    });
   },
 );

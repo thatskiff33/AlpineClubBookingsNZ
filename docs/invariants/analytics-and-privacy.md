@@ -844,33 +844,34 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
 
 Dietary/allergy information — the profile's `Member.dietaryRequirements`
 (#2941) and each stay's `BookingGuest.dietaryRequirements` (#3029) — is ABSENT
-unless `src/lib/member-dietary.ts` selects it for a grant holder (its write
-half only seeds and carries).
+unless `src/lib/member-dietary.ts` selects it for a grant holder.
 Decisions: 20 Sep 2026 on
 [#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941); the
 [#3029](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3029) body.
 
 - **Absent by construction.** Every application Prisma client omits both columns
-  (`PRISMA_CLIENT_GLOBAL_OMIT`); elsewhere a read yields `undefined`.
-- **Profile audiences:** the subject, for their own profile and onboarding
-  while ON; their own data export, ON or OFF; a DB-verified `membership` admin
-  (editor, create, member CSV) while ON; a Full Admin merge.
+  (`PRISMA_CLIENT_GLOBAL_OMIT`). The write half
+  (`member-dietary-booking-writes.ts`) mints no grant; its fence is its closed
+  importer list, and its fragment builders, which return the plain value, may
+  appear only as a spread operand.
+- **Profile audiences:** the subject (profile, onboarding) while ON; their own
+  data export, ON or OFF; a DB-verified `membership` admin while ON; a Full
+  Admin merge.
 - **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
-  change one row) and the kiosk's `admin` and `hut-leader` tiers for that day's
-  present guests, both while ON; the subject's export, for their own guest rows
-  only. A booking grant never reads a profile, nor a profile grant a booking.
-- **Everyone else is denied, absent from the payload:** members (their own
-  booking, linked guests, the #2942 roster), family, other kiosk tiers and
-  preview, rosters, the lobby, booking and finance exports and reports, Xero,
-  Stripe, analytics, notifications, logs and raw audit metadata.
-- **OFF hides, never clears.** Only the export grant is issued and writers
-  write nothing new. Default OFF, including on a read failure.
+  change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
+  lodge's present guests that day, both while ON; the subject's export, for
+  their own rows. So an admin who adds a member as a guest sees that member's
+  current profile value there, audited. Grants never cross profile and booking.
+- **Everyone else is denied, absent from the payload:** members (own booking,
+  linked guests, the #2942 roster), family, other kiosk tiers and preview,
+  rosters, the lobby, exports, reports, Xero, Stripe, analytics, notifications,
+  logs and raw audit metadata.
+- **OFF hides, never clears.** Only the export grant is issued; writers write
+  nothing new. Default OFF, including on a read failure.
 - **One shape.** Trimmed, blank null, at most 500 characters.
-- **Records say THAT, never WHAT.** Audit rows name the field; the log
-  redactor strips `dietary`/`allerg` keys and the audit sanitizer redacts any
-  value under one.
+- **Records say THAT, never WHAT.** Audit rows name the field; the log redactor
+  and audit sanitizer strip `dietary`/`allerg` values.
 - **Merge fills if blank.** **Erasure clears** the profile and the subject's
   guest rows.
-- Proof: `member-dietary-access-census.test.ts`, a text scan of what may
-  select, import, spell or write it (no data-flow tracing), plus privacy,
-  kiosk-payload, route and real-database tests.
+- Proof: `member-dietary-access-census.test.ts`, a text scan (no data-flow
+  tracing), plus privacy, kiosk, route and real-database tests.

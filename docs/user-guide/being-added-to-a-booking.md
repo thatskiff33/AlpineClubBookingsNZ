@@ -143,7 +143,9 @@ contact the club.
   roster, the arrivals list, or a bed plan, and no arrival email names you.
 - **Your dietary/allergy note comes with you, privately.** If your club collects
   dietary/allergy information and you have recorded some on your profile, the
-  booking copies it when you are added, so the hut leader knows. That copy is
+  booking copies it when you are added — or, if you are asked to agree first,
+  only once you agree — so the hut leader knows. If you decline, nothing is
+  copied. That copy is
   for this stay only: changing your profile later does not change it (ask the
   club if this trip is different). The person who made the booking and the
   other guests never see it — only the club's booking officers and the hut

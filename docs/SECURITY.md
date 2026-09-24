@@ -123,10 +123,16 @@ this section records how it is enforced.
   own export for their own guest rows. A booking grant cannot read a profile,
   nor a profile grant a booking. A grant is an opaque object whose authority
   lives in a module-private map, so a copy of one is not a grant.
-- **The booking write side hands out tokens, not values.** Its half of the
-  boundary, `src/lib/member-dietary-booking-writes.ts`, is the only other file
-  that may name the column; it mints no grant. Every guest create site takes a
-  required dietary decision from it, and the held-party
+- **The booking write side hands out tokens, not values — and its real fence is
+  its importer list.** Its half of the boundary,
+  `src/lib/member-dietary-booking-writes.ts`, is the only other file that may
+  name the column; it mints no grant, and its carries are scoped to their
+  source booking. Its two fragment builders necessarily return the plain value
+  for Prisma to write, so what holds is the census: a closed list of booking
+  writers may import it, none may name a grant or reader, the builders may
+  appear only as a `...` spread operand, and seeding may only come from the
+  toggle. That is a text scan and holds no stronger than one. Every guest create
+  site takes a required dietary decision from it, and the held-party
   planners carry a value only by unique identity, never by position
   (`INV-MOD-059`); a writer never holds the value in readable form.
 - **The type does not say so.** `src/lib/prisma.ts` keeps the plain
