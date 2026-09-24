@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 /**
  * #2265 (epic #2245, E1) — saving as a draft must REMEMBER the member's credit

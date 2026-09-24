@@ -9,7 +9,7 @@
  * PENDING booking holding nothing.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { BookingStatus, AgeTier } from "@prisma/client";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import { BookingMemberNightConflictError } from "@/lib/booking-member-night-conflicts";

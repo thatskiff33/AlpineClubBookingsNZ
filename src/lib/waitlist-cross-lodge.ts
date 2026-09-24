@@ -54,7 +54,7 @@ import logger from "@/lib/logger";
 import {
   captureBookingGuestDietaryCarries,
   resolveBookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these

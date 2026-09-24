@@ -20,8 +20,8 @@ lines: 813
 reason: the dietary value is validated, gated and written inside the existing all-or-nothing row pipeline; splitting one field out would fork that pipeline.
 
 file: src/app/api/member/data-export/route.ts
-lines: 366
-reason: the subject's own export must include the value (owner decision 20 Sep 2026); it is one read through the dietary door plus its explanation.
+lines: 379
+reason: the subject's own export must include the value (owner decision 20 Sep 2026); it is one read through the dietary door plus its explanation. Re-measured for #3029, which adds the subject's own booking-guest values under a separate key through the same grant.
 
 file: src/app/api/member/onboarding/route.ts
 lines: 274
@@ -68,5 +68,5 @@ lines: 876
 reason: the preview must know whether the club takes the dietary column, so the dialog passes the member-fields flag it already fetches; five lines at the one preview call.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1287
-reason: account erasure must null dietary/allergy information in the same anonymising update as the rest of the person; one import and one spread of the dietary module's erasure patch.
+lines: 1291
+reason: account erasure must null dietary/allergy information in the same anonymising update as the rest of the person; one import and one spread of the dietary module's erasure patch. Re-measured for #3029, which spreads the same patch into the guest-row anonymisation so a booking's copy goes with the profile.

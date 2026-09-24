@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 /*
   #2978 review — the other-lodge flag WRITE, at the `applyGuestChanges` DB level.

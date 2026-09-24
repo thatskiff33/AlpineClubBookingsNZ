@@ -537,8 +537,9 @@ model Member {
   // Free-text dietary/allergy information (#2941, epic #3021). Optional, any
   // age tier, admin-toggleable via MemberFieldsSettings.showDietaryRequirements
   // (default OFF; OFF hides but never clears). Privacy-sensitive: the primary
-  // Prisma client OMITS it globally and only src/lib/member-dietary.ts may
-  // select it (INV-PRIV-022). Blank normalises to null; at most 500 characters.
+  // Prisma client OMITS it globally and only src/lib/member-dietary.ts (and,
+  // to seed a booking guest, its write half) may select it (INV-PRIV-022).
+  // Blank normalises to null; at most 500 characters.
   dietaryRequirements     String?          @db.VarChar(500)
 
   // Member profile photo (MP1, epic #171). Nullable FK to a MEMBER_PHOTO
@@ -2138,7 +2139,8 @@ model BookingGuest {
   // later profile edit never rewrites it and an edit here never writes back to
   // the profile (INV-MOD-059). A non-member guest may carry one too. Same
   // privacy rules as the profile value: the primary Prisma client OMITS it
-  // globally and only src/lib/member-dietary.ts may select or write it by name
+  // globally and only src/lib/member-dietary.ts and its write half
+  // (member-dietary-booking-writes.ts) may select or write it by name
   // (INV-PRIV-022). Blank normalises to null; at most 500 characters.
   dietaryRequirements        String?   @db.VarChar(500)
   arrivedAt  DateTime?

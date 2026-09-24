@@ -18,7 +18,7 @@
 //     "it wrote the wrong thing" is not something a passing quote can reveal.
 // For those, reading the source is not a shortcut; it is the only honest test.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 

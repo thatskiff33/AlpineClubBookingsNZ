@@ -121,7 +121,7 @@ import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
-import { resolveBookingGuestDietary } from "@/lib/member-dietary";
+import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
 
 // The helper types, errors, and pure functions that used to live here now live
 // in three cohesive sibling modules (types <- promo, types <- guests). Re-export

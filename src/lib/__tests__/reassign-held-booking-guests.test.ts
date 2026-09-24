@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgeTier } from "@prisma/client";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 // booking-request.ts creates a PrismaClient at import time; stub it so importing
 // the module under test never touches a real database.

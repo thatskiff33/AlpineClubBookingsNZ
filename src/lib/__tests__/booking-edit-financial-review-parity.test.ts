@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import fs from "node:fs";
 import path from "node:path";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";

@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
-import {
-  checkLodgeAuth,
-  getLodgeAuthActorMemberId,
-  kioskLodgeAuthErrorResponse,
-  resolveKioskLodgeId,
-} from "@/lib/lodge-auth";
-import {
-  grantKioskDietaryAccess,
-  readKioskGuestDietaryRequirements,
-} from "@/lib/member-dietary";
+import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
+import { attachKioskGuestDietary } from "@/lib/member-dietary";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { GROUP_TRIP_IDENTITY_SELECT } from "@/lib/group-trip-identity";
 import { attachKioskGroupTrip } from "@/lib/kiosk-group-trip";
@@ -23,12 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
-import {
-  getGuestOperationalDayPresence,
-  isGuestDepartureMorning,
-  isGuestReturningOnDay,
-  getOperationallyPresentGuestsForDay,
-} from "@/lib/booking-guest-stay-ranges";
+import { getGuestOperationalDayPresence, isGuestDepartureMorning, isGuestReturningOnDay, getOperationallyPresentGuestsForDay } from "@/lib/booking-guest-stay-ranges";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -242,33 +229,8 @@ async function handleGet(req: NextRequest, dateStr: string) {
     })
     .filter((booking) => booking.guests.length > 0);
 
-  // #3029 (`INV-PRIV-022`): the stay's dietary/allergy notes, for the kiosk's
-  // `admin` and `hut-leader` tiers ONLY, and only for the guests this list
-  // already shows (the present population computed above). Every other tier —
-  // the unattended `lodge` wall, `staying-guest`, an admin's preview of a kiosk
-  // account — gets no grant, and its guests carry NO `dietaryRequirements` key
-  // at all: absent from the payload, not merely unrendered.
-  const dietaryGrant = await grantKioskDietaryAccess({
-    tier,
-    preview: "preview" in authResult ? authResult.preview : undefined,
-    actorMemberId: getLodgeAuthActorMemberId(authResult),
-    presentGuestIds: result.flatMap((b) => b.guests.map((g) => g.id)),
-  });
-  const withDietary = dietaryGrant
-    ? await (async () => {
-        const values = await readKioskGuestDietaryRequirements(
-          dietaryGrant,
-          result.flatMap((b) => b.guests.map((g) => g.id)),
-        );
-        return result.map((b) => ({
-          ...b,
-          guests: b.guests.map((g) => ({
-            ...g,
-            dietaryRequirements: values.get(g.id) ?? null,
-          })),
-        }));
-      })()
-    : result;
+  // #3029 (`INV-PRIV-022`): admin + hut-leader tiers only; every other tier's guests carry no key.
+  const withDietary = await attachKioskGuestDietary({ ...authResult, actorMemberId: getLodgeAuthActorMemberId(authResult) }, result);
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);

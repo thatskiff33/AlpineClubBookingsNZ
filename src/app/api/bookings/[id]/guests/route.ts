@@ -12,7 +12,7 @@ import {
   bookingGuestDietaryCreateData,
   resolveBookingGuestDietary,
   resolveBookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,

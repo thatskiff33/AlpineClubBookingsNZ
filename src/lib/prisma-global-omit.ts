@@ -8,7 +8,8 @@
  * return value and every other default Member projection simply does not carry
  * it, so a new reader cannot leak it by forgetting a filter. The only opt-in is
  * an explicit `select: { dietaryRequirements: true }` inside
- * `src/lib/member-dietary.ts`, and `member-dietary-access-census.test.ts`
+ * `src/lib/member-dietary.ts` or its booking write half
+ * (`member-dietary-booking-writes.ts`), and `member-dietary-access-census.test.ts`
  * refuses one anywhere else, refuses a local `omit` override, refuses a raw-SQL
  * read of the column, and refuses an application `new PrismaClient(...)` that
  * does not pass this constant.

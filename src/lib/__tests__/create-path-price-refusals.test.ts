@@ -69,7 +69,7 @@ import { dateOnlyFromParts } from "@/lib/date-only";
 import {
   bookingGuestDietarySeeding,
   resolveBookingGuestDietary,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 
 // #3029: builder calls need a dietary decision per guest; nothing is seeded here.
 const NO_DIETARY = await resolveBookingGuestDietary(

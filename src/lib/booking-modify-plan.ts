@@ -148,7 +148,7 @@ import {
   fillBookingGuestDietaryFromProfileIfEmpty,
   resolveBookingGuestDietary,
   type BookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 
 type ProposedGuestPricingInput = {
   bookingGuestId?: string | null;

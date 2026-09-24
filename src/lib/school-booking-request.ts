@@ -103,7 +103,7 @@ import logger from "@/lib/logger";
 import {
   resolveBookingGuestDietary,
   resolveBookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 // #2483: the club's own applied-credit total, so the admin's hand-written
 // invoice asks for the same figure the member's confirmation does.
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";

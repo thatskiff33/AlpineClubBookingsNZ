@@ -24,7 +24,7 @@ import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
   bookingGuestDietaryCreateData,
   type BookingGuestDietaryWrite,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import {
   type BookingGuestInput,
   BookingReviewJustificationRequiredError,

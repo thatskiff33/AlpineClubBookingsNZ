@@ -82,7 +82,7 @@ import {
   resolveBookingGuestDietary,
   resolveBookingGuestDietarySeeding,
   type BookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import {
   priceBookingGuests,
   toSeasonRateData,

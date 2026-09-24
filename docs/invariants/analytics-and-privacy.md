@@ -844,14 +844,14 @@ Decided on [#2703](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/27
 
 Dietary/allergy information — the profile's `Member.dietaryRequirements`
 (#2941) and each stay's `BookingGuest.dietaryRequirements` (#3029) — is ABSENT
-unless `src/lib/member-dietary.ts` selects it for a caller holding a grant.
+unless `src/lib/member-dietary.ts` selects it for a grant holder (its write
+half only seeds and carries).
 Decisions: 20 Sep 2026 on
 [#2941](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2941); the
 [#3029](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3029) body.
 
 - **Absent by construction.** Every application Prisma client omits both columns
-  (`PRISMA_CLIENT_GLOBAL_OMIT`); the module is the only opt-in, and a read
-  elsewhere yields `undefined`.
+  (`PRISMA_CLIENT_GLOBAL_OMIT`); elsewhere a read yields `undefined`.
 - **Profile audiences:** the subject, for their own profile and onboarding
   while ON; their own data export, ON or OFF; a DB-verified `membership` admin
   (editor, create, member CSV) while ON; a Full Admin merge.
@@ -865,12 +865,12 @@ Decisions: 20 Sep 2026 on
   Stripe, analytics, notifications, logs and raw audit metadata.
 - **OFF hides, never clears.** Only the export grant is issued and writers
   write nothing new. Default OFF, including on a read failure.
-- **One shape.** Trimmed, blank stored as null, at most 500 characters.
+- **One shape.** Trimmed, blank null, at most 500 characters.
 - **Records say THAT, never WHAT.** Audit rows name the field; the log
   redactor strips `dietary`/`allerg` keys and the audit sanitizer redacts any
   value under one.
 - **Merge fills if blank.** **Erasure clears** the profile and the subject's
   guest rows.
 - Proof: `member-dietary-access-census.test.ts`, a text scan of what may
-  select, import, spell or write it (no data-flow tracing), plus the privacy,
-  booking-privacy, kiosk-payload, routes and real-database tests.
+  select, import, spell or write it (no data-flow tracing), plus privacy,
+  kiosk-payload, route and real-database tests.

@@ -77,7 +77,7 @@ import {
 import {
   resolveBookingGuestDietary,
   resolveBookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
   type BookingPaymentMethod,

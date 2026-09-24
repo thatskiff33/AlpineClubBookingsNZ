@@ -8,7 +8,7 @@
  * OverCapacityConfirmationRequiredError keeps working with `instanceof`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import {
   OverCapacityConfirmationRequiredError,

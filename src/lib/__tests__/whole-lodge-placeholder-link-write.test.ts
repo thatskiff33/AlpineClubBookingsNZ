@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 /*
   #2337 — the placeholder→member link WRITE, at the `applyGuestChanges` DB level.

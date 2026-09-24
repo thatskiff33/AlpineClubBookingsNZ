@@ -38,10 +38,12 @@
  *  7. MERGE CALLERS: the merge engine mints a scoped merge grant internally and
  *     its preview returns both values, so calling it is confined to a listed set
  *     of files too.
- *  8. WRITE SIDE (#3029): a booking writer that imports the module may import
- *     only its write half — never a grant, reader or loader — and no file but
- *     the module writes the column by name. Every BookingGuest create site is on
- *     a closed list and hands its builder a dietary decision (`INV-MOD-059`).
+ *  8. WRITE SIDE (#3029): the door's write half,
+ *     `src/lib/member-dietary-booking-writes.ts`, is imported only by a closed
+ *     list of booking writers, none of which may name a grant, reader or
+ *     loader, and no file but the two boundary files writes the column by name.
+ *     Every BookingGuest create site is on a closed list and hands its builder a
+ *     dietary decision (`INV-MOD-059`).
  *
  * WHAT IT CANNOT SEE, stated so nobody reads it as stronger than it is. It
  * matches text, not data flow. A listed file that reads `.dietaryRequirements`
@@ -65,6 +67,14 @@ const LIFECYCLE_INVARIANT_ID = "INV-MOD-059";
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
 const CANONICAL_MODULE = "src/lib/member-dietary.ts";
+/**
+ * The same boundary's write half (#3029), split from the door only for size. It
+ * may select and write the column like the door, but it mints no grant, and it
+ * is imported through its own closed list (`BOOKING_WRITES_IMPORTERS`).
+ */
+const BOOKING_WRITES_MODULE = "src/lib/member-dietary-booking-writes.ts";
+/** Files allowed to select, omit-override or write the column by name. */
+const COLUMN_OWNERS: ReadonlySet<string> = new Set([CANONICAL_MODULE, BOOKING_WRITES_MODULE]);
 const OMIT_CONSTANT_MODULE = "src/lib/prisma-global-omit.ts";
 
 /**
@@ -127,6 +137,10 @@ const WRITE_SIDE = { allow: ["booking"], side: "write" } as const;
  */
 const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   [CANONICAL_MODULE]: "the one door: grants, selects and the write patch",
+  [BOOKING_WRITES_MODULE]: {
+    reason: "the door's write half: seeds, carries and rewrites booking values (#3029)",
+    ...BOOKING,
+  },
   [OMIT_CONSTANT_MODULE]: "the client-wide omission itself",
   "src/components/member-dietary-requirements-field.tsx":
     "the one input, shared by self and admin screens",
@@ -169,8 +183,6 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
     reason: "the one booking-value edit route (R4), bookings:edit",
     ...BOOKING,
   },
-  "src/app/api/lodge/guests/[date]/route.ts":
-    "kiosk day list (R2): the key exists only for the admin and hut-leader tiers",
   "src/app/(lodge)/lodge/kiosk/page.tsx": {
     reason: "kiosk day list display; the key is absent for every denied tier",
     ...KIOSK,
@@ -214,8 +226,20 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
     allow: [],
     side: "read",
   },
-  // #3029 WRITERS: the write half only (seeding, resolver, carries, planners,
-  // the create/update fragments). Rule 8 refuses a grant or reader here.
+  [BOOKING_WRITES_MODULE]: {
+    reason: "the write half reads the field toggle through the door (#3029)",
+    ...BOOKING,
+    side: "write",
+  },
+};
+
+/**
+ * Rule 8's list (#3029): the closed set of booking WRITERS that import the write
+ * half. Every entry is a `write` entry: rule 8 refuses a grant, reader or
+ * loader in any of them, so a booking writer can decide what a row carries but
+ * can never read a value back.
+ */
+const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/app/api/bookings/route.ts": { reason: "W1/W2/W4 seeding read", ...WRITE_SIDE },
   "src/app/api/bookings/[id]/guests/route.ts": { reason: "W10 add guest", ...WRITE_SIDE },
   "src/lib/admin-booking-copy.ts": { reason: "W19 copy re-seeds", ...WRITE_SIDE },
@@ -238,6 +262,10 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/lib/school-booking-request.ts": { reason: "W8 school, W9 whole-lodge", ...WRITE_SIDE },
   "src/lib/waitlist-cross-lodge.ts": { reason: "W18 cross-lodge offer carries", ...WRITE_SIDE },
 };
+
+/** An import of the write half, in the same spellings as the door's. */
+const BOOKING_WRITES_IMPORT =
+  /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'`](?:@\/lib\/|(?:\.{1,2}\/)+(?:[\w-]+\/)*)member-dietary-booking-writes(?:\.[cm]?[jt]sx?)?["'`]/;
 
 /**
  * Rule 6: path fragments of surfaces the value must never reach. A reach or
@@ -387,7 +415,7 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
 
   if (
     SELECT_OR_OMIT.test(code) &&
-    file !== CANONICAL_MODULE &&
+    !COLUMN_OWNERS.has(file) &&
     file !== OMIT_CONSTANT_MODULE
   ) {
     findings.push({
@@ -473,7 +501,19 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
     });
   }
 
-  const importerEntry = DIETARY_MODULE_IMPORTERS[file];
+  if (
+    file !== BOOKING_WRITES_MODULE &&
+    BOOKING_WRITES_IMPORT.test(code) &&
+    !(file in BOOKING_WRITES_IMPORTERS)
+  ) {
+    findings.push({
+      rule: "writes-import",
+      file,
+      detail: "imports the booking write half but is not in BOOKING_WRITES_IMPORTERS",
+    });
+  }
+
+  const importerEntry = BOOKING_WRITES_IMPORTERS[file] ?? DIETARY_MODULE_IMPORTERS[file];
   if (
     typeof importerEntry === "object" &&
     importerEntry.side === "write" &&
@@ -488,7 +528,7 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
   }
 
   if (
-    file !== CANONICAL_MODULE &&
+    !COLUMN_OWNERS.has(file) &&
     BOOKING_GUEST_WRITE_CALL.test(code) &&
     IDENTIFIER.test(code)
   ) {
@@ -496,7 +536,7 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
       rule: "writer-names-column",
       file,
       detail:
-        "writes BookingGuest rows and names dietaryRequirements; only the canonical module writes the column",
+        "writes BookingGuest rows and names dietaryRequirements; only the dietary boundary writes the column",
     });
   }
 
@@ -569,6 +609,7 @@ let cached: {
   findings: Finding[];
   reached: string[];
   importers: string[];
+  writesImporters: string[];
 } | null = null;
 function census() {
   if (cached) return cached;
@@ -578,6 +619,7 @@ function census() {
   const findings: Finding[] = [];
   const reached: string[] = [];
   const importers: string[] = [];
+  const writesImporters: string[] = [];
   for (const file of files) {
     const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
     findings.push(...scanDietaryAccessSource(file, source));
@@ -586,8 +628,17 @@ function census() {
     if (file !== CANONICAL_MODULE && DIETARY_MODULE_IMPORT.test(code)) {
       importers.push(file);
     }
+    if (file !== BOOKING_WRITES_MODULE && BOOKING_WRITES_IMPORT.test(code)) {
+      writesImporters.push(file);
+    }
   }
-  cached = { files, findings, reached: reached.sort(), importers: importers.sort() };
+  cached = {
+    files,
+    findings,
+    reached: reached.sort(),
+    importers: importers.sort(),
+    writesImporters: writesImporters.sort(),
+  };
   return cached;
 }
 
@@ -624,6 +675,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "merge-caller",
     "write-side-door",
     "writer-names-column",
+    "writes-import",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -677,6 +729,13 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     expect(census().importers).toEqual(Object.keys(DIETARY_MODULE_IMPORTERS).sort());
   });
 
+  it("the write-half importer list is exact, and every entry is a write entry (#3029)", () => {
+    expect(census().writesImporters).toEqual(Object.keys(BOOKING_WRITES_IMPORTERS).sort());
+    for (const [file, entry] of Object.entries(BOOKING_WRITES_IMPORTERS)) {
+      expect(typeof entry === "object" && entry.side, file).toBe("write");
+    }
+  });
+
   it("the real-database omission proof stays wired into the CI harness", () => {
     // It self-skips without RUN_CONCURRENCY_RACE_TESTS, so an unwired file
     // would pass everywhere while proving nothing.
@@ -704,6 +763,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     const egress = [
       ...Object.entries(DIETARY_REACH),
       ...Object.entries(DIETARY_MODULE_IMPORTERS),
+      ...Object.entries(BOOKING_WRITES_IMPORTERS),
       ...Object.entries(MERGE_ENGINE_CALLERS),
     ].flatMap(([file, entry]) =>
       unallowedEgress(file, entry).map((family) => `${file} (${family})`),
@@ -720,6 +780,7 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     const allowances = [
       ...Object.values(DIETARY_REACH),
       ...Object.values(DIETARY_MODULE_IMPORTERS),
+      ...Object.values(BOOKING_WRITES_IMPORTERS),
     ].flatMap((entry) => allowedFamilies(entry));
     for (const family of allowances) {
       expect(ALLOWABLE_EGRESS_FAMILIES as readonly string[], family).toContain(family);
@@ -766,7 +827,7 @@ describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () =
 
   it("every BookingGuest create site is on the closed list", () => {
     const sites = census()
-      .files.filter((file) => file.startsWith("src/") && file !== CANONICAL_MODULE)
+      .files.filter((file) => file.startsWith("src/") && !COLUMN_OWNERS.has(file))
       .filter((file) => {
         const text = code(file);
         return NESTED_GUEST_CREATE.test(text) || DIRECT_GUEST_CREATE.test(text);
@@ -965,7 +1026,7 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
     const writer = "src/lib/booking-create.ts";
     expect(
       rulesOf(
-        `import { resolveBookingGuestDietary } from "@/lib/member-dietary";\nconst w = await resolveBookingGuestDietary(tx, s, g);`,
+        `import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";\nconst w = await resolveBookingGuestDietary(tx, s, g);`,
         writer,
       ),
     ).not.toContain("write-side-door");
@@ -975,6 +1036,18 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
         writer,
       ),
     ).toContain("write-side-door");
+  });
+
+  it("reports an unlisted importer of the booking write half (#3029)", () => {
+    expect(
+      rulesOf(`import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";`),
+    ).toContain("writes-import");
+    expect(
+      rulesOf(
+        `import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";`,
+        "src/lib/booking-create.ts",
+      ),
+    ).not.toContain("writes-import");
   });
 
   it("reports a file that writes BookingGuest rows naming the column (#3029)", () => {

@@ -26,7 +26,7 @@ import {
   planHeldPartyRebuildDietary,
   planHeldPartyRewriteDietary,
   resolveBookingGuestDietary,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import { buildGuestCreateData } from "@/lib/booking-create-guests";
 import { toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { reassignHeldBookingGuests } from "@/lib/booking-request";

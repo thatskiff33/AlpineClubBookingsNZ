@@ -36,7 +36,7 @@ import logger from "@/lib/logger";
 import {
   bookingGuestDietaryCreateData,
   type BookingGuestDietaryWrite,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 import {
   assertMembershipTypeBookingAllowed,
   resolveGuestRateMembershipTypes,

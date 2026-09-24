@@ -18,7 +18,7 @@ import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings"
 import type {
   BookingGuestDietarySeeding,
   CarriedBookingGuestDietary,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 
 export type BookingWithGuests = Booking & { guests: BookingGuest[] };
 

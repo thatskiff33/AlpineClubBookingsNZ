@@ -82,7 +82,7 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
-import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
   assertCheckInClearsXeroLockDate,

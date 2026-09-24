@@ -70,7 +70,7 @@ import type { PolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import {
   resolveBookingGuestDietarySeeding,
   type BookingGuestDietarySeeding,
-} from "@/lib/member-dietary";
+} from "@/lib/member-dietary-booking-writes";
 
 /**
  * #2526 — the REAL {@link PolicyExceptionApprovalHooks} the admin approval route

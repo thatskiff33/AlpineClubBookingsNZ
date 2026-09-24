@@ -28,7 +28,7 @@ import {
 } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
-import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
