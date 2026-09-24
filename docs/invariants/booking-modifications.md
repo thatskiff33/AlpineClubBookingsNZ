@@ -1938,25 +1938,26 @@ lifecycle.
 
 - **Seeded once**, when the row is first created, from the linked member's
   CURRENT profile value, only while the toggle is ON (read before the
-  transaction; the profile read uses its `tx`, `INV-LOCK-004`), and never while
+  transaction, `INV-LOCK-004`), and never while
   that member's consent to be on the booking is PENDING. A non-member starts
   empty. Turning the toggle ON backfills nothing.
 - **Independent afterwards.** A profile edit never rewrites it; the one admin
   edit (`bookings:edit`, matched to the occupant the editor saw) never writes the
   profile and is not a booking modification (`INV-MOD-001`).
-- **Preserved** by date moves, guest removal, waitlist promotion, school
-  renames, price repair and arrive/depart, which never name the column.
+- **Preserved** by date moves, removal, promotion, school renames, price
+  repair and arrive/depart, which never name the column.
 - **One same-occupant rule** (`isSameBookingGuestOccupant`): the same member id;
   for a non-member, a generated placeholder being named, or the same name or an
   unambiguous spelling correction at the same age tier. A non-member renamed to
   anybody else, or a held-party row rewritten for a different person, loses the
   value; a substituted member is seeded from their own profile. A non-member row
-  becoming a member, a placeholder linked to a member, and a granted consent
-  fill only an empty row.
-- **Rebuilds carry by identity, never position.** A held party recreated at
-  approval locks its rows first and carries a value only on a member id, or an
-  exact non-member name and age tier, unique on both sides. The cross-lodge
-  offer carries every row; an admin copy re-seeds (`INV-GUEST-011`).
+  becoming a member who passes the same name test, a placeholder linked to a
+  member, and a granted consent fill only an empty row.
+- **Rebuilds carry by identity, never position.** An approval that rebuilds
+  or rewrites a held party locks its rows first; a rebuild carries a value only
+  on a member id, or an exact non-member name and tier, unique on both sides.
+  The cross-lodge offer carries every row; an admin copy re-seeds
+  (`INV-GUEST-011`).
 - **Limits.** Any hold release (correction, release route, quote expiry,
   cancellation) strands a value entered on the held booking; the next hold
   starts afresh. Drain limits: the migration ledger.
