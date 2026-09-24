@@ -7,6 +7,7 @@ import {
 } from "@/lib/booking-narrative";
 import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * The club's binding, supplied the way both real callers supply it (#3123). It
@@ -55,7 +56,7 @@ describe("resolveBookingNarrative", () => {
       club: CLUB,
       booking: booking({ status: "PENDING" }),
       events: [event(BookingEventType.CREATED, "2026-07-01T00:00:00.000Z")],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("payable");
     expect(result.message).toContain("$120.00");
@@ -74,7 +75,7 @@ describe("resolveBookingNarrative", () => {
         revokedAt: null,
       },
       now: new Date("2026-07-01T00:00:00.000Z"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("expired_payable");
     expect(result.nextStep).toMatch(/fresh payment link/i);
@@ -91,7 +92,7 @@ describe("resolveBookingNarrative", () => {
         revokedAt: new Date("2026-07-01T00:00:00.000Z"),
       },
       now: new Date("2026-07-02T00:00:00.000Z"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("expired_payable");
   });
@@ -106,7 +107,7 @@ describe("resolveBookingNarrative", () => {
           amountCents: 12000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
     expect(result.message).toContain("Thanks Sam");
@@ -123,7 +124,7 @@ describe("resolveBookingNarrative", () => {
           amountCents: 12000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
   });
@@ -137,7 +138,7 @@ describe("resolveBookingNarrative", () => {
           amountCents: 0,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
     expect(result.message).toMatch(/no payment was required/i);
@@ -153,7 +154,7 @@ describe("resolveBookingNarrative", () => {
           snapshot: { flagged: false },
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("bumped");
     expect(result.message).toContain("filled up");
@@ -167,7 +168,7 @@ describe("resolveBookingNarrative", () => {
       club: CLUB,
       booking: booking({ status: "BUMPED" }),
       events: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("bumped");
   });
@@ -180,7 +181,7 @@ describe("resolveBookingNarrative", () => {
         event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z"),
         event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z"),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_pre_payment");
     expect(result.message).toContain("cancelled on 5 May 2026");
@@ -212,7 +213,7 @@ describe("resolveBookingNarrative", () => {
           amountCents: 9000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_post_payment");
     expect(result.message).toBe(
@@ -257,7 +258,7 @@ describe("resolveBookingNarrative", () => {
           },
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_post_payment");
     expect(result.message).toBe(
@@ -292,7 +293,7 @@ describe("resolveBookingNarrative", () => {
           amountCents: 9000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_post_payment");
     expect(result.message).toContain("$90.00 was added to your account credit");
@@ -319,7 +320,7 @@ describe("resolveBookingNarrative", () => {
           },
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_post_payment");
     expect(result.message).toContain("no refund was due and the full $120.00 was retained");
@@ -334,7 +335,7 @@ describe("resolveBookingNarrative", () => {
         adminReviewNotes: "Youth-only party needs an accompanying adult.",
       }),
       events: [event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z")],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("declined");
     expect(result.message).toContain(
@@ -348,7 +349,7 @@ describe("resolveBookingNarrative", () => {
       club: CLUB,
       booking: booking({ status: "AWAITING_REVIEW", adminReviewStatus: "PENDING" }),
       events: [event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z")],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("under_review");
     expect(result.message).toMatch(/review/i);
@@ -386,12 +387,12 @@ describe("resolveBookingNarrative", () => {
         usedAt: null,
         revokedAt: null,
       },
-    });
+    }, CLUB_FORMAT_TEST);
     const adminView = resolveBookingNarrative({
       club: CLUB,
       booking: cancelledBooking,
       events,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(publicView).toEqual(adminView);
   });
@@ -404,7 +405,7 @@ describe("resolveBookingNarrative", () => {
       booking({ status: "BUMPED" }),
     ];
     for (const b of states) {
-      const result = resolveBookingNarrative({ booking: b, events: [], club: CLUB });
+      const result = resolveBookingNarrative({ booking: b, events: [], club: CLUB }, CLUB_FORMAT_TEST);
       expect(result.message).not.toMatch(/contact the booking officer/i);
       expect(result.nextStep).not.toMatch(/contact the booking officer/i);
     }
@@ -420,7 +421,7 @@ describe("resolveBookingNarrative", () => {
         club: CLUB,
         booking: booking({ status }),
         events: [],
-      });
+      }, CLUB_FORMAT_TEST);
       return (
         !result.headline.trim() ||
         !result.message.trim() ||
@@ -489,7 +490,7 @@ describe("a stay change that saved while its money is still being worked out (#3
   };
 
   it("confirms the saved change first, and says the club is working the amount out", () => {
-    const result = resolveBookingNarrative(REVIEW_ALONE);
+    const result = resolveBookingNarrative(REVIEW_ALONE, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("financial_review_pending");
     expect(result.headline).toBe("Your booking change is saved");
@@ -504,7 +505,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     // would put an authoritative-looking figure beside a sentence saying the
     // figure is unknown. `$` is asserted absent rather than a specific number,
     // so any amount reaching this copy trips it.
-    const result = resolveBookingNarrative(REVIEW_ALONE);
+    const result = resolveBookingNarrative(REVIEW_ALONE, CLUB_FORMAT_TEST);
 
     expect(result.message).not.toContain("$");
     expect(result.nextStep).not.toContain("$");
@@ -527,7 +528,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     answer about the payment at all.
   */
   it("confirms the payment it has received, and discloses the review beside it", () => {
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("financial_review_pending");
     expect(result.headline).toBe("Payment received");
@@ -555,7 +556,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     // event - not the post-edit total the standalone narrative refuses, and not
     // a guess at the adjustment. Exactly one figure, so a second one appearing
     // trips this.
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST);
 
     expect(result.message.match(/\$/g)).toHaveLength(1);
     expect(result.message).not.toMatch(/\$0\.00/);
@@ -571,7 +572,7 @@ describe("a stay change that saved while its money is still being worked out (#3
       booking: booking({ status: "PAID" }),
       events: [],
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.headline).toBe("Booking confirmed");
     expect(result.message).toContain("No payment was required.");
@@ -584,7 +585,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     const result = resolveBookingNarrative({
       ...REVIEW,
       booking: booking({ status: "COMPLETED" }),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("financial_review_pending");
     expect(result.message).toContain("we've received your payment of $120.00");
@@ -595,7 +596,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     const result = resolveBookingNarrative({
       ...REVIEW,
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
     expect(result.message).toContain("we've received your payment of $120.00");
@@ -605,7 +606,7 @@ describe("a stay change that saved while its money is still being worked out (#3
   });
 
   it("says nothing has moved, and never that settlement is complete", () => {
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST);
 
     expect(result.message).toMatch(/nothing has been refunded or charged/i);
     expect(result.message).not.toMatch(/refunded to you|has been credited|processed/i);
@@ -614,7 +615,7 @@ describe("a stay change that saved while its money is still being worked out (#3
   it("uses no internal vocabulary and blames nobody", () => {
     // #3033 forbids corruption terminology and blaming the member. The evidence
     // vocabulary stays on the admin screen.
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST);
     const copy = `${result.headline} ${result.message} ${result.nextStep}`;
 
     expect(copy).not.toMatch(
@@ -626,23 +627,23 @@ describe("a stay change that saved while its money is still being worked out (#3
   it("does not collide with the admin approval queue's own state", () => {
     // `under_review` already means "an officer has not allowed this booking
     // yet", which is a different and more alarming claim than the true one.
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST);
     const approval = resolveBookingNarrative({
       club: CLUB,
       booking: booking({ status: "AWAITING_REVIEW" }),
       events: [],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(approval.state).toBe("under_review");
     expect(result.state).not.toBe(approval.state);
   });
 
   it("outranks the paid narrative, whose next step is the false reassurance", () => {
-    const paid = resolveBookingNarrative({ ...REVIEW, financialReviewPending: false });
+    const paid = resolveBookingNarrative({ ...REVIEW, financialReviewPending: false }, CLUB_FORMAT_TEST);
 
     expect(paid.state).toBe("paid");
     expect(paid.nextStep).toMatch(/nothing more to do/i);
-    expect(resolveBookingNarrative(REVIEW).nextStep).not.toMatch(
+    expect(resolveBookingNarrative(REVIEW, CLUB_FORMAT_TEST).nextStep).not.toMatch(
       /nothing more to do/i,
     );
   });
@@ -655,7 +656,7 @@ describe("a stay change that saved while its money is still being worked out (#3
       booking: booking({ status: "CANCELLED" }),
       events: [event(BookingEventType.CANCELLED, "2026-07-05T00:00:00.000Z")],
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("cancelled_pre_payment");
   });
@@ -673,7 +674,7 @@ describe("a stay change that saved while its money is still being worked out (#3
       booking: booking({ status: "CONFIRMED" }),
       events: [],
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("financial_review_pending");
     // The payment facts survive intact — the amount due and the instruction to
@@ -710,7 +711,7 @@ describe("a stay change that saved while its money is still being worked out (#3
         booking: booking({ status }),
         events: [],
         financialReviewPending: true,
-      });
+      }, CLUB_FORMAT_TEST);
 
       expect(result.state).toBe("financial_review_pending");
       expect(result.message).toContain("$120.00 is due");
@@ -731,7 +732,7 @@ describe("a stay change that saved while its money is still being worked out (#3
         expiresAt: new Date("2026-06-01T00:00:00.000Z"),
       },
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.headline).toBe("Payment link expired");
     expect(result.nextStep).toMatch(/request a fresh payment link/i);
@@ -746,7 +747,7 @@ describe("a stay change that saved while its money is still being worked out (#3
       booking: booking({ status: "CONFIRMED" }),
       events: [],
       financialReviewPending: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.message.match(/\$/g)).toHaveLength(1);
     expect(result.message).not.toMatch(/\$0\.00/);
@@ -763,7 +764,7 @@ describe("a stay change that saved while its money is still being worked out (#3
           amountCents: 12000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
   });

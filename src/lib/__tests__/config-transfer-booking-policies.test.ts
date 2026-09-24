@@ -161,7 +161,7 @@ describe("config-transfer booking policies (#2363)", () => {
     // refused rather than half-applied.
     expect(parsed.files.has(ADULT_MEMBER_HOSTING_FILE)).toBe(true);
 
-    const plan = await buildImportPlan(db(), exported.zip, { mode: "merge" });
+    const plan = await buildImportPlan(db(), exported.zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors).toEqual([]);
     expect(plan.summary).toEqual({
       create: 0,

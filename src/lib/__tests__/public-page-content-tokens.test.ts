@@ -137,7 +137,7 @@ describe("public PageContent token view models", () => {
       { key: "ASSOC", name: "Associate", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 8000 }] },
     ]);
     mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
-    await expect(loadPublicJoiningFees({ byAge: true })).resolves.toEqual([
+    await expect(loadPublicJoiningFees(CLUB_FORMAT_TEST, { byAge: true })).resolves.toEqual([
       { heading: "Adult", rows: [
         { label: "Full", fee: { amountCents: 12500, label: "$125.00" } },
         { label: "Associate", fee: { amountCents: 8000, label: "$80.00" } },
@@ -150,14 +150,14 @@ describe("public PageContent token view models", () => {
       { key: "FULL", name: "Full", ageGroupsApply: true, joiningFees: [{ ageTier: "ADULT", amountCents: 12500 }] },
     ]);
     mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
-    await expect(loadPublicJoiningFees({ typeKey: "NOT_LISTED" })).resolves.toEqual([]);
+    await expect(loadPublicJoiningFees(CLUB_FORMAT_TEST, { typeKey: "NOT_LISTED" })).resolves.toEqual([]);
   });
 
   it("fails closed for an invalid lodge slug", async () => {
     mocks.lodge.mockResolvedValue(null);
-    await expect(loadPublicHutFees("missing-lodge")).resolves.toEqual([]);
+    await expect(loadPublicHutFees(CLUB_FORMAT_TEST, "missing-lodge")).resolves.toEqual([]);
     await expect(loadPublicBookingPolicy("missing-lodge")).resolves.toBeNull();
-    await expect(loadPublicCancellationPolicy("missing-lodge")).resolves.toBeNull();
+    await expect(loadPublicCancellationPolicy(CLUB_FORMAT_TEST, "missing-lodge")).resolves.toBeNull();
     expect(mocks.seasons).not.toHaveBeenCalled();
     expect(mocks.cancellation).not.toHaveBeenCalled();
   });
@@ -180,7 +180,7 @@ describe("public PageContent token view models", () => {
         { label: "Work party", amountCents: 5000 },
       ] }] },
     ]);
-    await expect(loadPublicAnnualFees({ components: true })).resolves.toEqual([
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST, { components: true })).resolves.toEqual([
       { heading: "Full", rows: [
         { label: "Base membership", fee: { amountCents: 10000, label: "$100.00" } },
         { label: "Work party", fee: { amountCents: 5000, label: "$50.00" } },
@@ -467,7 +467,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: hutType("t-full", "Full Member", 1) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees(undefined, { typeKey: "full" });
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST, undefined, { typeKey: "full" });
     expect(tables[0]?.columns).toEqual(["Full Member"]);
     // The resolved type id is pushed into the rate query — type= now genuinely
     // filters rather than only validating (the #2129 semantic change).
@@ -483,7 +483,7 @@ describe("public PageContent token view models", () => {
   it("fails closed for an unknown or unlisted hut-fee type key (#2129)", async () => {
     mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
     mocks.membershipTypeFindFirst.mockResolvedValue(null);
-    await expect(loadPublicHutFees(undefined, { typeKey: "NOT_LISTED" })).resolves.toEqual([]);
+    await expect(loadPublicHutFees(CLUB_FORMAT_TEST, undefined, { typeKey: "NOT_LISTED" })).resolves.toEqual([]);
     expect(mocks.seasons).not.toHaveBeenCalled();
   });
 
@@ -494,7 +494,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: hutType("t-non", "Non-member", 9) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees(undefined, { groupBy: new Set(["type"]) });
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST, undefined, { groupBy: new Set(["type"]) });
     expect(tables).toHaveLength(2);
     expect(tables[0]?.heading.endsWith("· Full Member")).toBe(true);
     expect(tables[1]?.heading.endsWith("· Non-member")).toBe(true);
@@ -509,7 +509,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: hutType("t-non", "Non-member", 9) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees(undefined, { groupBy: new Set(["age"]) });
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST, undefined, { groupBy: new Set(["age"]) });
     expect(tables[0]?.rowHeading).toBe("Membership type");
     expect(tables[0]?.columns).toEqual(["Child (5–12)", "Adult (18+)"]);
     expect(tables[0]?.rows).toEqual([
@@ -809,7 +809,7 @@ describe("public PageContent token view models", () => {
       { daysBeforeStay: 14, refundPercentage: 100 },
       { daysBeforeStay: 7, refundPercentage: 50 },
       { daysBeforeStay: 0, refundPercentage: 25 },
-    ])).toEqual([
+    ], CLUB_FORMAT_TEST)).toEqual([
       { description: "14 or more days before check-in: 100% refund" },
       { description: "7–13 days before check-in: 50% refund" },
       { description: "0–6 days before check-in: 25% refund" },
@@ -821,7 +821,7 @@ describe("public PageContent token view models", () => {
     expect(describePublicCancellationRules([
       { daysBeforeStay: 10, refundPercentage: 80 },
       { daysBeforeStay: 3, refundPercentage: 20 },
-    ])).toEqual([
+    ], CLUB_FORMAT_TEST)).toEqual([
       { description: "10 or more days before check-in: 80% refund" },
       { description: "3–9 days before check-in: 20% refund" },
       { description: "0–2 days before check-in: no refund" },
@@ -834,7 +834,7 @@ describe("public PageContent token view models", () => {
       { daysBeforeStay: 7, refundPercentage: 75 },
       { daysBeforeStay: 7, refundPercentage: 10 },
       { daysBeforeStay: 0, refundPercentage: 0 },
-    ])).toEqual([
+    ], CLUB_FORMAT_TEST)).toEqual([
       { description: "7 or more days before check-in: 75% refund" },
       { description: "0–6 days before check-in: 0% refund" },
       { description: "After check-in: no refund" },

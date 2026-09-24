@@ -107,7 +107,7 @@ describe("config-transfer committee + xero-config", () => {
 
   it("plans all-create against an empty target and warns on Xero", async () => {
     const { zip } = await exportCats();
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const committee = plan.categories.find((c) => c.category === "committee")!;
     const xero = plan.categories.find((c) => c.category === "xero-config")!;
     expect(committee.items.every((i) => i.action === "create")).toBe(true);

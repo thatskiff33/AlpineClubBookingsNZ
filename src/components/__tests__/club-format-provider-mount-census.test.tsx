@@ -99,6 +99,16 @@ const SELF_MOUNTING_SURFACES: Record<string, string> = {
     "chrome and its sibling `error.tsx` is held at zero data dependencies on " +
     "purpose (issue #176, ADR-003 section 5), so no mount on this route could " +
     "ever cover all three of its surfaces. See the reasoning block in the page.",
+  "src/app/not-found.tsx":
+    "The root 404, which sits outside both public route groups and therefore " +
+    "outside `WebsiteChrome`. It renders `EmbeddedPageContentParts` over " +
+    "whatever an admin published at that path, and an embedded booking-request " +
+    "form reads `useClubFormat()` in the browser since #3565 made the format a " +
+    "required argument everywhere - exactly the case the old PROVIDERLESS row " +
+    "said would turn it red. So the page resolves the club's format on the " +
+    "server, inside the same guarded read as its content, and mounts the " +
+    "provider around the embedded parts itself; the hardcoded fallback branch " +
+    "renders no amount and needs none.",
 };
 
 /**
@@ -116,15 +126,6 @@ const SELF_MOUNTING_SURFACES: Record<string, string> = {
  * than of either provider. The REASONS differ, and one of them differs sharply.
  */
 const PROVIDERLESS_SURFACES: Record<string, string> = {
-  "src/app/not-found.tsx":
-    "The root 404, which sits outside both public route groups and therefore " +
-    "outside `WebsiteChrome`. It renders `EmbeddedPageContentParts` over " +
-    "whatever an admin published at that path. Nothing it can reach renders a " +
-    "currency label or a locale-formatted number in the browser: the public " +
-    "fee tokens are expanded on the SERVER by `page-content-embeds.ts`, which " +
-    "is #3566's to move, and money strings come from `formatCents`, which is " +
-    "#3565's. When either of those lands on this context this row is what " +
-    "will go red, and that is the census working.",
   "src/app/(finance)/not-found.tsx":
     "The finance 404. `(finance)` has NO group-root layout — the only layout " +
     "in that group is `(finance)/finance/layout.tsx`, a segment deeper — so " +
@@ -348,13 +349,16 @@ describe("club-format provider mount census (#3564)", () => {
     /*
       AND THE RESOLVER REACHES A WIDE FIRST-PARTY GRAPH. `/display` reaches a
       handful of files, so on its own it says little about the walk's reach.
-      The root 404 is the widest providerless tree in the application, and its
-      clean consumer list is only worth anything if the walk really visited it.
+      The root 404 is the widest tree outside the chrome components, and its
+      consumer list is only worth anything if the walk really visited it. Since
+      #3565 that page mounts a provider of its own, so the walk is told to go
+      THROUGH the entry's mount rather than stop at it, exactly as the
+      self-mounting check above does.
     */
     it("resolves a wide first-party graph", () => {
       const { visited, unresolved } = walkImports(
         "src/app/not-found.tsx",
-        CLUB_FORMAT_WALK,
+        { ...CLUB_FORMAT_WALK, walkThroughEntry: true },
       );
       expect(unresolved).toEqual([]);
       expect(visited.length).toBeGreaterThan(20);

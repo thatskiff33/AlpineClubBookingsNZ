@@ -44,6 +44,7 @@
  * Neither configuration catches both, which is why both are here.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTAINER_ZONE = "America/Denver";
 process.env.NEXT_PUBLIC_TZ = CONTAINER_ZONE;
@@ -114,7 +115,7 @@ function lapseSentence(): string {
       expiredAt: EXPIRED_AT,
       creditCents: 4800,
     },
-  }).sentence;
+  }, CLUB_FORMAT_TEST).sentence;
 }
 
 async function withPersistedZone(zone: string): Promise<void> {
@@ -188,7 +189,7 @@ describe("a guest night is a stored calendar day and takes no zone", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       outcome: { kind: "APPROVED" },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("Test Lodge, 1 Aug 2026 - 3 Aug 2026");
     expect(sentence).not.toContain("31 Jul 2026");
@@ -209,7 +210,7 @@ describe("a consent deadline is an instant and is read in the club's zone", () =
         expiredAt: EXPIRED_AT,
         creditCents: 4800,
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("lapsed on 2 Aug 2026");
     // What the retired environment read would have said.
@@ -229,7 +230,7 @@ describe("a consent deadline is an instant and is read in the club's zone", () =
         expiredAt: EXPIRED_AT,
         blocker: "LAST_GUEST",
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sentence).toContain("lapsed on 2 Aug 2026");
     expect(sentence).not.toContain("lapsed on 1 Aug 2026");

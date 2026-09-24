@@ -129,10 +129,11 @@ describe("#2200 applyConfigImport surfaces the age-tier change signal", () => {
 
   it("includes 'age-tier' in appliedEntities when an import changes a tier", async () => {
     const zip = ageTierBundle();
-    const plan = await buildImportPlan(ageTierPlanDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(ageTierPlanDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors).toEqual([]);
 
     const result = await applyConfigImport({
+      format: CLUB_FORMAT_TEST,
       prisma: ageTierPrisma(),
       bundleBytes: zip,
       actorMemberId: "admin-1",
@@ -149,9 +150,10 @@ describe("#2200 applyConfigImport surfaces the age-tier change signal", () => {
     const plan = await buildImportPlan(
       { committeeRole: { findMany: vi.fn(async () => []) } } as unknown as ReadDb,
       zip,
-      { mode: "merge" },
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
     );
     const result = await applyConfigImport({
+      format: CLUB_FORMAT_TEST,
       prisma: committeePrisma(),
       bundleBytes: zip,
       actorMemberId: "admin-1",

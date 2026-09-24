@@ -173,7 +173,7 @@ describe("config-transfer display — export shape", () => {
 
 describe("config-transfer display — plan (round-trip + diff)", () => {
   it("plans all-create against an empty target with no errors", async () => {
-    const plan = await buildImportPlan(emptyTargetDb(), await exportBundle(), { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), await exportBundle(), { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     expect(cat.errors).toEqual([]);
     const layouts = cat.items.filter((i) => i.entity === "display-layout");
@@ -229,7 +229,7 @@ describe("config-transfer display — plan (round-trip + diff)", () => {
         ),
       },
     });
-    const plan = await buildImportPlan(target, zip, { mode: "merge" });
+    const plan = await buildImportPlan(target, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     const display = cat.items.filter(
       (i) => i.entity === "display-layout" || i.entity === "display-template",
@@ -262,7 +262,7 @@ describe("config-transfer display — plan (round-trip + diff)", () => {
         ]),
       },
     });
-    const plan = await buildImportPlan(target, zip, { mode: "overwrite" });
+    const plan = await buildImportPlan(target, zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     const item = cat.items.find((i) => i.entity === "display-template" && i.key === "room-occupancy-3day")!;
     expect(item.action).toBe("update");
@@ -285,7 +285,7 @@ describe("config-transfer display — plan (round-trip + diff)", () => {
       },
     });
 
-    const plan = await buildImportPlan(target, zip, { mode: "merge" });
+    const plan = await buildImportPlan(target, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const item = plan.categories
       .find((category) => category.category === "lodge-config")!
       .items.find((entry) => entry.entity === "display-layout")!;
@@ -364,6 +364,7 @@ describe("config-transfer display — overwrites a differing built-in (#156)", (
     });
 
     const plan = await buildImportPlan(target, await builtInBundle(), {
+      format: CLUB_FORMAT_TEST,
       mode: "overwrite",
     });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
@@ -411,6 +412,7 @@ describe("config-transfer display — overwrites a differing built-in (#156)", (
     });
 
     const plan = await buildImportPlan(target, await builtInBundle(), {
+      format: CLUB_FORMAT_TEST,
       mode: "overwrite",
     });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
@@ -426,7 +428,7 @@ describe("config-transfer display — plan errors (save contract)", () => {
     const zip = withFile(await exportBundle(), LAYOUTS_FILE, [
       { ...BOARD_LAYOUT, areas: [] }, // {{area:main}} now has no matching entry
     ]);
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     expect(cat.errors.join("\n")).toMatch(/layout "room-occupancy"[\s\S]*area "main"/i);
   });
@@ -435,7 +437,7 @@ describe("config-transfer display — plan errors (save contract)", () => {
     const zip = withFile(await exportBundle(), TEMPLATES_FILE, [
       { ...TEMPLATES[0], layoutKey: "no-such-layout" },
     ]);
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     expect(cat.errors.join("\n")).toMatch(/layoutKey "no-such-layout" is in neither/i);
   });
@@ -447,7 +449,7 @@ describe("config-transfer display — plan errors (save contract)", () => {
         slotContent: { "does-not-exist": { module: "arrivals-board" } },
       },
     ]);
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     expect(cat.errors.join("\n")).toMatch(/unknown slot key "does-not-exist"/i);
   });
@@ -479,6 +481,7 @@ describe("config-transfer display — apply", () => {
     } as unknown as TxDb;
 
     const result = await displayImporter.apply({
+      format: CLUB_FORMAT_TEST,
       tx,
       files,
       manifest: {} as never,

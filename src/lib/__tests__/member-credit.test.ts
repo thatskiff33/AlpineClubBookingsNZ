@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // ── Mock Prisma ─────────────────────────────────────────────────────────────
 
@@ -324,7 +325,7 @@ describe("member-credit helpers", () => {
       };
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
-      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any);
+      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST);
 
       expect(txClient.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -348,7 +349,7 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Insufficient credit balance");
     });
 
@@ -360,7 +361,7 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 0, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 0, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Credit amount must be positive");
     });
   });

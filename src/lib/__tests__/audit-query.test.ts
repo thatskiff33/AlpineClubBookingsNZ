@@ -8,6 +8,7 @@ import {
   getAuditTimelinePage,
   inferAuditCategoryFromAction,
 } from "@/lib/audit-query";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * The club's persisted timezone, supplied rather than read (#3123): the audit
@@ -212,6 +213,7 @@ describe("audit query helpers", () => {
     };
 
     const page = await getAuditTimelinePage({
+      format: CLUB_FORMAT_TEST,
       db: db as never,
       where: {},
       page: 1,
@@ -246,7 +248,7 @@ describe("audit query helpers", () => {
   // thousands grouping, no configured-currency awareness. It now derives from
   // the shared `formatCents`, so a metadata amount over $999 groups.
   it("formats a *Cents metadata value through the shared, currency-aware formatter", () => {
-    expect(formatMetadataFragment("amountCents", 123456)).toBe(
+    expect(formatMetadataFragment("amountCents", 123456, CLUB_FORMAT_TEST)).toBe(
       "Amount $1,234.56",
     );
   });
@@ -258,7 +260,7 @@ describe("audit query helpers", () => {
   // depending on which formatter happens to read it (measured: 1.5 rounded to
   // two cents one way and one cent the other before this guard).
   it("rounds a non-integer *Cents metadata value before formatting", () => {
-    expect(formatMetadataFragment("amountCents", 1.5)).toBe("Amount $0.02");
-    expect(formatMetadataFragment("amountCents", 1.4)).toBe("Amount $0.01");
+    expect(formatMetadataFragment("amountCents", 1.5, CLUB_FORMAT_TEST)).toBe("Amount $0.02");
+    expect(formatMetadataFragment("amountCents", 1.4, CLUB_FORMAT_TEST)).toBe("Amount $0.01");
   });
 });

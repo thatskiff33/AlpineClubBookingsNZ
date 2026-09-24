@@ -56,6 +56,7 @@ vi.mock("@/lib/payment-recovery", () => ({
 
 import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTEXT = {
   pendingRefundAmountCents: 0,
@@ -101,6 +102,7 @@ beforeEach(() => {
 describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
   it("writes the new intent's ADDITIONAL row BEFORE queueing the supersede", async () => {
     const result = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",
@@ -120,6 +122,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
 
   it("writes that row for the NEW intent id and the FULL sized ask", async () => {
     await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",
@@ -156,6 +159,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
     });
 
     const result = await createModificationAdditionalPaymentIntent({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking_1",
       result: CONTEXT,
       reason: "guest_add_price_increase",

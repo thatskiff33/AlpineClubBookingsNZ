@@ -86,6 +86,7 @@ import {
   sendNominationRequestEmail,
   sendPreArrivalReminderEmail,
 } from "@/lib/email";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function mockStoredOverride(templateName: string, subject: string) {
   mockPrisma.emailTemplateOverride.findUnique.mockImplementation(
@@ -163,6 +164,7 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       new Date("2026-07-12T00:00:00.000Z"),
       2,
       12300,
+      CLUB_FORMAT_TEST,
     );
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
@@ -199,7 +201,7 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       checkOut: new Date("2026-07-12T00:00:00.000Z"),
       guestCount: 2,
       expectedArrivalTime: "16:30",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
     const sent = mockTransporter.sendMail.mock.calls[0][0];
@@ -229,6 +231,7 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       new Date("2026-07-12T00:00:00.000Z"),
       2,
       12300,
+      CLUB_FORMAT_TEST,
     );
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
@@ -285,7 +288,7 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       requestType: "PUBLIC",
       options: [{ label: "Standard", totalCents: 12300 }],
       expiresAt: new Date("2026-07-09T00:00:00.000Z"),
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
     const sent = mockTransporter.sendMail.mock.calls[0][0];
@@ -336,6 +339,7 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       new Date("2026-07-12T00:00:00.000Z"),
       2,
       12300,
+      CLUB_FORMAT_TEST,
     );
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);

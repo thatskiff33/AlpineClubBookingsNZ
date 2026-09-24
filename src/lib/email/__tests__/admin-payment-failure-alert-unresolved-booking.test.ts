@@ -43,6 +43,7 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
 }));
 
 import { sendAdminPaymentFailureAlert } from "@/lib/email/admin-alerts-finance";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 type Captured = {
   subject: string;
@@ -66,7 +67,7 @@ async function send(dates: { checkIn: Date | null; checkOut: Date | null }) {
     amountCents: 12_345,
     errorMessage: "Group settlement payment failed.",
     paymentIntentId: "pi_test_1",
-  });
+  }, CLUB_FORMAT_TEST);
 }
 
 beforeEach(() => {

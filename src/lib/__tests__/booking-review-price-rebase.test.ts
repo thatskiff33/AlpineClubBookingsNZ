@@ -32,6 +32,7 @@ import {
 } from "@/lib/booking-review-price-rebase";
 import { requireCalendarDate } from "@/lib/club-time";
 import { selectBookingMoneyBuildUp } from "@/lib/booking-money-build-up";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const store = {
   booking: {
@@ -110,6 +111,7 @@ const SURVIVING_STRAND = {
 };
 
 const STORED_MONEY_SELECTION = selectBookingMoneyBuildUp({
+  format: CLUB_FORMAT_TEST,
   operation: "REVIEW_REBASE",
   baseEvidence: { kind: "EXACT", amountCents: 24_000 },
   rows: [],
@@ -138,6 +140,7 @@ beforeEach(() => {
 describe("re-pricing a booking from its strands (#3219)", () => {
   it("sums the surviving strands and writes all four money columns, fenced on all four", async () => {
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -190,6 +193,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
       reach, and the frozen figure is what produces MINUS $50.00.
     */
     await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -226,6 +230,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     });
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -257,6 +262,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,
@@ -277,6 +283,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
     });
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       todayAtClub: TODAY,
@@ -367,6 +374,7 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       );
 
       const outcome = await rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands,
         todayAtClub: TODAY,
@@ -394,6 +402,7 @@ describe("re-pricing a closure that repaired NOTHING (#3257)", () => {
       the headline kept counting a strand the booking no longer had.
     */
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [],
       todayAtClub: TODAY,
@@ -500,6 +509,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [
           { bookingGuestId: "guest-on-some-other-booking", totalCents: 10_000 },
@@ -519,6 +529,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,
@@ -538,6 +549,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     mocks.bookingFindUnique.mockResolvedValue(bookingWithStrands([]));
 
     const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       repairedStrands: [],
       todayAtClub: TODAY,
@@ -558,6 +570,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
     // write would give a pre-repair figure and a sum that is quietly wrong.
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 9_999 }],
         todayAtClub: TODAY,
@@ -572,6 +585,7 @@ describe("the strand-on-this-booking guard (#3219)", () => {
 
     await expect(
       rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
         todayAtClub: TODAY,

@@ -93,8 +93,9 @@ async function applyWith(
   mode: "merge" | "overwrite",
 ): Promise<ReturnType<typeof applyConfigImport>> {
   const zip = committeeBundle();
-  const plan = await buildImportPlan(planDb(), zip, { mode });
+  const plan = await buildImportPlan(planDb(), zip, { format: CLUB_FORMAT_TEST, mode });
   return applyConfigImport({
+    format: CLUB_FORMAT_TEST,
     prisma,
     bundleBytes: zip,
     actorMemberId: "admin-1",

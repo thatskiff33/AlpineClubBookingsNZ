@@ -209,6 +209,7 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedModifyBatch = vi.mocked(modifyBookingBatch);
 
@@ -3142,7 +3143,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
     expect(html).toContain("Dates Changed");
@@ -3169,7 +3170,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
     expect(html).toContain("New Guests");
@@ -3195,7 +3196,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
     expect(html).toContain("$50.00");
@@ -3220,7 +3221,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
     expect(html).toContain("additional payment");
@@ -3248,7 +3249,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("additional Internet Banking payment");
     expect(html).toContain("INV-1001");
@@ -3275,7 +3276,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
   });

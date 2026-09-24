@@ -47,6 +47,7 @@ import {
   CreditCoveredSettlementConflictError,
 } from "@/lib/booking-credit-election";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 type LedgerRow = {
   memberId: string;
@@ -203,7 +204,7 @@ function creditLot(amountCents: number): LedgerRow {
 function run(fixture: ReturnType<typeof makeTx>) {
   return consumeStoredCreditElection(
     fixture.tx as never,
-    { bookingId: BOOKING_ID },
+    { format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID },
   );
 }
 

@@ -323,6 +323,7 @@ async function runApply(
   mode: ImportMode,
 ) {
   return siteContentImporter.apply({
+    format: CLUB_FORMAT_TEST,
     tx: store.db as unknown as TxDb,
     files,
     manifest: { formatVersion: 2 } as never,
