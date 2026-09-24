@@ -180,7 +180,7 @@ export async function GET() {
   // dietary door, and only while the field is ON. Family members serialised
   // below never carry it — a relationship is not a grant.
   const dietary = await loadDietaryRequirementsForDisplay(
-    grantSelfDietaryAccess(session.user.id),
+    grantSelfDietaryAccess(session),
     session.user.id,
     { enabled: memberFieldsFlags.showDietaryRequirements },
   );

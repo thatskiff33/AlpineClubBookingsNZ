@@ -68,8 +68,22 @@ const VALUE = "Coeliac; severe peanut allergy (carries an EpiPen)";
 function adminUser(membership: "none" | "view" | "edit") {
   const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
   return {
-    id: "admin-1",
-    adminPermissionMatrix: { ...matrix, membership },
+    ok: true as const,
+    session: {
+      user: { id: "admin-1", adminPermissionMatrix: { ...matrix, membership } },
+    },
+  };
+}
+
+const session = (id: string) => ({ user: { id } });
+
+/** A merge db whose Full Admin count answers `fullAdmin` for the actor. */
+function mergeDb(fullAdmin: boolean, rows: unknown[] = []) {
+  return {
+    member: {
+      count: vi.fn().mockResolvedValue(fullAdmin ? 1 : 0),
+      findMany: vi.fn().mockResolvedValue(rows),
+    },
   };
 }
 
@@ -123,7 +137,7 @@ describe("the toggle defaults OFF everywhere (INV-PRIV-022)", () => {
 describe("grants (INV-PRIV-022)", () => {
   it("a self grant reads only its own member", async () => {
     mocks.memberFindUnique.mockResolvedValue({ dietaryRequirements: VALUE });
-    const grant = grantSelfDietaryAccess("m1");
+    const grant = grantSelfDietaryAccess(session("m1"));
 
     await expect(readMemberDietaryRequirements(grant, "m1")).resolves.toBe(VALUE);
     expect(mocks.memberFindUnique).toHaveBeenCalledWith({
@@ -135,7 +149,7 @@ describe("grants (INV-PRIV-022)", () => {
       /covers only its own member/,
     );
     await expect(
-      readMemberDietaryRequirements(grantSelfDataExportDietaryAccess("m1"), "m2"),
+      readMemberDietaryRequirements(grantSelfDataExportDietaryAccess(session("m1")), "m2"),
     ).rejects.toThrow(/covers only its own member/);
   });
 
@@ -157,7 +171,12 @@ describe("grants (INV-PRIV-022)", () => {
     expect(grantMembershipAdminDietaryAccess(adminUser("view"), "view")).not.toBeNull();
     expect(grantMembershipAdminDietaryAccess(adminUser("edit"), "edit")).not.toBeNull();
     // A session carrying no matrix at all fails closed.
-    expect(grantMembershipAdminDietaryAccess({ id: "a" }, "view")).toBeNull();
+    expect(
+      grantMembershipAdminDietaryAccess(
+        { ok: true, session: { user: { id: "a" } } },
+        "view",
+      ),
+    ).toBeNull();
   });
 
   it("bulk reads need membership administration, and select only the column", async () => {
@@ -166,11 +185,11 @@ describe("grants (INV-PRIV-022)", () => {
       { id: "m2", dietaryRequirements: null },
     ]);
     await expect(
-      readMemberDietaryRequirementsByIds(grantSelfDietaryAccess("m1"), ["m1"]),
-    ).rejects.toThrow(/membership administration grant/);
+      readMemberDietaryRequirementsByIds(grantSelfDietaryAccess(session("m1")), ["m1"]),
+    ).rejects.toThrow(/membership administration or merge grant/);
 
     const values = await readMemberDietaryRequirementsByIds(
-      grantMemberMergeDietaryAccess({ actorMemberId: "a", actorIsFullAdmin: true }),
+      grantMembershipAdminDietaryAccess(adminUser("view"), "view")!,
       ["m1", "m2", "m1"],
     );
     expect(values.get("m1")).toBe(VALUE);
@@ -181,9 +200,39 @@ describe("grants (INV-PRIV-022)", () => {
     });
   });
 
+  it("a merge grant is verified against the database and scoped to its two members", async () => {
+    await expect(
+      grantMemberMergeDietaryAccess(mergeDb(false) as never, {
+        actorMemberId: "a",
+        masterId: "m1",
+        loserId: "m2",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      grantMemberMergeDietaryAccess(mergeDb(true) as never, {
+        actorMemberId: "a",
+        masterId: "m1",
+        loserId: "m1",
+      }),
+    ).resolves.toBeNull();
+
+    const grant = await grantMemberMergeDietaryAccess(mergeDb(true) as never, {
+      actorMemberId: "a",
+      masterId: "m1",
+      loserId: "m2",
+    });
+    expect(grant).not.toBeNull();
+    await expect(
+      readMemberDietaryRequirementsByIds(grant!, ["m1", "m3"]),
+    ).rejects.toThrow(/only its two participants/);
+    await expect(readMemberDietaryRequirements(grant!, "m3")).rejects.toThrow(
+      /only its two participants/,
+    );
+  });
+
   it("display while OFF reads nothing and returns no value", async () => {
     const shown = await loadDietaryRequirementsForDisplay(
-      grantSelfDietaryAccess("m1"),
+      grantSelfDietaryAccess(session("m1")),
       "m1",
       { enabled: false },
     );
@@ -251,17 +300,13 @@ describe("member merge keeps the loser's value only when the master has none", (
   });
 
   it("the engine attaches the loser's stored value through the door, so it survives", async () => {
-    const db = {
-      member: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "master", dietaryRequirements: null },
-          { id: "loser", dietaryRequirements: VALUE },
-        ]),
-      },
-    } as never;
+    const db = mergeDb(true, [
+      { id: "master", dietaryRequirements: null },
+      { id: "loser", dietaryRequirements: VALUE },
+    ]) as never;
     const [masterRow, loserRow] = await attachMergeDietaryRequirements(
       db,
-      { actorMemberId: "a", actorIsFullAdmin: true },
+      "a",
       { ...base, id: "master" },
       { ...base, id: "loser" },
     );
@@ -270,15 +315,16 @@ describe("member merge keeps the loser's value only when the master has none", (
     ).toBe(VALUE);
   });
 
-  it("reads nothing for an actor who is not a Full Admin", async () => {
-    const findMany = vi.fn();
+  it("reads nothing for an actor the database does not confirm as Full Admin", async () => {
+    const db = mergeDb(false);
     const [masterRow, loserRow] = await attachMergeDietaryRequirements(
-      { member: { findMany } } as never,
-      { actorMemberId: "a", actorIsFullAdmin: false },
+      db as never,
+      "a",
       { ...base, id: "master" },
       { ...base, id: "loser" },
     );
-    expect(findMany).not.toHaveBeenCalled();
+    expect(db.member.count).toHaveBeenCalled();
+    expect(db.member.findMany).not.toHaveBeenCalled();
     expect("dietaryRequirements" in masterRow).toBe(false);
     expect("dietaryRequirements" in loserRow).toBe(false);
   });

@@ -87,7 +87,7 @@ export async function GET() {
     // FIELD OFF (owner decision, 20 Sep 2026): this route promises everything
     // held about the subject, and telling them is self disclosure, not egress.
     const dietaryRequirements = await readMemberDietaryRequirements(
-      grantSelfDataExportDietaryAccess(session.user.id),
+      grantSelfDataExportDietaryAccess(session),
       session.user.id,
     );
 

@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   const result = await createAdminMember(parsed.data, {
     accessRoles: guard.session.user.accessRoles,
-    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "edit"),
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard, "edit"),
   });
   return NextResponse.json(result.body, result.init);
 }

@@ -341,7 +341,7 @@ export async function PUT(req: NextRequest) {
   const dietaryBefore =
     "dietaryRequirements" in dietaryPatch
       ? await readMemberDietaryRequirements(
-          grantSelfDietaryAccess(session.user.id),
+          grantSelfDietaryAccess(session),
           session.user.id,
         )
       : null;

@@ -252,7 +252,7 @@ export default async function ProfilePage({
   // the one dietary door and only while the club has the field ON — while OFF
   // the key is absent from the props the client receives.
   const dietary = await loadDietaryRequirementsForDisplay(
-    grantSelfDietaryAccess(session.user.id),
+    grantSelfDietaryAccess(session),
     session.user.id,
     { enabled: memberFieldsFlags.showDietaryRequirements },
   );

@@ -1018,12 +1018,11 @@ export async function buildMemberMergePreview(params: {
     );
   }
 
+  // The merge grant verifies Full Admin and the two ids itself; nothing here
+  // is inferred from the blockers, which can return before that check.
   const [masterForMerge, loserForMerge] = await attachMergeDietaryRequirements(
     db,
-    {
-      actorMemberId,
-      actorIsFullAdmin: !blockers.some((b) => b.code === "not_full_admin"),
-    },
+    actorMemberId,
     masterFull,
     loserFull,
   );
@@ -1813,11 +1812,10 @@ export async function executeMemberMerge(params: {
     // This derivation is the PREVIEW's — it must stay keyed to the snapshot the
     // token was built from. The derivation that is actually WRITTEN is taken
     // fresh at step 5; see the comment there (#2243).
-    // No blockers, so the actor passed the DB-verified Full Admin check.
     const [masterFullForMerge, loserFullForMerge] =
       await attachMergeDietaryRequirements(
         tx,
-        { actorMemberId, actorIsFullAdmin: true },
+        actorMemberId,
         masterFull,
         loserFull,
       );
@@ -2165,7 +2163,7 @@ export async function executeMemberMerge(params: {
     const [masterAtWriteForMerge, loserAtWriteForMerge] =
       await attachMergeDietaryRequirements(
         tx,
-        { actorMemberId, actorIsFullAdmin: true },
+        actorMemberId,
         masterAtWrite,
         loserAtWrite,
       );

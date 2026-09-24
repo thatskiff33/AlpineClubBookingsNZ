@@ -28,7 +28,8 @@
  */
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
+import { actorIsFullAdmin } from "@/lib/admin-account-guards";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { normalizeDietaryRequirements } from "@/lib/member-dietary-field";
@@ -39,7 +40,8 @@ const DIETARY_GRANT = Symbol("member-dietary-access-grant");
 export type DietaryAccessPurpose =
   | "self"
   | "self-data-export"
-  | "membership-admin";
+  | "membership-admin"
+  | "member-merge";
 
 /**
  * Evidence that a caller has been authorised to read dietary/allergy data for a
@@ -50,15 +52,19 @@ export type DietaryAccessPurpose =
 export interface DietaryAccessGrant {
   readonly [DIETARY_GRANT]: true;
   readonly purpose: DietaryAccessPurpose;
-  /** The one member a self grant covers; null for membership administration. */
-  readonly subjectMemberId: string | null;
+  /**
+   * The members this grant may read: the subject for a self grant, the two
+   * merge participants for a merge grant, and null (any member) only for
+   * membership administration.
+   */
+  readonly memberIds: readonly string[] | null;
   readonly actorMemberId: string;
 }
 
 function mintGrant(
   purpose: DietaryAccessPurpose,
   actorMemberId: string,
-  subjectMemberId: string | null,
+  memberIds: readonly string[] | null,
 ): DietaryAccessGrant {
   if (!actorMemberId) {
     throw new Error("A dietary access grant needs an authenticated actor");
@@ -67,58 +73,77 @@ function mintGrant(
     [DIETARY_GRANT]: true as const,
     purpose,
     actorMemberId,
-    subjectMemberId,
+    memberIds: memberIds ? Object.freeze([...memberIds]) : null,
   });
 }
 
+/**
+ * The signed-in member's session, as `auth()` returns it. The subject IS the
+ * session's user: there is no separate member id to pass, so a self grant
+ * cannot be pointed at somebody else.
+ */
+type SignedInSession = { user: { id: string } };
+
 /** The signed-in member reading or editing their OWN profile/onboarding. */
-export function grantSelfDietaryAccess(sessionUserId: string): DietaryAccessGrant {
-  return mintGrant("self", sessionUserId, sessionUserId);
+export function grantSelfDietaryAccess(session: SignedInSession): DietaryAccessGrant {
+  return mintGrant("self", session.user.id, [session.user.id]);
 }
 
 /** The signed-in member's own full data export (`/api/member/data-export`). */
 export function grantSelfDataExportDietaryAccess(
-  sessionUserId: string,
+  session: SignedInSession,
 ): DietaryAccessGrant {
-  return mintGrant("self-data-export", sessionUserId, sessionUserId);
+  return mintGrant("self-data-export", session.user.id, [session.user.id]);
 }
 
 /**
- * An admin holding `membership` access at `level`, judged from the
- * DB-verified permission matrix `requireAdmin` returns — never a JWT claim.
- * Returns null, and so grants nothing, when the matrix does not reach it.
+ * An admin holding `membership` access at `level`, judged from the permission
+ * matrix on the SUCCESSFUL `requireAdmin` result: the DB-verified matrix the
+ * guard re-read for this request, never a JWT claim. The argument is the
+ * guard's own result shape, so a caller has to have run the guard to have one.
+ * Returns null, and so grants nothing, when the matrix does not reach it; a
+ * missing or malformed matrix resolves to no access (fail closed).
  */
 export function grantMembershipAdminDietaryAccess(
-  // `unknown` on purpose: the matrix is sanitised by `hasAdminAreaAccess`, and a
-  // missing or malformed one resolves to no access at all (fail closed).
-  sessionUser: { id: string; adminPermissionMatrix?: unknown },
+  guard: {
+    ok: true;
+    session: { user: { id: string; adminPermissionMatrix?: unknown } };
+  },
   level: "view" | "edit",
 ): DietaryAccessGrant | null {
+  if (guard.ok !== true) return null;
+  const user = guard.session.user;
   if (
     !hasAdminAreaAccess(
-      { adminPermissionMatrix: sessionUser.adminPermissionMatrix },
+      { adminPermissionMatrix: user.adminPermissionMatrix },
       { area: "membership", level },
     )
   ) {
     return null;
   }
-  return mintGrant("membership-admin", sessionUser.id, null);
+  return mintGrant("membership-admin", user.id, null);
 }
 
 /**
- * Member merge (Full Admin only). The merge engine verifies the actor against
- * the database before it reads either record (`actorIsFullAdmin` in
- * `member-merge.ts`), and the literal `true` makes a caller prove it narrowed
- * that check rather than pass a boolean it never tested. Merge reads the value
- * so the loser's entry survives when the master's is blank — a merge deletes
- * the loser row, so not reading it would destroy data the toggle promises to
- * keep.
+ * Member merge, Full Admin only, scoped to the two participants. The Full Admin
+ * check is made HERE, against the database, rather than trusted from the
+ * caller, and the grant reads nobody but `masterId` and `loserId`. Merge reads
+ * the value so the loser's entry survives when the master's is blank: a merge
+ * deletes the loser row, so not reading it would destroy data the toggle
+ * promises to keep.
  */
-export function grantMemberMergeDietaryAccess(verified: {
-  actorMemberId: string;
-  actorIsFullAdmin: true;
-}): DietaryAccessGrant {
-  return mintGrant("membership-admin", verified.actorMemberId, null);
+export async function grantMemberMergeDietaryAccess(
+  db: Prisma.TransactionClient | PrismaClient,
+  scope: { actorMemberId: string; masterId: string; loserId: string },
+): Promise<DietaryAccessGrant | null> {
+  if (!scope.masterId || !scope.loserId || scope.masterId === scope.loserId) {
+    return null;
+  }
+  if (!(await actorIsFullAdmin(db, scope.actorMemberId))) return null;
+  return mintGrant("member-merge", scope.actorMemberId, [
+    scope.masterId,
+    scope.loserId,
+  ]);
 }
 
 /**
@@ -138,26 +163,25 @@ export function redactDietaryValueForRecord(value: unknown): string | null {
  * field merge would see it blank on both sides and the loser's value would die
  * with the loser row. This attaches both values through this door so the
  * ordinary fill-if-blank rule applies: master wins, and the loser's value
- * survives only when the master has none. Without the engine's DB-verified
- * Full Admin check nothing is read, which can only ever keep the master's value.
+ * survives only when the master has none. The merge grant makes its own
+ * DB-verified Full Admin check; without it nothing is read, which can only ever
+ * keep the master's value.
  */
 export async function attachMergeDietaryRequirements<T extends { id: string }>(
-  db: Pick<Prisma.TransactionClient, "member">,
-  actor: { actorMemberId: string; actorIsFullAdmin: boolean },
+  db: Prisma.TransactionClient | PrismaClient,
+  actorMemberId: string,
   master: T,
   loser: T,
 ): Promise<
   [T & { dietaryRequirements?: string }, T & { dietaryRequirements?: string }]
 > {
-  const values = actor.actorIsFullAdmin
-    ? await readMemberDietaryRequirementsByIds(
-        grantMemberMergeDietaryAccess({
-          actorMemberId: actor.actorMemberId,
-          actorIsFullAdmin: true,
-        }),
-        [master.id, loser.id],
-        db,
-      )
+  const grant = await grantMemberMergeDietaryAccess(db, {
+    actorMemberId,
+    masterId: master.id,
+    loserId: loser.id,
+  });
+  const values = grant
+    ? await readMemberDietaryRequirementsByIds(grant, [master.id, loser.id], db)
     : new Map<string, string | null>();
   // Only a STORED value is attached. A member with none gains no key, which the
   // field merge reads as blank exactly as it reads null, and which leaves the
@@ -199,13 +223,18 @@ function isGrant(grant: unknown): grant is DietaryAccessGrant {
   );
 }
 
-function assertCovers(grant: DietaryAccessGrant, memberId: string): void {
+function assertCovers(grant: DietaryAccessGrant, memberIds: readonly string[]): void {
   if (!isGrant(grant)) {
     throw new Error("Dietary data requested without an access grant");
   }
-  if (grant.purpose === "membership-admin") return;
-  if (grant.subjectMemberId !== memberId) {
-    throw new Error("A self dietary access grant covers only its own member");
+  if (grant.memberIds === null) return;
+  const allowed = grant.memberIds;
+  if (!memberIds.every((id) => allowed.includes(id))) {
+    throw new Error(
+      grant.purpose === "member-merge"
+        ? "A merge dietary access grant covers only its two participants"
+        : "A self dietary access grant covers only its own member",
+    );
   }
 }
 
@@ -225,7 +254,7 @@ export async function readMemberDietaryRequirements(
   memberId: string,
   db: DietaryReadDb = prisma,
 ): Promise<string | null> {
-  assertCovers(grant, memberId);
+  assertCovers(grant, [memberId]);
   const row = await db.member.findUnique({
     where: { id: memberId },
     select: { dietaryRequirements: true },
@@ -235,7 +264,7 @@ export async function readMemberDietaryRequirements(
 
 /**
  * Several members' stored values keyed by id, for membership administration
- * only (member CSV export, merge). A self grant covers one member and is
+ * (member CSV export) or a merge grant's own two participants. A self grant is
  * refused here rather than silently narrowed.
  */
 export async function readMemberDietaryRequirementsByIds(
@@ -243,9 +272,15 @@ export async function readMemberDietaryRequirementsByIds(
   memberIds: readonly string[],
   db: DietaryReadDb = prisma,
 ): Promise<Map<string, string | null>> {
-  if (!isGrant(grant) || grant.purpose !== "membership-admin") {
-    throw new Error("Bulk dietary reads need a membership administration grant");
+  if (
+    !isGrant(grant) ||
+    (grant.purpose !== "membership-admin" && grant.purpose !== "member-merge")
+  ) {
+    throw new Error(
+      "Bulk dietary reads need a membership administration or merge grant",
+    );
   }
+  assertCovers(grant, memberIds);
   const result = new Map<string, string | null>();
   if (memberIds.length === 0) return result;
   const rows = await db.member.findMany({

@@ -45,7 +45,7 @@ export async function GET(
   const result = await getAdminMemberDetail({
     id: parsed.data.id,
     currentAdminMemberId: guard.session.user.id,
-    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "view"),
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard, "view"),
   });
   return NextResponse.json(result.body, result.init);
 }
@@ -93,7 +93,7 @@ export async function PUT(
     currentAdminAccessRoles: guard.session.user.accessRoles,
     request: req,
     data: parsedBody.data,
-    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "edit"),
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard, "edit"),
   });
   return NextResponse.json(result.body, result.init);
 }
