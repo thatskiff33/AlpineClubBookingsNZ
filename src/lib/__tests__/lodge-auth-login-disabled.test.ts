@@ -21,7 +21,7 @@ vi.mock("@/lib/prisma", async () => {
   const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
   return {
     prisma: {
-      member: { findUnique: honourSelect(mockMemberFindUnique) },
+      member: { findUnique: honourSelect(mockMemberFindUnique, "Member") },
       hutLeaderAssignment: { count: vi.fn().mockResolvedValue(0) },
       booking: { count: vi.fn().mockResolvedValue(0) },
     },

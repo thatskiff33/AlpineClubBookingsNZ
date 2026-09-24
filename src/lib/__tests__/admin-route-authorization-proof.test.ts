@@ -120,7 +120,7 @@ vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/prisma", async () => {
   const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
   return {
-    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique) } },
+    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique, "Member") } },
   };
 });
 vi.mock("@/lib/auth-diagnostics", () => ({

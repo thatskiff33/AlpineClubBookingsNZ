@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/prisma", async () => {
   const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
-  return { prisma: { member: { findUnique: honourSelect(h.memberFindUnique) } } };
+  return { prisma: { member: { findUnique: honourSelect(h.memberFindUnique, "Member") } } };
 });
 vi.mock("@/lib/booking-cancel", () => ({ cancelBooking: h.cancelBooking }));
 vi.mock("@/lib/rate-limit", () => ({ getClientIp: () => "127.0.0.1" }));

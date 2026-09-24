@@ -30,7 +30,7 @@ vi.mock("@/lib/prisma", async () => {
   const passedTheGate = () => {
     throw new Error("PASSED_THE_GATE");
   };
-  const member = { findUnique: honourSelect(mockFindUnique) };
+  const member = { findUnique: honourSelect(mockFindUnique, "Member") };
   return {
     prisma: new Proxy({ member } as Record<string, unknown>, {
       get: (target, key) =>

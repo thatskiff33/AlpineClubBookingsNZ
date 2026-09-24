@@ -99,3 +99,75 @@ describe("projectInclude and honourSelect", () => {
     await expect(missing({ select: { canLogin: true } })).resolves.toBeNull();
   });
 });
+
+describe("with the model named, relations are known exactly", () => {
+  const APPLICATION = {
+    id: "app-1",
+    applicantAddress: { line1: "1 Snow Road", city: { name: "Ohakune" } },
+    familyMembers: [{ firstName: "Kid", ageTier: "CHILD" }],
+    induction: {
+      id: "ind-1",
+      status: "PENDING",
+      member: { id: "m-1", canLogin: true, accessRoles: [{ role: "USER" }] },
+    },
+  };
+
+  it("keeps Json values whole on a bare query, and drops the relation", async () => {
+    const find = honourSelect(vi.fn(async () => APPLICATION), "MemberApplication");
+    await expect(find({})).resolves.toEqual({
+      id: "app-1",
+      applicantAddress: APPLICATION.applicantAddress,
+      familyMembers: APPLICATION.familyMembers,
+    });
+  });
+
+  it("keeps Json values whole when selected true, and a relation's scalars only", () => {
+    expect(
+      projectSelect(
+        APPLICATION,
+        { applicantAddress: true, familyMembers: true, induction: true },
+        "MemberApplication",
+      ),
+    ).toEqual({
+      applicantAddress: APPLICATION.applicantAddress,
+      familyMembers: APPLICATION.familyMembers,
+      induction: { id: "ind-1", status: "PENDING" },
+    });
+  });
+
+  it("follows a relation into the related model's own fields", () => {
+    expect(
+      projectInclude(
+        APPLICATION,
+        { induction: { include: { member: { include: { accessRoles: true } } } } },
+        "MemberApplication",
+      ),
+    ).toMatchObject({
+      induction: {
+        id: "ind-1",
+        member: { id: "m-1", canLogin: true, accessRoles: [{ role: "USER" }] },
+      },
+    });
+  });
+
+  it("keeps a scalar list whole", async () => {
+    const settings = { id: "s-1", allocationPriorityOrder: ["BOOKING_COHESION", "STAY_CONTINUITY"] };
+    const find = honourSelect(vi.fn(async () => settings), "BedAllocationSettings");
+    await expect(find({})).resolves.toEqual(settings);
+  });
+
+  it("refuses a model name the schema does not define", () => {
+    expect(() =>
+      projectSelect({ id: "x" }, { id: true }, "NoSuchModel" as never),
+    ).toThrow(/unknown Prisma model/);
+  });
+});
+
+describe("without a model, the helper has to guess", () => {
+  it("still keeps a primitive array, but takes an object to be a relation", async () => {
+    const find = honourSelect(
+      vi.fn(async () => ({ id: "x", tags: ["a", "b"], payload: { nested: true } })),
+    );
+    await expect(find({})).resolves.toEqual({ id: "x", tags: ["a", "b"] });
+  });
+});

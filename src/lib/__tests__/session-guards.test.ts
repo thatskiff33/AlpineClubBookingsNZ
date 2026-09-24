@@ -26,7 +26,7 @@ vi.mock("@/lib/prisma", async () => {
   return {
     prisma: {
       member: {
-        findUnique: honourSelect(mockFindUnique),
+        findUnique: honourSelect(mockFindUnique, "Member"),
       },
     },
   };

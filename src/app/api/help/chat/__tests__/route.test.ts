@@ -64,7 +64,7 @@ vi.mock("@/lib/help/grounding", () => ({
 vi.mock("@/lib/prisma", async () => {
   const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
   return {
-    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique) } },
+    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique, "Member") } },
   };
 });
 vi.mock("@/lib/observability-bridge", () => ({
