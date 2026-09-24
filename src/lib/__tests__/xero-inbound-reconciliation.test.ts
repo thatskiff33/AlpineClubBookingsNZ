@@ -348,6 +348,7 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
@@ -1306,6 +1307,7 @@ describe("processStoredXeroInboundEvents", () => {
       new Date("2026-07-12"),
       1,
       12345,
+      CLUB_FORMAT_TEST,
       // Multi-lodge phase 8: the options now carry the booking's lodge so
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).
@@ -1471,7 +1473,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 0,
         paymentIntentId: "inv_ib_election",
         errorMessage: expect.stringContaining("never debited"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -1620,6 +1623,7 @@ describe("processStoredXeroInboundEvents", () => {
       new Date("2026-07-12"),
       1,
       12345,
+      CLUB_FORMAT_TEST,
       expect.objectContaining({
         provisionalGuests: { guestCount: 2, holdUntil },
       }),
@@ -2201,6 +2205,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       12345,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_pl"
@@ -2257,6 +2262,7 @@ describe("processStoredXeroInboundEvents", () => {
         memberName: "Tokoroa Primary School",
         errorMessage: expect.stringContaining("manual refund task"),
       }),
+      CLUB_FORMAT_TEST,
     );
 
     // The booking is not resurrected, exactly as for a member.
@@ -2353,6 +2359,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_cap"
@@ -2360,7 +2367,8 @@ describe("processStoredXeroInboundEvents", () => {
     // #19: the late-capacity-failure waitlist re-processing is scoped to the
     // cancelled booking's own lodge, not the default lodge.
     expect(mocks.processWaitlist).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: "lodge_ib_cap" })
+      expect.objectContaining({ lodgeId: "lodge_ib_cap" }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.amountCents).toBe(6172);
@@ -2626,7 +2634,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 12345,
         errorMessage: expect.stringContaining("already-cancelled booking"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
       {
@@ -2638,6 +2647,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       12345,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_ac"
@@ -2788,6 +2798,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_ac"
@@ -2799,7 +2810,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 6172,
         errorMessage: expect.stringContaining("mixed invoice"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.errorMessage).toContain("$61.72");
@@ -3300,7 +3312,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 12345,
         errorMessage: expect.stringContaining("already-cancelled booking"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.errorMessage).not.toContain("mixed invoice");
@@ -3343,7 +3356,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 6172,
         errorMessage: expect.stringContaining("mixed invoice"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3591,7 +3605,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 12345,
         errorMessage: expect.stringContaining("credit-note allocation"),
         paymentIntentId: "inv_ib_gate",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // The skip is visible: counted in the reconcile result that lands in the
     // inbound audit metadata.
@@ -3806,7 +3821,8 @@ describe("processStoredXeroInboundEvents", () => {
       })
     );
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
-      "inv_settle_1"
+      "inv_settle_1",
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3881,7 +3897,8 @@ describe("processStoredXeroInboundEvents", () => {
     });
 
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
-      "inv_settle_retry"
+      "inv_settle_retry",
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.inboundUpdate).toHaveBeenCalledWith({
       where: { id: "evt_settle_retry" },
@@ -3978,7 +3995,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 24690,
         errorMessage: expect.stringContaining("no longer matches"),
         paymentIntentId: "inv_settle_mismatch",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // The settlement stays PENDING for manual reconciliation: no child
     // booking flipped PAID.
@@ -4065,7 +4083,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 24690,
         errorMessage: expect.stringContaining("paid after the organiser cancelled"),
         paymentIntentId: "inv_settle_cancelled",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
   });

@@ -16,6 +16,7 @@ import type { EmailSendOutcome } from "@/lib/email/core";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { buildAdditionalOwedPaymentWhere } from "@/lib/unpaid-finished-stays";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Admin re-send of the "you still owe this" email (#2350).
@@ -74,6 +75,9 @@ export async function resendAdditionalPaymentEmail(params: {
   };
   now?: Date;
 }): Promise<ResendAdditionalPaymentEmailResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = params.now ?? new Date();
 
   const booking = await prisma.booking.findUnique({
@@ -319,7 +323,7 @@ export async function resendAdditionalPaymentEmail(params: {
       checkOut: booking.checkOut,
       requestedOn: episodeStartedAt,
       lodgeId: booking.lodgeId,
-    });
+    }, format);
   } catch (err) {
     await restoreStamps("transport_error");
     logger.error(

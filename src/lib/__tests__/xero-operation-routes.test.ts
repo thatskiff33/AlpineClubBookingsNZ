@@ -117,6 +117,7 @@ import { POST as resolveOperation } from "@/app/api/admin/xero/operations/[id]/r
 import { POST as resetStaleRunning } from "@/app/api/admin/xero/operations/reset-stale-running/route";
 import { GET as listOperations } from "@/app/api/admin/xero/operations/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("Xero operation admin retry routes", () => {
   beforeEach(() => {
@@ -298,7 +299,7 @@ describe("Xero operation admin retry routes", () => {
     expect(mocks.enqueueXeroSyncOperationRetry).toHaveBeenCalledWith("op_123", {
       createdByMemberId: "admin-1",
     });
-    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 });
+    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 }, CLUB_FORMAT_TEST);
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_OPERATION_RETRY",
       category: "xero",
@@ -325,7 +326,7 @@ describe("Xero operation admin retry routes", () => {
     expect(mocks.enqueueXeroSyncOperationRetry).toHaveBeenCalledWith("op_456", {
       createdByMemberId: "admin-1",
     });
-    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 });
+    expect(mocks.processQueuedXeroOperationRetries).toHaveBeenCalledWith({ limit: 1 }, CLUB_FORMAT_TEST);
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_OPERATION_REQUEUED",
       category: "xero",

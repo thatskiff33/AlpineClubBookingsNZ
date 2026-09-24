@@ -43,6 +43,7 @@ import {
   type BookingLedgerIdentityRow,
 } from "../src/lib/additional-payment-ask";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import { formatCents } from "../src/lib/utils";
 
 function printUsage() {
@@ -129,6 +130,8 @@ async function main() {
     return;
   }
 
+  // The club's format (#3565), read once before the census query.
+  const format = await getClubFormat();
   const rows = await loadCensus();
   const unasked = rows.filter(
     (row) => bookingLedgerVerdict(row.residualCents) === "unasked",
@@ -150,10 +153,10 @@ async function main() {
     console.log(`## ${title}`);
     for (const row of group) {
       console.log(
-        `  ${row.bookingId}  ${row.bookingStatus.padEnd(16)} residual ${formatCents(row.residualCents)}` +
-          `  (price ${formatCents(row.finalPriceCents)}, fees ${formatCents(row.changeFeeCents)},` +
-          ` captured ${formatCents(row.amountCents)}, refunded ${formatCents(row.refundedAmountCents)},` +
-          ` credit ${formatCents(row.creditAppliedCents)}, ask ${formatCents(row.additionalAmountCents)}` +
+        `  ${row.bookingId}  ${row.bookingStatus.padEnd(16)} residual ${formatCents(row.residualCents, format)}` +
+          `  (price ${formatCents(row.finalPriceCents, format)}, fees ${formatCents(row.changeFeeCents, format)},` +
+          ` captured ${formatCents(row.amountCents, format)}, refunded ${formatCents(row.refundedAmountCents, format)},` +
+          ` credit ${formatCents(row.creditAppliedCents, format)}, ask ${formatCents(row.additionalAmountCents, format)}` +
           ` [${row.additionalPaymentStatus ?? "none"}])`,
       );
     }

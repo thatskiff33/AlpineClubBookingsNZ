@@ -13,7 +13,7 @@ import {
   getCachedClubIdentity,
   getCachedWebsiteThemeRenderState,
 } from "@/lib/public-layout-config";
-import { getClubFormat } from "@/lib/club-format-settings";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { SETUP_IN_PROGRESS_COPY } from "@/lib/setup-in-progress-screen";
@@ -121,7 +121,14 @@ export async function WebsiteChrome({
     // every club, so a `"use client"` component on the public site that reads
     // them sees `undefined` and renders New Zealand. One more primary-key read
     // of a one-row table, and it never throws (INV-CONFIG-006).
-    getClubFormat(),
+    //
+    // Through `clubFormatValues()` since #3565, which is the raw reader wrapped
+    // in React `cache()`. `cache()` memoises per function identity, so a chrome
+    // that kept calling `getClubFormat()` directly would not share the memo with
+    // anything below it that renders an amount through `clubFormat()` — two
+    // reads of one row in one render pass. This is the same request-scoped memo
+    // `clubTimeZone()` above already uses.
+    clubFormatValues(),
     // NOTE: the club identity is NOT fetched here. It is used only by the
     // pre-setup branch below, which since #2420 is a rare fallback rather than
     // the pre-setup norm, so it is resolved inside that branch — the same

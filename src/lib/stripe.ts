@@ -11,6 +11,7 @@ import "server-only";
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -65,18 +66,21 @@ const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
 export async function createPaymentIntent({
   amountCents,
   currency,
+  format,
   customerId,
   metadata,
   idempotencyKey,
 }: {
   amountCents: number;
   currency: string;
+  /** The club's format, for the below-minimum refusal (#3565). */
+  format: ClubFormat;
   customerId?: string;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${formatCents(amountCents)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS)})`);
+    throw new Error(`Amount ${formatCents(amountCents, format)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS, format)})`);
   }
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
@@ -121,6 +125,7 @@ export async function createSetupIntent({
 export async function chargePaymentMethod({
   amountCents,
   currency,
+  format,
   customerId,
   paymentMethodId,
   metadata,
@@ -128,13 +133,15 @@ export async function chargePaymentMethod({
 }: {
   amountCents: number;
   currency: string;
+  /** The club's format, for the below-minimum refusal (#3565). */
+  format: ClubFormat;
   customerId: string;
   paymentMethodId: string;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${formatCents(amountCents)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS)})`);
+    throw new Error(`Amount ${formatCents(amountCents, format)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS, format)})`);
   }
   const stripe = await getStripe();
   return stripe.paymentIntents.create(

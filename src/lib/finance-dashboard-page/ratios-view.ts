@@ -9,9 +9,11 @@ import type {
   FinanceDashboardRatioExplorerModel,
   FinanceDashboardViewModel,
 } from "@/lib/finance-dashboard-page/model";
+import type { ClubFormat } from "@/lib/club-format";
 
 export async function buildRatiosDashboard(
-  selection: FinanceDashboardSelection
+  selection: FinanceDashboardSelection,
+  format: ClubFormat,
 ): Promise<FinanceDashboardViewModel & { ratios: FinanceDashboardRatioExplorerModel }> {
   const matrix = await buildFinanceRatioMatrix({
     financialYearEndMonth: selection.financialYearEndMonth,
@@ -47,9 +49,9 @@ export async function buildRatiosDashboard(
           // One FY total, one definition (INV-SSOT-001): the same
           // `sumRatioSeries` the Financial-years panel and the ratio explorer
           // use, so this export cannot disagree with the panel on the same page.
-          [buckets[0].label]: formatCents(sumRatioSeries(matrix, series, buckets[0])),
-          [buckets[1].label]: formatCents(sumRatioSeries(matrix, series, buckets[1])),
-          [buckets[2].label]: formatCents(sumRatioSeries(matrix, series, buckets[2])),
+          [buckets[0].label]: formatCents(sumRatioSeries(matrix, series, buckets[0]), format),
+          [buckets[1].label]: formatCents(sumRatioSeries(matrix, series, buckets[1]), format),
+          [buckets[2].label]: formatCents(sumRatioSeries(matrix, series, buckets[2]), format),
         })),
       },
     ],

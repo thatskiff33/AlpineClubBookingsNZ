@@ -37,6 +37,7 @@ import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-eviden
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 const DEFAULT_STALE_PENDING_MINUTES = 30;
 
@@ -304,7 +305,9 @@ function groupRepeatedFailures(
   });
 }
 
-export async function buildXeroReconciliationReport(options?: {
+export async function buildXeroReconciliationReport(
+  format: ClubFormat,
+  options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
@@ -737,7 +740,7 @@ export async function buildXeroReconciliationReport(options?: {
         operationStatus: null,
         operationType: null,
         correlationKey: null,
-        detail: `Active refund credit-note coverage is ${formatCents(coveredCents)} against a provider-backed cash refund target of ${formatCents(evidence.cashRefundCents)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
+        detail: `Active refund credit-note coverage is ${formatCents(coveredCents, format)} against a provider-backed cash refund target of ${formatCents(evidence.cashRefundCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
         latestErrorMessage: null,
         createdAt: null,
       });
@@ -1044,7 +1047,9 @@ export async function buildXeroReconciliationReport(options?: {
   };
 }
 
-export async function sendXeroReconciliationReport(options?: {
+export async function sendXeroReconciliationReport(
+  format: ClubFormat,
+  options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
@@ -1052,7 +1057,7 @@ export async function sendXeroReconciliationReport(options?: {
   topLimit?: number;
   now?: Date;
 }) {
-  const report = await buildXeroReconciliationReport(options);
+  const report = await buildXeroReconciliationReport(format, options);
   const delivery = await shouldSendAdminSystemEmail({
     templateName: "admin-xero-reconciliation-report",
     hasContent: report.summary.issueTotalCount > 0,

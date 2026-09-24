@@ -3,6 +3,7 @@ import {
   type CancellationRuleLike,
 } from "@/lib/cancellation-rules";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type CancellationScheduleRow = {
   description: string;
@@ -18,6 +19,7 @@ export type CancellationScheduleRow = {
  */
 export function describeCancellationSchedule(
   rules: CancellationRuleLike[],
+  format: ClubFormat,
 ): CancellationScheduleRow[] {
   const sortedRules = rules
     .map(normalizeCancellationRule)
@@ -38,11 +40,11 @@ export function describeCancellationSchedule(
     const creditFeeDiffers = rule.creditFixedFeeCents !== rule.fixedFeeCents;
     const cardFeeStr =
       rule.fixedFeeCents > 0
-        ? ` less ${formatCents(rule.fixedFeeCents)} fee`
+        ? ` less ${formatCents(rule.fixedFeeCents, format)} fee`
         : "";
     const creditFeeStr =
       rule.creditFixedFeeCents > 0
-        ? ` less ${formatCents(rule.creditFixedFeeCents)} fee`
+        ? ` less ${formatCents(rule.creditFixedFeeCents, format)} fee`
         : "";
     const description =
       creditDiffers || creditFeeDiffers

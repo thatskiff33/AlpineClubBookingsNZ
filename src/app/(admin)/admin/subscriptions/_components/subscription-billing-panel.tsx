@@ -16,6 +16,7 @@ import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/a
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { useClubTime } from "@/components/club-time-provider";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type BillingData = {
   preview: {
@@ -95,6 +96,7 @@ type BillingData = {
 };
 
 export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number }) {
+  const format = useClubFormat();
   const { confirm, confirmDialog } = useConfirm();
   const canEditFinance = useAdminAreaEditAccess("finance");
   // The default decision date is the CLUB's today, not the build's
@@ -211,7 +213,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     if (!data || data.preview.seasonYear !== seasonYear || data.preview.decisionDate !== decisionDate) return;
     const accepted = await confirm({
       title: `Create ${data.preview.entries.length} annual membership charge${data.preview.entries.length === 1 ? "" : "s"}?`,
-      description: `${formatCents(data.preview.totalCents)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${data.preview.exceptions.length} exception${data.preview.exceptions.length === 1 ? "" : "s"} will be recorded without invoicing.`,
+      description: `${formatCents(data.preview.totalCents, format)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${data.preview.exceptions.length} exception${data.preview.exceptions.length === 1 ? "" : "s"} will be recorded without invoicing.`,
       confirmLabel: "Confirm annual batch",
     });
     if (!accepted) return;
@@ -287,7 +289,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           <>
             <div className="grid gap-3 sm:grid-cols-4">
               <div><p className="text-xs text-muted-foreground">Charges</p><p className="text-xl font-semibold tabular-nums">{data.preview.entries.length}</p></div>
-              <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
               <div><p className="text-xs text-muted-foreground">Open exceptions</p><p className="text-xl font-semibold tabular-nums">{visibleExceptions.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Due</p><p className="text-xl font-semibold tabular-nums">{data.preview.dueDays} days</p></div>
             </div>
@@ -295,7 +297,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               <div className="space-y-2">
                 {data.preview.entries.map((entry) => (
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents)}</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents, format)}</span></div>
                     <p className="text-muted-foreground">{entry.billingBasis.replaceAll("_", " ")} · {entry.coveredMonths}/12 months · covers {entry.coveredMembers.map((member) => member.name).join(", ")}{entry.xeroAccountCode ? ` · Xero ${entry.xeroAccountCode}${entry.xeroItemCode ? ` / ${entry.xeroItemCode}` : ""}` : ""}</p>
                     {/* #2161 (D2): a PER_FAMILY charge can be marked as already
                         invoiced when the operator knows an ambiguous legacy
@@ -407,7 +409,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 <h3 className="font-medium">Durable charge queue</h3>
                 {data.charges.map((charge) => (
                   <div key={charge.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}</div>
+                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
                       {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}

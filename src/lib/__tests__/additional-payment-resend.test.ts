@@ -38,6 +38,7 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
 import { resendAdditionalPaymentEmail } from "@/lib/additional-payment-resend-service";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const NOW = new Date("2026-10-10T22:00:00.000Z");
 const RAISED_AT = new Date("2026-10-01T00:00:00.000Z");
@@ -113,7 +114,7 @@ describe("resendAdditionalPaymentEmail", () => {
       checkOut: new Date("2026-11-03T00:00:00.000Z"),
       requestedOn: RAISED_AT,
       lodgeId: "lodge-1",
-    });
+    }, CLUB_FORMAT_TEST);
     // Writes the SAME stamp the automatic day-three nudge writes, which is what
     // stops the two arriving one after the other.
     expect(mockPrisma.payment.updateMany).toHaveBeenCalledWith(

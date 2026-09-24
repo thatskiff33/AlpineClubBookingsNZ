@@ -7,6 +7,7 @@ import {
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { parseProviderReportAmountToCents } from "@/lib/money-provider-amount";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Parser for stored BANK_BALANCES finance snapshots. The dashboard's
@@ -81,7 +82,8 @@ export interface ParsedCashSnapshot {
 
 export function parseCashSnapshot(
   club: BoundClubTime,
-  snapshot: FinanceCashSnapshotRecord
+  snapshot: FinanceCashSnapshotRecord,
+  format: ClubFormat,
 ): ParsedCashSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
 
@@ -102,7 +104,7 @@ export function parseCashSnapshot(
     snapshotLabel: storedSnapshotDay(snapshot.asOfDate),
     sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
     totalBalanceCents,
-    totalBalance: formatCents(totalBalanceCents),
+    totalBalance: formatCents(totalBalanceCents, format),
     accountCount: accounts.length,
     sourceUpdatedAtLabel: formatSourceUpdatedAt(club, snapshot.sourceUpdatedAt),
     accounts,

@@ -1,6 +1,7 @@
 import { redactSensitiveRecord } from "@/lib/redact-sensitive-json";
 import { formatCents } from "@/lib/utils";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Plain-English summaries of Xero sync operations for the admin Xero
@@ -72,10 +73,10 @@ function readBoolean(value: unknown): boolean | null {
 }
 
 /** Integer-cent money, formatted with the shared cents helper. */
-function formatCentsValue(value: unknown): string | null {
+function formatCentsValue(value: unknown, format: ClubFormat): string | null {
   const cents = readNumberLike(value);
   if (cents === null) return null;
-  return formatCents(Math.round(cents));
+  return formatCents(Math.round(cents), format);
 }
 
 /**
@@ -83,10 +84,10 @@ function formatCentsValue(value: unknown): string | null {
  * cents-only helper renders them. This is a unit conversion, not a hand-rolled
  * currency formatter — the actual formatting still goes through `formatCents`.
  */
-function formatDollarsValue(value: unknown): string | null {
+function formatDollarsValue(value: unknown, format: ClubFormat): string | null {
   const cents = providerAmountToCents(readNumberLike(value));
   if (cents === null) return null;
-  return formatCents(cents);
+  return formatCents(cents, format);
 }
 
 function shortId(value: unknown): string | null {
@@ -124,7 +125,8 @@ class FactList {
 
 function summarizeQueuedPayload(
   queueType: string,
-  req: Record<string, unknown>
+  req: Record<string, unknown>,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   const facts = new FactList();
 
@@ -136,7 +138,7 @@ function summarizeQueuedPayload(
     case "ENTRANCE_FEE_INVOICE":
       facts
         .add("Category", readString(req.category))
-        .add("Fee", formatCentsValue(req.feeAmountCents))
+        .add("Fee", formatCentsValue(req.feeAmountCents, format))
         .add("Item code", readString(req.itemCode))
         .add("Description", readString(req.description));
       return {
@@ -149,10 +151,10 @@ function summarizeQueuedPayload(
       const changeFee = readNumberLike(req.changeFeeCents);
       facts
         .add("Booking", shortId(req.bookingId))
-        .add("Price difference", formatCentsValue(req.priceDiffCents))
-        .add("Change fee", formatCentsValue(req.changeFeeCents));
+        .add("Price difference", formatCentsValue(req.priceDiffCents, format))
+        .add("Change fee", formatCentsValue(req.changeFeeCents, format));
       if (priceDiff !== null && changeFee !== null) {
-        facts.add("Net to bill", formatCentsValue(priceDiff + changeFee));
+        facts.add("Net to bill", formatCentsValue(priceDiff + changeFee, format));
       }
       const waiting = readBoolean(req.waitForConfirmedAdditionalPayment);
       if (waiting === true) {
@@ -190,15 +192,15 @@ function summarizeQueuedPayload(
 
     case "REFUND_CREDIT_NOTE":
       facts
-        .add("Refund amount", formatCentsValue(req.refundAmountCents))
-        .add("Covers refunds up to", formatCentsValue(req.watermarkCents));
+        .add("Refund amount", formatCentsValue(req.refundAmountCents, format))
+        .add("Covers refunds up to", formatCentsValue(req.watermarkCents, format));
       return {
         title: "Queued: create refund credit note",
         facts: facts.build(),
       };
 
     case "ACCOUNT_CREDIT_NOTE":
-      facts.add("Credit amount", formatCentsValue(req.refundAmountCents));
+      facts.add("Credit amount", formatCentsValue(req.refundAmountCents, format));
       return {
         title: "Queued: create account-credit note",
         facts: facts.build(),
@@ -207,7 +209,7 @@ function summarizeQueuedPayload(
     case "MODIFICATION_CREDIT_NOTE":
       facts
         .add("Booking", shortId(req.bookingId))
-        .add("Refund amount", formatCentsValue(req.refundAmountCents))
+        .add("Refund amount", formatCentsValue(req.refundAmountCents, format))
         .add("Booking modification", shortId(req.bookingModificationId));
       return {
         title: "Queued: create modification credit note",
@@ -218,7 +220,7 @@ function summarizeQueuedPayload(
       facts
         .add("Booking", shortId(req.bookingId))
         .add("Payment", shortId(req.paymentId))
-        .add("Refund amount", formatCentsValue(req.refundAmountCents))
+        .add("Refund amount", formatCentsValue(req.refundAmountCents, format))
         .add("Booking modification", shortId(req.bookingModificationId));
       return {
         title: "Queued: create modification account-credit note",
@@ -227,7 +229,7 @@ function summarizeQueuedPayload(
 
     case "CREDIT_NOTE_ALLOCATION":
       facts
-        .add("Amount", formatCentsValue(req.amountCents))
+        .add("Amount", formatCentsValue(req.amountCents, format))
         .add("Credit note", shortId(req.creditNoteId))
         .add("Invoice", shortId(req.invoiceId))
         .add("Role", readString(req.role));
@@ -242,8 +244,8 @@ function summarizeQueuedPayload(
       if (checkpoint) {
         facts
           .add("Credit note", shortId(checkpoint.creditNoteId))
-          .add("Current allocation", formatCentsValue(checkpoint.currentCents))
-          .add("Target allocation", formatCentsValue(checkpoint.targetCents))
+          .add("Current allocation", formatCentsValue(checkpoint.currentCents, format))
+          .add("Target allocation", formatCentsValue(checkpoint.targetCents, format))
           .add("Recovery phase", readString(checkpoint.phase));
       }
       return {
@@ -312,7 +314,8 @@ function lineItemsSummary(
 function summarizeInvoice(
   operationType: string,
   req: Record<string, unknown> | null,
-  res: Record<string, unknown> | null
+  res: Record<string, unknown> | null,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   const requestInvoice = findInvoice(req);
   const responseInvoice = findInvoice(res);
@@ -340,8 +343,8 @@ function summarizeInvoice(
   }
 
   facts
-    .add("Total", formatDollarsValue(responseInvoice?.total))
-    .add("Amount due", formatDollarsValue(responseInvoice?.amountDue))
+    .add("Total", formatDollarsValue(responseInvoice?.total, format))
+    .add("Amount due", formatDollarsValue(responseInvoice?.amountDue, format))
     .add(
       "Status",
       readString(responseInvoice?.status) ?? readString(requestInvoice?.status)
@@ -359,7 +362,8 @@ function summarizeInvoice(
 
 function summarizeCreditNote(
   req: Record<string, unknown> | null,
-  res: Record<string, unknown> | null
+  res: Record<string, unknown> | null,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   const existingCreditNoteId = shortId(res?.existingCreditNoteId);
   if (existingCreditNoteId) {
@@ -394,7 +398,7 @@ function summarizeCreditNote(
   }
 
   facts
-    .add("Total", formatDollarsValue(responseNote?.total))
+    .add("Total", formatDollarsValue(responseNote?.total, format))
     .add(
       "Status",
       readString(responseNote?.status) ?? readString(requestNote?.status)
@@ -403,7 +407,7 @@ function summarizeCreditNote(
   const allocation = asRecord(req?.allocation);
   if (allocation) {
     facts
-      .add("Allocated", formatDollarsValue(allocation.amount))
+      .add("Allocated", formatDollarsValue(allocation.amount, format))
       .add("Allocated to invoice", shortId(allocation.invoiceId));
   }
 
@@ -413,7 +417,8 @@ function summarizeCreditNote(
 
 function summarizeAllocation(
   req: Record<string, unknown> | null,
-  res: Record<string, unknown> | null
+  res: Record<string, unknown> | null,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   if (!req) return null;
   const responseAllocation = firstArrayItem(res?.allocations);
@@ -421,8 +426,8 @@ function summarizeAllocation(
   facts
     .add(
       "Amount",
-      formatCentsValue(req.amountCents) ??
-        formatDollarsValue(responseAllocation?.amount)
+      formatCentsValue(req.amountCents, format) ??
+        formatDollarsValue(responseAllocation?.amount, format)
     )
     .add("Credit note", shortId(req.creditNoteId))
     .add("Invoice", shortId(req.invoiceId))
@@ -471,7 +476,8 @@ function summarizeContactGroupSync(
  * shape is not mapped (the panel then falls back to the raw JSON view).
  */
 export function summarizeXeroOperation(
-  input: XeroOperationSummaryInput
+  input: XeroOperationSummaryInput,
+  format: ClubFormat,
 ): XeroOperationSummary | null {
   // The stored-record limits, not the log cap: these are already-persisted,
   // already-redacted payloads being re-read to build the panel's summary, and a
@@ -481,17 +487,17 @@ export function summarizeXeroOperation(
 
   const queueType = req ? readString(req.queueType) : null;
   if (queueType) {
-    const queued = summarizeQueuedPayload(queueType, req!);
+    const queued = summarizeQueuedPayload(queueType, req!, format);
     if (queued) return queued;
   }
 
   switch (input.entityType) {
     case "INVOICE":
-      return summarizeInvoice(input.operationType, req, res);
+      return summarizeInvoice(input.operationType, req, res, format);
     case "CREDIT_NOTE":
-      return summarizeCreditNote(req, res);
+      return summarizeCreditNote(req, res, format);
     case "ALLOCATION":
-      return summarizeAllocation(req, res);
+      return summarizeAllocation(req, res, format);
     case "CONTACT_GROUP":
       return input.operationType === "SYNC_MANAGED_MEMBERSHIP"
         ? summarizeContactGroupSync(req, res)

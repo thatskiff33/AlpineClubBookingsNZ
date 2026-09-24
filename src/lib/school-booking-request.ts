@@ -129,6 +129,7 @@ import {
   unchangedSchoolGuestPrefixLength,
 } from "@/lib/school-booking-constants";
 import { nameField } from "@/lib/zod-helpers";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
@@ -755,6 +756,9 @@ export async function approveSchoolBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveSchoolBookingRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -1803,7 +1807,7 @@ export async function approveSchoolBookingRequest(input: {
         checkOut: request.checkOut,
         guestCount: guests.length,
         totalCents: totalPriceCents,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId },
           "Failed to send school manual-invoice admin notification"
@@ -2096,6 +2100,9 @@ export async function approveMemberWholeLodgeRequest(input: {
   adminMemberId: string;
   override?: MemberWholeLodgeApprovalOverride;
 }): Promise<ApproveMemberWholeLodgeRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2817,7 +2824,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         totalCents: totalPriceCents,
         appliedCreditCents: manualInvoiceCreditCents,
         paymentReference: conversion.paymentReference,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId },
           "Failed to send the manual-invoice admin notification for an approved member whole-lodge booking",
@@ -2858,6 +2865,7 @@ export async function approveMemberWholeLodgeRequest(input: {
       request.checkOut,
       guests.length,
       totalPriceCents,
+      format,
       {
         lodgeId: conversion.lodgeId,
         paymentDue: {

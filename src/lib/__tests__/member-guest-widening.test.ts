@@ -50,10 +50,12 @@ import {
   DEFAULT_MODULE_SETTINGS,
   MODULE_DEFINITIONS,
   MODULE_KEYS,
+  resolveModuleDependencies,
 } from "@/config/modules";
 import { DEFAULT_MEMBER_GUEST_SETTINGS } from "@/config/club-settings-defaults";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { buildClubModuleSettingsPayload } from "@/lib/module-settings";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
@@ -1166,7 +1168,10 @@ describe("the module flag now gates the widening, and says so", () => {
     // What must SURVIVE is everything the bullet list is actually for: what
     // switching this on does to other members, and what an admin should know
     // before doing it.
-    const dependencies = MODULE_DEFINITIONS.memberGuests.dependencies.join(" ");
+    const dependencies = resolveModuleDependencies(
+      MODULE_DEFINITIONS.memberGuests,
+      CLUB_FORMAT_TEST,
+    ).join(" ");
     expect(dependencies).not.toMatch(/not ready to turn on yet/i);
     expect(dependencies).not.toMatch(/arrives in the next update/i);
     // Asked-first by default, the pending guest's operational invisibility, and
@@ -1181,7 +1186,7 @@ describe("the module flag now gates the widening, and says so", () => {
     // deleted here, in the same change that flips the widening — its own comment
     // said to. A module whose behaviour has shipped must read as ready.
     const statusFor = (memberGuests: boolean) => {
-      const found = buildClubModuleSettingsPayload({ memberGuests }).modules.find(
+      const found = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberGuests }).modules.find(
         (entry) => entry.key === "memberGuests",
       );
       expect(found, "memberGuests missing from the module payload").toBeDefined();
@@ -1272,10 +1277,10 @@ describe("the admin Modules card renders memberGuests as an ordinary module (D-1
   it("badges memberGuests exactly like any other credential-free module", () => {
     // The behavioural half, so the structural pins above cannot pass while the
     // payload says something different.
-    const memberGuests = buildClubModuleSettingsPayload({ memberGuests: true }).modules.find(
+    const memberGuests = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberGuests: true }).modules.find(
       (entry) => entry.key === "memberGuests",
     );
-    const notices = buildClubModuleSettingsPayload({ memberNotices: true }).modules.find(
+    const notices = buildClubModuleSettingsPayload(CLUB_FORMAT_TEST, { memberNotices: true }).modules.find(
       (entry) => entry.key === "memberNotices",
     );
     expect(memberGuests!.readiness.status).toBe(notices!.readiness.status);

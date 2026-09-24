@@ -48,6 +48,7 @@ import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -114,6 +115,9 @@ export async function POST(request: NextRequest) {
     }
 
     const { bookingId } = parsed.data;
+    // The club's format (#3565), resolved once, before any transaction or
+    // lock below — never per amount and never inside a transaction.
+    const format = await clubFormatValues();
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
@@ -337,6 +341,7 @@ export async function POST(request: NextRequest) {
             // up. The throw would roll the transaction back anyway, but the
             // ordering means the property does not depend on that.
             const creditElection = await consumeStoredCreditElection(tx, {
+              format,
               bookingId,
             });
 
@@ -441,6 +446,7 @@ export async function POST(request: NextRequest) {
         booking.checkOut,
         booking.guests.length,
         draftTransition.finalPriceCents,
+        format,
         {
           lodgeId: booking.lodgeId,
           ...(promoRedemption?.promoCode
@@ -564,6 +570,7 @@ export async function POST(request: NextRequest) {
           receivedPaymentIntentId = existingIntent.id;
           if (booking.payment.status !== "SUCCEEDED") {
             const reconciliation = await markBookingPaymentSucceeded({
+              format,
               bookingId: booking.id,
               paymentIntentId: existingIntent.id,
               amountCents: existingIntent.amount,
@@ -690,6 +697,7 @@ export async function POST(request: NextRequest) {
     // supersedes a different intent), while the "repay" segment keeps it
     // disjoint from every non-repay key.
     const paymentIntent = await createPaymentIntent({
+      format,
       amountCents: effectivePriceCents,
       currency: APP_STRIPE_CURRENCY,
       customerId: customer.id,

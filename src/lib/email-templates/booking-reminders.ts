@@ -23,6 +23,7 @@ import {
 import { CLUB_LODGE_TRAVEL_NOTE, CLUB_NAME } from "@/config/club-identity";
 import { emailPalette } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- N-01: Check-in Reminder ----
 
@@ -80,7 +81,9 @@ export function preArrivalReminderTemplate(params: {
   // fail-quiet direction: a member never sees a roster instruction the club may
   // not mean.
   checkoutChoreNote?: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: emailCalendarDay(params.checkIn) },
     { label: "Check-out", value: emailCalendarDay(params.checkOut) },
@@ -99,7 +102,7 @@ export function preArrivalReminderTemplate(params: {
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", your lodge stay is coming up.")}
     ${infoTable(rows)}
     ${params.checkoutChoreNote ? paragraph(escapeHtml(params.checkoutChoreNote)) : ""}
-    ${outstandingAdditionalPaymentNote(params.outstandingAdditionalAmountCents)}
+    ${outstandingAdditionalPaymentNote(params.outstandingAdditionalAmountCents, format)}
     ${arrivalInstructionsSection({
       travelNote: params.lodgeTravelNote,
       doorCode: params.doorCode,
@@ -114,10 +117,10 @@ export function preArrivalReminderTemplate(params: {
  * reminder so both say the same thing in the same words. Empty for a booking
  * with nothing outstanding, so the surrounding template is unchanged.
  */
-function outstandingAdditionalPaymentNote(amountCents: number | undefined): string {
+function outstandingAdditionalPaymentNote(amountCents: number | undefined, format: ClubFormat): string {
   if (!amountCents || amountCents <= 0) return "";
   return alertBox(
-    `There is still ${formatCents(amountCents)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`,
+    `There is still ${formatCents(amountCents, format)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`,
     "warning",
   );
 }
@@ -135,12 +138,14 @@ export function additionalPaymentReminderTemplate(params: {
   checkIn: Date;
   checkOut: Date;
   requestedOn: Date;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Payment Still Needed")}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", a change to your lodge booking increased the total, and the extra amount has not been paid yet.")}
     ${infoTable([
-      { label: "Amount still to pay", value: formatCents(params.additionalAmountCents) },
+      { label: "Amount still to pay", value: formatCents(params.additionalAmountCents, format) },
       { label: "Requested on", value: emailClubDate(params.requestedOn) },
       { label: "Check-in", value: emailCalendarDay(params.checkIn) },
       { label: "Check-out", value: emailCalendarDay(params.checkOut) },

@@ -50,6 +50,7 @@ import {
 } from "@/lib/email-templates/member-guest";
 import { sendMemberGuestConsentOutcomeEmail } from "@/lib/email/member-guest";
 import { composeMemberGuestConsentOutcome } from "@/lib/member-guest-email-notes";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const TEMPLATE = "member-guest-consent-outcome";
 const SEND_PARAMS = {
@@ -71,7 +72,7 @@ describe("memberGuestConsentOutcomeTemplate (#2307)", () => {
     checkIn: parseDateOnly("2026-08-08"),
     checkOut: parseDateOnly("2026-08-10"),
     outcome: { kind: "DECLINED", creditCents: 4800 },
-  });
+  }, CLUB_FORMAT_TEST);
   const html = memberGuestConsentOutcomeTemplate({
     firstName: "Dave",
     outcomeHeading: copy.heading,
@@ -178,7 +179,7 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
   });
 
   it("passes the booking id so the per-booking No-emails switch can withhold it", async () => {
-    await sendMemberGuestConsentOutcomeEmail(SEND_PARAMS);
+    await sendMemberGuestConsentOutcomeEmail(SEND_PARAMS, CLUB_FORMAT_TEST);
 
     const call = sendEmailMock.mock.calls[0][0];
     expect(call.bookingContext).toEqual({
@@ -194,12 +195,12 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
     const outcome = { status: "sent", emailLogId: "log_1", messageId: "msg_1" };
     sendEmailMock.mockResolvedValue(outcome);
     await expect(
-      sendMemberGuestConsentOutcomeEmail(SEND_PARAMS),
+      sendMemberGuestConsentOutcomeEmail(SEND_PARAMS, CLUB_FORMAT_TEST),
     ).resolves.toBe(outcome);
   });
 
   it("reports an acceptance as changing nothing", async () => {
-    await sendMemberGuestConsentOutcomeEmail(SEND_PARAMS);
+    await sendMemberGuestConsentOutcomeEmail(SEND_PARAMS, CLUB_FORMAT_TEST);
     const call = sendEmailMock.mock.calls[0][0];
 
     expect(call.subject).toContain("Priya Kaur has accepted");
@@ -216,7 +217,7 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
         expiredAt: parseDateOnly("2026-08-07"),
         creditCents: 4800,
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     const call = sendEmailMock.mock.calls[0][0];
     expect(call.templateData.outcomeSentence).toContain(
@@ -236,7 +237,7 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
         expiredAt: parseDateOnly("2026-08-07"),
         blocker: "LAST_GUEST",
       },
-    });
+    }, CLUB_FORMAT_TEST);
 
     const call = sendEmailMock.mock.calls[0][0];
     // The owner must not be told the guest came off when they did not.
@@ -258,7 +259,7 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
     await sendMemberGuestConsentOutcomeEmail({
       ...SEND_PARAMS,
       outcome: { kind: "DECLINED_STILL_ON_BOOKING", blocker: "SETTLEMENT_CHOICE" },
-    });
+    }, CLUB_FORMAT_TEST);
 
     const call = sendEmailMock.mock.calls[0][0];
     expect(call.templateData.outcomeHeading).toBe("Priya Kaur has declined");
@@ -279,7 +280,7 @@ describe("sendMemberGuestConsentOutcomeEmail (#2307)", () => {
     await sendMemberGuestConsentOutcomeEmail({
       ...SEND_PARAMS,
       outcome: { kind: "DECLINED", creditCents: 0 },
-    });
+    }, CLUB_FORMAT_TEST);
 
     const call = sendEmailMock.mock.calls[0][0];
     expect(call.subject).toContain("Priya Kaur has declined");

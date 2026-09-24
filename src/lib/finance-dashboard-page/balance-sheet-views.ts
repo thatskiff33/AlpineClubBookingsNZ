@@ -23,23 +23,25 @@ import {
   type FinanceDashboardKpiCard,
 } from "@/lib/finance-dashboard-page/model";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
+import type { ClubFormat } from "@/lib/club-format";
 
-async function loadLatestBankBalancesSnapshot(club: BoundClubTime) {
+async function loadLatestBankBalancesSnapshot(club: BoundClubTime, format: ClubFormat) {
   const snapshots = await listFinanceSnapshots({
     snapshotType: FinanceSnapshotType.BANK_BALANCES,
     scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
     limit: 1,
   });
-  return snapshots[0] ? parseCashSnapshot(club, snapshots[0]) : null;
+  return snapshots[0] ? parseCashSnapshot(club, snapshots[0], format) : null;
 }
 
 export async function buildCashDashboard(
   club: BoundClubTime,
-  selection: FinanceDashboardSelection
+  selection: FinanceDashboardSelection,
+  format: ClubFormat,
 ) {
   const [series, latestSnapshot] = await Promise.all([
     buildFinanceMonthlyBalanceSeries(selection.primary),
-    loadLatestBankBalancesSnapshot(club),
+    loadLatestBankBalancesSnapshot(club, format),
   ]);
   const monthPoints = series.points.filter((point) => point.hasData);
   const averageMonthEndCents =
@@ -58,12 +60,12 @@ export async function buildCashDashboard(
     },
     {
       title: "Average month-end balance",
-      value: formatDollarsDisplay(averageMonthEndCents),
+      value: formatDollarsDisplay(averageMonthEndCents, format),
       description: "Average of stored month-end bank balances in the selected range.",
     },
     {
       title: "Accounts tracked",
-      value: formatNumber(series.latestBankAccounts.length),
+      value: formatNumber(series.latestBankAccounts.length, format),
       description: "Bank accounts present in the latest stored month.",
     },
   ];
@@ -116,7 +118,7 @@ export async function buildCashDashboard(
         title: "Month-end balances",
         rows: monthPoints.map((point) => ({
           Month: point.label,
-          Balance: formatCents(point.bankCents),
+          Balance: formatCents(point.bankCents, format),
           MonthToDate: monthToDateCell(point),
         })),
       },
@@ -124,7 +126,7 @@ export async function buildCashDashboard(
         title: "Accounts",
         rows: series.latestBankAccounts.map((account) => ({
           Account: account.label,
-          Balance: formatCents(account.balanceCents),
+          Balance: formatCents(account.balanceCents, format),
         })),
       },
     ],
@@ -140,7 +142,9 @@ export async function buildCashDashboard(
 export async function buildBalanceOrWorkingCapitalDashboard(input: {
   selection: FinanceDashboardSelection;
   workingCapitalOnly: boolean;
+  format: ClubFormat;
 }) {
+  const { format } = input;
   const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary);
   const monthPoints = series.points.filter((point) => point.hasData);
   const latest = series.latest;
@@ -152,19 +156,19 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
     ? [
         {
           title: "Current assets",
-          value: latest ? formatDollarsDisplay(latest.currentAssetsCents) : "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.currentAssetsCents, format) : "Unavailable",
           description: "Current assets at the latest stored month end.",
         },
         {
           title: "Current liabilities",
           value: latest
-            ? formatDollarsDisplay(latest.currentLiabilitiesCents)
+            ? formatDollarsDisplay(latest.currentLiabilitiesCents, format)
             : "Unavailable",
           description: "Current liabilities at the latest stored month end.",
         },
         {
           title: "Working capital",
-          value: latest ? formatDollarsDisplay(latest.workingCapitalCents) : "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.workingCapitalCents, format) : "Unavailable",
           description: "Current assets less current liabilities.",
         },
         {
@@ -176,17 +180,17 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
     : [
         {
           title: "Total assets",
-          value: latest ? formatDollarsDisplay(latest.assetsCents) : "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.assetsCents, format) : "Unavailable",
           description: "Assets at the latest stored month end.",
         },
         {
           title: "Total liabilities",
-          value: latest ? formatDollarsDisplay(latest.liabilitiesCents) : "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.liabilitiesCents, format) : "Unavailable",
           description: "Liabilities at the latest stored month end.",
         },
         {
           title: "Net assets",
-          value: latest ? formatDollarsDisplay(latest.netAssetsCents) : "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.netAssetsCents, format) : "Unavailable",
           description: "Assets less liabilities at the latest stored month end.",
         },
         {
@@ -294,12 +298,12 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
         title: "Month-end positions",
         rows: monthPoints.map((point) => ({
           Month: point.label,
-          Assets: formatCents(point.assetsCents),
-          Liabilities: formatCents(point.liabilitiesCents),
-          NetAssets: formatCents(point.netAssetsCents),
-          CurrentAssets: formatCents(point.currentAssetsCents),
-          CurrentLiabilities: formatCents(point.currentLiabilitiesCents),
-          WorkingCapital: formatCents(point.workingCapitalCents),
+          Assets: formatCents(point.assetsCents, format),
+          Liabilities: formatCents(point.liabilitiesCents, format),
+          NetAssets: formatCents(point.netAssetsCents, format),
+          CurrentAssets: formatCents(point.currentAssetsCents, format),
+          CurrentLiabilities: formatCents(point.currentLiabilitiesCents, format),
+          WorkingCapital: formatCents(point.workingCapitalCents, format),
           MonthToDate: monthToDateCell(point),
         })),
       },

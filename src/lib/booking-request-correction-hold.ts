@@ -34,6 +34,7 @@ import {
 import { cancelBooking } from "@/lib/booking-cancel";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** How the request's capacity hold ended up. */
 export type CorrectionHoldOutcome =
@@ -88,7 +89,10 @@ export async function reconcileCorrectedRequestHold(params: {
   holdAffecting: boolean;
   adminMemberId: string;
   ipAddress: string;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<CorrectionHoldOutcome> {
+  const { format } = params;
   if (!params.heldBookingId) return "none";
   if (!params.holdAffecting) return "keptCateringOnly";
 
@@ -116,6 +120,7 @@ export async function reconcileCorrectedRequestHold(params: {
     params.adminMemberId,
     "ADMIN",
     params.ipAddress,
+    format,
     "card",
     {
       // An officer correcting a request, not the requester cancelling a

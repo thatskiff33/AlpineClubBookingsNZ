@@ -18,6 +18,7 @@ import {
   sizeReviewChargeAsk,
   type BookingLedgerIdentityRow,
 } from "@/lib/additional-payment-ask";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
   #3340 scope item 6 — THE CENSUS GUARD.
@@ -384,7 +385,7 @@ describe("INV-PAY-047: every live booking's money balances", () => {
         label: scenario.label,
         row,
         residualCents: residual,
-      });
+      }, CLUB_FORMAT_TEST);
 
       // The headline assertion: NOTHING built by the production sizing rule may
       // leave money the price says is owed that no ask is collecting.
@@ -413,7 +414,7 @@ describe("INV-PAY-047: every live booking's money balances", () => {
       label: "a seeded mis-sized booking",
       row: misSized,
       residualCents: residual,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(message).toContain("INV-PAY-047");
     // #3533: the sentence states the amount, not the storage form.
     expect(message).toContain("Residual $70.00");

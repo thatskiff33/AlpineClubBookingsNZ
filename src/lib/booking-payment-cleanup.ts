@@ -10,6 +10,7 @@ import {
   enqueuePaymentIntentCancellationRecovery,
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
@@ -107,6 +108,8 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
   bookingId: string;
   paymentId: string;
   newPaymentIntentId: string;
+  /** The club's format (#3565), resolved once by the caller and handed to each immediate run. */
+  format: ClubFormat;
 }): Promise<{ paymentTransactionId: string; paymentIntentId: string }[]> {
   const pendingAdditional = await prisma.paymentTransaction.findMany({
     where: {
@@ -146,7 +149,7 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
     // The durable row above is the guarantee; this is latency only (#3340).
     // `runPaymentRecoveryOperationNow` never throws, so a Stripe failure here
     // leaves precisely the pre-#3340 arrangement.
-    const immediate = await runPaymentRecoveryOperationNow(operation.id).catch(
+    const immediate = await runPaymentRecoveryOperationNow(operation.id, options.format).catch(
       (err) => {
         logger.error(
           {

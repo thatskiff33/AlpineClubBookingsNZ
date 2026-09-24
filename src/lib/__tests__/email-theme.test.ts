@@ -41,6 +41,7 @@ import {
 } from "../club-theme-schema";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import { frozenTestNow, realElapsedMs } from "./helpers/clock";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // The email palette is DERIVED from the three seeds via the light substrate
 // (#2187 D7): gold/deep pass through, and charcoal/mist/snow/ridge are the
@@ -94,6 +95,7 @@ const BOOKING_FIXTURE = () =>
     new Date("2026-07-06T00:00:00.000Z"),
     3,
     30000,
+    CLUB_FORMAT_TEST,
     { paymentDue: { reference: "TKC-0001", invoiceEmailed: false } },
   );
 const MEMBERSHIP_FIXTURE = () =>
@@ -110,7 +112,7 @@ const ADMIN_ALERT_FIXTURE = () =>
     guestCount: 3,
     totalCents: 30000,
     status: "CONFIRMED",
-  });
+  }, CLUB_FORMAT_TEST);
 
 describe("email-theme palette cache", () => {
   beforeEach(() => {

@@ -138,6 +138,7 @@ import {
   HOSTING_COVERAGE_RETRY_MESSAGE,
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CHECK_IN = new Date("2026-08-10");
 const CHECK_OUT = new Date("2026-08-12");
@@ -206,7 +207,7 @@ describe("confirmCrossLodgeWaitlistOffer duplicate-stay guard (M3)", () => {
     // offer's dates at the offered lodge — the residue of a stranded confirm.
     mocks.bookingFindFirst.mockResolvedValue({ id: "existing-booking" });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("DUPLICATE_STAY");
@@ -250,7 +251,7 @@ describe("confirmCrossLodgeWaitlistOffer duplicate-stay guard (M3)", () => {
     mocks.bookingFindFirst.mockResolvedValue(null);
     mocks.checkCapacityForGuestRanges.mockResolvedValue({ available: false });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     // Not rejected as a duplicate — it got past the guard.
@@ -297,7 +298,7 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
     // surfaced as DuplicateStayConflictError.
     mocks.createConfirmedBooking.mockRejectedValue(new DuplicateStayConflictError());
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("DUPLICATE_STAY");
@@ -324,7 +325,7 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
     // rejection: only DuplicateStayConflictError is special-cased.
     mocks.createConfirmedBooking.mockRejectedValue(new Error("boom"));
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBeUndefined();
@@ -340,6 +341,7 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
     const result = await confirmCrossLodgeWaitlistOffer(
       "entry-1",
       "member-1",
+      CLUB_FORMAT_TEST,
     );
 
     expect(result).toEqual({
@@ -393,7 +395,7 @@ describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("MINIMUM_STAY_VIOLATION");
@@ -427,7 +429,7 @@ describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {
       violations: [violation],
     });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
     const wire = JSON.stringify(result);
 
     expect(result.error).toBe(
@@ -443,19 +445,19 @@ describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {
 
   it("does not run the check for a stranger, an already-expired offer, or a non-offered entry", async () => {
     mocks.prismaBookingFindUnique.mockResolvedValue(offeredEntry());
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-2");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-2", CLUB_FORMAT_TEST);
     expect(mocks.validateMinimumStay).not.toHaveBeenCalled();
 
     mocks.prismaBookingFindUnique.mockResolvedValue(
       offeredEntry({ waitlistOfferExpiresAt: new Date(Date.now() - 1_000) }),
     );
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
     expect(mocks.validateMinimumStay).not.toHaveBeenCalled();
 
     mocks.prismaBookingFindUnique.mockResolvedValue(
       offeredEntry({ status: BookingStatus.WAITLISTED }),
     );
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
     expect(mocks.validateMinimumStay).not.toHaveBeenCalled();
   });
 
@@ -475,7 +477,7 @@ describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {
     mocks.priceBooking.mockResolvedValue({ totalPriceCents: 34_000 });
     mocks.createConfirmedBooking.mockRejectedValue(new Error("boom"));
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     // It got all the way to Phase 2, so the guard let it through untouched.
     expect(mocks.validateMinimumStay).toHaveBeenCalledTimes(1);
@@ -593,7 +595,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     async (_case, evaluation) => {
       mocks.evaluateNonMemberPricing.mockResolvedValue(evaluation);
 
-      const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+      const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
       expect(result.success).toBe(false);
       expect(result.code).toBe("PAID_UP_ADULT_MEMBER_REQUIRED");
@@ -617,7 +619,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
   it("fails closed WITHOUT consuming the offer, so the member keeps their place", async () => {
     mocks.evaluateNonMemberPricing.mockResolvedValue(repricedRefusal);
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(false);
     // Reverted to WAITLISTED under the OFFERED lodge's lock, exactly as the
@@ -646,7 +648,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     // waitlist-confirm route spreads it into a 409 with no cross-lodge special case.
     mocks.evaluateNonMemberPricing.mockResolvedValue(repricedRefusal);
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.paidUpAdultRefusal?.code).toBe(
       "PAID_UP_ADULT_MEMBER_REQUIRED",
@@ -661,7 +663,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     mocks.evaluateNonMemberPricing.mockResolvedValue(repricedRefusal);
 
     const wire = JSON.stringify(
-      await confirmCrossLodgeWaitlistOffer("entry-1", "member-1"),
+      await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST),
     );
 
     expect(wire).not.toContain("member-unpaid");
@@ -673,7 +675,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     ]);
     mocks.evaluateNonMemberPricing.mockResolvedValue(null);
 
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(mocks.evaluateNonMemberPricing).toHaveBeenCalledTimes(1);
     const input = mocks.evaluateNonMemberPricing.mock.calls[0][1];
@@ -710,7 +712,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     mocks.evaluateNonMemberPricing.mockResolvedValue(repricedAndCompliant);
     mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(result.newBookingId).toBe("new-booking");
@@ -727,7 +729,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     mocks.evaluateNonMemberPricing.mockResolvedValue(null);
     mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect("subscriptionMemberRateNotice" in result).toBe(false);
@@ -737,7 +739,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     letPhase1Pass();
     mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(1);
@@ -756,7 +758,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
     mocks.bookingUpdateMany.mockResolvedValue({ count: 0 });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result.success).toBe(true);
     expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
@@ -780,7 +782,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
 
-    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({
       success: false,
@@ -819,7 +821,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     // the evaluation takes no second pool connection either.
     mocks.evaluateNonMemberPricing.mockResolvedValue(repricedRefusal);
 
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
     expect(mocks.resolveSubscriptionLockoutMode).toHaveBeenCalledTimes(1);
     expect(
@@ -831,19 +833,19 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
     // Same preconditions as the minimum-stay check it sits beside: the gate must
     // not answer anything about an offer this caller does not own.
     mocks.prismaBookingFindUnique.mockResolvedValue(offeredEntry());
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-2");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-2", CLUB_FORMAT_TEST);
     expect(mocks.evaluateNonMemberPricing).not.toHaveBeenCalled();
 
     mocks.prismaBookingFindUnique.mockResolvedValue(
       offeredEntry({ waitlistOfferExpiresAt: new Date(Date.now() - 1_000) }),
     );
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
     expect(mocks.evaluateNonMemberPricing).not.toHaveBeenCalled();
 
     mocks.prismaBookingFindUnique.mockResolvedValue(
       offeredEntry({ status: BookingStatus.WAITLISTED }),
     );
-    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+    await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
     expect(mocks.evaluateNonMemberPricing).not.toHaveBeenCalled();
   });
 
@@ -856,7 +858,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
       letPhase1Pass();
       mocks.createConfirmedBooking.mockRejectedValue(new Error("boom"));
 
-      const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+      const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST);
 
       // It got all the way to Phase 2, so the gate let it through untouched.
       expect(mocks.createConfirmedBooking).toHaveBeenCalledTimes(1);

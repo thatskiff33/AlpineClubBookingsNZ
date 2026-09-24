@@ -4,6 +4,7 @@ import {
 } from "@/lib/member-address"
 import { seasonSelectLabel } from "@/lib/season-label"
 import { formatCents } from "@/lib/utils"
+import type { ClubFormat } from "@/lib/club-format"
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -197,7 +198,10 @@ export function dedupeParentOptions<T extends { id: string }>(parents: T[]) {
   })
 }
 
-export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
+export function formatPromoBenefit(
+  promo: PromoCodeBenefitSource,
+  format: ClubFormat,
+) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
       ? `${promo.percentOff}% off per individual`
@@ -205,7 +209,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off per individual`
+      ? `${formatCents(promo.valueCents, format)} off per individual`
       : "Fixed discount"
   }
   if (promo.type === "FIXED_NIGHTLY_PRICE") {
@@ -213,7 +217,7 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
       return "Fixed nightly price"
     }
     const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only"
-    return `${formatCents(promo.fixedNightlyPriceCents)} per eligible night · ${mode}`
+    return `${formatCents(promo.fixedNightlyPriceCents, format)} per eligible night · ${mode}`
   }
   if (promo.freeNightsPerIndividual !== null) {
     const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`
@@ -352,11 +356,11 @@ export function formatMemberFinancePreview(input: {
   creditBalanceCents: number | null
   promoCodeCount: number
   xeroLinked: boolean
-}) {
+}, format: ClubFormat) {
   return [
     input.creditBalanceCents === null
       ? "Credit —"
-      : `Credit ${formatCents(input.creditBalanceCents)}`,
+      : `Credit ${formatCents(input.creditBalanceCents, format)}`,
     input.promoCodeCount > 0
       ? pluralize(input.promoCodeCount, "promo code")
       : null,

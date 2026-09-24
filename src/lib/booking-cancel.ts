@@ -77,6 +77,7 @@ import {
   isCancellableBookingStatus,
   memberCancelRefusal,
 } from "@/lib/booking-cancel-eligibility";
+import type { ClubFormat } from "@/lib/club-format";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -183,6 +184,7 @@ export async function cancelBooking(
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
+  format: ClubFormat,
   refundMethod: "card" | "credit" = "card",
   options: {
     suppressCustomerNotification?: boolean;
@@ -223,6 +225,7 @@ export async function cancelBooking(
     sessionUserId,
     sessionUserRole,
     ipAddress,
+    format,
     refundMethod,
     options.suppressCustomerNotification ?? false,
     options.hasBookingsEditAccess ?? false,
@@ -238,6 +241,7 @@ export async function cancelBooking(
       bookingId,
       sessionUserId,
       ipAddress,
+      format,
       notifyMember
     );
     // If this booking hosts a group, clean up the joiners the PENDING-only sweep
@@ -250,7 +254,8 @@ export async function cancelBooking(
     await settleGroupBookingOnOrganiserCancel(
       bookingId,
       sessionUserId,
-      ipAddress
+      ipAddress,
+      format,
     ).catch((err) =>
       logger.error(
         { err, bookingId },
@@ -283,6 +288,7 @@ async function cancelLinkedProvisionalChildBookings(
   parentBookingId: string,
   sessionUserId: string,
   ipAddress: string,
+  format: ClubFormat,
   notifyMember = true
 ) {
   const children = await prisma.booking.findMany({
@@ -393,6 +399,7 @@ async function cancelLinkedProvisionalChildBookings(
         child.checkIn,
         child.checkOut,
         0,
+        format,
         "card",
         0,
         child.lodgeId
@@ -408,7 +415,7 @@ async function cancelLinkedProvisionalChildBookings(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-    }).catch(
+    }, format).catch(
       (err) =>
         logger.error(
           { err, bookingId: child.id },
@@ -423,6 +430,7 @@ async function performBookingCancellation(
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
+  format: ClubFormat,
   refundMethod: "card" | "credit" = "card",
   suppressCustomerNotification = false,
   hasBookingsEditAccess = false,
@@ -770,6 +778,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -778,7 +787,7 @@ async function performBookingCancellation(
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 
@@ -918,7 +927,8 @@ async function performBookingCancellation(
       actorMemberId: sessionUserId,
       reason: appendReturnedCreditSentence(
         "Cancelled before payment. No payment was taken.",
-        creditRestoredCents
+        creditRestoredCents,
+        format,
       ),
     });
 
@@ -930,6 +940,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -937,7 +948,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
@@ -1275,7 +1286,7 @@ async function performBookingCancellation(
       details: freshPaymentCaptured
         ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
         : xeroClearingAmountCents > 0
-          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${formatCents(xeroClearingAmountCents)} to clear the outstanding invoice`
+          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${formatCents(xeroClearingAmountCents, format)} to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
@@ -1297,7 +1308,8 @@ async function performBookingCancellation(
         freshPaymentCaptured
           ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
           : "Cancelled before payment was captured. Nothing was charged.",
-        creditRestoredCents
+        creditRestoredCents,
+        format,
       ),
     });
 
@@ -1309,6 +1321,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -1316,7 +1329,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
@@ -1812,8 +1825,8 @@ async function performBookingCancellation(
       sessionUserId,
       details:
         payment.changeFeeCents > 0
-          ? `Manual refund task for ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)}`
-          : `Manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents)}`,
+          ? `Manual refund task for ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)}`
+          : `Manual refund task for ${refundPercentage}% = ${formatCents(refundAmountCents, format)}`,
       ipAddress,
       metadata: {
         refundMethod: "manual",
@@ -1850,6 +1863,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "manual",
         creditRestoredCents,
         fresh.lodgeId
@@ -1866,14 +1880,14 @@ async function performBookingCancellation(
       refundAmountCents,
       bookingId,
       reason: `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId, manualRefundTaskId },
         "Failed to alert admins about a manual refund task"
       )
     );
 
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after manual-refund cancellation"));
 
     return {
@@ -1885,7 +1899,7 @@ async function performBookingCancellation(
         refundMethod: "manual",
         creditRestoredCents: creditRestoredCents || undefined,
         manualRefundTaskId: manualRefundTaskId ?? undefined,
-        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents)} has been raised for an admin to pay back by hand.`,
+        message: `Booking cancelled. This booking was settled in cash, so a manual refund task for ${formatCents(refundAmountCents, format)} has been raised for an admin to pay back by hand.`,
       },
     };
   }
@@ -1923,8 +1937,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Credit ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)} as account credit`
-        : `Credit ${refundPercentage}% = ${formatCents(refundAmountCents)} as account credit`,
+        ? `Credit ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)} as account credit`
+        : `Credit ${refundPercentage}% = ${formatCents(refundAmountCents, format)} as account credit`,
       ipAddress,
       metadata: {
         refundMethod: "credit",
@@ -1958,6 +1972,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "credit",
         creditRestoredCents,
         fresh.lodgeId
@@ -1965,7 +1980,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
 
     return {
@@ -1977,7 +1992,7 @@ async function performBookingCancellation(
         refundMethod: "credit",
         creditAmountCents: refundAmountCents,
         creditRestoredCents: creditRestoredCents || undefined,
-        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents)} added to your account.`,
+        message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents, format)} added to your account.`,
       },
     };
   }
@@ -2003,6 +2018,7 @@ async function performBookingCancellation(
     if (cardRefundPlan && plannedCardRefundCents > 0) {
       try {
         const refundResult = await refundPaymentTransactions({
+          format,
           paymentId,
           amountCents: plannedCardRefundCents,
           allocation: cardRefundPlan,
@@ -2088,8 +2104,8 @@ async function performBookingCancellation(
       bookingId,
       sessionUserId,
       details: payment.changeFeeCents > 0
-        ? `Refund ${refundPercentage}% of ${formatCents(refundableBaseCents)} (excluding ${formatCents(payment.changeFeeCents)} change fee) = ${formatCents(refundAmountCents)}`
-        : `Refund ${refundPercentage}% = ${formatCents(refundAmountCents)}`,
+        ? `Refund ${refundPercentage}% of ${formatCents(refundableBaseCents, format)} (excluding ${formatCents(payment.changeFeeCents, format)} change fee) = ${formatCents(refundAmountCents, format)}`
+        : `Refund ${refundPercentage}% = ${formatCents(refundAmountCents, format)}`,
       ipAddress,
       metadata: {
         refundMethod: "card",
@@ -2129,6 +2145,7 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         refundAmountCents,
+        format,
         "card",
         creditRestoredCents,
         fresh.lodgeId
@@ -2136,7 +2153,7 @@ async function performBookingCancellation(
     }
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
 
     return {
@@ -2148,7 +2165,7 @@ async function performBookingCancellation(
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
         stripeRefundId,
-        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents)} processed.`,
+        message: `Booking cancelled. ${refundPercentage}% refund of ${formatCents(refundAmountCents, format)} processed.`,
       },
     };
   }
@@ -2193,6 +2210,7 @@ async function performBookingCancellation(
       fresh.checkIn,
       fresh.checkOut,
       0,
+      format,
       "card",
       creditRestoredCents,
       fresh.lodgeId
@@ -2200,7 +2218,7 @@ async function performBookingCancellation(
   }
 
   // Trigger waitlist processing for freed dates
-  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
+  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
     .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {
@@ -2432,10 +2450,11 @@ async function paymentHasCaptureEvidence(
 // sentence renders the club's configured currency (#3325).
 function appendReturnedCreditSentence(
   reason: string,
-  creditRestoredCents: number
+  creditRestoredCents: number,
+  format: ClubFormat,
 ): string {
   return creditRestoredCents > 0
-    ? `${reason} ${formatCents(creditRestoredCents)} of applied account credit was returned.`
+    ? `${reason} ${formatCents(creditRestoredCents, format)} of applied account credit was returned.`
     : reason;
 }
 

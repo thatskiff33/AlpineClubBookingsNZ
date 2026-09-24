@@ -9,6 +9,7 @@ import {
   selectBookingMoneyBuildUp,
   type BookingMoneyBuildUpRow,
 } from "@/lib/booking-money-build-up";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BOOKER = "member-booker";
 
@@ -117,6 +118,7 @@ describe("#3277 canonical D3 build-up selection", () => {
 
   it("classifies an expired old-colour promotion with no recorded rows as a stored-side fallback", () => {
     const result = selectBookingMoneyBuildUp({
+      format: CLUB_FORMAT_TEST,
       operation: "XERO_PROMO_LINE",
       baseEvidence: { kind: "EXACT", amountCents: 20_000 },
       rows: [],
@@ -144,6 +146,7 @@ describe("#3277 canonical D3 build-up selection", () => {
       "STORED_TOTAL_MISMATCH",
     ] as const) {
       const result = selectBookingMoneyBuildUp({
+        format: CLUB_FORMAT_TEST,
         operation: "GUEST_REMOVAL",
         baseEvidence: { kind: "UNKNOWN", reason },
         ...knownRows([-500]),
@@ -162,6 +165,7 @@ describe("#3277 canonical D3 build-up selection", () => {
 
   it("keeps a whole-guest EVEN_SPLIT total usable when the caller proves that grain exact", () => {
     const result = selectBookingMoneyBuildUp({
+      format: CLUB_FORMAT_TEST,
       operation: "GUEST_REMOVAL",
       baseEvidence: { kind: "EXACT", amountCents: 10_001 },
       ...knownRows([-1_001], ["departing"]),
@@ -175,6 +179,7 @@ describe("#3277 canonical D3 build-up selection", () => {
   it("refuses a known mismatch without an explicit classification", () => {
     expect(() =>
       selectBookingMoneyBuildUp({
+        format: CLUB_FORMAT_TEST,
         operation: "CREDIT_ELECTION",
         baseEvidence: { kind: "EXACT", amountCents: 20_000 },
         ...knownRows([-2_000]),
@@ -185,6 +190,7 @@ describe("#3277 canonical D3 build-up selection", () => {
 
   it("keeps the Xero result at one aggregate signed promo amount", () => {
     const result = selectBookingMoneyBuildUp({
+      format: CLUB_FORMAT_TEST,
       operation: "XERO_PROMO_LINE",
       baseEvidence: { kind: "EXACT", amountCents: 40_500 },
       ...knownRows([-500, -400, 350]),

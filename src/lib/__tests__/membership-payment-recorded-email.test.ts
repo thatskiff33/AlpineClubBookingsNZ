@@ -18,6 +18,7 @@ import {
 } from "@/lib/email-message-registry";
 import { validateEmailTemplateContent } from "@/lib/email-message-renderer";
 import { sendMembershipPaymentRecordedEmail } from "@/lib/email/membership";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // 8am on 2 July in NZ is still 1 July in UTC. Any date rendered through the
 // NZ helpers reports 2 July; a bare toLocaleDateString on a UTC/other-zone
@@ -31,7 +32,7 @@ describe("membershipPaymentRecordedTemplate (#2260)", () => {
       seasonYear: 2026,
       amountCents: 12345,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Membership Payment Recorded");
     expect(html).toContain("Ada");
@@ -47,7 +48,7 @@ describe("membershipPaymentRecordedTemplate (#2260)", () => {
       seasonYear: 2026,
       amountCents: null,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Never invent a figure for cash the app never saw — and never print
     // "$0.00" as if that were the amount paid.
@@ -62,7 +63,7 @@ describe("membershipPaymentRecordedTemplate (#2260)", () => {
       seasonYear: 2026,
       amountCents: 5000,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html.toLowerCase()).not.toContain("xero");
     expect(html.toLowerCase()).not.toContain("invoice");
@@ -75,7 +76,7 @@ describe("membershipPaymentRecordedTemplate (#2260)", () => {
       seasonYear: 2026,
       amountCents: null,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
@@ -152,7 +153,7 @@ describe("sendMembershipPaymentRecordedEmail (#2260)", () => {
         seasonYear: 2026,
         amountCents: null,
         recordedAt: RECORDED_AT,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).resolves.toBe(outcome);
   });
 
@@ -169,7 +170,7 @@ describe("sendMembershipPaymentRecordedEmail (#2260)", () => {
       seasonYear: 2026,
       amountCents: 12345,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     const call = sendEmailMock.mock.calls[0][0];
@@ -196,7 +197,7 @@ describe("sendMembershipPaymentRecordedEmail (#2260)", () => {
       seasonYear: 2026,
       amountCents: null,
       recordedAt: RECORDED_AT,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(sendEmailMock.mock.calls[0][0].templateData.amount).toBe("");
   });

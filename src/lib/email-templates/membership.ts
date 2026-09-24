@@ -21,6 +21,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 export function nominationRequestTemplate(params: {
   nominatorName: string;
@@ -355,7 +356,9 @@ export function membershipPaymentRecordedTemplate(data: {
   seasonYear: number;
   amountCents: number | null;
   recordedAt: Date;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Membership Payment Recorded")}
     ${paragraph(
@@ -364,7 +367,7 @@ export function membershipPaymentRecordedTemplate(data: {
     ${infoTable([
       { label: "Season", value: escapeHtml(String(data.seasonYear)) },
       ...(data.amountCents !== null
-        ? [{ label: "Amount recorded", value: formatCents(data.amountCents) }]
+        ? [{ label: "Amount recorded", value: formatCents(data.amountCents, format) }]
         : []),
       { label: "Date recorded", value: emailClubDate(data.recordedAt) },
     ])}

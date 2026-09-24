@@ -102,6 +102,7 @@ import {
   maybeNotifyXeroRepeatedFailure,
   sendXeroReconciliationReport,
 } from "@/lib/xero-hardening";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("maybeNotifyXeroRepeatedFailure", () => {
   beforeEach(() => {
@@ -388,7 +389,7 @@ describe("buildXeroReconciliationReport", () => {
       },
     ]);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -527,7 +528,7 @@ describe("buildXeroReconciliationReport", () => {
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -591,7 +592,7 @@ describe("buildXeroReconciliationReport", () => {
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -667,7 +668,7 @@ describe("buildXeroReconciliationReport", () => {
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -735,7 +736,7 @@ describe("buildXeroReconciliationReport", () => {
       source: "legacy-mirror",
     });
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -807,7 +808,7 @@ describe("buildXeroReconciliationReport", () => {
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -862,7 +863,7 @@ describe("buildXeroReconciliationReport", () => {
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -904,7 +905,7 @@ describe("buildXeroReconciliationReport persistently failing inbound events", ()
       },
     ]);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -962,7 +963,7 @@ describe("buildXeroReconciliationReport persistently failing inbound events", ()
     mocks.inboundEventCount.mockResolvedValue(0);
     mocks.inboundEventFindMany.mockResolvedValue([]);
 
-    const report = await buildXeroReconciliationReport({
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -979,7 +980,7 @@ describe("buildXeroReconciliationReport persistently failing inbound events", ()
   });
 
   it("honours a custom failedInboundMinAgeMinutes threshold", async () => {
-    await buildXeroReconciliationReport({
+    await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
       failedInboundMinAgeMinutes: 120,
     });
@@ -1009,7 +1010,7 @@ describe("sendXeroReconciliationReport", () => {
   });
 
   it("does not email clean reports under the default content-only policy", async () => {
-    const result = await sendXeroReconciliationReport({
+    const result = await sendXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -1024,7 +1025,7 @@ describe("sendXeroReconciliationReport", () => {
       { id: "mem_1", xeroContactId: "contact_1" },
     ]);
 
-    const result = await sendXeroReconciliationReport({
+    const result = await sendXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -1046,7 +1047,7 @@ describe("sendXeroReconciliationReport", () => {
       mode: "ALWAYS",
     });
 
-    const result = await sendXeroReconciliationReport({
+    const result = await sendXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 
@@ -1064,7 +1065,7 @@ describe("sendXeroReconciliationReport", () => {
       mode: "DISABLED",
     });
 
-    const result = await sendXeroReconciliationReport({
+    const result = await sendXeroReconciliationReport(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-13T12:00:00Z"),
     });
 

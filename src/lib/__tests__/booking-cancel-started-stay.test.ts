@@ -92,6 +92,7 @@ import {
   CANCELLABLE_BOOKING_STATUSES,
   cancellableStatusRefusal,
 } from "@/lib/booking-cancel-eligibility";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const STARTED_MSG =
   "This stay has already started, so it can no longer be cancelled online. To leave early, edit the booking to shorten your remaining nights, or contact the club for help.";
@@ -143,7 +144,7 @@ afterEach(() => {
 describe("cancelBooking — #2029 started-stay self-service block", () => {
   it("(a) blocks a member cancelling a mid-stay PAID booking", async () => {
     setBooking({ status: "PAID", checkIn: "2026-08-20" }); // started
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
     });
     expect(result.status).toBe(400);
@@ -152,7 +153,7 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
 
   it("(b) blocks a member cancelling on the check-out day (check-in == today)", async () => {
     setBooking({ status: "PAID", checkIn: "2026-08-24" }); // starts today
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
     });
     expect(result.status).toBe(400);
@@ -161,7 +162,7 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
 
   it("blocks a Booking Officer (non-owner, bookings:edit) cancelling a started stay", async () => {
     setBooking({ status: "PAID", checkIn: "2026-08-20", memberId: OWNER });
-    const result = await cancelBooking("b1", "officer-9", "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", "officer-9", "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
       hasBookingsEditAccess: true,
     });
@@ -174,7 +175,7 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
     // gate) without driving the full refund machinery — proving the started
     // guard was skipped for a future stay.
     setBooking({ status: "DRAFT", checkIn: "2026-08-30" }); // future
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
     });
     expect(errorOf(result)).not.toBe(STARTED_MSG);
@@ -187,7 +188,7 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
     // land on the STATUS gate rather than the full admin paid-cancel flow (that
     // path is covered by the existing booking-cancel suite).
     setBooking({ status: "COMPLETED", checkIn: "2026-08-20" }); // started
-    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
     });
     expect(errorOf(result)).not.toBe(STARTED_MSG);
@@ -197,7 +198,7 @@ describe("cancelBooking — #2029 started-stay self-service block", () => {
 
   it("does NOT block when the caller does not opt in (internal/admin cancel paths)", async () => {
     setBooking({ status: "DRAFT", checkIn: "2026-08-20" }); // started, but no flag
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       // enforceStartedStayBlock omitted (defaults false)
     });
     expect(errorOf(result)).not.toBe(STARTED_MSG);
@@ -212,7 +213,7 @@ describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelD
 
   it("refuses a member cancelling a booking under review, with the sentence that says what to do instead", async () => {
     setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" }); // future
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
       enforceMemberCancelDoor: true,
     });
@@ -222,7 +223,7 @@ describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelD
 
   it("does not exempt a Full Admin on the member route — their door is the review Reject", async () => {
     setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
-    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceStartedStayBlock: true,
       enforceMemberCancelDoor: true,
     });
@@ -232,7 +233,7 @@ describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelD
 
   it("runs AFTER authorization, so a stranger learns nothing about the booking's status", async () => {
     setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30", memberId: OWNER });
-    const result = await cancelBooking("b1", "stranger-7", "USER", "127.0.0.1", "card", {
+    const result = await cancelBooking("b1", "stranger-7", "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card", {
       enforceMemberCancelDoor: true,
     });
     expect(result.status).toBe(403);
@@ -243,7 +244,7 @@ describe("cancelBooking — #3497 member-door status guard (enforceMemberCancelD
     setBooking({ status: "AWAITING_REVIEW", checkIn: "2026-08-30" });
     // Only the guard is under test: whatever the no-payment cancel path does
     // with this mocked tx, it must not have been the member-door refusal.
-    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", "card").catch(
+    const result = await cancelBooking("b1", OWNER, "USER", "127.0.0.1", CLUB_FORMAT_TEST, "card").catch(
       (error: unknown) => ({ status: -1, error: String(error) }),
     );
     expect(result.status === 400 && errorOf(result as never) === REVIEW_MSG).toBe(false);

@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 
 import { siteContentImporter } from "@/lib/config-transfer/categories/site-content";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const THEME_FILE = "site-content/theme.json";
 
@@ -58,6 +59,7 @@ async function applyTheme(
 ) {
   const store = makeStore(existing);
   await siteContentImporter.apply({
+    format: CLUB_FORMAT_TEST,
     tx: store.db as unknown as TxDb,
     files: themeFiles(theme),
     manifest: { formatVersion: 2 } as never,

@@ -114,6 +114,7 @@ import {
   hasAdminAccess,
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -296,6 +297,9 @@ export async function POST(request: NextRequest) {
   }
 
   const xeroIntegrationEnabled = (await loadEffectiveModuleFlags()).xeroIntegration;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   // Resolve effective member: authorized on-behalf booking for another member.
   let effectiveMemberId = session.user.id;
@@ -1111,6 +1115,7 @@ export async function POST(request: NextRequest) {
   if (draft) {
     try {
       const newBooking = await createDraftBooking({
+        format,
         effectiveMemberId,
         isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,
@@ -1281,6 +1286,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const outcome = await createConfirmedBooking({
+      format,
       // #3123 review — the SAME club day this route already gated the
       // retroactive envelope on, so the service's defence-in-depth re-check
       // cannot land on a different day (`INV-LOCK-004`).
@@ -1338,6 +1344,7 @@ export async function POST(request: NextRequest) {
 
     try {
       const waitlisted = await createWaitlistedBooking({
+        format,
         effectiveMemberId,
         isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,

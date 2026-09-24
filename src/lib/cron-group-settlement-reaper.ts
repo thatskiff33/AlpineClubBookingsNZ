@@ -76,6 +76,8 @@ import {
   sendGroupJoinCancelledEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 const GROUP_SETTLEMENT_REAP_HOURS =
   Number(process.env.GROUP_SETTLEMENT_REAP_HOURS) || 48;
@@ -129,6 +131,9 @@ const REAPABLE_SETTLEMENT_STATUSES = [
 export async function reapStaleGroupSettlements(
   now: Date = new Date()
 ): Promise<GroupSettlementReapResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const candidates = await prisma.groupBookingSettlement.findMany({
     where: { status: { in: [...REAPABLE_SETTLEMENT_STATUSES] } },
     select: {
@@ -196,6 +201,7 @@ export async function reapStaleGroupSettlements(
       await finishReap({
         settlement,
         released,
+        format,
       });
     } catch (err) {
       logger.error(
@@ -207,7 +213,7 @@ export async function reapStaleGroupSettlements(
 
   await expireReapedChildren(now, result);
 
-  await resumeInterruptedOrganiserCancels(now, result);
+  await resumeInterruptedOrganiserCancels(now, result, format);
 
   return result;
 }
@@ -240,7 +246,8 @@ export async function reapStaleGroupSettlements(
  */
 async function resumeInterruptedOrganiserCancels(
   now: Date,
-  result: GroupSettlementReapResult
+  result: GroupSettlementReapResult,
+  format: ClubFormat,
 ): Promise<void> {
   const graceMs = GROUP_CANCEL_RESUME_GRACE_MINUTES * 60 * 1000;
   const cutoff = new Date(now.getTime() - graceMs);
@@ -272,7 +279,8 @@ async function resumeInterruptedOrganiserCancels(
       await settleGroupBookingOnOrganiserCancel(
         group.organiserBookingId,
         group.organiserMemberId,
-        "cron:group-cancel-resume"
+        "cron:group-cancel-resume",
+        format
       );
       result.resumedInterruptedCancels += 1;
     } catch (err) {
@@ -660,6 +668,7 @@ async function finishExpiry({
 async function finishReap({
   settlement,
   released,
+  format,
 }: {
   settlement: {
     id: string;
@@ -674,6 +683,8 @@ async function finishReap({
     };
   };
   released: ReleasedChild[];
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   // Void the abandoned intent so a retained client_secret cannot capture. A
   // failed cancel is logged only: if the stale intent later captures, the
@@ -705,7 +716,7 @@ async function finishReap({
       checkOut: child.checkOut,
       // Re-process the freed lodge's own queue, not the default lodge's.
       lodgeId: child.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
         "Failed to process waitlist after group settlement reap"
@@ -729,7 +740,7 @@ async function finishReap({
       checkOut: organiserBooking.checkOut,
       joinerCount: released.length,
       totalCents: settlement.amountCents,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, groupBookingId: settlement.groupBookingId },

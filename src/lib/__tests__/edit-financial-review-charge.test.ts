@@ -209,6 +209,7 @@ import {
   buildEditFinancialReviewChargeReason,
   stripeIdempotencyKeyForAskAmount,
 } from "@/lib/payment-recovery-keys";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   manualRefundTask: {
@@ -373,7 +374,7 @@ function charge(overrides: Record<string, unknown> = {}) {
     direction: "CHARGE_TO_MEMBER",
     ...overrides,
     recordedNightPrices: null,
-  } as Parameters<typeof resolveManualRefundTask>[0]);
+  } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
 }
 
 beforeEach(() => {
@@ -851,7 +852,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
       confirmedAmountCents: null,
       direction: null,
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment-1",
@@ -869,7 +870,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
       note: "the club collected this at the lodge",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
     expect(claim.data.settlementDirection).toBeUndefined();
@@ -914,7 +915,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
       direction: "CHARGE_TO_MEMBER",
       ...overrides,
       recordedNightPrices: null,
-    } as Parameters<typeof resolveManualRefundTask>[0]);
+    } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
   }
 
   beforeEach(() => {
@@ -1158,6 +1159,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     // #3181: the EDIT's answer, carried in so a mint failure can freeze it on
     // the recovery row rather than leave the replay to re-derive one.
     hasIssuedXeroInvoice: true,
+    format: CLUB_FORMAT_TEST,
   };
 
   beforeEach(() => {
@@ -1383,7 +1385,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
       direction: "CHARGE_TO_MEMBER",
       ...overrides,
       recordedNightPrices: null,
-    } as Parameters<typeof resolveManualRefundTask>[0]);
+    } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
   }
 
   beforeEach(() => {
@@ -1646,6 +1648,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
    */
   it("tells an officer to run the repair, NOT to raise an invoice, when the owing is unknown", async () => {
     await recordUncollectedEditReviewChargeShare({
+      format: CLUB_FORMAT_TEST,
       leg: "xero-invoice",
       cause: "ask-owed-unknown",
       secondAsk: null,
@@ -1683,6 +1686,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
    */
   it("still tells an officer to raise it by hand when an invoice was owed", async () => {
     await recordUncollectedEditReviewChargeShare({
+      format: CLUB_FORMAT_TEST,
       leg: "xero-invoice",
       cause: "ask-not-raised",
       secondAsk: null,
@@ -2104,6 +2108,7 @@ describe("#3371: a later share joins a request that carried a balance", () => {
 
     await expect(
       syncEditFinancialReviewChargeRequest({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         bookingModificationId: "mod-1",
         paymentId: "payment-1",

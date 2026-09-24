@@ -13,6 +13,8 @@ import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -322,6 +324,9 @@ async function softDeleteCancelledBookingInTransaction(
   actor: BookingDeleteActor,
   reason: string
 ): Promise<SoftDeleteOutcome> {
+  // The club's format (#3565), for a blocker's credit figure: read before the
+  // transaction and its global lock, never inside them.
+  const format = await clubFormatValues();
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const booking = await loadBookingForDelete(tx, bookingId);
@@ -348,7 +353,7 @@ async function softDeleteCancelledBookingInTransaction(
       };
     }
 
-    const blockers = await getCancelledBookingDeleteBlockers(tx, booking);
+    const blockers = await getCancelledBookingDeleteBlockers(tx, booking, format);
     if (blockers.length > 0) {
       return {
         result: {
@@ -483,7 +488,8 @@ async function loadBookingForDelete(db: BookingDeleteDb, bookingId: string) {
 
 async function getCancelledBookingDeleteBlockers(
   tx: Prisma.TransactionClient,
-  booking: BookingForDelete
+  booking: BookingForDelete,
+  format: ClubFormat,
 ) {
   const blockers: BookingDeleteBlocker[] = [];
   const paymentId = booking.payment?.id;
@@ -592,7 +598,7 @@ async function getCancelledBookingDeleteBlockers(
     "member_credit",
     `Member credit history exists (${memberCreditRows.length} row${
       memberCreditRows.length === 1 ? "" : "s"
-    }, net ${formatCents(creditNetCents)})`,
+    }, net ${formatCents(creditNetCents, format)})`,
     memberCreditRows.length > 0 && !creditFullyRestored ? memberCreditRows.length : 0
   );
   addBlocker(

@@ -168,9 +168,10 @@ describe("PATCH /api/admin/bookings/[id]/review notify choice (#1790) — reject
     // #1730 carve-out (guards the DOMAIN_INVARIANTS/registry claim): the
     // review-declined explainer is suppressed, but notifyMember must NOT be
     // threaded into cancelBooking, so its cancellation email still always
-    // sends. Pin that no suppress/options arg is passed (6th positional arg
-    // stays undefined) — a future refactor that suppresses it would fail here.
-    expect(h.cancelBooking.mock.calls[0][5]).toBeUndefined();
+    // sends. Pin that no suppress/options arg is passed (7th positional arg,
+    // after `format` and `refundMethod`, stays undefined) — a future refactor
+    // that suppresses it would fail here.
+    expect(h.cancelBooking.mock.calls[0][6]).toBeUndefined();
     expect(h.sendRejected).not.toHaveBeenCalled();
     const call = auditFor("booking.review.reject");
     expect(call?.metadata).toMatchObject({

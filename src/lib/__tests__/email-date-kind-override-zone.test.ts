@@ -89,6 +89,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Type-only, so it emits nothing and cannot warm the module registry
 // ahead of the container-zone re-import below.
 import type { EmailTemplateData } from "@/lib/email-message-renderer";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * The container's zone, chosen BEHIND Greenwich so the retired environment-zone
@@ -319,7 +320,7 @@ const SENDERS: readonly Sender[] = [
         priceCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: INSTANT,
-      }),
+      }, CLUB_FORMAT_TEST),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },
       { key: "checkOut", iso: CHECK_OUT_ISO },
@@ -342,7 +343,7 @@ const SENDERS: readonly Sender[] = [
         priceCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: INSTANT,
-      }),
+      }, CLUB_FORMAT_TEST),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },
       { key: "checkOut", iso: CHECK_OUT_ISO },
@@ -383,7 +384,7 @@ const SENDERS: readonly Sender[] = [
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         requestedOn: INSTANT,
-      }),
+      }, CLUB_FORMAT_TEST),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },
       { key: "checkOut", iso: CHECK_OUT_ISO },
@@ -424,6 +425,7 @@ const SENDERS: readonly Sender[] = [
         INSTANT,
         "bk_1",
         12_000,
+        CLUB_FORMAT_TEST,
       ),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // DB-only credential resolution (#2082): the secret key now comes from the
 // encrypted store via stripe-config, so mock that resolver instead of the env.
@@ -81,6 +82,7 @@ describe("Stripe library", () => {
       mockPaymentIntentsCreate.mockResolvedValue(mockPI);
 
       const result = await createPaymentIntent({
+        format: CLUB_FORMAT_TEST,
         amountCents: 5000,
         currency: "nzd",
         customerId: "cus_test",
@@ -113,7 +115,7 @@ describe("Stripe library", () => {
       */
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ amountCents: 1000, currency: "nzd" });
+      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, currency: "nzd" });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "nzd" }),
@@ -124,7 +126,7 @@ describe("Stripe library", () => {
     it("allows custom currency", async () => {
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ amountCents: 1000, currency: "aud" });
+      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, currency: "aud" });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "aud" }),
@@ -164,6 +166,7 @@ describe("Stripe library", () => {
       mockPaymentIntentsCreate.mockResolvedValue(mockPI);
 
       const result = await chargePaymentMethod({
+        format: CLUB_FORMAT_TEST,
         amountCents: 8000,
         currency: "nzd",
         customerId: "cus_test",

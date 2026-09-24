@@ -26,6 +26,7 @@ import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 // the one definition and is deliberately import-free, so a client component
 // can reach it without dragging the server module across the boundary.
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -92,6 +93,7 @@ export function BookingManualPaymentControls({
    */
   noEmails?: boolean;
 }) {
+  const format = useClubFormat();
   const router = useRouter();
   // Writes /api/admin/bookings/[id]/mark-paid, which is FINANCE-gated (the
   // bookings prefix is deliberately overridden in SPECIAL_ROUTE_AREA_PATTERNS),
@@ -327,7 +329,7 @@ export function BookingManualPaymentControls({
             variant="outline"
             onClick={() => openDialog("paid")}
           >
-            Record manual payment ({formatCents(state.amountOwingCents)})
+            Record manual payment ({formatCents(state.amountOwingCents, format)})
           </ViewOnlyActionButton>
         ) : (
           <p className="text-sm text-warning-11">
@@ -366,7 +368,7 @@ export function BookingManualPaymentControls({
                 <DialogTitle>
                   {recordedAmountCents === null
                     ? `Record a payment for ${memberName}?`
-                    : `Record ${formatCents(recordedAmountCents)} as paid for ${memberName}?`}
+                    : `Record ${formatCents(recordedAmountCents, format)} as paid for ${memberName}?`}
                 </DialogTitle>
                 <DialogDescription>
                   This records money the club has already received in cash or by
@@ -381,12 +383,12 @@ export function BookingManualPaymentControls({
                   data-testid="manual-payment-credit-election-warning"
                 >
                   {memberName} asked to put{" "}
-                  {formatCents(state.storedCreditElectionCents)} of their account
+                  {formatCents(state.storedCreditElectionCents, format)} of their account
                   credit towards this booking, and it has not been applied yet.
                   Recording cash cannot use it — the money has already changed
                   hands — so that credit will stay unused and remain available on
                   their account, and they will be told so. Take the full{" "}
-                  {formatCents(state.amountOwingCents)} only if that is what they
+                  {formatCents(state.amountOwingCents, format)} only if that is what they
                   have actually handed over.
                 </p>
               ) : null}
@@ -397,29 +399,29 @@ export function BookingManualPaymentControls({
                 >
                   <p>
                     A later change to this booking added{" "}
-                    <strong>{formatCents(outstandingAdditionalCents)}</strong>,
+                    <strong>{formatCents(outstandingAdditionalCents, format)}</strong>,
                     which is recorded separately and is still marked as unpaid.
                     That amount is part of the{" "}
-                    {formatCents(state.amountOwingCents)} this booking owes, not
+                    {formatCents(state.amountOwingCents, format)} this booking owes, not
                     on top of it:
                   </p>
                   <dl className="space-y-1">
                     <div className="flex justify-between gap-4">
                       <dt>Booking before the change</dt>
                       <dd data-testid="manual-payment-additional-base">
-                        {formatCents(baseAmountCents)}
+                        {formatCents(baseAmountCents, format)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-4">
                       <dt>Later addition, still marked unpaid</dt>
                       <dd data-testid="manual-payment-additional-extra">
-                        {formatCents(outstandingAdditionalCents)}
+                        {formatCents(outstandingAdditionalCents, format)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-4 border-t border-warning-6 pt-1">
                       <dt>Owed in total</dt>
                       <dd data-testid="manual-payment-additional-owing">
-                        {formatCents(state.amountOwingCents)}
+                        {formatCents(state.amountOwingCents, format)}
                       </dd>
                     </div>
                     <div className="flex justify-between gap-4 font-medium">
@@ -427,14 +429,14 @@ export function BookingManualPaymentControls({
                       <dd data-testid="manual-payment-additional-total">
                         {recordedAmountCents === null
                           ? "answer below"
-                          : formatCents(recordedAmountCents)}
+                          : formatCents(recordedAmountCents, format)}
                       </dd>
                     </div>
                   </dl>
                   <fieldset className="space-y-2">
                     <legend className="font-medium">
                       Does the money you have received cover that{" "}
-                      {formatCents(outstandingAdditionalCents)} addition as
+                      {formatCents(outstandingAdditionalCents, format)} addition as
                       well?
                     </legend>
                     <label className="flex items-start gap-2">
@@ -447,8 +449,8 @@ export function BookingManualPaymentControls({
                       />
                       <span>
                         Yes — record the full{" "}
-                        {formatCents(state.amountOwingCents)}, including the{" "}
-                        {formatCents(outstandingAdditionalCents)} addition. The
+                        {formatCents(state.amountOwingCents, format)}, including the{" "}
+                        {formatCents(outstandingAdditionalCents, format)} addition. The
                         booking is fully paid and the member will not be asked
                         for the addition again.
                       </span>
@@ -463,9 +465,9 @@ export function BookingManualPaymentControls({
                       />
                       <span>
                         No — record only the{" "}
-                        {formatCents(baseAmountCents)} owed before the change.
+                        {formatCents(baseAmountCents, format)} owed before the change.
                         The booking is marked paid, but the{" "}
-                        {formatCents(outstandingAdditionalCents)} addition stays
+                        {formatCents(outstandingAdditionalCents, format)} addition stays
                         recorded as owing and the club will keep asking the
                         member for it. If the member has a card payment set up
                         for that addition it is left open, so they can pay it

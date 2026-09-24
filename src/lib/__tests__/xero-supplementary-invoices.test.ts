@@ -93,6 +93,7 @@ import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
@@ -125,6 +126,7 @@ describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L
   it("throws when bookingModificationId is absent instead of collapsing the key to bookingId", async () => {
     await expect(
       createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "bk1",
         priceDiffCents: 5000,
         changeFeeCents: 2000,
@@ -147,6 +149,7 @@ describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L
 
     await expect(
       createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "bk1",
         priceDiffCents: 5000,
         changeFeeCents: 2000,
@@ -220,6 +223,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
 
   it("bills the signed net: negative price line + fee line, payment equals the Stripe capture", async () => {
     const invoiceId = await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: -500,
       changeFeeCents: 1000,
@@ -306,6 +310,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     itemisedFixtures();
 
     await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 8000,
       changeFeeCents: 1000,
@@ -337,6 +342,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     const run = async () => {
       mocks.startXeroSyncOperation.mockClear();
       await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "bk1",
         priceDiffCents: 8000,
         changeFeeCents: 1000,
@@ -381,6 +387,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     ]);
 
     await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 3275,
       changeFeeCents: 0,
@@ -426,7 +433,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     const first = { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext };
     const run = async () => {
       mocks.startXeroSyncOperation.mockClear();
-      await createXeroSupplementaryInvoice({ bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
+      await createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
       const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
       return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
     };
@@ -448,6 +455,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     itemisedFixtures();
 
     await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 9500,
       changeFeeCents: 1000,
@@ -469,6 +477,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
 
   it("completes as skipped without provider calls when the net is not positive", async () => {
     const invoiceId = await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: -1500,
       changeFeeCents: 1000,
@@ -537,6 +546,7 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
 
   it("anchors on the review task and keys the create so Xero cannot dedupe it", async () => {
     const invoiceId = await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 3000,
       changeFeeCents: 0,
@@ -569,6 +579,7 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
 
   it("tells the member why a second invoice has arrived", async () => {
     await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 3000,
       changeFeeCents: 0,
@@ -598,6 +609,7 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
    */
   it("CONTROL: the booking change's own invoice keeps its anchor, key and wording", async () => {
     await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       priceDiffCents: 3000,
       changeFeeCents: 0,
@@ -711,6 +723,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
 
     await expect(
       createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "bk1",
         priceDiffCents: 3000,
         changeFeeCents: 0,
@@ -770,6 +783,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
 
     await expect(
       createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "bk1",
         priceDiffCents: 3000,
         changeFeeCents: 0,

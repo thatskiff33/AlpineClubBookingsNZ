@@ -12,6 +12,7 @@ import {
   type AuditTimelineCategory,
 } from "@/lib/audit-query";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await getAuditTimelinePage({
       db: prisma,
+      format: await clubFormatValues(),
       where,
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,

@@ -77,6 +77,7 @@ import {
   OPTIONAL_TEMPLATE_TOKENS,
   findDanglingDefaultLines,
 } from "@/lib/email-message-token-contract";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const GLOBAL_DATA: EmailTemplateData = {
   BASE_URL: "https://bookings.example.org",
@@ -137,6 +138,7 @@ async function send(
     new Date("2026-08-17"),
     2,
     totalCents,
+    CLUB_FORMAT_TEST,
     senderOptions,
   );
   expect(sendEmailMock).toHaveBeenCalledTimes(1);
@@ -443,6 +445,7 @@ describe("#2328 booking-confirmed applied-credit note", () => {
       new Date("2026-08-17"),
       2,
       30000,
+      CLUB_FORMAT_TEST,
     );
 
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
@@ -479,19 +482,19 @@ describe("#2328 booking-confirmed applied-credit note", () => {
 
 describe("#2328 the shared row builder", () => {
   it("renders nothing at all when no credit was applied", () => {
-    expect(appliedCreditSummaryRows(0, 18000, "card")).toEqual([]);
+    expect(appliedCreditSummaryRows(0, 18000, CLUB_FORMAT_TEST, "card")).toEqual([]);
     // A negative amount cannot describe applied credit; it must not invent a
     // "+$…" line out of one.
-    expect(appliedCreditSummaryRows(-1, 18000, "card")).toEqual([]);
+    expect(appliedCreditSummaryRows(-1, 18000, CLUB_FORMAT_TEST, "card")).toEqual([]);
   });
 
   it("renders nothing when nothing was settled to report", () => {
     // settledByPaymentCents returns a negative for an unpaid confirmation.
-    expect(appliedCreditSummaryRows(12000, -1, "card")).toEqual([]);
+    expect(appliedCreditSummaryRows(12000, -1, CLUB_FORMAT_TEST, "card")).toEqual([]);
   });
 
   it("signs the credit itself, so no body ever needs to type a minus", () => {
-    expect(appliedCreditSummaryRows(12000, 18000, "card")).toEqual([
+    expect(appliedCreditSummaryRows(12000, 18000, CLUB_FORMAT_TEST, "card")).toEqual([
       { label: "Account credit applied", value: "-$120.00" },
       { label: "Paid by card", value: "$180.00" },
     ]);

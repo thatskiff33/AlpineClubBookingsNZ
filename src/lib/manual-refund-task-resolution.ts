@@ -62,6 +62,7 @@ export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -101,7 +102,8 @@ import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
  * added nothing to it.
  */
 export async function resolveManualRefundTask(
-  input: ManualRefundTaskResolution
+  input: ManualRefundTaskResolution,
+  format: ClubFormat
 ) {
   const { taskId, resolution, note, actingMemberId } = input;
   const trimmedNote = normaliseManualPaymentNote(note);
@@ -335,6 +337,7 @@ export async function resolveManualRefundTask(
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
     const nightPriceRepairs = await planStoredNightPriceRepair({
+      format,
       task,
       requested: input.recordedNightPrices,
       settled: settlement
@@ -493,6 +496,7 @@ export async function resolveManualRefundTask(
     // condition, is `recordReviewClosurePricing`'s docblock.
     if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
       await recordReviewClosurePricing({
+        format,
         plans: nightPriceRepairs,
         task,
         actingMemberId,
@@ -621,6 +625,7 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
+      format,
     });
 
   return { ...result, stripeRefundId, additionalPaymentIntentId };
