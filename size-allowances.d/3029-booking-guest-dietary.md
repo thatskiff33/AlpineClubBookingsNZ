@@ -41,7 +41,7 @@ reason: the approval's new-booking execution parameters, resolved before its
   transaction, carry the seeding toggle to the create it executes.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3091
+lines: 3114
 reason: applyGuestChanges takes the seeding toggle; its two add-guest creates
   spread a decision and its two placeholder-link writes fill an empty value.
 
@@ -72,6 +72,13 @@ reason: the school and whole-lodge approvals read the toggle before their
   transactions and resolve one decision per guest at their creates.
 
 file: src/lib/waitlist-cross-lodge.ts
-lines: 997
+lines: 998
 reason: the cross-lodge offer rebuilds the same stay, so it captures each
   source row's value and carries it onto the new guest rows.
+
+file: src/lib/member-guest-consent-service.ts
+lines: 1221
+reason: granting a member guest's pending consent is the moment their row
+  first belongs to them, so the approval fills an empty dietary note from their
+  profile inside the consent transaction it already holds (#3029 S5); the
+  seeding toggle is read with the club day before that transaction.

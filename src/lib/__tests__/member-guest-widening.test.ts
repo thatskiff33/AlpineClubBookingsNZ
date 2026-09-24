@@ -770,6 +770,11 @@ describe("consent columns have exactly one writer", () => {
     // Its #3123 docblock names `consentExpiresAt` in order to say which of the
     // two date KINDS it renders is a real instant, which is exactly the
     // distinction a reader has to get right here.
+    // #3029 S5: READS a planned guest's consentStatus so a member whose consent
+    // is still PENDING is not seeded with their dietary note. Writes no consent
+    // column.
+    "src/lib/member-dietary-booking-writes.ts":
+      "reads consentStatus to withhold dietary seeding while consent is pending",
     "src/lib/member-guest-email-notes.ts":
       "names a consent column in a docblock explaining instants versus calendar days; reads and writes nothing",
     "src/lib/member-guest-delegate-page.ts":
