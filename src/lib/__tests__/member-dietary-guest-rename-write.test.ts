@@ -94,3 +94,52 @@ describe("a non-member rename on a modification (#3029 S2)", () => {
     expect(dataFor("untouched")).not.toHaveProperty("dietaryRequirements");
   });
 });
+
+describe("a row linked to a member on a modification (#3029 W15)", () => {
+  it("replaces a named non-member's note with the linked member's profile and only fills an empty placeholder", async () => {
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx } = fakeTx();
+    const member = {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, dietaryRequirements: `${id} profile` })),
+      ),
+    };
+    const rows = [guestRow("alice", "Alice", "Smith"), guestRow("placeholder", "Guest", "3")];
+    const priced = {
+      priceCents: 3000,
+      perNightCents: [3000],
+      perNightPriceSources: ["SOLD" as const],
+      nightDates: [CHECK_IN],
+    };
+    await applyGuestChanges({ ...tx, member } as unknown as Parameters<typeof applyGuestChanges>[0], {
+      guestDietarySeeding: bookingGuestDietarySeeding(true),
+      bookingId: "bk-1",
+      newCheckIn: CHECK_IN,
+      newCheckOut: CHECK_OUT,
+      removedGuests: [],
+      remainingGuests: rows as unknown as Parameters<typeof applyGuestChanges>[1]["remainingGuests"],
+      proposedRemainingGuests: rows.map((guest) => ({
+        guest,
+        stayStart: CHECK_IN,
+        stayEnd: CHECK_OUT,
+      })) as unknown as Parameters<typeof applyGuestChanges>[1]["proposedRemainingGuests"],
+      normalizedAddGuests: undefined,
+      guestMemberLinks: new Map([
+        ["alice", { memberId: "m-bob", firstName: "Bob", lastName: "Jones" }],
+        ["placeholder", { memberId: "m-hana", firstName: "Hana", lastName: "Rewi" }],
+      ]),
+      priceBreakdown: { guests: rows.map(() => priced) },
+      inProgressPlan: null,
+    });
+
+    expect(tx.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "alice", memberId: "m-bob" },
+      data: { dietaryRequirements: "m-bob profile" },
+    });
+    expect(tx.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "placeholder", memberId: "m-hana", dietaryRequirements: null },
+      data: { dietaryRequirements: "m-hana profile" },
+    });
+    expect(tx.bookingGuest.updateMany).toHaveBeenCalledTimes(2);
+  });
+});

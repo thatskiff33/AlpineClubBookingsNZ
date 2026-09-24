@@ -144,9 +144,9 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
 import {
+  applyGuestMemberLinkDietary,
   bookingGuestDietaryCreateData,
   bookingGuestDietaryUpdateData,
-  fillBookingGuestDietaryFromProfileIfEmpty,
   planGuestRenameDietary,
   resolveBookingGuestDietary,
   type BookingGuestDietarySeeding,
@@ -595,6 +595,10 @@ export function resolveGuestMemberLinks({
     // Narrow gate 3 — placeholder-only. NEVER member→member: a guest that already
     // carries a member identity keeps the same lock a rename keeps, so the
     // reversal can never silently transfer a booking to a different member.
+    // "Placeholder" here means an UNLINKED party row, named or not (ADR-001's
+    // "unlinked placeholders only"): an officer may name "Guest 3" and then link
+    // that person's member record. What a named row's dietary note does on the
+    // link is decided by `applyGuestMemberLinkDietary` (#3029, `INV-MOD-059`).
     if (guest.isMember || guest.memberId) {
       throw new ApiError(GUEST_MEMBER_LINK_PLACEHOLDER_ONLY_MESSAGE, 400);
     }
@@ -2546,6 +2550,28 @@ function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
   };
 }
 
+/**
+ * #3029 (W15, `INV-MOD-059`): what the dietary rule needs about one linked row —
+ * the row as it was before the link, and the name the link writes onto it.
+ */
+function guestMemberLinkDietary(
+  guest: BookingGuest,
+  link: {
+    memberId: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    consentColumns?: MemberGuestConsentColumns;
+  },
+) {
+  return {
+    guestId: guest.id,
+    memberId: link.memberId,
+    memberGuestConsent: link.consentColumns,
+    previous: guest,
+    linkedName: { firstName: link.firstName, lastName: link.lastName },
+  };
+}
+
 export async function applyGuestChanges(
   tx: Prisma.TransactionClient,
   {
@@ -2889,15 +2915,14 @@ export async function applyGuestChanges(
       createdGuests.push(guest);
     }
 
-    // #3029 (W15): a placeholder row this edit linked to a member.
-    await fillBookingGuestDietaryFromProfileIfEmpty(
+    // #3029 (W15): a row this edit linked to a member — the one rule that decides
+    // whether the value already on it is that member's, or somebody else's.
+    await applyGuestMemberLinkDietary(
       tx,
       guestDietarySeeding,
       inProgressPlan.proposedExistingGuests.flatMap((entry) => {
         const link = linkByGuestId.get(entry.guest.id);
-        return link
-          ? [{ guestId: entry.guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
-          : [];
+        return link ? [guestMemberLinkDietary(entry.guest, link)] : [];
       }),
     );
 
@@ -3062,16 +3087,15 @@ export async function applyGuestChanges(
     });
   }
 
-  // #3029 (W15): a placeholder row this edit linked to a member is filled from
-  // that member's profile only if it holds no value yet (an admin's entry wins).
-  await fillBookingGuestDietaryFromProfileIfEmpty(
+  // #3029 (W15): a row this edit linked to a member keeps its value only when it
+  // was a placeholder or already described that member; any other person's
+  // note is replaced from the member's profile, or cleared.
+  await applyGuestMemberLinkDietary(
     tx,
     guestDietarySeeding,
     remainingGuests.flatMap((guest) => {
       const link = linkByGuestId.get(guest.id);
-      return link
-        ? [{ guestId: guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
-        : [];
+      return link ? [guestMemberLinkDietary(guest, link)] : [];
     }),
   );
 

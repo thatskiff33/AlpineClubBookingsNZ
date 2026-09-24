@@ -18,6 +18,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  applyGuestMemberLinkDietary,
   bookingGuestDietaryCreateData,
   bookingGuestDietarySeeding,
   bookingGuestDietaryUpdateData,
@@ -420,8 +421,81 @@ describe(`the held-party rebuild locks the party first (C3, ${ID})`, () => {
   });
 });
 
-describe(`a placeholder newly linked to a member (W15, ${ID})`, () => {
-  it("fills only while ON, only an empty row, and never from an empty profile", async () => {
+describe(`a row newly linked to a member (W15, ${ID})`, () => {
+  const linkOf = (
+    guestId: string,
+    previous: ReturnType<typeof person>,
+    memberId: string,
+    linkedName: { firstName: string | null; lastName: string | null },
+    extra: object = {},
+  ) => ({ guestId, memberId, previous, linkedName, ...extra });
+  const bob = { firstName: "Bob", lastName: "Jones" };
+
+  it("a NAMED non-member linked to a DIFFERENT member has the other person's note replaced from the member's profile", async () => {
+    // "Guest 3" was named Alice Smith and an officer recorded Alice's allergy;
+    // an admin then links member Bob onto that row.
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    const alice = { ...person("Alice"), lastName: "Smith" };
+    await applyGuestMemberLinkDietary(db, ON, [linkOf("r3", alice, "m-bob", bob)]);
+    expect(db.bookingGuest.updateMany, `${ID}: Alice's note must not stay on Bob's row`).toHaveBeenCalledTimes(1);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r3", memberId: "m-bob" },
+      data: { dietaryRequirements: "Bob's profile" },
+    });
+  });
+
+  it("...and clears it while seeding is OFF, when the member's consent is pending, or from an empty profile", async () => {
+    const alice = { ...person("Alice"), lastName: "Smith" };
+    for (const [seeding, values, extra] of [
+      [OFF, { "m-bob": "Bob's profile" }, {}],
+      [ON, { "m-bob": "Bob's profile" }, PENDING],
+      [ON, { "m-bob": null }, {}],
+    ] as const) {
+      const db = profileDb(values);
+      await applyGuestMemberLinkDietary(db, seeding, [linkOf("r3", alice, "m-bob", bob, extra)]);
+      expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+        where: { id: "r3", memberId: "m-bob" },
+        data: { dietaryRequirements: null },
+      });
+    }
+  });
+
+  it("a placeholder linked keeps an admin-entered note: only an EMPTY row is filled", async () => {
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    const placeholder = { ...person("Guest"), lastName: "3" };
+    await applyGuestMemberLinkDietary(db, ON, [linkOf("r3", placeholder, "m-bob", bob)]);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r3", memberId: "m-bob", dietaryRequirements: null },
+      data: { dietaryRequirements: "Bob's profile" },
+    });
+    // While OFF nothing is written at all: the admin's note stays.
+    const off = profileDb({ "m-bob": "Bob's profile" });
+    await applyGuestMemberLinkDietary(off, OFF, [linkOf("r3", placeholder, "m-bob", bob)]);
+    expect(off.bookingGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a row already named as the member (or a spelling fix of it) is the same person and keeps its note", async () => {
+    const db = profileDb({ "m-bob": "Bob's profile" });
+    await applyGuestMemberLinkDietary(db, OFF, [
+      linkOf("r1", { ...person("Bob"), lastName: "Jones" }, "m-bob", bob),
+      linkOf("r2", { ...person("Bbo"), lastName: "Jones" }, "m-bob", bob),
+    ]);
+    expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a named row linked to a member with no name on record is treated as somebody else", async () => {
+    const db = profileDb({ "m-x": null });
+    await applyGuestMemberLinkDietary(db, ON, [
+      linkOf("r1", { ...person("Alice"), lastName: "Smith" }, "m-x", { firstName: null, lastName: null }),
+    ]);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "r1", memberId: "m-x" },
+      data: { dietaryRequirements: null },
+    });
+  });
+
+  it("the consent-grant fill: only while ON, only an empty row, and never from an empty profile (S5)", async () => {
     const db = profileDb({ "m-1": PROFILE, "m-2": null });
     await fillBookingGuestDietaryFromProfileIfEmpty(db, OFF, [{ guestId: "g1", memberId: "m-1" }]);
     expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();

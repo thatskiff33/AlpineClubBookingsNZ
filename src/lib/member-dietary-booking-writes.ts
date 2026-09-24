@@ -324,6 +324,16 @@ function nonMemberNameIsSamePerson(previous: OccupantIdentity, next: OccupantIde
 }
 
 /**
+ * A NON-MEMBER row becoming a MEMBER's, and that member plausibly the same
+ * person the row already described ({@link nonMemberNameIsSamePerson}): only then
+ * may a value already on the row stay there. The held-party rewrite (W14) and a
+ * placeholder linked to a member (W15) both ask this, so they cannot disagree.
+ */
+function becomesSamePersonAsMember(previous: OccupantIdentity, next: OccupantIdentity): boolean {
+  return !previous.memberId && Boolean(next.memberId) && nonMemberNameIsSamePerson(previous, next);
+}
+
+/**
  * A held party whose rows are REWRITTEN IN PLACE at approval, paired by
  * position (W14). Pairing by position is the existing rule for identity, price
  * and nights; this refuses to let it carry one person's value onto another:
@@ -351,10 +361,10 @@ export async function planHeldPartyRewriteDietary(
   // unseen. The approval already holds the global and lodge keys, and the
   // rewrite's own UPDATEs take these row locks anyway.
   await lockBookingGuestRowsForUpdate(db, bookingId);
-  const becomesSamePersonAsMember = ({ previous, next }: (typeof pairs)[number]) =>
-    !previous.memberId && Boolean(next.memberId) && nonMemberNameIsSamePerson(previous, next);
   const stored = new Map<string, string | null>();
-  const becoming = pairs.filter(becomesSamePersonAsMember).map(({ previous }) => previous.id);
+  const becoming = pairs
+    .filter(({ previous, next }) => becomesSamePersonAsMember(previous, next))
+    .map(({ previous }) => previous.id);
   if (becoming.length > 0) {
     const rows = await db.bookingGuest.findMany({
       where: { id: { in: becoming } },
@@ -370,7 +380,7 @@ export async function planHeldPartyRewriteDietary(
   const profiles = await readProfileValues(db, pairs.flatMap((pair) => seeds(pair) ?? []));
   return pairs.map((pair) => {
     if (isSameBookingGuestOccupant(pair.previous, pair.next)) return mintUpdate(UNTOUCHED);
-    if (becomesSamePersonAsMember(pair) && stored.get(pair.previous.id)) {
+    if (becomesSamePersonAsMember(pair.previous, pair.next) && stored.get(pair.previous.id)) {
       return mintUpdate(UNTOUCHED);
     }
     const memberId = seeds(pair);
@@ -418,13 +428,13 @@ export function bookingGuestDietaryUpdateData(
 }
 
 /**
- * A guest row that has just BECOME a linked member's — a placeholder linked to a
- * member (W15), or a member guest whose pending consent was just granted (S5).
- * That is the moment the row first belongs to that member, so it is filled from
- * their CURRENT profile — but ONLY if it holds no value yet (an admin's entry is
- * kept), only while seeding is ON, and never while the member's consent is
- * still pending. The null check is in the update's own WHERE, so a value
- * written concurrently is never overwritten.
+ * A member guest row whose pending consent was just granted (S5), or a
+ * placeholder linked to a member who is the same person (W15, via
+ * {@link applyGuestMemberLinkDietary}). The row was already that person's, so
+ * it is filled from the member's CURRENT profile — but ONLY if it holds no value
+ * yet (an admin's entry for that same person is kept), only while seeding is ON,
+ * and never while the member's consent is still pending. The null check is in
+ * the update's own WHERE, so a value written concurrently is never overwritten.
  */
 export async function fillBookingGuestDietaryFromProfileIfEmpty(
   db: ProfileDb & BookingGuestDb,
@@ -446,6 +456,57 @@ export async function fillBookingGuestDietaryFromProfileIfEmpty(
     await db.bookingGuest.updateMany({
       where: { id: link.guestId, memberId: link.memberId, dietaryRequirements: null },
       data: { dietaryRequirements: value },
+    });
+  }
+}
+
+/**
+ * A non-member row LINKED to a member by a modification (W15, #2337). The link
+ * gate refuses only a row that already has a member, so the row may be a
+ * generated placeholder or a non-member somebody has already named. Whether the
+ * value on it may stay is the W14 rule ({@link becomesSamePersonAsMember}):
+ *  - a placeholder being linked, or a name that is the member's own name (or an
+ *    unambiguous spelling correction of it) at the same age tier: the same
+ *    person, so a value already there is kept and an empty row is filled from
+ *    the member's profile ({@link fillBookingGuestDietaryFromProfileIfEmpty});
+ *  - anybody else: the note on the row is another person's, so it is REPLACED
+ *    with the member's current profile value while seeding is ON and their
+ *    consent is not pending, and cleared otherwise. Another person's value never
+ *    stays on the member's row, where their own data export and the kiosk would
+ *    show it as theirs.
+ * `previous` is the row as it was before the link; `linkedName` is the name the
+ * link writes (the member's), empty when the member record carries none — so a
+ * named row linked to a member without a name is treated as somebody else.
+ * Call it after the link's own update, in the same transaction.
+ */
+export async function applyGuestMemberLinkDietary(
+  db: ProfileDb & BookingGuestDb,
+  seeding: BookingGuestDietarySeeding,
+  links: readonly (ConsentShape & {
+    guestId: string;
+    memberId: string;
+    previous: OccupantIdentity;
+    linkedName: { firstName?: string | null; lastName?: string | null };
+  })[],
+): Promise<void> {
+  const samePerson = (link: (typeof links)[number]) =>
+    becomesSamePersonAsMember(link.previous, {
+      ...link.previous,
+      memberId: link.memberId,
+      firstName: link.linkedName.firstName ?? "",
+      lastName: link.linkedName.lastName ?? "",
+    });
+  await fillBookingGuestDietaryFromProfileIfEmpty(db, seeding, links.filter(samePerson));
+  const replaced = links.filter((link) => !samePerson(link));
+  if (replaced.length === 0) return;
+  const seeds = (link: (typeof links)[number]) =>
+    seeding.seedFromProfile && !consentPending(link) ? link.memberId : null;
+  const profiles = await readProfileValues(db, replaced.flatMap((link) => seeds(link) ?? []));
+  for (const link of replaced) {
+    const memberId = seeds(link);
+    await db.bookingGuest.updateMany({
+      where: { id: link.guestId, memberId: link.memberId },
+      data: { dietaryRequirements: memberId ? (profiles.get(memberId) ?? null) : null },
     });
   }
 }
