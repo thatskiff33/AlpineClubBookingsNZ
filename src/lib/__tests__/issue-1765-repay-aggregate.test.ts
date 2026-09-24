@@ -56,8 +56,32 @@ type StorePayment = {
 function makeStore(payment: StorePayment) {
   const paymentTransactionCreate = vi.fn();
   const store = {
+    // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
+    // ledger's settlement lines from the same rows, so it reads and writes here.
+    bookingLedgerLine: {
+      findMany: vi.fn(async () => []),
+      createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+    },
     payment: {
-      findUnique: vi.fn(async () => payment),
+      // The sync's select is answered with the shape it asks for, so the sync
+      // RUNS rather than taking its error path (review of #3604).
+      findUnique: vi.fn(async (args?: { select?: { refunds?: unknown } }) =>
+        args?.select?.refunds
+          ? {
+              bookingId: "booking-1765",
+              manuallyMarkedPaidAt: null,
+              manuallyMarkedPaidByMemberId: null,
+              booking: { lodgeId: "lodge-1765" },
+              transactions: payment.transactions.map(({ id, source, status, amountCents }) => ({
+                id,
+                source,
+                status,
+                amountCents,
+              })),
+              refunds: [],
+            }
+          : payment,
+      ),
       update: vi.fn(async ({ data }: { data: Partial<StorePayment> }) => {
         Object.assign(payment, data);
         return payment;

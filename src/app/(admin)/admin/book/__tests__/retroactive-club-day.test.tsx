@@ -33,6 +33,7 @@ import {
   render,
   screen,
   waitFor,
+  ClubFormatTestProvider,
 } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -241,7 +242,9 @@ describe("admin book: the club's day decides what is retroactive (CT-4, #2870)",
 
     render(<AdminBookPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     })
 

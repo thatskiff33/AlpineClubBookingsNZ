@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 
 let activeChartData: Array<{

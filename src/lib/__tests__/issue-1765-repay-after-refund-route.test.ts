@@ -87,6 +87,7 @@ import {
   getPaymentIntent,
 } from "@/lib/stripe";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
@@ -301,6 +302,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
       paymentIntentId: "pi_stuck",
       amountCents: REPRICED_FINAL,
       paymentMethodId: "pm_123",
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.queueXeroInvoiceForPaidBooking).toHaveBeenCalledWith({
       bookingId: "booking-1",

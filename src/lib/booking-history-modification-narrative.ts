@@ -8,6 +8,7 @@ import type {
   BookingMoneyBuildUpHistoryMetadata,
   BookingMoneyCompatibilityClassification,
 } from "@/lib/booking-money-build-up";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * HOW A STORED `BookingModification` ROW IS DESCRIBED IN WORDS.
@@ -102,6 +103,7 @@ const MONEY_BUILD_UP_FALLBACK_LABELS: Record<
  */
 export function moneyBuildUpNoteOf(
   modification: BookingHistoryModification,
+  format: ClubFormat,
 ): string | null {
   const next =
     modification.newData && typeof modification.newData === "object"
@@ -110,20 +112,20 @@ export function moneyBuildUpNoteOf(
   const source = next.moneyBuildUpSource;
   const derivedCents = next.moneyBuildUpDerivedCents;
   if (source === "STORED" && Number.isInteger(next.moneyBuildUpStoredCents)) {
-    return `Price source: stored booking build-up (${formatCents(next.moneyBuildUpStoredCents!)}), confirmed against the current calculation.`;
+    return `Price source: stored booking build-up (${formatCents(next.moneyBuildUpStoredCents!, format)}), confirmed against the current calculation.`;
   }
   if (
     source === "DERIVED_COMPATIBILITY_FALLBACK" &&
     Number.isInteger(derivedCents)
   ) {
     const stored = Number.isInteger(next.moneyBuildUpStoredCents)
-      ? `; the stored build-up was ${formatCents(next.moneyBuildUpStoredCents!)}`
+      ? `; the stored build-up was ${formatCents(next.moneyBuildUpStoredCents!, format)}`
       : "";
     const classification = next.moneyBuildUpFallbackClassification
       ? MONEY_BUILD_UP_FALLBACK_LABELS[next.moneyBuildUpFallbackClassification]
       : null;
     const reason = classification ? ` because ${classification}` : "";
-    return `Price source: current calculation (${formatCents(derivedCents!)}) retained${stored}${reason}.`;
+    return `Price source: current calculation (${formatCents(derivedCents!, format)}) retained${stored}${reason}.`;
   }
   if (source === "BASE_EVIDENCE_UNKNOWN") {
     return "Price source: stored sold-price evidence was not exact enough to use; the source is recorded as unknown.";
@@ -131,7 +133,7 @@ export function moneyBuildUpNoteOf(
   return null;
 }
 
-export function describeModification(modification: BookingHistoryModification): string | null {
+export function describeModification(modification: BookingHistoryModification, format: ClubFormat): string | null {
   const previous =
     modification.previousData && typeof modification.previousData === "object"
       ? (modification.previousData as Record<string, unknown>)
@@ -172,7 +174,7 @@ export function describeModification(modification: BookingHistoryModification): 
     case "CREDIT_ELECTION": {
       const electionCents = next.creditElectionCents;
       return typeof electionCents === "number" && electionCents > 0
-        ? `${formatCents(electionCents)} of account credit will be applied at payment.`
+        ? `${formatCents(electionCents, format)} of account credit will be applied at payment.`
         : "The saved account-credit choice was removed.";
     }
     // #3219: the review settle re-based the booking from its strands. The
@@ -186,7 +188,7 @@ export function describeModification(modification: BookingHistoryModification): 
         typeof next.finalPriceCents === "number"
       ) {
         parts.push(
-          `${formatCents(previous.finalPriceCents)} to ${formatCents(next.finalPriceCents)}, recalculated from what this booking's nights sold for.`,
+          `${formatCents(previous.finalPriceCents, format)} to ${formatCents(next.finalPriceCents, format)}, recalculated from what this booking's nights sold for.`,
         );
       } else {
         parts.push(
@@ -220,10 +222,11 @@ export function describeModificationLines(
   modification: Pick<BookingHistoryModification, "priceLines">,
   /** #2543's member word follows the rate snapshot; null falls back to `isMember`. */
   rateLabels: RateMembershipLabelResolver | null,
+  format: ClubFormat,
 ): string | null {
   const lines = parseModificationLines(modification.priceLines);
   if (!lines) return null;
   return `Made up of: ${lines
-    .map((line) => renderModificationLineWithAmount(line, rateLabels))
+    .map((line) => renderModificationLineWithAmount(line, format, rateLabels))
     .join("; ")}.`;
 }

@@ -98,6 +98,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("cancelBooking split cascade (#738)", () => {
   beforeEach(() => {
@@ -175,7 +176,7 @@ describe("cancelBooking split cascade (#738)", () => {
     );
     mocks.bookingFindMany.mockResolvedValue([child]);
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The cascade queried for children of the cancelled parent...
@@ -257,7 +258,7 @@ describe("cancelBooking split cascade (#738)", () => {
     // The outer sweep saw PENDING before waiting for the locks.
     mocks.bookingFindMany.mockResolvedValue([child]);
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
@@ -306,7 +307,7 @@ describe("cancelBooking split cascade (#738)", () => {
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
 
-    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("parent_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.reconcileBedAllocationsForBooking).not.toHaveBeenCalledWith(
@@ -335,7 +336,7 @@ describe("cancelBooking split cascade (#738)", () => {
     mocks.txBookingFindUnique.mockResolvedValue(directChild);
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    const result = await cancelBooking("child_1", "member_1", "MEMBER", "127.0.0.1");
+    const result = await cancelBooking("child_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The cascade looks for children of child_1 (there are none); the parent is

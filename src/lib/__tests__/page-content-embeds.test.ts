@@ -34,7 +34,6 @@ vi.mock("@/lib/club-identity-settings", () => ({
       : {},
   })),
 }));
-vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getDefaultLodgeCapacity: vi.fn(async () => 42),
   getLodgeCapacity: vi.fn(async (lodgeId: string) =>
@@ -50,12 +49,20 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
+vi.mock("@/lib/club-format-server", async () => {
+  const { bindClubFormat } = await import("@/lib/club-format-bound");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+  return {
+    clubFormatValues: vi.fn(async () => CLUB_FORMAT_TEST),
+    clubFormat: vi.fn(async () => bindClubFormat(CLUB_FORMAT_TEST)),
+  };
+});
 vi.mock("@/lib/public-page-content-tokens", () => ({
   loadPublicAnnualFees: vi.fn(async () => [{ heading: "Annual membership fees", rows: [{ label: "Public member", fee: { amountCents: 1000, label: "$10.00" } }] }]),
   loadPublicJoiningFees: vi.fn(async () => [{ heading: "Adult", rows: [] }]),
-  loadPublicHutFees: vi.fn(async (slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
+  loadPublicHutFees: vi.fn(async (_format: unknown, slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
   loadPublicBookingPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
-  loadPublicCancellationPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
+  loadPublicCancellationPolicy: vi.fn(async (_format: unknown, slug?: string) => ({ lodge: slug ?? null })),
 }));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
 
@@ -67,6 +74,7 @@ import {
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("buildEmbeddedBody", () => {
   it("maps every public data token, including lodge variants, through the shared registry", async () => {
@@ -240,7 +248,11 @@ describe("buildEmbeddedBody", () => {
     expect(parts).toEqual([
       {
         type: "html",
-        value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD &amp; GST.</p>",
+        // `{{currency}}` is the club's STORED code since #3565 (the `club-format-server`
+        // mock above), not the environment's; a validated ISO 4217 code can never
+        // carry a character that needs escaping, so the escaping proof on this line
+        // is the club name's.
+        value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD.</p>",
       },
     ]);
   });
@@ -330,6 +342,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -343,6 +356,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -358,6 +372,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Contact</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe('<a href="mailto:social@example.org">Contact</a>');
@@ -367,6 +382,7 @@ describe("resolveTextTokens URL scheme validation", () => {
   it("falls back to the public URL when no facebook URL is configured", async () => {
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe(
@@ -379,9 +395,11 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const first = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
     const second = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(first).toBe('<a href="https://club.example.org">Facebook</a>');
@@ -396,6 +414,7 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     const resolved = await resolveTextTokens(
       '<a href="{{facebook-url}}">Facebook</a>',
+      CLUB_FORMAT_TEST,
     );
 
     expect(resolved).toBe('<a href="#">Facebook</a>');
@@ -414,7 +433,7 @@ describe("resolveTextTokens URL scheme validation", () => {
     // Mirrors renderFooterSection in site-content.ts: sanitise the stored
     // HTML first, then resolve text tokens on the sanitised output.
     const sanitised = sanitizePageContentHtml(storedFooterHtml);
-    const resolved = await resolveTextTokens(sanitised);
+    const resolved = await resolveTextTokens(sanitised, CLUB_FORMAT_TEST);
 
     expect(resolved).not.toContain("javascript:");
     expect(resolved).toContain('href="https://club.example.org"');
@@ -426,6 +445,7 @@ describe("resolveTextTokens URL scheme validation", () => {
     for (const section of starterSiteContent) {
       const resolved = await resolveTextTokens(
         sanitizePageContentHtml(section.contentHtml),
+        CLUB_FORMAT_TEST,
       );
       expect(resolved).not.toContain("{{");
       expect(resolved).not.toMatch(/RMCA|Ruapehu|Federated Mountain Clubs/i);

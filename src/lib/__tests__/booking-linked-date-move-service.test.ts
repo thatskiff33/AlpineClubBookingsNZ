@@ -156,6 +156,7 @@ import {
   modifyBookingDatesWithLinkedMoveSupport,
   modifyBookingWithLinkedMoveSupport,
 } from "@/lib/booking-linked-date-move-arms";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const LODGE = "lodge-alpine";
 const OWNER = "member-owner";
@@ -287,6 +288,7 @@ function args(
     input: { checkIn: "2026-08-20", checkOut: "2026-08-22" },
     ipAddress: "203.0.113.7",
     todayAtClub: "2026-07-01" as never,
+    format: CLUB_FORMAT_TEST,
     ...overrides,
   };
 }

@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   // #3580: the ledger's one write delegate, so a settle's charge lines are
   // observable here.
   ledgerCreateMany: vi.fn(),
+  // #3595: the per-booking confirmation fence asks this first.
+  ledgerFindFirst: vi.fn(),
   // #2576 §9: the single settle door is a confirming path, so it records the bounded
   // hosting re-evaluation with the PAID claim and drains it after the commit.
   enqueueOwnHostingCoverage: vi.fn(async (...args: unknown[]) => {
@@ -156,6 +158,7 @@ import {
   markBookingSetupIntentSucceeded,
 } from "@/lib/payment-reconciliation";
 import logger from "@/lib/logger";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -175,6 +178,7 @@ const tx = {
   // claim; nothing reads them yet.
   bookingLedgerLine: {
     createMany: (...args: unknown[]) => mocks.ledgerCreateMany(...args),
+    findFirst: (...args: unknown[]) => mocks.ledgerFindFirst(...args),
   },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
@@ -227,6 +231,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.ledgerCreateMany.mockImplementation(
       async ({ data }: { data: unknown[] }) => ({ count: data.length }),
     );
+    mocks.ledgerFindFirst.mockResolvedValue(null);
     mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: LODGE_CAPACITY });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
@@ -301,6 +306,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_ledger",
       amountCents: 10000,
@@ -318,6 +324,55 @@ describe("markBookingPaymentSucceeded", () => {
     // The lines add up to what the booking says it costs — which is the whole
     // claim the ledger will eventually replace the mirror columns on.
     expect(rows.reduce((sum, row) => sum + (row.amountCents as number), 0)).toBe(10000);
+    // #3595: every line is keyed, and the write skips a key already posted, so
+    // a booking that passes the PAID claim twice (a reversed mark-paid, then a
+    // card payment) cannot post its charge lines twice.
+    expect(rows.every((row) => typeof row.postingKey === "string" && row.postingKey !== "")).toBe(true);
+    expect(mocks.ledgerCreateMany.mock.calls[0]?.[0]).toMatchObject({ skipDuplicates: true });
+  });
+
+  it("posts nothing when the booking's confirmation is already on the ledger (#3595)", async () => {
+    /*
+      The double-post the key alone could not stop. Mark-paid, reverse it (the
+      status goes back to payable), shift the dates — which recreates every
+      night row — then a card payment: the PAID claim succeeds a second time
+      and every per-night key is new. The fence asks the question once per
+      booking, under this settle's lock(1), before anything is planned.
+    */
+    mocks.ledgerFindFirst.mockResolvedValue({ id: "an-earlier-confirmation-line" });
+    const booking = makeStaggeredBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      lodgeId: "lodge-1",
+      totalPriceCents: 10000,
+      promoAdjustmentCents: 0,
+      guests: booking.guests.map((guest) => ({
+        ...guest,
+        firstName: "Moved",
+        lastName: "Dates",
+        ageTier: "ADULT",
+        rateMembershipTypeId: null,
+        nights: [{ stayDate: parseDateOnly("2026-04-17"), priceCents: 5000 }],
+      })),
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      paymentIntentId: "pi_second_settle",
+      amountCents: 10000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(result.outcome).toBe("paid");
+    expect(mocks.ledgerFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "booking-1", anchorKind: "CONFIRMATION" },
+      }),
+    );
+    const rows = mocks.ledgerCreateMany.mock.calls[0]?.[0]?.data as unknown[] | undefined;
+    expect(rows ?? []).toEqual([]);
   });
 
   it("settles anyway when the charge lines cannot be BUILT, and writes none (#3580)", async () => {
@@ -351,6 +406,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_ledger_unbuildable",
       amountCents: 10000,
@@ -372,6 +428,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_election",
       amountCents: 10000,
@@ -405,7 +462,7 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: 0,
         paymentIntentId: "pi_election",
         errorMessage: expect.stringContaining("never debited"),
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 
@@ -424,6 +481,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.getMemberCreditBalance.mockResolvedValue(5000);
 
     await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_election_clamped",
       amountCents: 10000,
@@ -444,7 +502,7 @@ describe("markBookingPaymentSucceeded", () => {
       expect.objectContaining({
         amountCents: 5000,
         errorMessage: expect.stringContaining("at most $50.00"),
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 
@@ -452,6 +510,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_no_election",
       amountCents: 10000,
@@ -487,6 +546,7 @@ describe("markBookingPaymentSucceeded", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_123",
       amountCents: 10000,
@@ -525,6 +585,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_lockorder",
       amountCents: 10000,
@@ -585,6 +646,7 @@ describe("markBookingPaymentSucceeded", () => {
     );
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_held",
       amountCents: 10000,
@@ -640,6 +702,7 @@ describe("markBookingPaymentSucceeded", () => {
 
     it("accepts a credit-reduced effective capture and mirrors credit = finalPrice − captured", async () => {
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_effective",
         amountCents: EFFECTIVE,
@@ -656,6 +719,7 @@ describe("markBookingPaymentSucceeded", () => {
 
     it("still accepts a legacy full-price capture (mirror credit = 0)", async () => {
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_legacy_full",
         amountCents: FINAL,
@@ -671,6 +735,7 @@ describe("markBookingPaymentSucceeded", () => {
     it("rejects an amount that is neither full nor effective", async () => {
       await expect(
         markBookingPaymentSucceeded({
+          format: CLUB_FORMAT_TEST,
           bookingId: "booking-1",
           paymentIntentId: "pi_wrong",
           amountCents: 5000, // neither 10000 nor 7000
@@ -706,6 +771,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingFindMany.mockResolvedValue([]); // no occupancy -> available
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_h3",
       amountCents: 10000,
@@ -771,6 +837,7 @@ describe("markBookingPaymentSucceeded", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_overbook",
       amountCents: 10000,
@@ -880,6 +947,7 @@ describe("markBookingPaymentSucceeded", () => {
       );
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_race",
         amountCents: 10000,
@@ -937,6 +1005,7 @@ describe("markBookingPaymentSucceeded", () => {
       primeCapacityRaceLoss();
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_race",
         amountCents: 10000,
@@ -958,6 +1027,7 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: 10000,
         reason: "requested_by_customer",
         allocation: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
+        format: CLUB_FORMAT_TEST,
         metadata: { bookingId: "booking-1", reason: "capacity_claim_failed" },
         idempotencyKeyPrefix: "capacity_claim_failed_booking-1_pi_race",
       });
@@ -1019,6 +1089,7 @@ describe("markBookingPaymentSucceeded", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_override",
       amountCents: 10000,

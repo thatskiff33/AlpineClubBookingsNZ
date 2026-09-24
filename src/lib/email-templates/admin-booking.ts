@@ -25,6 +25,7 @@ import {
 import { emailPalette } from "@/lib/email-theme";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- N-02: Admin Alert — New Booking ----
 
@@ -37,13 +38,15 @@ export function adminNewBookingTemplate(data: {
   status: string;
   reviewReason?: string | null;
   memberJustification?: string | null;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const rows = [
     { label: "Member", value: escapeHtml(data.memberName) },
     { label: "Check-in", value: emailCalendarDay(data.checkIn) },
     { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     { label: "Guests", value: String(data.guestCount) },
-    { label: "Total", value: formatCents(data.totalCents) },
+    { label: "Total", value: formatCents(data.totalCents, format) },
     { label: "Status", value: escapeHtml(data.status) },
   ];
   if (data.memberJustification) {
@@ -354,7 +357,9 @@ export function adminSchoolManualInvoiceTemplate(data: {
   guestCount: number;
   totalCents: number;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("School Booking Needs a Manual Invoice")}
     ${paragraph("A school group booking has been approved and confirmed. The Xero module is currently off, so no invoice was raised automatically. Please invoice the school manually and record payment through the usual paths.")}
@@ -364,7 +369,7 @@ export function adminSchoolManualInvoiceTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount", value: formatCents(data.totalCents) },
+      { label: "Amount", value: formatCents(data.totalCents, format) },
     ])}
     ${button("View Booking Requests", data.reviewUrl, { sameOrigin: true })}
   `);
@@ -415,7 +420,9 @@ export function adminWholeLodgeManualInvoiceTemplate(data: {
   appliedCreditCents?: number;
   paymentReference: string;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Whole-Lodge Booking Needs a Manual Invoice")}
     ${paragraph("A member's whole-lodge request has been approved and the booking is confirmed with the whole lodge held for their group. The Xero module is currently off, so no invoice was raised automatically. Please invoice the member manually and record the payment through the usual paths.")}
@@ -432,6 +439,7 @@ export function adminWholeLodgeManualInvoiceTemplate(data: {
             data.totalCents,
             data.appliedCreditCents ?? 0,
           ),
+          format,
         ),
       },
       { label: "Payment reference", value: escapeHtml(data.paymentReference) },
@@ -449,7 +457,9 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
   totalCents: number;
   holdUntil: Date;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Request Booking Unpaid at Hold Expiry")}
     ${paragraph("A booking created from a public booking request reached its hold deadline without payment. There is no saved card to charge, so the hold has been extended and the booking still holds member-priority status.")}
@@ -458,7 +468,7 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Total", value: formatCents(data.totalCents) },
+      { label: "Total", value: formatCents(data.totalCents, format) },
       { label: "Hold extended to", value: emailClubDateTime(data.holdUntil) },
     ])}
     ${paragraph("Consider following up with the requester or cancelling the booking if payment is not expected.")}
@@ -485,7 +495,9 @@ export function adminBookingRequestHoldCancelledTemplate(data: {
   guestCount: number;
   totalCents: number;
   reviewUrl: string;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Request Booking Auto-Cancelled — Unpaid Past Check-in")}
     ${paragraph("A booking created from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge. The provisional booking has now been automatically cancelled and the beds it was holding have been released back to availability. No payment was taken. The requester has been notified.")}
@@ -494,7 +506,7 @@ export function adminBookingRequestHoldCancelledTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents, format) },
     ])}
     ${paragraph("No further action is required. If the requester still intends to come and pay, ask them to submit a new booking request.")}
     ${muted("This is a one-off notice — it ends the capped hold-extension alert series for this request booking.")}
@@ -525,7 +537,9 @@ export function adminSplitSettlementUnpaidTemplate(data: {
   holdUntil: Date;
   reviewUrl: string;
   parentUnpaid: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Split Booking Guest Portion Unpaid — No Card on File")}
     ${paragraph(adminSplitSettlementUnpaidLeadParagraph(data.parentUnpaid))}
@@ -534,7 +548,7 @@ export function adminSplitSettlementUnpaidTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount due", value: formatCents(data.totalCents) },
+      { label: "Amount due", value: formatCents(data.totalCents, format) },
       { label: "Hold extended to", value: emailClubDateTime(data.holdUntil) },
     ])}
     ${paragraph("No beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.")}
@@ -563,7 +577,9 @@ export function adminSplitSettlementCancelledTemplate(data: {
   totalCents: number;
   reviewUrl: string;
   parentUnpaid: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Split Booking Guest Portion Auto-Cancelled — Unpaid Past Check-in")}
     ${paragraph(adminSplitSettlementCancelledLeadParagraph(data.parentUnpaid))}
@@ -572,7 +588,7 @@ export function adminSplitSettlementCancelledTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents, format) },
     ])}
     ${paragraph("No further action is required for the guest portion. If these guests are in fact coming and the member intends to pay, create a new booking for them.")}
     ${muted("This is a one-off notice — it ends the capped hold-extension alert series for this guest portion.")}

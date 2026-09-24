@@ -18,6 +18,7 @@
  * because it does not carry the suffix.
  */
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** A cents key holds a whole number of cents; anything else is left alone. */
 function isWholeCents(value: unknown): value is number {
@@ -43,7 +44,7 @@ function keyIsCents(key: string): boolean {
  * which is what makes the annotation obviously an annotation rather than a
  * value somebody might copy back into a repair script.
  */
-export function formatAuditMetadataJson(metadata: unknown): string {
+export function formatAuditMetadataJson(metadata: unknown, format: ClubFormat): string {
   const json = JSON.stringify(metadata, null, 2);
   if (json === undefined) return "";
   return json
@@ -55,7 +56,7 @@ export function formatAuditMetadataJson(metadata: unknown): string {
       if (!keyIsCents(key)) return line;
       const value = Number(digits);
       if (!isWholeCents(value)) return line;
-      return `${indent}"${key}": ${digits}${comma}  // ${formatCents(value)}`;
+      return `${indent}"${key}": ${digits}${comma}  // ${formatCents(value, format)}`;
     })
     .join("\n");
 }

@@ -232,6 +232,12 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     $executeRaw: vi.fn().mockResolvedValue(undefined),
+    // #3595: the settle asks the ledger once per booking whether its
+    // confirmation is already posted, then posts through the write door.
+    bookingLedgerLine: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+    },
     // #2364: the hosting review is reconciled inside the booking write, so
     // every prisma/tx double a booking path runs against needs this client.
     // #2623 T5 / #2675: an ACTIVE mode, so the gate in front of the participant

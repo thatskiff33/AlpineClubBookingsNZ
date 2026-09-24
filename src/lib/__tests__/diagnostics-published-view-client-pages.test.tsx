@@ -15,7 +15,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -460,7 +460,9 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
       </HelpWidgetProvider>,
       {
         wrapper: ({ children }: { children: ReactNode }) => (
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubFormatTestProvider>
+            <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          </ClubFormatTestProvider>
         ),
       },
     );

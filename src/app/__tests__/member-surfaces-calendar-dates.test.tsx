@@ -127,6 +127,7 @@ vi.mock("@/config/operational", async (importOriginal) => ({
 }));
 
 import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
+import { bindClubFormat } from "@/lib/club-format-bound";
 import { KioskWeekView } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
@@ -137,6 +138,7 @@ import {
 } from "@/lib/member-guest-consent-card";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { KioskWeekDaySummary } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 afterAll(() => {
   restoreHostTimeZone(originalHostTimeZone);
@@ -232,6 +234,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
   it("a linked non-member child's stay names its own nights", () => {
     render(
       <NonMemberGuestsSection
+        money={bindClubFormat(CLUB_FORMAT_TEST)}
         nonOwnerAdminViewer={false}
         guests={[
           {

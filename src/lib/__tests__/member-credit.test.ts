@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // ── Mock Prisma ─────────────────────────────────────────────────────────────
 
@@ -35,6 +36,15 @@ prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMo
 
 vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
+}));
+
+// #3599: every credit writer posts the booking's ledger lines through the one
+// sync, inside its own client. The sync itself is proved in
+// `booking-ledger-credit-sync.test.ts` and against Postgres; here it is a spy,
+// so these suites keep testing the credit rows and can assert the handoff.
+const mockSyncBookingLedgerCredits = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: mockSyncBookingLedgerCredits,
 }));
 
 const mockApplyLocalRefundAllocation = vi.fn();
@@ -169,6 +179,10 @@ describe("member-credit helpers", () => {
           xeroCreditNoteId: "xero-cn-1",
         }),
       });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-abc12345",
+        store: prisma,
+      });
     });
 
     it("handles missing Xero credit note ID", async () => {
@@ -209,6 +223,10 @@ describe("member-credit helpers", () => {
           sourceBookingModificationId: "mod-1",
           xeroCreditNoteId: null,
         }),
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-abc12345",
+        store: prisma,
       });
     });
 
@@ -324,7 +342,7 @@ describe("member-credit helpers", () => {
       };
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
-      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any);
+      await applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST);
 
       expect(txClient.memberCredit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -333,6 +351,10 @@ describe("member-credit helpers", () => {
           type: "BOOKING_APPLIED",
           appliedToBookingId: "booking-new",
         }),
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-new",
+        store: txClient,
       });
     });
 
@@ -348,7 +370,7 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 5000, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Insufficient credit balance");
     });
 
@@ -360,7 +382,7 @@ describe("member-credit helpers", () => {
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
-        applyCreditToBooking("member-1", 0, "booking-new", txClient as any)
+        applyCreditToBooking("member-1", 0, "booking-new", txClient as any, CLUB_FORMAT_TEST)
       ).rejects.toThrow("Credit amount must be positive");
     });
   });
@@ -394,6 +416,10 @@ describe("member-credit helpers", () => {
           }),
         ],
         skipDuplicates: true,
+      });
+      expect(mockSyncBookingLedgerCredits).toHaveBeenCalledWith({
+        bookingId: "booking-cancelled",
+        store: prisma,
       });
     });
 

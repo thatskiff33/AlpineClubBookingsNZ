@@ -49,6 +49,7 @@ import {
 } from "@/lib/stored-night-price-repair-plan";
 import { requireCalendarDate } from "@/lib/club-time";
 import { parkedEditWorkItems } from "@/lib/parked-edit-occurrence";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const store = {
   bookingGuest: { findMany: (...a: unknown[]) => mocks.findMany(...a) },
@@ -152,6 +153,7 @@ describe("which strand the settled amount moves (#3498)", () => {
       guest("other-a", 14_000, true),
     ]);
     const plans = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: task("lead", ["other-a"]),
       requested: [
         {
@@ -171,6 +173,7 @@ describe("which strand the settled amount moves (#3498)", () => {
     // applied here - is refused, which is what makes the case above non-vacuous.
     await expect(
       planStoredNightPriceRepair({
+        format: CLUB_FORMAT_TEST,
         task: task("lead", ["other-a"]),
         requested: [
           {
@@ -193,6 +196,7 @@ describe("which strand the settled amount moves (#3498)", () => {
     // the $40.00 going back, is $80.00 across its two nights.
     mocks.findMany.mockResolvedValue([guest("lead", 12_000, true)]);
     const plans = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: task("lead", []),
       requested: [
         {
@@ -218,6 +222,7 @@ describe("which strand the settled amount moves (#3498)", () => {
       guest("other-a", 14_000, true),
     ]);
     const plans = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: task("lead", ["other-a"]),
       requested: [
         // The lead absorbs the $40.00 refund: $120.00 - $40.00.
@@ -266,6 +271,7 @@ describe("which strand the settled amount moves (#3498)", () => {
     ]);
     await expect(
       planStoredNightPriceRepair({
+        format: CLUB_FORMAT_TEST,
         task: task("lead", ["other-a"]),
         requested: [
           {
@@ -304,6 +310,7 @@ describe("which strand the settled amount moves (#3498)", () => {
     ]);
     await expect(
       planStoredNightPriceRepair({
+        format: CLUB_FORMAT_TEST,
         task: task("lead", ["other-a"]),
         requested: [
           {
@@ -373,6 +380,7 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
     */
     mocks.findMany.mockResolvedValue([guest("a-existing", 14_000, true)]);
     const plans = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: taskOf([strandRecord("a-existing")]),
       requested: [
         {
@@ -393,6 +401,7 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
     // is refused, which is what makes the case above non-vacuous.
     await expect(
       planStoredNightPriceRepair({
+        format: CLUB_FORMAT_TEST,
         task: taskOf([strandRecord("a-existing")]),
         requested: [
           {
@@ -423,6 +432,7 @@ describe("a strand the edit never moved absorbs nothing (#3498 fix round)", () =
     */
     mocks.findMany.mockResolvedValue([guest("extended", 14_000, true)]);
     const plans = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: taskOf([
         strandRecord("extended", { added: ["2026-08-11"] }),
       ]),
@@ -506,6 +516,7 @@ describe("how many work items one parked edit raises (#3498 fix round)", () => {
     */
     mocks.findMany.mockResolvedValue([guest("mover-a", 14_000, true)]);
     const mover = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: taskOf([strandRecord("mover-a", { surrendered: ["2026-08-10"] })]),
       requested: [
         {
@@ -524,6 +535,7 @@ describe("how many work items one parked edit raises (#3498 fix round)", () => {
     // The item led by the strand nobody moved comes to its stored total flat.
     mocks.findMany.mockResolvedValue([guest("stayer", 14_000, true)]);
     const stayer = await planStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       task: taskOf([strandRecord("stayer")]),
       requested: [
         {

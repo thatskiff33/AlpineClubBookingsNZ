@@ -312,6 +312,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/webhooks/stripe/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("Stripe webhook Xero alerting", () => {
   beforeEach(() => {
@@ -489,6 +490,7 @@ describe("Stripe webhook Xero alerting", () => {
 
     expect(response.status).toBe(200);
     expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_primary",
       amountCents: 5000,
@@ -553,6 +555,7 @@ describe("Stripe webhook Xero alerting", () => {
         amountCents: 10000,
         errorMessage: expect.stringContaining("stale intent"),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -861,6 +864,7 @@ describe("Stripe webhook Xero alerting", () => {
       });
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: expect.anything() });
       expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: "pi_lost",
         amountCents: 5000,
@@ -1249,7 +1253,7 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockApplyGroupSettlementSucceeded).toHaveBeenCalledWith({
       id: "pi_group_stale",
       amount: 50000,
-    });
+    }, CLUB_FORMAT_TEST);
     // Full refund with a deterministic per-intent idempotency key.
     expect(mockProcessRefund).toHaveBeenCalledTimes(1);
     expect(mockProcessRefund).toHaveBeenCalledWith({
@@ -1270,6 +1274,7 @@ describe("Stripe webhook Xero alerting", () => {
         amountCents: 50000,
         paymentIntentId: "pi_group_stale",
       }),
+      CLUB_FORMAT_TEST,
     );
     // The group path never falls through to the per-booking handlers.
     expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
@@ -1428,6 +1433,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect.objectContaining({
         errorMessage: expect.stringContaining("automatic refund failed"),
       }),
+      CLUB_FORMAT_TEST,
     );
     // F16 fence (#1887): release keyed on status + the claimed lease token.
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
@@ -1516,6 +1522,7 @@ describe("Stripe webhook Xero alerting", () => {
         paymentMethodId: "pm_late",
       });
       expect(mockRefundPaymentTransactions).toHaveBeenCalledWith({
+        format: CLUB_FORMAT_TEST,
         paymentId: "payment-9",
         amountCents: 2500,
         allocation: [{ paymentTransactionId: "txn-9", amountCents: 2500 }],
@@ -1535,6 +1542,7 @@ describe("Stripe webhook Xero alerting", () => {
           bookingId: "booking-9",
           bookingDeleted: true,
         }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
@@ -1639,6 +1647,7 @@ describe("Stripe webhook Xero alerting", () => {
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
         expect.objectContaining({ bookingDeleted: false }),
+        CLUB_FORMAT_TEST,
       );
       // The refund itself is unchanged by the population.
       expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
@@ -1791,6 +1800,7 @@ describe("Stripe webhook Xero alerting", () => {
       // the card's grouping (which reads current state) cannot disagree.
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
         expect.objectContaining({ bookingDeleted: true }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -1991,6 +2001,7 @@ describe("Stripe webhook Xero alerting", () => {
         mockSendAdminLateCaptureHandBackConflictAlert,
       ).toHaveBeenCalledWith(
         expect.objectContaining({ refundSent: false, bookingId: "booking-9" }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
@@ -2078,7 +2089,7 @@ describe("Stripe webhook Xero alerting", () => {
       // lie by omission about money leaving the club twice.
       expect(
         mockSendAdminLateCaptureHandBackConflictAlert,
-      ).toHaveBeenCalledWith(expect.objectContaining({ refundSent: true }));
+      ).toHaveBeenCalledWith(expect.objectContaining({ refundSent: true }), CLUB_FORMAT_TEST);
       expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
     });
 
@@ -2225,6 +2236,7 @@ describe("Stripe webhook Xero alerting", () => {
           bookingDeleted: true,
           captureKind: "primary",
         }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
@@ -2261,6 +2273,7 @@ describe("Stripe webhook Xero alerting", () => {
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
         expect.objectContaining({ bookingDeleted: false }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -2297,6 +2310,7 @@ describe("Stripe webhook Xero alerting", () => {
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
         expect.objectContaining({ bookingDeleted: true }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -2369,6 +2383,7 @@ describe("Stripe webhook Xero alerting", () => {
           captureKind: "primary",
           handBackAmountCents: 12000,
         }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
       expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();

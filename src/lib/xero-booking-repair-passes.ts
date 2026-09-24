@@ -17,6 +17,7 @@ import type {
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -218,7 +219,8 @@ async function applyCancelledInFlightPaymentRepair(
 
 async function applyLateCaptureRefundRepair(
   action: BookingXeroRepairAction,
-  deps: RepairDependencies
+  deps: RepairDependencies,
+  format: ClubFormat
 ) {
   const paymentId = String(action.payload.paymentId);
   const refundAmountCents = Number(action.payload.refundAmountCents);
@@ -239,6 +241,7 @@ async function applyLateCaptureRefundRepair(
   >;
   try {
     refundResult = await deps.refundPaymentTransactions({
+      format,
       paymentId,
       amountCents: refundAmountCents,
       reason: "requested_by_customer",
@@ -337,6 +340,7 @@ async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
   bookingModificationId: string;
   paymentIntentId: string;
   expectedNetAmountCents: number;
+  format: ClubFormat;
 }) {
   const { action, deps } = params;
   const request = await deps.prisma.paymentTransaction.findFirst({
@@ -364,7 +368,7 @@ async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
 
   if (capture === "short-of-ask") {
     action.status = "manual_review";
-    action.resultMessage = `${action.resultMessage} The member's card was captured while this sweep ran, but for ${formatCents(request.amountCents)} against an ask of ${formatCents(params.expectedNetAmountCents)}. The queued invoice was deliberately NOT released - releasing it would book the full ask as received - so it will be retired unsent, and the difference has to be collected by hand.`;
+    action.resultMessage = `${action.resultMessage} The member's card was captured while this sweep ran, but for ${formatCents(request.amountCents, params.format)} against an ask of ${formatCents(params.expectedNetAmountCents, params.format)}. The queued invoice was deliberately NOT released - releasing it would book the full ask as received - so it will be retired unsent, and the difference has to be collected by hand.`;
     return;
   }
 
@@ -380,7 +384,8 @@ async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
 
 async function applyQueuedAction(
   action: BookingXeroRepairAction,
-  deps: RepairDependencies
+  deps: RepairDependencies,
+  format: ClubFormat
 ) {
   switch (action.type) {
     case "QUEUE_PRIMARY_INVOICE": {
@@ -462,6 +467,7 @@ async function applyQueuedAction(
             bookingModificationId,
             paymentIntentId,
             expectedNetAmountCents: priceDiffCents + changeFeeCents,
+            format,
           });
         } catch (error) {
           // The invoice IS queued, so reporting this action as `failed` would
@@ -553,7 +559,7 @@ async function applyQueuedAction(
       await applyCancelledInFlightPaymentRepair(action, deps);
       return;
     case "AUTO_REFUND_LATE_CAPTURED_PAYMENT":
-      await applyLateCaptureRefundRepair(action, deps);
+      await applyLateCaptureRefundRepair(action, deps, format);
       return;
     case "MARK_MANUAL_REVIEW":
       action.status = "manual_review";
@@ -566,6 +572,7 @@ export async function applyActionsForPass(
   bookings: BookingXeroRepairBookingSummary[],
   deps: RepairDependencies,
   xeroConnectionAvailable: boolean,
+  format: ClubFormat,
   // #1491: exact keys an operator explicitly confirmed for execution even
   // though they are not safeToAutoApply (from the dry-run report).
   forcedActionKeys?: Set<string>
@@ -583,7 +590,7 @@ export async function applyActionsForPass(
       }
 
       try {
-        await applyQueuedAction(action, deps);
+        await applyQueuedAction(action, deps, format);
         const updatedStatus = action.status as XeroBookingRepairActionStatus;
         if (updatedStatus !== "failed" && updatedStatus !== "manual_review") {
           hasStateChanges = true;
@@ -608,7 +615,7 @@ export async function applyActionsForPass(
   if (xeroConnectionAvailable) {
     const [outboxResult, retryResult] = await Promise.all([
       deps.processQueuedXeroOutboxOperations({ limit: 50 }),
-      deps.processQueuedXeroOperationRetries({ limit: 50 }),
+      deps.processQueuedXeroOperationRetries({ limit: 50 }, format),
     ]);
 
     if (

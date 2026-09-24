@@ -8,7 +8,7 @@ import {
   type AdditionalPaymentChasePayment,
 } from "@/lib/additional-payment-chase";
 import { clubTime } from "@/lib/club-time/server";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 
 /**
  * Admin-only view of an uncollected additional payment (#2350).
@@ -80,6 +80,7 @@ export async function BookingAdditionalPaymentPanel({
   }
 
   const club = await clubTime();
+  const money = await clubFormat();
 
   const failed = payment.additionalPaymentStatus === "FAILED";
   const lastChasedAt =
@@ -103,7 +104,7 @@ export async function BookingAdditionalPaymentPanel({
       <CardContent className="space-y-3 text-sm text-warning-11">
         <p>
           A change to this booking increased the total by{" "}
-          <strong>{formatCents(payment.additionalAmountCents)}</strong>, and that
+          <strong>{money.cents(payment.additionalAmountCents)}</strong>, and that
           amount has not been collected.{" "}
           {failed
             ? "The last attempt to charge the member's card failed."
@@ -115,7 +116,7 @@ export async function BookingAdditionalPaymentPanel({
               Amount due
             </dt>
             <dd className="font-medium tabular-nums">
-              {formatCents(payment.additionalAmountCents)}
+              {money.cents(payment.additionalAmountCents)}
             </dd>
           </div>
           <div>

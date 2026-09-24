@@ -427,9 +427,11 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
 // it: an exemption written for seeding an input's plain value never excused a
 // hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
-// pass `APP_LOCALE` and `APP_CURRENCY`, both Identifiers, so they pass without
-// an exemption list — which is the point: there is no legitimate literal
-// locale or currency code in `src/`.
+// pass identifiers off the club's resolved format — `APP_LOCALE` and
+// `APP_CURRENCY` until #3565, `format.locale` and `format.currencyCode`
+// through `@/lib/club-format-intl` since — so they pass without an exemption
+// list, which is the point: there is no legitimate literal locale or currency
+// code in `src/`.
 //
 // Two arms, each with the shape it does and does not see stated in
 // `cents-display-guard.test.ts`. Both match `Intl.NumberFormat` whether or not
@@ -440,10 +442,10 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // guard is a structural check on the one shape this codebase has actually
 // written, not a proof that no other shape exists.
 const CURRENCY_LOCALE_MESSAGE =
-  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; both read APP_LOCALE and APP_CURRENCY. A genuinely new rendering shape is added to one of those two modules, built from APP_LOCALE, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
+  "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; since #3565 both TAKE the club's resolved format, which a server caller gets from clubFormat() and a browser caller from bindClubFormat. A genuinely new rendering SHAPE is declared in @/lib/club-format-intl beside the others, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
 
 const CURRENCY_CODE_MESSAGE =
-  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which read it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
+  "INV-CONFIG-001 / #3325: do not pass a literal currency code (`currency: \"NZD\"`) to Intl.NumberFormat — the currency is the club's configuration (APP_CURRENCY), not this codebase's. Use formatCents / formatSignedCents from @/lib/utils or formatDollarsDisplay from @/lib/finance-format, which take it; a formatter in a foreign currency (a Xero invoice's own) takes that currency as a variable, never a literal. There is no exemption list for this rule and no eslint-disable.";
 
 const INTL_NUMBER_FORMAT =
   ':matches(NewExpression, CallExpression)[callee.object.name="Intl"][callee.property.name="NumberFormat"]';

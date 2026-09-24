@@ -17,6 +17,7 @@ import {
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Verification email for a non-member joining a group booking. Reuses the
@@ -76,7 +77,9 @@ export async function sendGroupSettlementReceiptEmail(params: {
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendEmail({
     to: params.email,
     subject: `Your group booking is settled — ${CLUB_NAME}`,
@@ -86,7 +89,7 @@ export async function sendGroupSettlementReceiptEmail(params: {
       checkOut: params.checkOut,
       joinerCount: params.joinerCount,
       totalCents: params.totalCents,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "group-settlement-receipt",
     templateData: {
@@ -94,7 +97,7 @@ export async function sendGroupSettlementReceiptEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
-      total: formatMoneyCents(params.totalCents),
+      total: formatMoneyCents(params.totalCents, format),
     },
   });
 }
@@ -146,7 +149,9 @@ export async function sendGroupSettlementExpiredEmail(params: {
   checkOut: Date;
   joinerCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendEmail({
     to: params.email,
     subject: `Your group payment expired — ${CLUB_NAME}`,
@@ -156,7 +161,7 @@ export async function sendGroupSettlementExpiredEmail(params: {
       checkOut: params.checkOut,
       joinerCount: params.joinerCount,
       totalCents: params.totalCents,
-    })),
+    }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
     templateName: "group-settlement-expired",
     templateData: {
@@ -164,7 +169,7 @@ export async function sendGroupSettlementExpiredEmail(params: {
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
-      total: formatMoneyCents(params.totalCents),
+      total: formatMoneyCents(params.totalCents, format),
     },
   });
 }

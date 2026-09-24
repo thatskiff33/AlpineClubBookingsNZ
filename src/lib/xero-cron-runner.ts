@@ -20,6 +20,7 @@ import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const XERO_CRON_TASKS = [
   "memberships",
@@ -260,6 +261,10 @@ export async function runXeroCronTaskList(
     } as XeroCronRunnerPayload & { skipped: true; reason: string };
   }
 
+  // The club's format (#3565), resolved once per run and passed to the three
+  // tasks that render money — the retry worker, the reconciliation report and
+  // the credit-sync check — never per row.
+  const format = await clubFormatValues();
   const connected = await isConnected();
   payload.connected = connected;
 
@@ -298,7 +303,7 @@ export async function runXeroCronTaskList(
           work: async () =>
             connected
               ? await (taskDependencies.processQueuedXeroOperationRetries ??
-                  processQueuedXeroOperationRetries)()
+                  processQueuedXeroOperationRetries)(undefined, format)
               : { skipped: true, reason: "Xero not connected" },
         });
       } else if (task === "inbound") {
@@ -331,9 +336,9 @@ export async function runXeroCronTaskList(
         payload.reconciliationReport = await runRecordedXeroTask({
           task,
           recordCronRun,
-          work:
-            taskDependencies.sendXeroReconciliationReport ??
-            sendXeroReconciliationReport,
+          work: () =>
+            (taskDependencies.sendXeroReconciliationReport ??
+              sendXeroReconciliationReport)(format),
         });
       } else {
         // credit-sync (#2501): reconcile stamped applied credit against Xero's
@@ -346,7 +351,7 @@ export async function runXeroCronTaskList(
           work: async () =>
             connected
               ? await (taskDependencies.reconcileXeroCreditSync ??
-                  reconcileXeroCreditSync)()
+                  reconcileXeroCreditSync)(format)
               : { skipped: true, reason: "Xero not connected" },
         });
       }

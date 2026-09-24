@@ -23,6 +23,8 @@ import {
 import {
   type CreditSyncDriftReportEmail,
 } from "@/lib/email-templates/admin-xero-reports";
+import type { ClubFormat } from "@/lib/club-format";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 interface FakeDbState {
   cronJobRun: unknown;
@@ -136,11 +138,11 @@ function invoiceRead(
 
 describe("reconcileXeroCreditSync", () => {
   let sendAlert: ReturnType<
-    typeof vi.fn<(report: CreditSyncDriftReportEmail) => Promise<void>>
+    typeof vi.fn<(report: CreditSyncDriftReportEmail, format: ClubFormat) => Promise<void>>
   >;
 
   beforeEach(() => {
-    sendAlert = vi.fn<(report: CreditSyncDriftReportEmail) => Promise<void>>(
+    sendAlert = vi.fn<(report: CreditSyncDriftReportEmail, format: ClubFormat) => Promise<void>>(
       async () => {}
     );
   });
@@ -154,7 +156,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () =>
@@ -190,7 +192,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () =>
@@ -222,7 +224,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () =>
@@ -250,7 +252,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () =>
@@ -272,7 +274,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       // Xero shows only $30 allocated where BookingApp believes $120.
@@ -314,7 +316,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () =>
@@ -343,7 +345,7 @@ describe("reconcileXeroCreditSync", () => {
     });
 
     const readInvoice = vi.fn(async () => invoiceRead(0));
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: readInvoice,
@@ -372,7 +374,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () => {
@@ -399,7 +401,7 @@ describe("reconcileXeroCreditSync", () => {
     });
 
     const readInvoice = vi.fn(async () => invoiceRead(0));
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: readInvoice,
@@ -422,7 +424,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: async () => ({
@@ -449,13 +451,13 @@ describe("reconcileXeroCreditSync", () => {
     };
     const read = async () => invoiceRead(7500, [stampedNote(7500, "cn_1")]);
 
-    const first = await reconcileXeroCreditSync({
+    const first = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db: makeDb(state),
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: read,
       sendAlert,
     });
-    const second = await reconcileXeroCreditSync({
+    const second = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db: makeDb(state),
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: read,
@@ -480,7 +482,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 20 * 60 * 60 * 1000,
       readInvoiceCreditAllocation: readInvoice,
@@ -508,7 +510,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 20 * 60 * 60 * 1000,
       readInvoiceCreditAllocation: readInvoice,
@@ -532,7 +534,7 @@ describe("reconcileXeroCreditSync", () => {
       inFlightOpBookingPaymentIds: new Set(),
     });
 
-    const result = await reconcileXeroCreditSync({
+    const result = await reconcileXeroCreditSync(CLUB_FORMAT_TEST, {
       db,
       minRecheckIntervalMs: 0,
       readInvoiceCreditAllocation: readInvoice,

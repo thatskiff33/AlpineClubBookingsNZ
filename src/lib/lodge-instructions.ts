@@ -5,6 +5,7 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
 import { hasAdminAccess, type AccessRoleInput } from "@/lib/access-roles";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Canonical display order for the three keyed documents.
 export const LODGE_INSTRUCTION_KEYS = ["OPEN", "CLOSE", "DAY_TO_DAY"] as const;
@@ -128,14 +129,18 @@ export async function getSanitizedLodgeInstructions(
     }
   }
 
+  // The club's format (#3565), resolved ONCE for every key below, and only when
+  // tokens are resolved at all — never once per key.
+  const format = options?.resolveTokens ? await clubFormatValues() : null;
+
   return Promise.all(
     LODGE_INSTRUCTION_KEYS.map(async (key) => {
       const record = byKey.get(key);
       let contentHtml = record
         ? sanitizePageContentHtml(record.contentHtml)
         : "";
-      if (options?.resolveTokens && contentHtml) {
-        contentHtml = await resolveTextTokens(contentHtml);
+      if (format && contentHtml) {
+        contentHtml = await resolveTextTokens(contentHtml, format);
       }
       return {
         key,

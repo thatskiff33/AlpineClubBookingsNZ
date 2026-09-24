@@ -73,10 +73,13 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
 } from "@/lib/booking-ledger-write";
+import type { ClubFormat } from "@/lib/club-format";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -196,11 +199,14 @@ async function alertRefundFailure({
   paymentIntentId,
   amountCents,
   error,
+  format,
 }: {
   booking: ReconciliationBooking;
   paymentIntentId: string;
   amountCents: number;
   error: unknown;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -211,7 +217,7 @@ async function alertRefundFailure({
     amountCents,
     errorMessage: `Payment succeeded but final capacity claim failed and automatic refund failed: ${errorMessage}`,
     paymentIntentId,
-  }).catch((alertErr) =>
+  }, format).catch((alertErr) =>
     logger.error(
       { err: alertErr, bookingId: booking.id, paymentIntentId },
       "Failed to alert admins about capacity refund failure"
@@ -1565,7 +1571,18 @@ async function settleBookingPaymentInTransaction(
     //     read moves.
     //   * WRITING them is a statement. If Postgres refuses it, this settle is
     //     already lost and pretending otherwise would only hide why.
-    const ledgerRows = (() => {
+    //
+    // AND IT HAPPENS ONCE PER BOOKING (#3595). A booking can pass the PAID
+    // claim above twice — a mark-paid, its reversal, then a card payment — and
+    // its nights can change in between (a date shift recreates them; a guest
+    // removed and re-added gets a new id), so per-night keys alone would post
+    // the whole charge again under new keys. A booking is confirmed once; what
+    // changes afterwards is a modification (#3582). The question is asked
+    // under this transaction's global `lock(1)`, which serialises every settle,
+    // so it cannot race; and it counts un-keyed lines too, so lines #3580
+    // posted before keys existed fence this settle as well.
+    const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
+    const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
       try {
         const plan = planConfirmationChargeLines({
           id: booking.id,
@@ -1593,7 +1610,26 @@ async function settleBookingPaymentInTransaction(
         return [];
       }
     })();
-    await writeBookingLedgerRows(tx, ledgerRows);
+    const ledgerInserted = await writeBookingLedgerRows(tx, ledgerRows);
+    // Under the fence every row is new, so a shortfall means a key was already
+    // there — not an error (the write skipped it rather than aborting), but not
+    // something that should happen either, so it is said out loud rather than
+    // discarded (review of #3597).
+    if (ledgerInserted !== ledgerRows.length) {
+      logger.warn(
+        { bookingId: booking.id, planned: ledgerRows.length, inserted: ledgerInserted },
+        "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
+      );
+    }
+
+    // #3581: the manual settle writes its transaction rows and the payment's
+    // columns itself, so it never passes through `reconcilePaymentAggregates`
+    // where every other settlement's ledger lines converge. It runs the same
+    // sync here, after the provenance columns above are written — so its rows
+    // read as cash recorded by an officer (`INV-PAY-001`), not a bank receipt.
+    if (settlement.kind === "manual") {
+      await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    }
 
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator
@@ -1828,11 +1864,14 @@ export async function markBookingPaymentSucceeded({
   paymentIntentId,
   amountCents,
   paymentMethodId,
+  format,
 }: {
   bookingId: string;
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -1865,6 +1904,7 @@ export async function markBookingPaymentSucceeded({
     // their booking history and put it in front of an operator who can decide
     // whether to refund the difference. Their balance is untouched either way.
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
@@ -1922,6 +1962,7 @@ export async function markBookingPaymentSucceeded({
     // line and the admin alert below.
     try {
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -1986,7 +2027,7 @@ export async function markBookingPaymentSucceeded({
           paymentIntentId
         ),
         refundFailed: false,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the auto-refunded duplicate capture"
@@ -2036,7 +2077,7 @@ export async function markBookingPaymentSucceeded({
             ? refundError.message
             : String(refundError),
         refundFailed: true,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId, paymentIntentId },
           "Failed to alert admins about the failed duplicate-capture refund"
@@ -2099,6 +2140,7 @@ export async function markBookingPaymentSucceeded({
       }
 
       await refundPaymentTransactions({
+        format,
         paymentId: reconciliation.paymentId,
         amountCents: plannedRefundCents,
         reason: "requested_by_customer",
@@ -2172,6 +2214,7 @@ export async function markBookingPaymentSucceeded({
         )
       );
       await alertRefundFailure({
+        format,
         booking: reconciliation.booking,
         paymentIntentId,
         amountCents,
@@ -2344,6 +2387,7 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents,
   notifyMember,
   additionalCoverage = null,
+  format,
 }: {
   bookingId: string;
   actingAdminMemberId: string;
@@ -2351,6 +2395,8 @@ export async function markBookingPaymentManuallySettled({
   expectedAmountCents: number;
   notifyMember: boolean;
   additionalCoverage?: ManualAdditionalCoverage | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<ManualBookingSettlementResult> {
   const reconciliation = await prisma.$transaction((tx) =>
     settleBookingPaymentInTransaction(tx, bookingId, {
@@ -2398,6 +2444,7 @@ export async function markBookingPaymentManuallySettled({
   // first cannot cost the event either.
   if (reconciliation.staleCreditElectionCents != null) {
     await reportUnappliedCreditElection({
+      format,
       bookingId,
       memberId: bookingOwner(reconciliation.booking).memberId,
       memberFirstName: bookingOwner(reconciliation.booking).member.firstName,
@@ -2848,6 +2895,12 @@ export async function reverseManualBookingPayment({
       restoredAdditionalAmountCents =
         restoredAdditional.count === 1 ? settledAdditional.amountCents : null;
     }
+
+    // #3581: the reversal flipped the manual rows from SUCCEEDED to FAILED
+    // above, so the cash lines the settle posted no longer hold. The same sync
+    // posts their reversals — new lines, the originals untouched, each keyed by
+    // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
+    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

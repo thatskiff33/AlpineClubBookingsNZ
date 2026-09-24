@@ -16,6 +16,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/booking-financial-review-copy";
 
 export default function PayByLinkPage() {
+  const format = useClubFormat();
   const club = useClubIdentity();
   /*
     `expiresAt` is a real INSTANT — the moment the link stops working — so it has
@@ -388,7 +390,7 @@ export default function PayByLinkPage() {
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">
-            Amount due: {formatCents(payable.amountCents)}
+            Amount due: {formatCents(payable.amountCents, format)}
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />

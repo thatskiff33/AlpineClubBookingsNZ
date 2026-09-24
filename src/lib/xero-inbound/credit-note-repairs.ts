@@ -1,6 +1,7 @@
 import { type CreditNote as XeroCreditNote } from "xero-node";
 import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
@@ -881,6 +882,7 @@ export async function repairAccountCreditAllocationBusinessState(
               xeroCreditNoteId: creditNoteId,
             },
           });
+          await syncBookingLedgerCredits({ bookingId: payment.bookingId, store: tx });
           createdAppliedCredits += 1;
         }
       }
@@ -944,6 +946,7 @@ export async function repairAccountCreditAllocationBusinessState(
             xeroCreditNoteId: creditNoteId,
           },
         });
+        await syncBookingLedgerCredits({ bookingId: payment.bookingId, store: tx });
         if (ledgerDeltaCents > 0) createdAppliedCredits += 1;
         else updatedAppliedCredits += 1;
       }

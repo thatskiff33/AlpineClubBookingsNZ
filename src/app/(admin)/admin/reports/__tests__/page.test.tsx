@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/dynamic", () => ({
@@ -512,7 +512,9 @@ describe("reports default range comes from the club's zone (CT-4, #2870)", () =>
     );
     render(<ReportsPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     });
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());

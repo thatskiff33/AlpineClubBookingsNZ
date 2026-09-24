@@ -24,6 +24,7 @@ import {
   type FinanceDashboardTrend,
 } from "@/lib/finance-dashboard-page/model";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Group the mapped P&L categories under their subtype sub-headings, inserting an
 // emphasised sub-total row before each subtype's member groups. Groups without a
@@ -31,7 +32,8 @@ import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 // labelled subtypes.
 function buildGroupStatusItems(
   groups: FinanceMappedPnlCategorySummary[],
-  hasComparison: boolean
+  hasComparison: boolean,
+  format: ClubFormat,
 ): FinanceDashboardStatusPanel["items"] {
   const withSubtype = groups.filter((group) => group.subtype);
   const withoutSubtype = groups.filter((group) => !group.subtype);
@@ -71,7 +73,7 @@ function buildGroupStatusItems(
     );
     items.push({
       label: subtype,
-      value: formatDollarsDisplay(subtotalCents),
+      value: formatDollarsDisplay(subtotalCents, format),
       detail: `${members.length} group${members.length === 1 ? "" : "s"} subtotal`,
       emphasis: true,
     });
@@ -84,12 +86,15 @@ function buildGroupStatusItems(
 export async function buildMappedPnlDashboard(input: {
   selection: FinanceDashboardSelection;
   kind: "REVENUE" | "EXPENSE";
+  format: ClubFormat;
 }) {
+  const { format } = input;
   const summary = await buildFinanceMonthlyPnlSummary({
     kind: input.kind,
     primary: input.selection.primary,
     comparison: input.selection.comparison,
     currentMonth: input.selection.currentMonth,
+    format,
     expenseCategoryId: input.selection.expenseCategoryId,
     expenseLine: input.selection.expenseLine,
   });
@@ -113,7 +118,7 @@ export async function buildMappedPnlDashboard(input: {
     hasComparison
       ? {
           title: "Comparison period",
-          value: summary.formattedComparisonAmount ?? formatDollarsDisplay(0),
+          value: summary.formattedComparisonAmount ?? formatDollarsDisplay(0, format),
           description: `${input.selection.comparison?.label ?? ""} total.`,
         }
       : {
@@ -132,7 +137,7 @@ export async function buildMappedPnlDashboard(input: {
       title: "Unmapped included",
       value:
         summary.groups.find((group) => group.id === "unmapped")?.formattedAmount ??
-        formatDollarsDisplay(0),
+        formatDollarsDisplay(0, format),
       description:
         "Unmapped account lines remain in totals so missing mappings cannot hide data.",
     },
@@ -185,7 +190,7 @@ export async function buildMappedPnlDashboard(input: {
       title: input.kind === "REVENUE" ? "Revenue groups" : "Expense groups",
       description:
         "Mapped Treasurer-controlled groups under their subtype sub-headings, with Unmapped kept visible.",
-      items: buildGroupStatusItems(summary.groups, hasComparison),
+      items: buildGroupStatusItems(summary.groups, hasComparison, format),
     },
   ];
   // Export rows keep exact cents so they tie out against Xero.
@@ -196,9 +201,9 @@ export async function buildMappedPnlDashboard(input: {
       rows: summary.groups.map((group) => ({
         Subtype: group.subtype ?? "",
         Group: group.name,
-        Amount: formatCents(group.amountCents),
-        Comparison: hasComparison ? formatCents(group.comparisonAmountCents) : "",
-        Delta: hasComparison ? formatSignedCents(group.deltaCents) : "",
+        Amount: formatCents(group.amountCents, format),
+        Comparison: hasComparison ? formatCents(group.comparisonAmountCents, format) : "",
+        Delta: hasComparison ? formatSignedCents(group.deltaCents, format) : "",
         Lines: group.lineCount,
       })),
     },
@@ -206,11 +211,11 @@ export async function buildMappedPnlDashboard(input: {
       title: "Monthly totals",
       rows: summary.trend.map((point) => ({
         Month: point.label,
-        Amount: formatCents(point.amountCents),
+        Amount: formatCents(point.amountCents, format),
         Comparison:
           point.comparisonAmountCents === null
             ? ""
-            : formatCents(point.comparisonAmountCents),
+            : formatCents(point.comparisonAmountCents, format),
         MonthToDate: monthToDateCell(point),
       })),
     },
@@ -221,8 +226,8 @@ export async function buildMappedPnlDashboard(input: {
           Group: group.name,
           Line: line.lineLabel,
           AccountCode: line.accountCode ?? "",
-          Amount: formatCents(line.amountCents),
-          Comparison: hasComparison ? formatCents(line.comparisonAmountCents) : "",
+          Amount: formatCents(line.amountCents, format),
+          Comparison: hasComparison ? formatCents(line.comparisonAmountCents, format) : "",
           MonthsPresent: line.periodsPresent,
         }))
       ),
@@ -279,7 +284,8 @@ export async function buildMappedPnlDashboard(input: {
 export async function appendFinancialYearsPanel(
   viewModel: { statusPanels: FinanceDashboardStatusPanel[]; warnings: string[] },
   selection: FinanceDashboardSelection,
-  kind: "REVENUE" | "EXPENSE"
+  kind: "REVENUE" | "EXPENSE",
+  format: ClubFormat,
 ) {
   try {
     const matrix = await buildFinanceRatioMatrix({
@@ -296,7 +302,7 @@ export async function appendFinancialYearsPanel(
       items: buildFinanceFinancialYearsPanelItems({
         matrix,
         kind,
-        formatCents: formatDollarsDisplay,
+        formatCents: (cents) => formatDollarsDisplay(cents, format),
       }),
     });
   } catch {
@@ -304,9 +310,13 @@ export async function appendFinancialYearsPanel(
   }
 }
 
-export async function buildRevenueDashboard(selection: FinanceDashboardSelection) {
-  const mapped = await buildMappedPnlDashboard({ selection, kind: "REVENUE" });
-  await appendFinancialYearsPanel(mapped, selection, "REVENUE");
+export async function buildRevenueDashboard(selection: FinanceDashboardSelection, format: ClubFormat) {
+  const mapped = await buildMappedPnlDashboard({
+    selection,
+    kind: "REVENUE",
+    format,
+  });
+  await appendFinancialYearsPanel(mapped, selection, "REVENUE", format);
   try {
     const periods = Math.max(
       1,
@@ -334,8 +344,8 @@ export async function buildRevenueDashboard(selection: FinanceDashboardSelection
         value:
           period.varianceCents === null
             ? "Unavailable"
-            : formatSignedCents(period.varianceCents),
-        detail: `Xero ${period.xeroHutFeesIncomeCents === null ? "—" : formatCents(period.xeroHutFeesIncomeCents)} · Booking ${formatCents(period.bookingHutFeesCents)}`,
+            : formatSignedCents(period.varianceCents, format),
+        detail: `Xero ${period.xeroHutFeesIncomeCents === null ? "—" : formatCents(period.xeroHutFeesIncomeCents, format)} · Booking ${formatCents(period.bookingHutFeesCents, format)}`,
       })),
     });
   } catch {

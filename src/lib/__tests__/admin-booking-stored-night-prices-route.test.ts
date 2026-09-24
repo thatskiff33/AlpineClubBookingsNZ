@@ -35,6 +35,7 @@ vi.mock("@/lib/stored-night-price-strand-reconcile", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/stored-night-prices/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { STRAND_RECONCILE_NOT_OFFERED_MESSAGE } from "@/lib/stored-night-price-repair";
 
@@ -145,6 +146,7 @@ describe("POST /api/admin/bookings/[id]/stored-night-prices", () => {
       bookingGuestId: "guest-1",
       entries: validBody.nightPrices,
       store: TX,
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.record).toHaveBeenCalledWith({
       plan: { bookingGuestId: "guest-1" },

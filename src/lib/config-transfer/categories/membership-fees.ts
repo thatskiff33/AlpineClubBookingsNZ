@@ -23,6 +23,7 @@ import {
 import { RowValidator, nz, readCsvRows } from "../values";
 import { formatDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 // membership-fees category (#1941, follow-up to #1931/#1932): the first-class
 // transfer of the MEMBERSHIP FEE SCHEDULES — joining fees (JoiningFee, #1931/E5)
@@ -483,6 +484,7 @@ function parseMembershipFees(
   files: Map<string, Uint8Array>,
   batch: FeesBatch,
   errors: string[],
+  format: ClubFormat,
 ): ParsedFees {
   const out: ParsedFees = { joiningFees: [], annualFees: [], components: [] };
 
@@ -600,7 +602,7 @@ function parseMembershipFees(
     });
   });
 
-  validateComponentInvariant(out, errors);
+  validateComponentInvariant(out, errors, format);
   return out;
 }
 
@@ -619,7 +621,7 @@ function quoteLabels(labels: string[]): string {
  * bundle carrying two components with the same (fee window, label) cannot
  * round-trip (no DB unique; apply is last-wins by label) — also blocked here.
  */
-function validateComponentInvariant(parsed: ParsedFees, errors: string[]): void {
+function validateComponentInvariant(parsed: ParsedFees, errors: string[], format: ClubFormat): void {
   const componentsByParent = new Map<string, ParsedComponent[]>();
   for (const c of parsed.components) {
     const list = componentsByParent.get(c.parentKey) ?? [];
@@ -672,7 +674,7 @@ function validateComponentInvariant(parsed: ParsedFees, errors: string[]): void 
     const sum = comps.reduce((total, c) => total + c.data.amountCents, 0);
     if (sum !== fee.data.amountCents) {
       errors.push(
-        `${ANNUAL_FEE_COMPONENTS_FILE}: components for annual fee "${fee.parentKey}" sum to ${formatCents(sum)} but the fee amount is ${formatCents(fee.data.amountCents)}`,
+        `${ANNUAL_FEE_COMPONENTS_FILE}: components for annual fee "${fee.parentKey}" sum to ${formatCents(sum, format)} but the fee amount is ${formatCents(fee.data.amountCents, format)}`,
       );
     }
   }
@@ -701,6 +703,7 @@ function validatePostMergeComponentInvariant(
   batch: FeesBatch,
   mode: ImportMode,
   errors: string[],
+  format: ClubFormat,
 ): void {
   const bundleCompsByParent = new Map<string, ParsedComponent[]>();
   for (const c of parsed.components) {
@@ -776,11 +779,11 @@ function validatePostMergeComponentInvariant(
     if (sum !== effectiveTotal) {
       if (leftoverLabels.length > 0) {
         errors.push(
-          `${ANNUAL_FEE_COMPONENTS_FILE}: importing annual fee "${fee.parentKey}" would leave orphaned component(s) ${quoteLabels(leftoverLabels)} already on the target that the bundle does not carry (upsert-only import never deletes), so its post-merge components sum to ${formatCents(sum)} but the fee total is ${formatCents(effectiveTotal)} — remove or rename those component(s) on the Fees page before importing`,
+          `${ANNUAL_FEE_COMPONENTS_FILE}: importing annual fee "${fee.parentKey}" would leave orphaned component(s) ${quoteLabels(leftoverLabels)} already on the target that the bundle does not carry (upsert-only import never deletes), so its post-merge components sum to ${formatCents(sum, format)} but the fee total is ${formatCents(effectiveTotal, format)} — remove or rename those component(s) on the Fees page before importing`,
         );
       } else {
         errors.push(
-          `${ANNUAL_FEE_COMPONENTS_FILE}: after merge the components for annual fee "${fee.parentKey}" sum to ${formatCents(sum)} but the fee total would be ${formatCents(effectiveTotal)}`,
+          `${ANNUAL_FEE_COMPONENTS_FILE}: after merge the components for annual fee "${fee.parentKey}" sum to ${formatCents(sum, format)} but the fee total would be ${formatCents(effectiveTotal, format)}`,
         );
       }
     }
@@ -898,12 +901,12 @@ async function planMembershipFees(ctx: PlanContext): Promise<CategoryPlanResult>
   const errors: string[] = [];
   const fingerprintParts: string[] = [];
   const batch = await loadFeesBatch(ctx.db);
-  const parsed = parseMembershipFees(ctx.files, batch, errors);
+  const parsed = parseMembershipFees(ctx.files, batch, errors, ctx.format);
   // #1941 FIX-1/FIX-3: block imports whose EFFECTIVE post-merge component set
   // would break the Σ(components)=total billing invariant (leftover orphans from
   // a renamed label, or duplicate-label rows the label-keyed upsert can't fix).
   // Runs at plan time and therefore again at the in-lock re-plan.
-  validatePostMergeComponentInvariant(parsed, batch, ctx.mode, errors);
+  validatePostMergeComponentInvariant(parsed, batch, ctx.mode, errors, ctx.format);
   // #2067 FIX-2: block a bundle whose EFFECTIVE post-merge state would put a flat
   // PER_FAMILY fee in an overlapping window with a per-age-tier fee for the same
   // type — the API forbids this mix but the DB constraints allow it, so config
@@ -976,7 +979,7 @@ async function applyMembershipFees(ctx: ApplyContext): Promise<CategoryApplyResu
   const result: CategoryApplyResult = { created: 0, updated: 0, deleted: 0, unchanged: 0, skipped: 0 };
   const errors: string[] = []; // plan blocked all errors; defensive collection only
   const batch = await loadFeesBatch(ctx.tx);
-  const parsed = parseMembershipFees(ctx.files, batch, errors);
+  const parsed = parseMembershipFees(ctx.files, batch, errors, ctx.format);
 
   // Joining fees (JoiningFee, keyed by type x ageTier x effectiveFrom).
   for (const row of parsed.joiningFees) {

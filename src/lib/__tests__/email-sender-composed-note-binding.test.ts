@@ -53,6 +53,7 @@ import {
   sendBookingBumpedEmail,
   sendSplitGuestPortionCancelledEmail,
 } from "@/lib/email/booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function capturedAdminTemplateData(): EmailTemplateData {
   expect(mocks.sendToAdmins).toHaveBeenCalledTimes(1);
@@ -97,7 +98,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       totalCents: 45000,
       holdUntil: new Date("2026-07-09T18:00:00.000Z"),
       parentUnpaid: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.settlementActionNote).toBe("string");
@@ -121,7 +122,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       guestCount: 3,
       totalCents: 45000,
       parentUnpaid: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.settlementActionNote).toBe("string");
@@ -153,7 +154,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       operationReference: "op_1",
       errorMessage: null,
       refundFailed: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = capturedAdminTemplateData();
     expect(typeof data.refundOutcomeNote).toBe("string");
@@ -176,7 +177,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       operationReference: "op_1",
       errorMessage: "card_declined",
       refundFailed: true,
-    });
+    }, CLUB_FORMAT_TEST);
     const failedData = capturedAdminTemplateData();
     const failedRendered = renderDefaultBody(
       "admin-duplicate-capture-refund",
@@ -204,7 +205,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const deletedData = capturedUnmuteableTemplateData();
     expect(typeof deletedData.refundOutcomeNote).toBe("string");
@@ -227,7 +228,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: false,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const cancelledData = capturedUnmuteableTemplateData();
     const cancelledRendered = renderDefaultBody(
@@ -257,7 +258,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "modification",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const modificationData = capturedUnmuteableTemplateData();
     expect(typeof modificationData.lateCaptureLeadNote).toBe("string");
@@ -278,7 +279,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       bookingId: "booking-9",
       bookingDeleted: true,
       captureKind: "primary",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const primaryRendered = renderDefaultBody(
       "admin-late-capture-auto-refund",
@@ -305,7 +306,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       captureKind: "modification",
       handBackAmountCents: 2500,
       refundSent: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const withheldData = capturedUnmuteableTemplateData();
     expect(typeof withheldData.handBackConflictNote).toBe("string");
@@ -329,7 +330,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       captureKind: "modification",
       handBackAmountCents: null,
       refundSent: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const sentRendered = renderDefaultBody(
       "admin-late-capture-hand-back-conflict",

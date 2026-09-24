@@ -58,6 +58,7 @@ import {
   buildRefundDocumentReference,
   defaultRefundMethodForPaymentSource,
 } from "@/lib/xero-refund-method";
+import type { ClubFormat } from "@/lib/club-format";
 
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
@@ -651,6 +652,8 @@ async function backfillBookingModificationCreditXeroNote(params: {
 export async function createUnappliedXeroCreditNote(
   paymentId: string,
   refundAmountCents: number,
+  /** The club's format (#3565); see `createXeroCreditNoteForModification`. */
+  format: ClubFormat,
   options?: CreateXeroUnappliedCreditNoteOptions
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
@@ -759,7 +762,7 @@ export async function createUnappliedXeroCreditNote(
         bookingModificationId,
         document: "MODIFICATION_CREDIT_NOTE",
         billedCents: refundAmountCents,
-      })
+      }, format)
     : null;
 
   // Account credit by construction (`INV-PAY-101`): this note is left
@@ -933,10 +936,17 @@ export async function createUnappliedXeroCreditNoteForModification(params: {
   bookingModificationId: string;
   createdByMemberId?: string;
   syncOperationId?: string;
+  /**
+   * The club's format (#3565), for any amount a line description renders (a
+   * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
+   * by the job or request that raised this document, never here.
+   */
+  format: ClubFormat;
 }): Promise<string> {
   return createUnappliedXeroCreditNote(
     params.paymentId,
     params.refundAmountCents,
+    params.format,
     {
       createdByMemberId: params.createdByMemberId,
       syncOperationId: params.syncOperationId,

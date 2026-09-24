@@ -52,6 +52,7 @@ import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
 // helpers when a member has opted into alternate lodges: the queue-order
@@ -302,6 +303,8 @@ const CROSS_LODGE_MINIMUM_STAY_ERROR =
 export async function confirmCrossLodgeWaitlistOffer(
   bookingId: string,
   memberId: string,
+  /** The club's format (#3565), resolved once by the request, before any transaction. */
+  format: ClubFormat,
 ): Promise<CrossLodgeConfirmResult> {
   // Phase 0 — #2363 minimum stay at the OFFERED lodge, evaluated OUTSIDE any
   // transaction (the house pattern for pre-write policy checks; Phase 1 below
@@ -703,6 +706,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   let outcome;
   try {
     outcome = await createConfirmedBooking({
+      format,
       // #3123 — the CLUB's day (`INV-CONFIG-002`). The three `prisma.$transaction`
       // spans this confirm runs have all closed by here, so this is a position
       // outside every lock; `createConfirmedBooking` is transaction-aware and

@@ -41,6 +41,9 @@ const mocks = vi.hoisted(() => ({
   bookingModificationFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentFindUnique: vi.fn(),
+  // #3581: what the booking ledger's settlement sync wrote. A plain array, not
+  // a vi.fn(), so this suite's resetAllMocks() cannot wipe the delegate.
+  ledgerWrites: [] as Array<Record<string, unknown>>,
   paymentUpdate: vi.fn(),
   paymentUpdateMany: vi.fn(),
   paymentTransactionUpdateMany: vi.fn(),
@@ -81,6 +84,13 @@ const mocks = vi.hoisted(() => ({
   txOperationFindFirst: vi.fn(),
   txOperationFindMany: vi.fn(),
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
+}));
+
+// #3599: the credit rows' ledger lines are posted by one sync, proved in its own
+// suites and against Postgres; this suite tests what it always tested.
+const syncCredits = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: syncCredits,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -338,6 +348,7 @@ import {
   sendBookingConfirmedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
@@ -417,6 +428,15 @@ describe("processStoredXeroInboundEvents", () => {
         paymentTransaction: {
           updateMany: mocks.paymentTransactionUpdateMany,
           create: mocks.paymentTransactionCreate,
+        },
+        // #3581: the paid-invoice path now posts its receipt to the booking
+        // ledger inside this transaction.
+        bookingLedgerLine: {
+          findMany: async () => [],
+          createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+            mocks.ledgerWrites.push(...data);
+            return { count: data.length };
+          },
         },
         booking: {
           update: mocks.bookingUpdate,
@@ -1100,7 +1120,11 @@ describe("processStoredXeroInboundEvents", () => {
     // transaction via tx.payment.findUnique. internetBankingHoldSlots:true
     // marks the booking as already holding its beds, so the paid path runs
     // straight through without a capacity re-check.
-    mocks.paymentFindUnique.mockResolvedValue({
+    mocks.ledgerWrites.length = 0;
+    // #3581: the ledger's settlement sync reads this payment's rows after the
+    // receipt write; answered with the row that write produced, so the new
+    // call site is exercised rather than slipping through its error path.
+    const ibPaymentRow = {
       id: "pay_ib_1",
       bookingId: "booking_ib_1",
       amountCents: 12345,
@@ -1128,7 +1152,22 @@ describe("processStoredXeroInboundEvents", () => {
         guests: [{ id: "guest_1" }],
         promoRedemption: null,
       },
-    });
+    };
+    mocks.paymentFindUnique.mockImplementation(
+      async (args?: { select?: Record<string, unknown> }) =>
+        args?.select?.refunds && args?.select?.transactions
+          ? {
+              bookingId: "booking_ib_1",
+              manuallyMarkedPaidAt: null,
+              manuallyMarkedPaidByMemberId: null,
+              booking: { lodgeId: "lodge-1" },
+              transactions: [
+                { id: "txn_ib_1", source: "INTERNET_BANKING", status: "SUCCEEDED", amountCents: 12345 },
+              ],
+              refunds: [],
+            }
+          : ibPaymentRow,
+    );
     mocks.subscriptionFindMany.mockResolvedValue([]);
     const accountingApi = {
       getInvoice: vi.fn().mockResolvedValue({
@@ -1168,6 +1207,17 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 0,
     });
 
+    // #3581 (review of #3604): the paid bank transfer posts its receipt to the
+    // booking ledger in this transaction. Before the fix, nothing did.
+    expect(mocks.ledgerWrites).toContainEqual(
+      expect.objectContaining({
+        kind: "BANK_RECEIPT",
+        settlementMethod: "INTERNET_BANKING",
+        amountCents: 12345,
+        postingKey: "capture:txn_ib_1",
+      }),
+    );
+
     expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalledWith({
       where: {
         paymentId: "pay_ib_1",
@@ -1197,15 +1247,36 @@ describe("processStoredXeroInboundEvents", () => {
         draftExpiresAt: null,
       },
     });
-    expect(mocks.paymentFindUnique).toHaveBeenCalledTimes(2);
+    // The inbound path reads the payment twice. The booking ledger's
+    // settlement sync (#3581) adds its own two reads — the owner, then the
+    // rows it posts from — which are counted separately so this still pins
+    // what it always pinned.
+    const ledgerSyncRead = (args: { select?: Record<string, unknown> } | undefined) =>
+      Boolean(
+        args?.select &&
+          ((args.select.refunds && args.select.transactions) ||
+            (Object.keys(args.select).length === 1 && args.select.bookingId)),
+      );
+    expect(
+      mocks.paymentFindUnique.mock.calls.filter(([args]) => !ledgerSyncRead(args)),
+    ).toHaveLength(2);
+    expect(
+      mocks.paymentFindUnique.mock.calls.filter(([args]) => ledgerSyncRead(args)),
+    ).toHaveLength(2);
     expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(
       expect.anything(),
       "lodge-1",
     );
-    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.paymentFindUnique.mock.invocationCallOrder[1],
-    );
-    expect(mocks.paymentFindUnique.mock.invocationCallOrder[1]).toBeLessThan(
+    // The post-lock RE-READ is the inbound path's own second read, found by
+    // what it is rather than by position: the ledger sync's two reads (#3581)
+    // now sit between the first read and the lock, right after the receipt
+    // row they post from — correct, since the receipt stands even if the
+    // capacity check below cancels the booking.
+    const postLockReread = mocks.paymentFindUnique.mock.calls
+      .map(([args], index) => ({ args, order: mocks.paymentFindUnique.mock.invocationCallOrder[index]! }))
+      .filter(({ args }) => !ledgerSyncRead(args))[1]!.order;
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(postLockReread);
+    expect(postLockReread).toBeLessThan(
       mocks.bookingUpdateMany.mock.invocationCallOrder.at(-1)!,
     );
     expect(mocks.bookingUpdateMany.mock.invocationCallOrder.at(-1)!).toBeLessThan(
@@ -1236,6 +1307,7 @@ describe("processStoredXeroInboundEvents", () => {
       new Date("2026-07-12"),
       1,
       12345,
+      CLUB_FORMAT_TEST,
       // Multi-lodge phase 8: the options now carry the booking's lodge so
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).
@@ -1401,7 +1473,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 0,
         paymentIntentId: "inv_ib_election",
         errorMessage: expect.stringContaining("never debited"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -1550,6 +1623,7 @@ describe("processStoredXeroInboundEvents", () => {
       new Date("2026-07-12"),
       1,
       12345,
+      CLUB_FORMAT_TEST,
       expect.objectContaining({
         provisionalGuests: { guestCount: 2, holdUntil },
       }),
@@ -1574,6 +1648,14 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
         const tx = {
+          // #3581: the paid-invoice path posts its receipt to the booking ledger.
+          bookingLedgerLine: {
+            findMany: async () => [],
+            createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+              mocks.ledgerWrites.push(...data);
+              return { count: data.length };
+            },
+          },
           $executeRaw: mocks.txExecuteRaw,
           $queryRaw: mocks.txExecuteRaw,
           lodge: {
@@ -1788,6 +1870,8 @@ describe("processStoredXeroInboundEvents", () => {
         sourceBookingId: "booking_ib_cap",
       }),
     });
+    // #3599: the minted credit reaches the ledger, for its booking, in the same transaction.
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_cap", store: txRef.current });
 
     // The account-credit note outbox operation was queued through the SAME
     // transaction client (store === the captured tx), proving it commits
@@ -1898,6 +1982,14 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
         const tx = {
+          // #3581: the paid-invoice path posts its receipt to the booking ledger.
+          bookingLedgerLine: {
+            findMany: async () => [],
+            createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+              mocks.ledgerWrites.push(...data);
+              return { count: data.length };
+            },
+          },
           $executeRaw: mocks.txExecuteRaw,
           $queryRaw: mocks.txExecuteRaw,
           lodge: { findFirst: mocks.lodgeFindFirst },
@@ -2105,6 +2197,7 @@ describe("processStoredXeroInboundEvents", () => {
         sourceBookingId: "booking_ib_pl",
       },
     });
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_pl", store: expect.anything() });
     expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
       { bookingId: "booking_ib_pl", recipientMemberId: "mem_pl" },
       "member@example.com",
@@ -2112,6 +2205,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       12345,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_pl"
@@ -2168,6 +2262,7 @@ describe("processStoredXeroInboundEvents", () => {
         memberName: "Tokoroa Primary School",
         errorMessage: expect.stringContaining("manual refund task"),
       }),
+      CLUB_FORMAT_TEST,
     );
 
     // The booking is not resurrected, exactly as for a member.
@@ -2264,6 +2359,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_cap"
@@ -2271,7 +2367,8 @@ describe("processStoredXeroInboundEvents", () => {
     // #19: the late-capacity-failure waitlist re-processing is scoped to the
     // cancelled booking's own lodge, not the default lodge.
     expect(mocks.processWaitlist).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: "lodge_ib_cap" })
+      expect.objectContaining({ lodgeId: "lodge_ib_cap" }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.amountCents).toBe(6172);
@@ -2299,6 +2396,14 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
         const tx = {
+          // #3581: the paid-invoice path posts its receipt to the booking ledger.
+          bookingLedgerLine: {
+            findMany: async () => [],
+            createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+              mocks.ledgerWrites.push(...data);
+              return { count: data.length };
+            },
+          },
           $executeRaw: mocks.txExecuteRaw,
           processedWebhookEvent: { deleteMany: mocks.processedDeleteMany },
           xeroInboundEvent: { update: mocks.inboundUpdate },
@@ -2529,7 +2634,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 12345,
         errorMessage: expect.stringContaining("already-cancelled booking"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
       {
@@ -2541,6 +2647,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       12345,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_ac"
@@ -2691,6 +2798,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
+      CLUB_FORMAT_TEST,
       "credit",
       0,
       "lodge_ib_ac"
@@ -2702,7 +2810,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 6172,
         errorMessage: expect.stringContaining("mixed invoice"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.errorMessage).toContain("$61.72");
@@ -2970,6 +3079,14 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) =>
         callback({
+          // #3581: the paid-invoice path posts its receipt to the booking ledger.
+          bookingLedgerLine: {
+            findMany: async () => [],
+            createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+              mocks.ledgerWrites.push(...data);
+              return { count: data.length };
+            },
+          },
           $executeRaw: mocks.txExecuteRaw,
           processedWebhookEvent: { deleteMany: mocks.processedDeleteMany },
           xeroInboundEvent: { update: mocks.inboundUpdate },
@@ -3195,7 +3312,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 12345,
         errorMessage: expect.stringContaining("already-cancelled booking"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.errorMessage).not.toContain("mixed invoice");
@@ -3238,7 +3356,8 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({
         amountCents: 6172,
         errorMessage: expect.stringContaining("mixed invoice"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3486,7 +3605,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 12345,
         errorMessage: expect.stringContaining("credit-note allocation"),
         paymentIntentId: "inv_ib_gate",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // The skip is visible: counted in the reconcile result that lands in the
     // inbound audit metadata.
@@ -3701,7 +3821,8 @@ describe("processStoredXeroInboundEvents", () => {
       })
     );
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
-      "inv_settle_1"
+      "inv_settle_1",
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3776,7 +3897,8 @@ describe("processStoredXeroInboundEvents", () => {
     });
 
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
-      "inv_settle_retry"
+      "inv_settle_retry",
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.inboundUpdate).toHaveBeenCalledWith({
       where: { id: "evt_settle_retry" },
@@ -3873,7 +3995,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 24690,
         errorMessage: expect.stringContaining("no longer matches"),
         paymentIntentId: "inv_settle_mismatch",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // The settlement stays PENDING for manual reconciliation: no child
     // booking flipped PAID.
@@ -3960,7 +4083,8 @@ describe("processStoredXeroInboundEvents", () => {
         amountCents: 24690,
         errorMessage: expect.stringContaining("paid after the organiser cancelled"),
         paymentIntentId: "inv_settle_cancelled",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
   });
@@ -5866,6 +5990,15 @@ describe("replayStoredXeroInboundEvent", () => {
         paymentTransaction: {
           updateMany: mocks.paymentTransactionUpdateMany,
           create: mocks.paymentTransactionCreate,
+        },
+        // #3581: the paid-invoice path now posts its receipt to the booking
+        // ledger inside this transaction.
+        bookingLedgerLine: {
+          findMany: async () => [],
+          createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+            mocks.ledgerWrites.push(...data);
+            return { count: data.length };
+          },
         },
         booking: {
           update: mocks.bookingUpdate,

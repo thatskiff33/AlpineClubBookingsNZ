@@ -65,6 +65,7 @@ import {
   deriveBrandShims,
 } from "../club-theme-schema";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("email-templates", () => {
   describe("adminDailyDigestTemplate", () => {
@@ -111,7 +112,7 @@ describe("email-templates", () => {
       const html = adminDuplicateCaptureRefundTemplate({
         ...base,
         refundFailed: false,
-      });
+      }, CLUB_FORMAT_TEST);
       expect(html).toContain("Duplicate Card Capture Auto-Refunded");
       expect(html).toContain("automatically refunded in full");
       expect(html).toContain("no action is needed");
@@ -130,7 +131,7 @@ describe("email-templates", () => {
         ...base,
         refundFailed: true,
         errorMessage: "Stripe is unavailable (503)",
-      });
+      }, CLUB_FORMAT_TEST);
       expect(html).toContain("Retry Queued");
       expect(html).toContain("could not be automatically refunded");
       expect(html).toContain("watch the recovery queue");
@@ -146,7 +147,7 @@ describe("email-templates", () => {
         ...base,
         settledPaymentIntentId: null,
         refundFailed: false,
-      });
+      }, CLUB_FORMAT_TEST);
       expect(html).toContain("another capture");
     });
   });
@@ -164,7 +165,7 @@ describe("email-templates", () => {
     };
 
     it("recurring variant reports the hold extension and the capped repeating cadence", () => {
-      const html = adminSplitSettlementUnpaidTemplate(base);
+      const html = adminSplitSettlementUnpaidTemplate(base, CLUB_FORMAT_TEST);
       expect(html).toContain("Hold extended to");
       // #1993 Part B / C3: the cadence is capped (1, 2, 3, then every 7th) and a
       // terminal cancellation ends the series — no more "repeats each run".
@@ -178,11 +179,11 @@ describe("email-templates", () => {
       const settled = adminSplitSettlementUnpaidTemplate({
         ...base,
         parentUnpaid: false,
-      });
+      }, CLUB_FORMAT_TEST);
       const parentUnpaid = adminSplitSettlementUnpaidTemplate({
         ...base,
         parentUnpaid: true,
-      });
+      }, CLUB_FORMAT_TEST);
       expect(settled).toContain("internet banking");
       expect(parentUnpaid).toContain("has not been paid either");
     });
@@ -200,7 +201,7 @@ describe("email-templates", () => {
     };
 
     it("reports the auto-cancellation and drops any hold/repeat wording", () => {
-      const html = adminSplitSettlementCancelledTemplate(base);
+      const html = adminSplitSettlementCancelledTemplate(base, CLUB_FORMAT_TEST);
       expect(html).toContain("Auto-Cancelled");
       expect(html).toContain("automatically cancelled");
       // A terminal one-off notice: no "hold extended" row, no recurring cadence.
@@ -213,11 +214,11 @@ describe("email-templates", () => {
       const settled = adminSplitSettlementCancelledTemplate({
         ...base,
         parentUnpaid: false,
-      });
+      }, CLUB_FORMAT_TEST);
       const parentUnpaid = adminSplitSettlementCancelledTemplate({
         ...base,
         parentUnpaid: true,
-      });
+      }, CLUB_FORMAT_TEST);
       expect(settled).toContain("internet banking");
       expect(settled).toContain("settled and is unaffected");
       // For a not-settled parent the copy says "not settled (it may be unpaid or
@@ -278,24 +279,24 @@ describe("email-templates", () => {
     const checkOut = new Date("2026-07-18");
 
     it("includes booking details", () => {
-      const html = bookingConfirmedTemplate("Alice", checkIn, checkOut, 3, 45000);
+      const html = bookingConfirmedTemplate("Alice", checkIn, checkOut, 3, 45000, CLUB_FORMAT_TEST);
       expect(html).toContain("Alice");
       expect(html).toContain("3");
       expect(html).toContain("$450.00");
     });
 
     it("shows confirmed status", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000);
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, CLUB_FORMAT_TEST);
       expect(html).toContain("Booking Confirmed");
     });
 
     it("includes view booking link", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000);
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, CLUB_FORMAT_TEST);
       expect(html).toContain("/bookings");
     });
 
     it("includes lodge directions and the configured door code", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, CLUB_FORMAT_TEST, {
         lodgeTravelNote: "Take the Bruce Road and carry chains.",
         doorCode: "A1234",
       });
@@ -307,7 +308,7 @@ describe("email-templates", () => {
     });
 
     it("includes lodge directions without a door-code field when no code is set", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, CLUB_FORMAT_TEST, {
         lodgeTravelNote: "Take the Bruce Road and carry chains.",
         doorCode: null,
       });
@@ -319,7 +320,7 @@ describe("email-templates", () => {
 
     it("explains the split provisional guest portion when this is a split parent (#1942)", () => {
       const holdUntil = new Date("2026-07-08T00:30:00Z");
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, CLUB_FORMAT_TEST, {
         provisionalGuests: { guestCount: 2, holdUntil },
       });
 
@@ -332,7 +333,7 @@ describe("email-templates", () => {
 
     it("uses singular wording for a single provisional guest (#1942)", () => {
       const holdUntil = new Date("2026-07-08T00:30:00Z");
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, CLUB_FORMAT_TEST, {
         provisionalGuests: { guestCount: 1, holdUntil },
       });
 
@@ -340,7 +341,7 @@ describe("email-templates", () => {
     });
 
     it("omits the provisional section for an ordinary (non-split) confirmation (#1942)", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000);
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, CLUB_FORMAT_TEST);
       expect(html).not.toContain("held provisionally");
     });
 
@@ -350,7 +351,7 @@ describe("email-templates", () => {
     // there is no PaymentLink on that path — so the reference is the only way
     // they can pay and it has to be in the message.
     it("states the amount OWING and the internet-banking reference for an unpaid confirmation", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 6, 30000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 6, 30000, CLUB_FORMAT_TEST, {
         paymentDue: { reference: "TAC-ABC123", invoiceEmailed: true },
       });
 
@@ -363,7 +364,7 @@ describe("email-templates", () => {
     });
 
     it("promises a club-sent invoice rather than an emailed one when none was raised", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 6, 30000, {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 6, 30000, CLUB_FORMAT_TEST, {
         paymentDue: { reference: "TAC-ABC123", invoiceEmailed: false },
       });
 
@@ -375,7 +376,7 @@ describe("email-templates", () => {
     });
 
     it("keeps the paid confirmation exactly as it was when no payment is due", () => {
-      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000);
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, CLUB_FORMAT_TEST);
       expect(html).toContain("Total Paid");
       expect(html).toContain("Payment has been processed successfully.");
       expect(html).not.toContain("Total Due");
@@ -425,7 +426,7 @@ describe("email-templates", () => {
         expectedArrivalTime: "16:30",
         lodgeTravelNote: "Park below the lodge and walk up.",
         doorCode: "9876",
-      });
+      }, CLUB_FORMAT_TEST);
 
       expect(html).toContain("Upcoming Lodge Stay");
       expect(html).toContain("Park below the lodge and walk up.");
@@ -447,7 +448,7 @@ describe("email-templates", () => {
         lodgeTravelNote: "Park below the lodge and walk up.",
         doorCode: null,
         checkoutChoreNote: checkoutDayChoreNote(true),
-      });
+      }, CLUB_FORMAT_TEST);
 
       expect(html).toContain("chore roster on the morning you check out");
       // The arrival information is unaffected — the field stays, as
@@ -462,7 +463,7 @@ describe("email-templates", () => {
           lodgeTravelNote: "Park below the lodge and walk up.",
           doorCode: null,
           checkoutChoreNote: checkoutDayChoreNote(true),
-        })
+        }, CLUB_FORMAT_TEST)
       ).toContain("Expected arrival");
     });
 
@@ -481,7 +482,7 @@ describe("email-templates", () => {
           lodgeTravelNote: "Park below the lodge and walk up.",
           doorCode: null,
           ...params,
-        });
+        }, CLUB_FORMAT_TEST);
 
         expect(html).not.toMatch(/chore/i);
         expect(html).not.toMatch(/hut leader/i);
@@ -498,7 +499,7 @@ describe("email-templates", () => {
         guestCount: 2,
         lodgeTravelNote: "Park below the lodge and walk up.",
         doorCode: null,
-      });
+      }, CLUB_FORMAT_TEST);
 
       expect(html).toContain("Park below the lodge and walk up.");
       expect(html).not.toContain("Door code");
@@ -562,13 +563,13 @@ describe("email-templates", () => {
     const checkOut = new Date("2026-07-18");
 
     it("shows refund amount when applicable", () => {
-      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 25000);
+      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 25000, CLUB_FORMAT_TEST);
       expect(html).toContain("$250.00");
       expect(html).toContain("refund");
     });
 
     it("shows no refund message when zero", () => {
-      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 0);
+      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 0, CLUB_FORMAT_TEST);
       expect(html).toContain("No refund was applicable");
     });
 
@@ -578,6 +579,7 @@ describe("email-templates", () => {
         checkIn,
         checkOut,
         0,
+        CLUB_FORMAT_TEST,
         "card",
         1500
       );
@@ -587,7 +589,7 @@ describe("email-templates", () => {
     });
 
     it("omits the restored-credit line when nothing was restored", () => {
-      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 25000);
+      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 25000, CLUB_FORMAT_TEST);
       expect(html).not.toContain("previously applied account credit");
     });
   });
@@ -737,7 +739,8 @@ describe("email-templates", () => {
         2,
         expiresAt,
         "booking123",
-        10000
+        10000,
+        CLUB_FORMAT_TEST
       );
 
       expect(html).toContain(emailClubDateTime(expiresAt));
@@ -869,7 +872,7 @@ describe("email-templates", () => {
         requestedAmountCents: 2500,
         paidAmountCents: 5000,
         refundedAmountCents: 0,
-      });
+      }, CLUB_FORMAT_TEST);
 
       expect(html).toContain("white-space: pre-wrap");
       expect(html).toContain("First line\nSecond line");

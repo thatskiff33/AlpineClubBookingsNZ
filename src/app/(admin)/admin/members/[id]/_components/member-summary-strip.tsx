@@ -23,6 +23,7 @@ import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 import type { LucideIcon } from "lucide-react"
+import { useClubFormat } from "@/components/club-format-provider"
 
 interface MemberSummaryStripProps {
   member: MemberDetail
@@ -64,6 +65,7 @@ export function MemberSummaryStrip({
   creditBalance,
   creditLoading,
 }: MemberSummaryStripProps) {
+  const format = useClubFormat()
   const clubClock = useClubTime()
   const memberExactAge = member.dateOfBirth
     ? formatAgeYearsMonths(member.dateOfBirth, clubClock.today())
@@ -91,7 +93,7 @@ export function MemberSummaryStrip({
         <SummaryItem
           icon={Wallet}
           label="Credit"
-          value={creditLoading ? "—" : formatCents(creditBalance)}
+          value={creditLoading ? "—" : formatCents(creditBalance, format)}
         />
         <SummaryItem
           icon={Calendar}
@@ -101,7 +103,7 @@ export function MemberSummaryStrip({
         <SummaryItem
           icon={CreditCard}
           label="Total Spend"
-          value={formatCents(member.stats.totalSpendCents)}
+          value={formatCents(member.stats.totalSpendCents, format)}
         />
         <SummaryItem
           icon={Clock}

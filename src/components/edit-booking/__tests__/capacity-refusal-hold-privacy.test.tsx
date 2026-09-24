@@ -18,7 +18,7 @@
  * The list is now the server's `capacityFullNights` (from the single helper,
  * which counts a held night as a full night) and carries dates only.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import type { QuoteResult } from "@/components/edit-booking/types";

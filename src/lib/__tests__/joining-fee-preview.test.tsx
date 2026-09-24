@@ -3,7 +3,7 @@
 // Item 15 (#1931, E5): the blind-override surfaces fetch the joining-fee preview
 // and surface the default amount + narration, prefilling the override fields so
 // overriding is an informed choice.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee";
 import { MemberXeroEntranceFeeFields } from "@/app/(admin)/admin/members/_components/member-xero-entrance-fee-fields";

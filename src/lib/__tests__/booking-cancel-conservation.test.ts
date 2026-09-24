@@ -166,6 +166,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const POLICY: CancellationRule[] = [
   {
@@ -250,6 +251,7 @@ async function runCancel({
     "member_1",
     "MEMBER",
     "127.0.0.1",
+    CLUB_FORMAT_TEST,
     method
   );
 
@@ -509,6 +511,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 

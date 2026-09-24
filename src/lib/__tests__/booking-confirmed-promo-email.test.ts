@@ -59,6 +59,7 @@ import {
   validateEmailTemplateContent,
   type EmailTemplateData,
 } from "@/lib/email-message-renderer";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // The global tokens prepareEmailMessage merges in from settings; supplied here
 // so the rendered default body has no artificial holes at the global tokens.
@@ -175,6 +176,7 @@ async function captureConfirmedTemplateData(
     new Date("2026-08-16"),
     options?.promoAdjustmentCents ? 1 : 2,
     totalCents,
+    CLUB_FORMAT_TEST,
     options,
   );
   expect(sendEmailMock).toHaveBeenCalledTimes(1);
@@ -712,7 +714,7 @@ describe("booking-modified default body (#2267)", () => {
       // value keeps the review note out of every assertion here.
       financialReviewPending: false,
       ...overrides,
-    });
+    }, CLUB_FORMAT_TEST);
     const call = sendEmailMock.mock.calls[0][0];
     expect(call.templateName).toBe("booking-modified");
     return { templateData: call.templateData, html: call.html };

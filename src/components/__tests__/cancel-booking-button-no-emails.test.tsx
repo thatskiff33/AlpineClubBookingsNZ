@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 

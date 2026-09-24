@@ -35,6 +35,7 @@ import type { DismissedManualRefundTaskPayload } from "@/lib/manual-refund-task-
   back to the rule at all.
 */
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -86,6 +87,7 @@ export function ManualRefundTaskReopenCard({
   /** Reload the whole queue, so the reopened row appears on the OPEN card. */
   onReopened: () => Promise<void> | void;
 }) {
+  const format = useClubFormat();
   const [target, setTarget] = useState<DismissedManualRefundTask | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -190,7 +192,7 @@ export function ManualRefundTaskReopenCard({
                 {" · "}
                 {task.amountCents === null
                   ? "no amount was recorded"
-                  : formatCents(task.amountCents)}
+                  : formatCents(task.amountCents, format)}
               </p>
               <p className="text-xs text-muted-foreground">
                 Stay {formatStayDate(task.checkIn)} to{" "}

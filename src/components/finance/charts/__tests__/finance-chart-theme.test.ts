@@ -10,6 +10,7 @@ import {
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
 import { CHART_FINANCE_8SLOT } from "@/lib/theme/aliases";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
  * #2190 P4 — FINANCE_MIX_COLORS is DERIVED from the signed-off categorical
@@ -68,10 +69,10 @@ describe("FINANCE_MIX_COLORS (derived categorical palette)", () => {
 // byte-identical to what the local instances produced.
 describe("formatFinanceValue renders through the shared finance formatters (#3325)", () => {
   it("keeps count, percent, ratio and whole-dollar currency byte-identical", () => {
-    expect(formatFinanceValue(1234567, "count")).toBe("1,234,567");
-    expect(formatFinanceValue(0.125, "percent")).toBe("12.5%");
-    expect(formatFinanceValue(1.35, "ratio")).toBe("1.35");
-    expect(formatFinanceValue(123456, "currency")).toBe("$1,235");
+    expect(formatFinanceValue(1234567, "count", CLUB_FORMAT_TEST)).toBe("1,234,567");
+    expect(formatFinanceValue(0.125, "percent", CLUB_FORMAT_TEST)).toBe("12.5%");
+    expect(formatFinanceValue(1.35, "ratio", CLUB_FORMAT_TEST)).toBe("1.35");
+    expect(formatFinanceValue(123456, "currency", CLUB_FORMAT_TEST)).toBe("$1,235");
   });
 
   // Measured against the hand-rolled `$` version before it was replaced, so
@@ -79,7 +80,7 @@ describe("formatFinanceValue renders through the shared finance formatters (#332
   it("keeps the compact currency tick byte-identical under the default configuration", () => {
     expect(
       [1_000_000, 120_000_000, 45_000, -120_000_000, -1_000_000, 0].map((cents) =>
-        formatFinanceAxisTick(cents, "currency"),
+        formatFinanceAxisTick(cents, "currency", CLUB_FORMAT_TEST),
       ),
     ).toEqual(["$10k", "$1.2m", "$450", "$-1.2m", "$-10k", "$0"]);
   });

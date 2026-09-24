@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /*
   #2263 — the admin-side additions for whole-lodge requests, kept as small
@@ -270,6 +271,7 @@ export function MemberWholeLodgeApprovalFields({
   onPricingModeChange: (mode: "per-guest" | "whole-lodge") => void;
   disabled?: boolean;
 }) {
+  const format = useClubFormat();
   const flatRateOffered = flatWholeLodgeTotalCents != null;
   return (
     <div className="space-y-3">
@@ -310,7 +312,7 @@ export function MemberWholeLodgeApprovalFields({
             />
             <span>
               <span className="font-medium">Price as whole lodge</span> —{" "}
-              {formatCents(flatWholeLodgeTotalCents)} for the whole building
+              {formatCents(flatWholeLodgeTotalCents, format)} for the whole building
               {nights > 0
                 ? ` (${nights} ${nights === 1 ? "night" : "nights"} at the season flat rate${nights === 1 ? "" : ", each night at its own season's rate"})`
                 : ""}

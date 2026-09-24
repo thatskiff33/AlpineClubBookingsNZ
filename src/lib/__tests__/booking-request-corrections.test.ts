@@ -604,7 +604,7 @@ describe("the beds the request was holding", () => {
     });
     const result = await correctBookingRequest(schoolInput());
     expect(result.holdOutcome).toBe("released");
-    const [bookingId, actor, role, ip, refundMethod, options] = (
+    const [bookingId, actor, role, ip, , refundMethod, options] = (
       cancelBooking as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(bookingId).toBe("held-1");

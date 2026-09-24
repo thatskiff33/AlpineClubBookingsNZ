@@ -31,6 +31,7 @@ import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
 import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #2267: the single source of truth for the signed promo adjustment behind a
@@ -68,16 +69,17 @@ export function resolvePromoAdjustmentCents(options?: {
 export function promoAdjustmentSummaryRows(
   totalCents: number,
   promoAdjustmentCents: number,
+  format: ClubFormat,
   promoCode?: string,
 ): Array<{ label: string; value: string }> {
   if (promoAdjustmentCents === 0) return [];
   const subtotalCents = totalCents - promoAdjustmentCents;
   const adjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
   return [
-    { label: "Subtotal", value: formatMoneyCents(subtotalCents) },
+    { label: "Subtotal", value: formatMoneyCents(subtotalCents, format) },
     {
       label: promoCode ? `Promo adjustment (${promoCode})` : "Promo adjustment",
-      value: `${adjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents))}`,
+      value: `${adjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents), format)}`,
     },
   ];
 }
@@ -179,13 +181,14 @@ const APPLIED_CREDIT_LABEL = "Account credit applied";
 export function appliedCreditSummaryRows(
   appliedCreditCents: number,
   settledCents: number,
+  format: ClubFormat,
   settlementMethod: ConfirmationSettlementMethod = "card",
 ): Array<{ label: string; value: string }> {
   if (appliedCreditCents <= 0 || settledCents < 0) return [];
   return [
     {
       label: APPLIED_CREDIT_LABEL,
-      value: `-${formatMoneyCents(appliedCreditCents)}`,
+      value: `-${formatMoneyCents(appliedCreditCents, format)}`,
     },
     {
       // #2328 (review): a $0.00 settlement has no method to name — the Payment
@@ -194,7 +197,7 @@ export function appliedCreditSummaryRows(
         settledCents === 0
           ? NOTHING_SETTLED_LABEL
           : SETTLED_LINE_LABELS[settlementMethod],
-      value: formatMoneyCents(settledCents),
+      value: formatMoneyCents(settledCents, format),
     },
   ];
 }
@@ -430,20 +433,21 @@ export function wholeLodgeManualInvoiceAmountCents(
 export function unpaidMoneySummaryRows(
   totalCents: number,
   netting: UnpaidCreditNetting,
+  format: ClubFormat,
 ): Array<{ label: string; value: string }> {
   if (netting.outcome === "none") {
-    return [{ label: "Total Due", value: formatMoneyCents(totalCents) }];
+    return [{ label: "Total Due", value: formatMoneyCents(totalCents, format) }];
   }
   if (netting.outcome === "unreconciled") {
-    return [{ label: "Booking Total", value: formatMoneyCents(totalCents) }];
+    return [{ label: "Booking Total", value: formatMoneyCents(totalCents, format) }];
   }
   return [
-    { label: "Booking Total", value: formatMoneyCents(totalCents) },
+    { label: "Booking Total", value: formatMoneyCents(totalCents, format) },
     {
       label: APPLIED_CREDIT_LABEL,
-      value: `-${formatMoneyCents(netting.creditCents)}`,
+      value: `-${formatMoneyCents(netting.creditCents, format)}`,
     },
-    { label: "Total Due", value: formatMoneyCents(netting.toTransferCents) },
+    { label: "Total Due", value: formatMoneyCents(netting.toTransferCents, format) },
   ];
 }
 
@@ -483,7 +487,9 @@ export function bookingModificationSummaryRows(params: {
   // reason above: the hand-built HTML email and the admin-editable flat body
   // both compose from these rows, so neither can be the one that stays silent.
   promoChangeNotAppliedNote?: string | null;
-}): Array<{ label: string; value: string }> {
+},
+  format: ClubFormat,
+): Array<{ label: string; value: string }> {
   // #3123: `oldCheckIn`/`newCheckIn`/`oldCheckOut`/`newCheckOut` are all
   // `Booking.checkIn`/`checkOut` values — `DateTime @db.Date` lodge nights.
   // A calendar day has no timezone, so `emailCalendarDay` consults none; it is
@@ -525,23 +531,23 @@ export function bookingModificationSummaryRows(params: {
   if (params.oldFinalPriceCents !== params.newFinalPriceCents) {
     rows.push({
       label: "Previous Total",
-      value: formatMoneyCents(params.oldFinalPriceCents),
+      value: formatMoneyCents(params.oldFinalPriceCents, format),
     });
     rows.push({
       label: "New Total",
-      value: formatMoneyCents(params.newFinalPriceCents),
+      value: formatMoneyCents(params.newFinalPriceCents, format),
     });
   } else {
     rows.push({
       label: "Total",
-      value: formatMoneyCents(params.newFinalPriceCents),
+      value: formatMoneyCents(params.newFinalPriceCents, format),
     });
   }
 
   if (params.changeFeeCents > 0) {
     rows.push({
       label: "Change Fee",
-      value: formatMoneyCents(params.changeFeeCents),
+      value: formatMoneyCents(params.changeFeeCents, format),
     });
   }
 

@@ -108,6 +108,7 @@ import { bookingModificationSummaryRows } from "@/lib/booking-money-lines";
 import { requireCalendarDate } from "@/lib/club-time";
 import { bookingModifiedTemplate } from "@/lib/email-templates/booking";
 import { sendBookingModifiedEmail } from "@/lib/email/booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("the sentence a member reads when a promo-code change was dropped (#3179)", () => {
   it("names the code, what did not happen, why, and what it means for the price", () => {
@@ -436,7 +437,7 @@ describe("the email carries the sentence (#3179)", () => {
       newFinalPriceCents: 24000,
       changeFeeCents: 0,
       promoChangeNotAppliedNote: NOTE,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(rows).toContainEqual({
       label: PROMO_CHANGE_NOT_APPLIED_LABEL,
@@ -455,7 +456,7 @@ describe("the email carries the sentence (#3179)", () => {
       oldFinalPriceCents: 24000,
       newFinalPriceCents: 24000,
       changeFeeCents: 0,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(
       rows.some((row) => row.label === PROMO_CHANGE_NOT_APPLIED_LABEL),
@@ -463,9 +464,10 @@ describe("the email carries the sentence (#3179)", () => {
   });
 
   it("says it in the HTML email AND in the admin-editable flat body, identically", async () => {
-    const silent = bookingModifiedTemplate(emailParams());
+    const silent = bookingModifiedTemplate(emailParams(), CLUB_FORMAT_TEST);
     const honest = bookingModifiedTemplate(
       emailParams({ promoChangeNotAppliedNote: NOTE }),
+      CLUB_FORMAT_TEST,
     );
 
     expect(silent).not.toMatch(/was not applied to this booking/i);
@@ -476,7 +478,7 @@ describe("the email carries the sentence (#3179)", () => {
       recipientMemberId: "member-1",
       email: "sam@example.org",
       ...emailParams({ promoChangeNotAppliedNote: NOTE }),
-    });
+    }, CLUB_FORMAT_TEST);
     const [call] = sendEmail.mock.calls as unknown as [
       [{ templateData: { changeSummary: string } }],
     ];
