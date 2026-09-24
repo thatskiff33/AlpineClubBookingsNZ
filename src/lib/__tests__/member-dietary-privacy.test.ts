@@ -1,0 +1,302 @@
+/**
+ * The member dietary/allergy privacy boundary (#2941, `INV-PRIV-022`).
+ *
+ * `member-dietary-access-census.test.ts` proves no other file can SELECT the
+ * column. This file proves what the one door does with it, and that the
+ * surfaces the value must never reach drop it even when handed it directly:
+ * the log/Sentry redactor, the audit sanitizer, the Xero contact payload and
+ * the member merge's persisted row.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  memberFindUnique: vi.fn(),
+  memberFindMany: vi.fn(),
+  settingsFindUnique: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    member: { findUnique: mocks.memberFindUnique, findMany: mocks.memberFindMany },
+    memberFieldsSettings: { findUnique: mocks.settingsFindUnique },
+  },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import {
+  DEFAULT_MEMBER_FIELDS_SETTINGS,
+  MEMBER_FIELD_KEYS,
+} from "@/config/member-fields";
+import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
+import { sanitizeAuditMetadata } from "@/lib/audit";
+import {
+  DIETARY_REQUIREMENTS_MAX_LENGTH,
+  dietaryRequirementsInputSchema,
+  isDietaryRequirementsWithinLimit,
+  normalizeDietaryRequirements,
+} from "@/lib/member-dietary-field";
+import {
+  buildDietaryRequirementsPatch,
+  dietaryRequirementsChanged,
+  grantMembershipAdminDietaryAccess,
+  grantMemberMergeDietaryAccess,
+  grantSelfDataExportDietaryAccess,
+  grantSelfDietaryAccess,
+  isDietaryFieldEnabled,
+  loadDietaryRequirementsForDisplay,
+  readMemberDietaryRequirements,
+  readMemberDietaryRequirementsByIds,
+  redactDietaryValueForRecord,
+} from "@/lib/member-dietary";
+import {
+  loadMemberFieldsFlags,
+  normalizeMemberFieldsSettings,
+} from "@/lib/member-fields-settings";
+import { mergeMemberFields } from "@/lib/member-merge-field-rules";
+import {
+  redactSensitiveJson,
+  redactSensitiveRecord,
+} from "@/lib/redact-sensitive-json";
+import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
+
+const VALUE = "Coeliac; severe peanut allergy (carries an EpiPen)";
+
+function adminUser(membership: "none" | "view" | "edit") {
+  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
+  return {
+    id: "admin-1",
+    adminPermissionMatrix: { ...matrix, membership },
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("the field's shape (INV-PRIV-022)", () => {
+  it("normalises blank to null, trims, and folds CRLF", () => {
+    expect(normalizeDietaryRequirements("   ")).toBeNull();
+    expect(normalizeDietaryRequirements("")).toBeNull();
+    expect(normalizeDietaryRequirements(null)).toBeNull();
+    expect(normalizeDietaryRequirements(undefined)).toBeNull();
+    expect(normalizeDietaryRequirements("  vegan\r\nno nuts  ")).toBe(
+      "vegan\nno nuts",
+    );
+  });
+
+  it("bounds the normalised value at 500 characters", () => {
+    expect(DIETARY_REQUIREMENTS_MAX_LENGTH).toBe(500);
+    expect(isDietaryRequirementsWithinLimit("x".repeat(500))).toBe(true);
+    expect(isDietaryRequirementsWithinLimit("x".repeat(501))).toBe(false);
+    // Surrounding whitespace a browser adds does not count.
+    expect(isDietaryRequirementsWithinLimit(`  ${"x".repeat(500)}  `)).toBe(true);
+    expect(dietaryRequirementsInputSchema.safeParse("x".repeat(501)).success).toBe(
+      false,
+    );
+    expect(dietaryRequirementsInputSchema.safeParse(undefined).success).toBe(true);
+    expect(dietaryRequirementsInputSchema.safeParse(null).success).toBe(true);
+  });
+});
+
+describe("the toggle defaults OFF everywhere (INV-PRIV-022)", () => {
+  it("is off in the defaults, on a missing row and on a partial row", () => {
+    expect(MEMBER_FIELD_KEYS).toContain("showDietaryRequirements");
+    expect(DEFAULT_MEMBER_FIELDS_SETTINGS.showDietaryRequirements).toBe(false);
+    expect(normalizeMemberFieldsSettings(null).showDietaryRequirements).toBe(false);
+    expect(
+      normalizeMemberFieldsSettings({ showOccupation: true })
+        .showDietaryRequirements,
+    ).toBe(false);
+  });
+
+  it("is off when the settings read fails", async () => {
+    mocks.settingsFindUnique.mockRejectedValue(new Error("relation missing"));
+    expect((await loadMemberFieldsFlags()).showDietaryRequirements).toBe(false);
+    expect(await isDietaryFieldEnabled()).toBe(false);
+  });
+});
+
+describe("grants (INV-PRIV-022)", () => {
+  it("a self grant reads only its own member", async () => {
+    mocks.memberFindUnique.mockResolvedValue({ dietaryRequirements: VALUE });
+    const grant = grantSelfDietaryAccess("m1");
+
+    await expect(readMemberDietaryRequirements(grant, "m1")).resolves.toBe(VALUE);
+    expect(mocks.memberFindUnique).toHaveBeenCalledWith({
+      where: { id: "m1" },
+      select: { dietaryRequirements: true },
+    });
+
+    await expect(readMemberDietaryRequirements(grant, "m2")).rejects.toThrow(
+      /covers only its own member/,
+    );
+    await expect(
+      readMemberDietaryRequirements(grantSelfDataExportDietaryAccess("m1"), "m2"),
+    ).rejects.toThrow(/covers only its own member/);
+  });
+
+  it("a forged grant object is refused", async () => {
+    const forged = {
+      purpose: "membership-admin",
+      subjectMemberId: null,
+      actorMemberId: "x",
+    } as unknown as Parameters<typeof readMemberDietaryRequirements>[0];
+    await expect(readMemberDietaryRequirements(forged, "m1")).rejects.toThrow(
+      /without an access grant/,
+    );
+    expect(mocks.memberFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("membership administration needs membership access at the level asked", () => {
+    expect(grantMembershipAdminDietaryAccess(adminUser("none"), "view")).toBeNull();
+    expect(grantMembershipAdminDietaryAccess(adminUser("view"), "edit")).toBeNull();
+    expect(grantMembershipAdminDietaryAccess(adminUser("view"), "view")).not.toBeNull();
+    expect(grantMembershipAdminDietaryAccess(adminUser("edit"), "edit")).not.toBeNull();
+    // A session carrying no matrix at all fails closed.
+    expect(grantMembershipAdminDietaryAccess({ id: "a" }, "view")).toBeNull();
+  });
+
+  it("bulk reads need membership administration, and select only the column", async () => {
+    mocks.memberFindMany.mockResolvedValue([
+      { id: "m1", dietaryRequirements: VALUE },
+      { id: "m2", dietaryRequirements: null },
+    ]);
+    await expect(
+      readMemberDietaryRequirementsByIds(grantSelfDietaryAccess("m1"), ["m1"]),
+    ).rejects.toThrow(/membership administration grant/);
+
+    const values = await readMemberDietaryRequirementsByIds(
+      grantMemberMergeDietaryAccess({ actorMemberId: "a", actorIsFullAdmin: true }),
+      ["m1", "m2", "m1"],
+    );
+    expect(values.get("m1")).toBe(VALUE);
+    expect(values.get("m2")).toBeNull();
+    expect(mocks.memberFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["m1", "m2"] } },
+      select: { id: true, dietaryRequirements: true },
+    });
+  });
+
+  it("display while OFF reads nothing and returns no value", async () => {
+    const shown = await loadDietaryRequirementsForDisplay(
+      grantSelfDietaryAccess("m1"),
+      "m1",
+      { enabled: false },
+    );
+    expect(shown).toEqual({ enabled: false });
+    expect("value" in shown).toBe(false);
+    expect(mocks.memberFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("writers (INV-PRIV-022)", () => {
+  it("OFF, or a value not sent, produces no patch so the stored value survives", () => {
+    expect(buildDietaryRequirementsPatch({ enabled: false, value: VALUE })).toEqual({});
+    expect(buildDietaryRequirementsPatch({ enabled: false, value: "" })).toEqual({});
+    expect(buildDietaryRequirementsPatch({ enabled: true, value: undefined })).toEqual(
+      {},
+    );
+  });
+
+  it("ON writes the normalised value, and blank clears it", () => {
+    expect(
+      buildDietaryRequirementsPatch({ enabled: true, value: `  ${VALUE}  ` }),
+    ).toEqual({ dietaryRequirements: VALUE });
+    expect(buildDietaryRequirementsPatch({ enabled: true, value: "   " })).toEqual({
+      dietaryRequirements: null,
+    });
+  });
+
+  it("reports whether the value changed without ever returning it", () => {
+    expect(dietaryRequirementsChanged(null, {})).toBe(false);
+    expect(dietaryRequirementsChanged(VALUE, { dietaryRequirements: VALUE })).toBe(
+      false,
+    );
+    expect(dietaryRequirementsChanged(null, { dietaryRequirements: VALUE })).toBe(
+      true,
+    );
+    expect(dietaryRequirementsChanged(VALUE, { dietaryRequirements: null })).toBe(
+      true,
+    );
+  });
+});
+
+describe("member merge keeps the loser's value only when the master has none", () => {
+  const base = { id: "x", firstName: "A", lastName: "B" };
+
+  it("fills a blank master from the loser", () => {
+    const { patch, diff } = mergeMemberFields(
+      { ...base, dietaryRequirements: null },
+      { ...base, dietaryRequirements: VALUE },
+    );
+    expect(patch.dietaryRequirements).toBe(VALUE);
+    expect(diff.find((row) => row.field === "dietaryRequirements")?.source).toBe(
+      "loser",
+    );
+  });
+
+  it("master wins when both hold a value", () => {
+    const { patch, diff } = mergeMemberFields(
+      { ...base, dietaryRequirements: "Vegetarian" },
+      { ...base, dietaryRequirements: VALUE },
+    );
+    expect(patch.dietaryRequirements).toBeUndefined();
+    expect(diff.find((row) => row.field === "dietaryRequirements")?.result).toBe(
+      "Vegetarian",
+    );
+  });
+
+  it("a persisted record says only whether a value is recorded", () => {
+    expect(redactDietaryValueForRecord(VALUE)).toBe("[REDACTED]");
+    expect(redactDietaryValueForRecord("  ")).toBeNull();
+    expect(redactDietaryValueForRecord(null)).toBeNull();
+  });
+});
+
+describe("negative egress: surfaces handed the value still drop it (INV-PRIV-022)", () => {
+  it("the log/Sentry redactor strips dietary and allergy keys", () => {
+    const payload = {
+      member: { id: "m1", dietaryRequirements: VALUE },
+      guestDietary: VALUE,
+      allergies: VALUE,
+      allergyNotes: VALUE,
+    };
+    for (const redacted of [
+      redactSensitiveJson(payload),
+      redactSensitiveRecord(payload),
+    ]) {
+      const text = JSON.stringify(redacted);
+      expect(text).not.toContain("peanut");
+      expect(text).toContain('"id":"m1"');
+    }
+  });
+
+  it("the audit sanitizer redacts a value under a dietary key but keeps change evidence", () => {
+    const sanitized = sanitizeAuditMetadata({
+      changedFields: ["dietaryRequirements"],
+      fieldGroups: { dietaryRequirements: true },
+      dietaryRequirementsSet: true,
+      dietaryRequirements: VALUE,
+      before: { allergies: VALUE },
+    }) as Record<string, unknown>;
+    const text = JSON.stringify(sanitized);
+    expect(text).not.toContain("peanut");
+    expect(sanitized.changedFields).toEqual(["dietaryRequirements"]);
+    expect(sanitized.fieldGroups).toEqual({ dietaryRequirements: true });
+    expect(sanitized.dietaryRequirementsSet).toBe(true);
+    expect(sanitized.dietaryRequirements).toBe("[REDACTED]");
+  });
+
+  it("the Xero contact payload never carries it, even from a row that does", () => {
+    const payload = buildXeroContactUpdatePayload({
+      firstName: "Aroha",
+      lastName: "Member",
+      email: "aroha@example.test",
+      dietaryRequirements: VALUE,
+    } as unknown as Parameters<typeof buildXeroContactUpdatePayload>[0]);
+    expect(JSON.stringify(payload)).not.toContain("peanut");
+    expect(Object.keys(payload)).not.toContain("dietaryRequirements");
+  });
+});
