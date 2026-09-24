@@ -868,7 +868,7 @@ grant. Owner-approved blueprint and decision, 20 Sep 2026, on
   redacts its values. The log redactor strips `dietary`/`allerg` keys and the
   audit sanitizer redacts any value under one.
 - **Merge fills if blank.** The loser's value survives only when the master has
-  none.
+  none. **Erasure clears it:** an approved account deletion nulls it.
 - Proof: `member-dietary-access-census.test.ts` (select, omit override, raw SQL,
   whole-row raw read, omit-less client, closed reach list, no egress file),
   `member-dietary-privacy.test.ts`, `member-dietary-routes.test.ts`.

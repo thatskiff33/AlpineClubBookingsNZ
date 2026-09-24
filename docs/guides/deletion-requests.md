@@ -46,6 +46,8 @@ to read the queues and membership **edit** to approve or reject.
    as anonymisation, so a failed cleanup commits neither the marker nor a
    partially anonymised member. This first rollout records the fact only;
    existing screens and eligibility rules are unchanged.
+   Anonymisation also erases any dietary/allergy information the member
+   recorded, whether or not the club currently has that field switched on.
 3. **Reject** lets you choose **Reject without emailing** or **Reject and email
    member** (with an optional reason sent to the member). If the member has no
    email on file, it is a single **Reject Request** with no notification.

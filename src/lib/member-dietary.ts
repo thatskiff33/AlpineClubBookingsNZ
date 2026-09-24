@@ -274,6 +274,17 @@ export async function loadDietaryRequirementsForDisplay(
 }
 
 /**
+ * What account erasure writes (#2941, `INV-PRIV-022`). An approved self-service
+ * deletion anonymises the Member row, and the dietary/allergy value is personal
+ * data like the address beside it: it goes too, whatever the toggle says.
+ * Exported as a constant so the anonymising update spreads it rather than
+ * naming the column itself.
+ */
+export const DIETARY_ERASURE_PATCH = Object.freeze({
+  dietaryRequirements: null,
+} as const);
+
+/**
  * The write half every writer shares. Returns the patch to spread into a
  * Member `data` object, or an empty patch when the field is OFF or the value
  * was not sent — so OFF writes nothing and the stored value survives.
