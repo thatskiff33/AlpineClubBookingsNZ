@@ -567,7 +567,8 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         "Check both before launch, and again if the club ever changes what it charges in.",
         "Choose the three-letter code for the currency, such as NZD or CHF - not a symbol and not a name.",
         "Write the number and date format as a language tag: the language, then the country, separated by a hyphen, such as en-NZ or de-CH.",
-        "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change these, and every change is recorded in the audit log with the old and new values.",
+        "Read the consequences and tick the acknowledgement before saving; every change is recorded in the audit log with the old and new values.",
+        "Every admin can open this page and see both values, where each came from and who last changed them; only a Full Admin can change them. Anyone else sees them read-only, with the Change button greyed out - unlike Club Time Zone and Environment Safety, which only a Full Admin can open at all.",
       ],
       [
         {

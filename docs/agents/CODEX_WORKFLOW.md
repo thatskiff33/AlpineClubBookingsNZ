@@ -43,10 +43,9 @@ conditions. Planning mode must not edit app logic.
 
 The shared quota, context, risk-tiered blueprint, proportional-validation and
 two-attempt failure controls live once in root `AGENTS.md`. Apply them before
-expanding a plan or delegating work. In Codex, pick the tier at dispatch from the
-shape in `AGENTS.md` → "Model selection" and the dated names in
-`docs/agents/SUBAGENT_GUIDE.md` → "Model routing table", rather than from a
-name written here; state the model and effort when you delegate, keep subagent prompts bounded, and clear
+expanding a plan or delegating work. In Codex, pick the model and effort at
+dispatch as `AGENTS.md` → "Model selection" describes; state the model and
+effort when you delegate, keep subagent prompts bounded, and clear
 issue-specific context before switching lanes.
 
 When the routed docs are known but the code neighbourhood is not, generate the

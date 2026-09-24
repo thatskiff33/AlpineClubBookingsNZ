@@ -19,7 +19,7 @@ vi.setConfig({ testTimeout: 30_000 });
  * documents** recorded the #2773 / #2774 directions as a settled "owner decision
  * 11 Aug 2026", while both issues carried `needs-decision`, one comment (the owner
  * holding the branch over exactly this), zero ticked options and no assignee. That
- * is not a wording nicety. `CLAUDE.md` makes the issue thread the audit trail,
+ * is not a wording nicety. `AGENTS.md` makes the issue thread the audit trail,
  * `docs/DOMAIN_INVARIANTS.md` is mandatory reading, and `INV-ADDPAY-039`
  * **withholds a member's refund** — so a false "owner decided" clause in it would
  * tell every future agent that the semantics are settled and must not be revisited.

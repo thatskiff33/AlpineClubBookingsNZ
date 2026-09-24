@@ -73,6 +73,8 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
@@ -1565,7 +1567,18 @@ async function settleBookingPaymentInTransaction(
     //     read moves.
     //   * WRITING them is a statement. If Postgres refuses it, this settle is
     //     already lost and pretending otherwise would only hide why.
-    const ledgerRows = (() => {
+    //
+    // AND IT HAPPENS ONCE PER BOOKING (#3595). A booking can pass the PAID
+    // claim above twice — a mark-paid, its reversal, then a card payment — and
+    // its nights can change in between (a date shift recreates them; a guest
+    // removed and re-added gets a new id), so per-night keys alone would post
+    // the whole charge again under new keys. A booking is confirmed once; what
+    // changes afterwards is a modification (#3582). The question is asked
+    // under this transaction's global `lock(1)`, which serialises every settle,
+    // so it cannot race; and it counts un-keyed lines too, so lines #3580
+    // posted before keys existed fence this settle as well.
+    const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
+    const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
       try {
         const plan = planConfirmationChargeLines({
           id: booking.id,
@@ -1593,7 +1606,26 @@ async function settleBookingPaymentInTransaction(
         return [];
       }
     })();
-    await writeBookingLedgerRows(tx, ledgerRows);
+    const ledgerInserted = await writeBookingLedgerRows(tx, ledgerRows);
+    // Under the fence every row is new, so a shortfall means a key was already
+    // there — not an error (the write skipped it rather than aborting), but not
+    // something that should happen either, so it is said out loud rather than
+    // discarded (review of #3597).
+    if (ledgerInserted !== ledgerRows.length) {
+      logger.warn(
+        { bookingId: booking.id, planned: ledgerRows.length, inserted: ledgerInserted },
+        "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
+      );
+    }
+
+    // #3581: the manual settle writes its transaction rows and the payment's
+    // columns itself, so it never passes through `reconcilePaymentAggregates`
+    // where every other settlement's ledger lines converge. It runs the same
+    // sync here, after the provenance columns above are written — so its rows
+    // read as cash recorded by an officer (`INV-PAY-001`), not a bank receipt.
+    if (settlement.kind === "manual") {
+      await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
+    }
 
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator
@@ -2848,6 +2880,12 @@ export async function reverseManualBookingPayment({
       restoredAdditionalAmountCents =
         restoredAdditional.count === 1 ? settledAdditional.amountCents : null;
     }
+
+    // #3581: the reversal flipped the manual rows from SUCCEEDED to FAILED
+    // above, so the cash lines the settle posted no longer hold. The same sync
+    // posts their reversals — new lines, the originals untouched, each keyed by
+    // the line it reverses so a replay posts nothing (`INV-MONEY-033`).
+    await syncBookingLedgerSettlements({ paymentId: payment.id, store: tx });
 
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding

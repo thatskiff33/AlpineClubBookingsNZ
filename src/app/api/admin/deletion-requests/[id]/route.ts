@@ -14,6 +14,7 @@ import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -843,7 +844,7 @@ export async function POST(
     const approvalReceipt = { email: member.email, firstName: member.firstName };
 
     // 4-7: Anonymise atomically in a single transaction
-    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
+    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@${DELETED_CONTACT_EMAIL_DOMAIN}`;
     let sweptShares: SweptPartnerSharedAllocation[] = [];
     // #2255: who was still pointed at this member when we anonymised them.
     let detachedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;

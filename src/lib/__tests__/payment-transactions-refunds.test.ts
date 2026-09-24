@@ -70,6 +70,12 @@ function createRefundStore() {
   const refunds = new Map<string, Record<string, unknown>>();
 
   const store = {
+    // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
+    // ledger's settlement lines from the same rows, so it reads and writes here.
+    bookingLedgerLine: {
+      findMany: vi.fn(async () => []),
+      createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+    },
     payment: {
       findUnique: vi.fn(async (args: any) => {
         if (args.where?.stripePaymentIntentId || args.where?.additionalPaymentIntentId) {
@@ -80,6 +86,31 @@ function createRefundStore() {
           return {
             ...payment,
             transactions: transactions.map((item) => ({ ...item })),
+          };
+        }
+
+        // #3581: the booking ledger's settlement sync, which
+        // `reconcilePaymentAggregates` now ends in, reads this shape. Answered
+        // honestly so the sync RUNS here — a double that returned the bare
+        // payment would send it down its error path on every test and prove
+        // nothing (review of #3604).
+        if (args.select?.refunds && args.select?.transactions) {
+          return {
+            bookingId: payment.bookingId,
+            manuallyMarkedPaidAt: null,
+            manuallyMarkedPaidByMemberId: null,
+            booking: { lodgeId: "lodge_1" },
+            transactions: transactions.map(({ id, source, status, amountCents }) => ({
+              id,
+              source,
+              status,
+              amountCents,
+            })),
+            refunds: [...refunds.values()].map((refund) => ({
+              id: refund.id as string,
+              status: refund.status as string,
+              amountCents: refund.amountCents as number,
+            })),
           };
         }
 

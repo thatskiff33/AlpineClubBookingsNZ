@@ -35,6 +35,8 @@ import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-rep
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { formatCents } from "@/lib/utils";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -631,6 +633,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         }
       }
 
+      // #3581: the one Internet Banking receipt writer that does NOT end in
+      // `reconcilePaymentAggregates` — it sets the payment's columns itself,
+      // below — so the booking ledger's receipt line is posted here, in this
+      // transaction, from the row just written. Review of #3604 found it
+      // missing: without this call a member who pays by bank transfer got no
+      // ledger line at all. A manually settled payment never reaches this
+      // point (it returned above), so the row is a genuine bank receipt.
+      await syncBookingLedgerSettlements({ paymentId: fresh.id, store: tx });
+
       const paymentWasPending = fresh.status !== PaymentStatus.SUCCEEDED;
       // A PAID invoice event must never un-refund money (#1357, the #1353
       // raise-only spirit): a payment already (PARTIALLY_)REFUNDED keeps its
@@ -898,6 +909,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               sourceBookingId: settlementPayment.bookingId,
             },
           });
+          await syncBookingLedgerCredits({ bookingId: settlementPayment.bookingId, store: tx });
           // Real cash arrived, so the hold-expiry release's still-pending
           // invoice-clearing refund credit note (which would post a fictional
           // cash refund) is obsolete — retire it in the same transaction. An
@@ -1124,6 +1136,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 sourceBookingId: fresh.bookingId,
               },
             });
+            await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
           }
 
           // Enqueue the offsetting Xero account-credit note inside this same
