@@ -152,4 +152,3 @@ export function useClubFormat(): ClubFormat {
   }
   return format;
 }
-
