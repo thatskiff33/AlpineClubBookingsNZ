@@ -735,7 +735,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-012` | Cancellation approval leaves access roles standing; `active: false` is the load-bearing flag |
 | `INV-LIFE-013` | Two paths write `active: true`; each refuses cancelled, archived and deleted members |
 | `INV-LIFE-014` | A deleted account yields no session even with `active: true`; providers refuse |
-| `INV-LIFE-015` | The deleted-account marker is a strong signal, not a schema invariant |
+| `INV-LIFE-015` | Structural deletion and adopter-era reserved addresses share one predicate |
 | `INV-LIFE-016` | Cancellation clears no roles and no JWT; admin-access routes re-read `active` |
 | `INV-LIFE-017` | Application-approval mapping preserves login uniqueness and auth, and never double-charges coverage |
 | `INV-LIFE-066` | The applicant MAP path's #1026 privileged-email gate is Full-Admin-only, fail-closed |
