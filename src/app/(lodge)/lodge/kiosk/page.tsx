@@ -294,6 +294,9 @@ export default function KioskPage() {
   const canCompleteChores = canMarkAttendance;
   const canManageRoster =
     !isPreview && (effectiveTier === "admin" || effectiveTier === "hut-leader");
+  // #3029 S4: the server sends notes to an admin, and "Viewing as" must show
+  // what the SIMULATED tier would see — which, below hut leader, is none.
+  const showDietary = effectiveTier === "admin" || effectiveTier === "hut-leader";
 
   const fetchData = useCallback(async () => {
     try {
@@ -1189,7 +1192,7 @@ export default function KioskPage() {
                                         : "Phone not available"}
                                     </p>
                                   )}
-                                  {guest.dietaryRequirements && (
+                                  {showDietary && guest.dietaryRequirements && (
                                     <p className="text-sm mt-1 whitespace-pre-wrap">
                                       <span className="font-medium">
                                         {DIETARY_REQUIREMENTS_LABEL}:

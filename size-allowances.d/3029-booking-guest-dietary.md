@@ -9,7 +9,7 @@ money- and lock-sensitive code of its own, which the issue forbids widening
 into.
 
 file: src/app/(lodge)/lodge/kiosk/page.tsx
-lines: 1417
+lines: 1420
 reason: the kiosk day list shows each present guest's dietary note under the
   name it already renders; the value arrives only for the admin and hut-leader
   tiers, so there is no separate component to lift out.
