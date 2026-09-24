@@ -26,6 +26,7 @@ import {
   unpricedNightsSummaryForGuest,
   NIGHT_PRICE_REPAIR_RACED_MESSAGE,
 } from "@/lib/stored-night-price-repair-plan";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * #3191 (epic #2797): the rules for filling in a night whose sold price is not
@@ -62,6 +63,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
 
   it("refuses a partial answer rather than working the rest out", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [{ date: requireCalendarDate("2026-08-01"), priceCents: 5_000 }],
       deltaCents: 0,
@@ -74,6 +76,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
 
   it("refuses one date typed twice standing in for the other", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 5_000 },
@@ -89,6 +92,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
 
   it("refuses a night this strand does not hold blank", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 5_000 },
@@ -105,6 +109,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
   it("refuses an amount that is not whole non-negative cents", () => {
     for (const priceCents of [-1, 12.5]) {
       const result = checkStoredNightPriceRepair({
+        format: CLUB_FORMAT_TEST,
         summary,
         entries: [
           { date: requireCalendarDate("2026-08-01"), priceCents },
@@ -124,6 +129,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
     // rule that refused it would have made the epic's own distinction
     // unrepresentable in the one screen that can restore it.
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 0 },
@@ -136,6 +142,7 @@ describe("no blank is ever filled in for the officer (INV-MOD-028)", () => {
 
   it("has nothing to accept when the strand has no blanks", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary: summaryOf([], 10_000, 10_000),
       entries: [],
       deltaCents: 0,
@@ -154,6 +161,7 @@ describe("the figures must reconcile to the amount being settled", () => {
     // THE CONTROL. Nothing moves, so the blanks make up the difference between
     // the priced nights and what the strand is already stored as being worth.
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 4_000 },
@@ -167,6 +175,7 @@ describe("the figures must reconcile to the amount being settled", () => {
 
   it("refuses figures that do not come to the target, and says the target", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 4_000 },
@@ -217,6 +226,7 @@ describe("the figures must reconcile to the amount being settled", () => {
     // figure to type here, so a refusal that named only the two forced options
     // would be a dead end.
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 0 },
@@ -245,6 +255,7 @@ describe("the figures must reconcile to the amount being settled", () => {
     ).toBe(2_500);
 
     const refunded = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 2_500 },
@@ -259,6 +270,7 @@ describe("the figures must reconcile to the amount being settled", () => {
     expect(refunded.targetCents).toBe(4_500);
 
     const charged = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 5_000 },
@@ -275,6 +287,7 @@ describe("the figures must reconcile to the amount being settled", () => {
 
   it("says so plainly when no set of prices could satisfy the settlement", () => {
     const result = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 0 },
@@ -441,6 +454,7 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
     const summary = unpricedNightsSummaryForGuest(guest);
     expect(summary).not.toBeNull();
     const check = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary: summary!,
       entries: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }],
       deltaCents: 0,
@@ -477,6 +491,7 @@ describe("a booking whose blanks are all cleared stops parking (#3191)", () => {
       amountCents: 4_000,
     });
     const check = checkStoredNightPriceRepair({
+      format: CLUB_FORMAT_TEST,
       summary,
       entries: [
         { date: requireCalendarDate("2026-08-01"), priceCents: 7_000 },

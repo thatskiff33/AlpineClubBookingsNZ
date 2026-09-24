@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   financeFinancialYearBuckets,
   last12MonthWindow,
@@ -125,6 +126,7 @@ export function RatioExplorer({
   initialDenominatorId,
   initialRangeKey,
 }: RatioExplorerProps) {
+  const format = useClubFormat();
   const chips = useMemo(() => buildRangeChips(matrix), [matrix]);
   const seriesById = useMemo(
     () => new Map(matrix.series.map((series) => [series.id, series])),
@@ -300,18 +302,20 @@ export function RatioExplorer({
               {numerator?.name} ÷ {denominator?.name} — {activeChip?.label}
             </div>
             <div className="text-4xl font-semibold text-card-foreground">
-              {headline === null ? "—" : formatFinancePercent(headline)}
+              {headline === null ? "—" : formatFinancePercent(headline, format)}
             </div>
             <div className="text-sm text-muted-foreground">
               {numerator && activeChip
                 ? formatDollarsDisplay(
-                    sumRatioSeries(matrix, numerator, activeChip)
+                    sumRatioSeries(matrix, numerator, activeChip),
+                    format
                   )
                 : "—"}{" "}
               of{" "}
               {denominator && activeChip
                 ? formatDollarsDisplay(
-                    sumRatioSeries(matrix, denominator, activeChip)
+                    sumRatioSeries(matrix, denominator, activeChip),
+                    format
                   )
                 : "—"}
               {includesProvisional
@@ -335,13 +339,13 @@ export function RatioExplorer({
                   <tr key={row.label} className="border-b border-border/60">
                     <td className="py-2 pr-4">{row.label}</td>
                     <td className="py-2 pr-4 font-semibold">
-                      {row.ratio === null ? "—" : formatFinancePercent(row.ratio)}
+                      {row.ratio === null ? "—" : formatFinancePercent(row.ratio, format)}
                     </td>
                     <td className="py-2 pr-4">
-                      {formatDollarsDisplay(row.numeratorCents)}
+                      {formatDollarsDisplay(row.numeratorCents, format)}
                     </td>
                     <td className="py-2">
-                      {formatDollarsDisplay(row.denominatorCents)}
+                      {formatDollarsDisplay(row.denominatorCents, format)}
                     </td>
                   </tr>
                 ))}

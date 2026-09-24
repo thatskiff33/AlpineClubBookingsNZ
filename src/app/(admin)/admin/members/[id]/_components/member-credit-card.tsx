@@ -15,6 +15,7 @@ import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { MONEY_INPUT_PROPS } from "@/lib/money-input"
 import { formatCents, formatSignedCents } from "@/lib/utils"
+import { useClubFormat } from "@/components/club-format-provider"
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
@@ -59,6 +60,7 @@ export function MemberCreditCard({
   onReviewAdjustment,
   className,
 }: MemberCreditCardProps) {
+  const format = useClubFormat()
   const { data: session } = useSession()
   // Two kinds of date on this card and they are NOT interchangeable: the ledger
   // stamps (`createdAt`, `reviewedAt`) are real instants and are read in the
@@ -85,7 +87,7 @@ export function MemberCreditCard({
             className={`text-lg font-semibold ${
               creditBalance > 0 ? "text-success-11" : creditBalance < 0 ? "text-danger-11" : "text-muted-foreground"
             }`}
-          >{formatCents(creditBalance)}</span>
+          >{formatCents(creditBalance, format)}</span>
           <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
             {showAdjustmentForm ? "Cancel" : "Request Adjustment"}
           </ViewOnlyActionButton>
@@ -173,7 +175,7 @@ export function MemberCreditCard({
                             className={`font-medium ${
                               item.amountCents > 0 ? "text-success-11" : "text-danger-11"
                             }`}
-                          >{formatSignedCents(item.amountCents)}</TableCell>
+                          >{formatSignedCents(item.amountCents, format)}</TableCell>
                           <TableCell className="text-sm text-muted-foreground max-w-[260px] truncate">{item.description}</TableCell>
                           <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
                           <TableCell className="text-right">
@@ -245,7 +247,7 @@ export function MemberCreditCard({
                       </TableCell>
                       <TableCell
                         className={`font-medium ${item.amountCents > 0 ? "text-success-11" : "text-danger-11"}`}
-                      >{formatSignedCents(item.amountCents)}</TableCell>
+                      >{formatSignedCents(item.amountCents, format)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{item.description}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (

@@ -156,6 +156,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** The contact the school's Organisation has held since stage 2 took it. */
 const SCHOOL_CONTACT = "xero-contact-held-by-the-school";
@@ -209,7 +210,7 @@ const PATHS: ReadonlyArray<{
     name: "the account-credit note",
     run: async (organisationId) => {
       mocks.paymentFindUnique.mockResolvedValue(paymentRow(organisationId));
-      return createUnappliedXeroCreditNote("pay-1", 5000);
+      return createUnappliedXeroCreditNote("pay-1", 5000, CLUB_FORMAT_TEST);
     },
   },
   {
@@ -217,6 +218,7 @@ const PATHS: ReadonlyArray<{
     run: async (organisationId) => {
       mocks.bookingFindUnique.mockResolvedValue(bookingRow(organisationId));
       return createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-from-last-year",
         refundAmountCents: 5000,
         bookingModificationId: "mod-1",
@@ -228,6 +230,7 @@ const PATHS: ReadonlyArray<{
     run: async (organisationId) => {
       mocks.bookingFindUnique.mockResolvedValue(bookingRow(organisationId));
       return createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-from-last-year",
         priceDiffCents: 5000,
         changeFeeCents: 0,

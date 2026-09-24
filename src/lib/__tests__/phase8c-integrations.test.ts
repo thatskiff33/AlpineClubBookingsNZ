@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // chore-cleanup imports the shared roster lock. Capacity is not exercised by
 // these date-key cleanup tests, so keep its module-level Prisma client out.
@@ -371,7 +372,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -402,7 +403,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -432,7 +433,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -460,7 +461,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
@@ -488,7 +489,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Should show "Total" not "Previous Total" / "New Total"
     expect(html).toContain("Total");

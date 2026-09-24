@@ -44,6 +44,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const modifyDatesSchema = z
   .object({
@@ -185,6 +186,9 @@ export async function PUT(
   // the lodge capacity key — `INV-LOCK-004`, the same reason its `todayAtClub` is a
   // required parameter on the `/modify` door.
   const todayAtClub = (await clubTime()).today();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result =
@@ -204,6 +208,7 @@ export async function PUT(
             ipAddress,
           })
         : await modifyBookingDatesWithLinkedMoveSupport({
+            format,
             bookingId,
             actor: { id: session.user.id, role: actorRole },
             ...(parsed.data.hostingCoverageOverride

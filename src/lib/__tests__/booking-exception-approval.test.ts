@@ -127,6 +127,7 @@ import { buildModificationProposalParties } from "@/lib/booking-exception-reques
 import type { ConfirmedOverride } from "@/lib/booking-exception-execution";
 import { requireCalendarDate } from "@/lib/club-time";
 import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -431,6 +432,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
   it("checks the FULL proposed party and EXCLUDES the live booking for a modification", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -456,6 +458,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
 
   it("excludes nothing for a new-booking proposal (there is no live booking)", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -473,6 +476,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
       nightDetails: [],
     });
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -489,6 +493,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("passes when the stored delta still replays to the reviewed proposal", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -503,6 +508,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the live booking drifted since the request was made", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -530,6 +536,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the stored delta was tampered with", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -569,6 +576,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the request carries no replayable delta at all", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -593,6 +601,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the live booking has vanished", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -607,6 +616,7 @@ describe("verifyLiveProposalIntegrity", () => {
 
   it("passes a new-booking proposal through — it has no live base to drift", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -632,6 +642,7 @@ describe("executeApprovedProposal — modification", () => {
   ) {
     const snapshot = frozenModificationSnapshot();
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -743,6 +754,7 @@ describe("executeApprovedProposal — modification", () => {
   it("refuses to execute without a verified delta (fails loudly, never silently)", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -764,6 +776,7 @@ describe("executeApprovedProposal — modification", () => {
 describe("executeApprovedProposal — new booking", () => {
   function hooksFor(adminNotes?: string) {
     return buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -920,6 +933,7 @@ describe("executeApprovedProposal — new booking", () => {
 
   it("carries the member's own words as the review justification", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",
@@ -1175,6 +1189,7 @@ describe("executeApprovedProposal — new booking", () => {
 
   it("refuses to execute without resolved execution parameters", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       batchPreTransaction: FIXTURE_PRE_TRANSACTION,
       requestId: "req-1",

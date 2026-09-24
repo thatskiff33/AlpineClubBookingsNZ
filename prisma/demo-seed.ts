@@ -34,6 +34,7 @@ import { must } from "../src/lib/indexed-access";
 import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { redeemPromoCode } from "../src/lib/promo";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import {
   DEMO_BOOKING_WINDOWS,
   DUAL_HAT_ADMIN,
@@ -263,6 +264,10 @@ async function addGuest(
 }
 
 async function main() {
+  // The club's format (#3565), read ONCE before any transaction and passed down.
+  // `getClubFormat()` falls back to the environment and then the defaults when
+  // the row is not persisted yet, which on a fresh database it is not.
+  const format = await getClubFormat();
   await assertDemoSeedSafety();
   await cleanup();
   console.log("Building demo data...");
@@ -653,6 +658,7 @@ async function main() {
     );
     await recordBookingNightAdjustments(tx, {
       bookingId: bPaid.id,
+      format,
       guestIds: [erinGuest.id],
       targets: [
         {

@@ -35,6 +35,7 @@ import {
   recordStripeRefundNoteLinkStatuses,
 } from "../src/lib/xero-refund-note-status-recorder";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
@@ -126,6 +127,8 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), resolved once per run.
+  const format = await getClubFormat();
   const scope =
     args.paymentIds.length > 0 ? { paymentIds: args.paymentIds } : undefined;
 
@@ -136,7 +139,7 @@ async function main() {
   }
 
   if (!args.apply) {
-    const report = await findStripeRefundNoteLinkRepairs(scope);
+    const report = await findStripeRefundNoteLinkRepairs(format, scope);
     console.log("DRY RUN — no repair was applied.");
     console.log("");
     console.log(formatStripeRefundNoteLinkRepairReport(report));
@@ -146,7 +149,7 @@ async function main() {
     return;
   }
 
-  const result = await applyStripeRefundNoteLinkRepairs(scope);
+  const result = await applyStripeRefundNoteLinkRepairs(format, scope);
   console.log(formatStripeRefundNoteLinkRepairReport(result.report));
   console.log(
     `\nApplied ${result.appliedPayments} payment(s): reactivated ${result.reactivatedLinks} link(s), deactivated ${result.deactivatedLinks} cancelled-note link(s).`

@@ -82,6 +82,7 @@ import {
   XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
   XeroContactCreateBlocksDeletionError,
 } from "@/lib/xero-contact-create-recovery";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -292,6 +293,9 @@ export async function POST(
 
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   let completedBookingCancellations = 0;
   let memberAnonymised = false;
 
@@ -766,6 +770,7 @@ export async function POST(
           session.user.id,
           "ADMIN",
           ip,
+          format,
         );
       } catch (err) {
         const cancellationFact = await recheckCancellationFailure(booking.id);

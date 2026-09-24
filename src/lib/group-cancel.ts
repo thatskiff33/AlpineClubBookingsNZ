@@ -106,6 +106,7 @@ import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group
 import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { ClubFormat } from "@/lib/club-format";
 
 // F3 (#1351): the recovery operation is enqueued BEFORE the inline Stripe
 // refund, so the cron must not claim it while this run is still executing.
@@ -173,7 +174,8 @@ async function markGroupCancelled(groupBookingId: string): Promise<void> {
 export async function settleGroupBookingOnOrganiserCancel(
   organiserBookingId: string,
   sessionUserId: string,
-  ipAddress: string
+  ipAddress: string,
+  format: ClubFormat,
 ): Promise<void> {
   const group = await prisma.groupBooking.findUnique({
     where: { organiserBookingId },
@@ -649,7 +651,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       summary: "Group joiner booking cancelled with organiser cancel",
       details:
         refundForChild > 0
-          ? `Group organiser cancelled; refunded ${formatCents(refundForChild)} of the settled beds to the organiser`
+          ? `Group organiser cancelled; refunded ${formatCents(refundForChild, format)} of the settled beds to the organiser`
           : "Group organiser cancelled; released the held spot (no payment taken)",
       metadata: {
         groupBookingId: group.id,
@@ -684,6 +686,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       child.checkIn,
       child.checkOut,
       refundForChild,
+      format,
       "card",
       0,
       child.lodgeId
@@ -698,7 +701,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       checkIn: child.checkIn,
       checkOut: child.checkOut,
       lodgeId: child.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
         "Failed to process waitlist after group joiner cancellation"
@@ -765,7 +768,8 @@ export type GroupSettlementRefundReplayResult = {
  * alerts only when retries exhaust (owner decision, 2026-07-06).
  */
 export async function executeGroupSettlementRefundPlan(
-  settlementId: string
+  settlementId: string,
+  format: ClubFormat,
 ): Promise<GroupSettlementRefundReplayResult> {
   const settlement = await prisma.groupBookingSettlement.findUnique({
     where: { id: settlementId },
@@ -891,7 +895,7 @@ export async function executeGroupSettlementRefundPlan(
       severity: "critical",
       outcome: "success",
       summary: "Group settlement refund recovered",
-      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(nextRefunded)} (frozen plan replay).`,
+      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(nextRefunded, format)} (frozen plan replay).`,
       metadata: {
         settlementId,
         groupBookingId: settlement.groupBookingId,

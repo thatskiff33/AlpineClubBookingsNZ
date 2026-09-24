@@ -4,7 +4,8 @@ import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-host
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   applyManualBookingPayment,
   ManualBookingPaymentError,
@@ -51,10 +52,11 @@ const bodySchema = z
  */
 function creditElectionNote(
   direction: "paid" | "unpaid",
-  creditElectionCents: number | null
+  creditElectionCents: number | null,
+  money: BoundClubFormat,
 ): string {
   if (creditElectionCents == null) return "";
-  const amount = formatCents(creditElectionCents);
+  const amount = money.cents(creditElectionCents);
   return direction === "paid"
     ? ` This member had asked to put ${amount} of account credit towards the booking; cash cannot use it, so that credit is untouched and still on their account. They have been told.`
     : ` Their ${amount} account-credit request has been put back on the booking, so it can be used when the booking is paid again.`;
@@ -70,9 +72,10 @@ function creditElectionNote(
 function additionalNote(
   direction: "paid" | "unpaid",
   additional: ManualBookingAdditionalOutcome | null | undefined,
+  money: BoundClubFormat,
 ): string {
   if (!additional) return "";
-  const amount = formatCents(additional.outstandingCents);
+  const amount = money.cents(additional.outstandingCents);
   if (direction === "unpaid") {
     return ` The ${amount} extra that settlement covered is owing again.`;
   }
@@ -89,7 +92,7 @@ function additionalNote(
   // so the settlement leaves the addition's card door open where one exists and
   // this sentence says which of the two situations they are in.
   return (
-    ` Only ${formatCents(additional.recordedAmountCents)} was recorded as received: the ${amount} extra was left unpaid, so the member will still be asked for it.` +
+    ` Only ${money.cents(additional.recordedAmountCents)} was recorded as received: the ${amount} extra was left unpaid, so the member will still be asked for it.` +
     (additional.payableOnline
       ? ` They can pay it themselves from their booking page.`
       : ` They have no card payment set up for it, so someone will need to contact them to collect it.`)
@@ -125,6 +128,7 @@ export async function POST(
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
+  const money = await clubFormat();
 
   let body: unknown;
   try {
@@ -231,10 +235,10 @@ export async function POST(
         // SYNCHRONOUSLY. The operator alert that also reports it is gated on the
         // club's `adminPaymentFailure` preference, which a club may have muted,
         // so the person who just took the cash must hear it here regardless.
-        creditElectionNote(result.direction, result.creditElectionCents) +
+        creditElectionNote(result.direction, result.creditElectionCents, money) +
         // #2397: what became of the booking's outstanding extra — reported the
         // same way and for the same reason as the credit election above.
-        additionalNote(result.direction, result.additional),
+        additionalNote(result.direction, result.additional, money),
     });
   } catch (error) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);

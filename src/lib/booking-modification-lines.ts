@@ -63,6 +63,7 @@ import {
   type RateMembershipLabelResolver,
 } from "@/lib/rate-membership-label";
 import { formatCents, formatSignedCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export const MODIFICATION_LINES_VERSION = 1 as const;
 
@@ -398,6 +399,7 @@ function formatDay(day: string): string {
  */
 export function renderModificationLineDescription(
   line: ModificationLine,
+  format: ClubFormat,
   labels?: RateMembershipLabelResolver | null,
 ): string {
   if (line.kind === "PROMO_DELTA") {
@@ -405,8 +407,8 @@ export function renderModificationLineDescription(
     // A promotion adjustment is negative money; it "increases" when the
     // adjustment moves further below zero.
     return line.amountCents < 0
-      ? `${code} increased by ${formatCents(-line.amountCents)}`
-      : `${code} reduced by ${formatCents(line.amountCents)}`;
+      ? `${code} increased by ${formatCents(-line.amountCents, format)}`
+      : `${code} reduced by ${formatCents(line.amountCents, format)}`;
   }
   const verb = line.sign > 0 ? "added" : "removed";
   const nights = `${line.nightCount} night${line.nightCount === 1 ? "" : "s"}`;
@@ -416,9 +418,10 @@ export function renderModificationLineDescription(
 /** The description with its signed money (`+$320.00` / `-$320.00`), for history and audit text. */
 export function renderModificationLineWithAmount(
   line: ModificationLine,
+  format: ClubFormat,
   labels?: RateMembershipLabelResolver | null,
 ): string {
-  return `${renderModificationLineDescription(line, labels)} (${formatSignedCents(line.amountCents)})`;
+  return `${renderModificationLineDescription(line, format, labels)} (${formatSignedCents(line.amountCents, format)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -605,11 +608,12 @@ export async function computeModificationPriceLines(
 export function modificationLinesAuditFields(
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   labels: RateMembershipLabelResolver | null,
+  format: ClubFormat,
 ): ModificationLinesAuditFields {
   if (!lines || lines.length === 0) return {};
   return {
     priceLines: [...lines],
-    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, labels)),
+    priceLinesText: lines.map((line) => renderModificationLineWithAmount(line, format, labels)),
   };
 }
 
@@ -628,6 +632,7 @@ export async function loadModificationLinesAuditFields(
   db: Parameters<typeof loadRateMembershipLabelResolver>[0],
   lines: ReadonlyArray<ModificationLine> | null | undefined,
   log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  format: ClubFormat,
 ): Promise<ModificationLinesAuditFields> {
   if (!lines || lines.length === 0) return {};
   let labels: RateMembershipLabelResolver | null = null;
@@ -639,5 +644,5 @@ export async function loadModificationLinesAuditFields(
       "booking-modification-lines: member label resolver unavailable; audit text falls back to isMember",
     );
   }
-  return modificationLinesAuditFields(lines, labels);
+  return modificationLinesAuditFields(lines, labels, format);
 }

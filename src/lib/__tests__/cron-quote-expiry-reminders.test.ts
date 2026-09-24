@@ -65,6 +65,7 @@ import {
   emailWithheldForEnvironment,
 } from "@/lib/__tests__/helpers/email-outcomes";
 import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // The one findMany mock serves both phases; discriminate by the where clause.
 // Phase 1 (reminders) filters on `reminderSentAt: null`; phase 2 (hold release)
@@ -180,6 +181,7 @@ describe("sendQuoteExpiryReminders — reminders", () => {
         isReminder: true,
         email: "tara@example.test",
       }),
+      CLUB_FORMAT_TEST,
     );
     expect(prisma.bookingRequestQuote.update).toHaveBeenLastCalledWith(
       expect.objectContaining({

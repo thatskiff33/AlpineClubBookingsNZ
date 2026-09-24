@@ -24,6 +24,7 @@ import {
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function createRefundStore() {
   const payment = {
@@ -242,6 +243,7 @@ describe("payment refund ledger", () => {
     });
 
     const result = await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 2500,
       store: store as any,
@@ -302,6 +304,7 @@ describe("payment refund ledger", () => {
     });
 
     await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 2500,
       idempotencyKeyPrefix: "retry_refund",
@@ -470,6 +473,7 @@ describe("payment refund ledger", () => {
 
     await expect(
       refundPaymentTransactions({
+        format: CLUB_FORMAT_TEST,
         paymentId: payment.id,
         amountCents: 2500,
         store: store as any,
@@ -541,6 +545,7 @@ describe("multi-transaction refund allocation (#1097)", () => {
     let thrown: unknown;
     try {
       await refundPaymentTransactions({
+        format: CLUB_FORMAT_TEST,
         paymentId: "payment_1",
         amountCents: 6000,
         idempotencyKeyPrefix: "refund_request_rq1",
@@ -569,6 +574,7 @@ describe("multi-transaction refund allocation (#1097)", () => {
       stripeRefund("re_slice_b", 3000, "pi_1", "ch_1")
     );
     await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 3000,
       allocation: [{ paymentTransactionId: "txn_1", amountCents: 3000 }],
@@ -590,6 +596,7 @@ describe("multi-transaction refund allocation (#1097)", () => {
       stripeRefund("re_slice_b", 3000, "pi_1", "ch_1")
     );
     await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 3000,
       allocation: [{ paymentTransactionId: "txn_1", amountCents: 3000 }],
@@ -609,6 +616,7 @@ describe("multi-transaction refund allocation (#1097)", () => {
 
     await expect(
       refundPaymentTransactions({
+        format: CLUB_FORMAT_TEST,
         paymentId: "payment_1",
         amountCents: 100,
         allocation: [{ paymentTransactionId: "txn_missing", amountCents: 100 }],
@@ -690,6 +698,7 @@ describe("planStripeRefundAllocation (#1349)", () => {
       .mockResolvedValueOnce(stripeRefund("re_d1", 3000, "pi_2", "ch_2"))
       .mockResolvedValueOnce(stripeRefund("re_d2", 2000, "pi_1", "ch_1"));
     await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 5000,
       idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
@@ -708,6 +717,7 @@ describe("planStripeRefundAllocation (#1349)", () => {
       .mockResolvedValueOnce(stripeRefund("re_p1", 3000, "pi_2", "ch_2"))
       .mockResolvedValueOnce(stripeRefund("re_p2", 2000, "pi_1", "ch_1"));
     await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 5000,
       allocation: slices,

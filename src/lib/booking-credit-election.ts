@@ -18,6 +18,7 @@ import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The stored credit election (#2265, epic #2245 E1).
@@ -124,7 +125,17 @@ export type StoredCreditElectionOutcome = {
  */
 export async function consumeStoredCreditElection(
   tx: Prisma.TransactionClient,
-  { bookingId }: { bookingId: string },
+  {
+    bookingId,
+    format,
+  }: {
+    bookingId: string;
+    /**
+     * The club's format (#3565): this runs inside the caller's transaction,
+     * so the caller resolved it before opening that transaction.
+     */
+    format: ClubFormat;
+  },
 ): Promise<StoredCreditElectionOutcome | null> {
   // Pre-lock read: the lock key (memberId) plus the cheap "is there anything to
   // do at all" test, so a booking with no election costs one SELECT and takes
@@ -231,6 +242,7 @@ export async function consumeStoredCreditElection(
   // stays in the shared policy function, which by construction can no longer
   // throw now that the request is inside both of its bounds.
   const { creditAppliedCents } = calculateBookingCreditApplication({
+    format,
     requestedCreditCents: clampedRequestCents,
     creditBalanceCents: availableBalanceCents,
     finalPriceCents: outstandingPriceCents,
@@ -248,6 +260,7 @@ export async function consumeStoredCreditElection(
       creditAppliedCents,
       bookingId,
       tx,
+      format,
       {
         description: `Applied to booking ${bookingId.slice(0, 8)}; price source ${moneyBuildUpSelection.source} (${moneyBuildUpSelection.reason})`,
       },

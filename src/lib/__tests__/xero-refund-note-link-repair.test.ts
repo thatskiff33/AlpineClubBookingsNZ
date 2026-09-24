@@ -302,6 +302,7 @@ import {
   findStripeRefundNoteLinkRepairs,
   formatStripeRefundNoteLinkRepairReport,
 } from "@/lib/xero-refund-note-link-repair";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 let nextId = 0;
 function makeLink(overrides: Partial<FakeLinkRow>): FakeLinkRow {
@@ -360,7 +361,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.scannedPayments).toBe(1);
     expect(report.plans).toHaveLength(1);
@@ -412,7 +413,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(true);
@@ -442,7 +443,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(false);
@@ -487,7 +488,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.repairable).toBe(false);
@@ -530,7 +531,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan).toMatchObject({
@@ -567,7 +568,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan).toMatchObject({
@@ -610,7 +611,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(true);
@@ -620,7 +621,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
     expect(plan?.manualReviewReason).toContain("op_pending");
     expect(plan?.manualReviewReason).toContain("could still execute");
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
   });
@@ -679,7 +680,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(true);
@@ -687,7 +688,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
     expect(plan?.reactivateLinkIds).toEqual([]);
     expect(plan?.manualReviewReason).toContain("op_requeue");
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
   });
@@ -763,7 +764,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(2);
     for (const [paymentId, operationId] of [
@@ -777,7 +778,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       expect(plan?.manualReviewReason).toContain(operationId);
     }
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(0);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(false);
     expect(state.links.find((link) => link.id === "link_2_90")?.active).toBe(false);
@@ -821,14 +822,14 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       },
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     const plan = report.plans[0];
     expect(plan?.blockedByPendingOperation).toBe(false);
     expect(plan?.repairable).toBe(true);
     expect(plan?.reactivateLinkIds).toEqual(["link_90"]);
 
-    const apply = await applyStripeRefundNoteLinkRepairs();
+    const apply = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(apply.appliedPayments).toBe(1);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(true);
   });
@@ -888,7 +889,7 @@ describe("findStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.scannedPayments).toBe(1);
     expect(report.plans).toEqual([]);
@@ -921,7 +922,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const first = await applyStripeRefundNoteLinkRepairs();
+    const first = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(first.appliedPayments).toBe(1);
     expect(first.reactivatedLinks).toBe(1);
@@ -931,7 +932,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
     expect(state.links.find((link) => link.id === "link_90_voided")?.active).toBe(false);
     expect(state.links.find((link) => link.id === "link_10")?.active).toBe(true);
 
-    const second = await applyStripeRefundNoteLinkRepairs();
+    const second = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(second.report.plans).toEqual([]);
     expect(second.appliedPayments).toBe(0);
@@ -957,7 +958,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     expect(result.deactivatedLinks).toBe(1);
@@ -986,7 +987,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     // The scalar now names the newest remaining ACTIVE note, so the report's
@@ -1007,7 +1008,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(1);
     expect(state.payments[0]!.xeroRefundCreditNoteId).toBeNull();
@@ -1044,7 +1045,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
         return originalFindUnique(args);
       });
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     findUniqueSpy.mockRestore();
     expect(result.appliedPayments).toBe(0);
@@ -1114,7 +1115,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
         return result;
       });
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     updateManySpy.mockRestore();
     // pay_1 rolled back: the post-claim re-sum found 190 !== 100.
@@ -1151,7 +1152,7 @@ describe("applyStripeRefundNoteLinkRepairs", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(result.appliedPayments).toBe(0);
     expect(result.skippedPayments).toHaveLength(1);
@@ -1180,7 +1181,7 @@ describe("formatStripeRefundNoteLinkRepairReport", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     const text = formatStripeRefundNoteLinkRepairReport(report);
 
     expect(text).toContain("1 need repair or review");
@@ -1220,7 +1221,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(1);
     const plan = report.plans[0];
@@ -1239,7 +1240,7 @@ describe("#2902 cash-evidence coverage target", () => {
     expect(plan.manualReviewReason).toContain("fictitious");
 
     // Nothing is applied for it either.
-    const result = await applyStripeRefundNoteLinkRepairs();
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
     expect(result.appliedPayments).toBe(0);
     expect(
       state.links.find((link) => link.id === "link_fict")?.active
@@ -1265,7 +1266,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const result = await applyStripeRefundNoteLinkRepairs({
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST, {
       paymentIds: ["pay_1"],
     });
 
@@ -1302,7 +1303,7 @@ describe("#2902 cash-evidence coverage target", () => {
       }),
     ];
 
-    const report = await findStripeRefundNoteLinkRepairs();
+    const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
 
     expect(report.plans).toHaveLength(1);
     const plan = report.plans[0];

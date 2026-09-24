@@ -48,6 +48,7 @@ import {
   savedPaymentMethodForBooking,
   savedPaymentMethodRowStamp,
 } from "@/lib/saved-payment-method";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -101,6 +102,9 @@ export async function POST(
   }
   const allowOverbook = parsedBody.data.allowOverbook ?? false;
   const notifyMember = parsedBody.data.notifyMember;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -326,6 +330,7 @@ export async function POST(
           booking.checkOut,
           booking.guests.length,
           booking.finalPriceCents,
+          format,
           promoEmailOptions
         ).catch((err) =>
           logger.error({ err, bookingId }, "Failed to send confirmation email")
@@ -537,7 +542,7 @@ export async function POST(
           amountCents: booking.finalPriceCents,
           errorMessage: claimErr.message,
           paymentIntentId: claimErr.paymentIntentId ?? "N/A",
-        }).catch((alertErr) =>
+        }, format).catch((alertErr) =>
           logger.error(
             { err: alertErr, bookingId },
             "Failed to send admin payment failure alert"
@@ -655,6 +660,7 @@ export async function POST(
     let paymentIntent;
     try {
       paymentIntent = await chargeSavedCardAttempt({
+        format,
         attempt: claim.attempt,
         bookingId,
         memberId: bookingOwner(booking).memberId,
@@ -686,7 +692,7 @@ export async function POST(
           (claim.attempt.kind === "replay" ? claim.attempt.paymentIntentId : null) ??
           booking.payment?.stripePaymentIntentId ??
           "N/A",
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId },
           "Failed to send admin payment failure alert"
@@ -766,6 +772,7 @@ export async function POST(
     let reconciliation;
     try {
       reconciliation = await markBookingPaymentSucceeded({
+        format,
         bookingId,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
@@ -791,7 +798,7 @@ export async function POST(
           reconcileErr instanceof Error ? reconcileErr.message : String(reconcileErr)
         }. The booking remains CONFIRMED holding its beds; the Stripe webhook will retry the promotion, or review manually.`,
         paymentIntentId: paymentIntent.id,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, bookingId },
           "Failed to send admin payment failure alert"
@@ -894,6 +901,7 @@ export async function POST(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
+        format,
         promoEmailOptions
       ).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send confirmation email")

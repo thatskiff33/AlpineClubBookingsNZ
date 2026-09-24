@@ -48,6 +48,7 @@ import {
   buildSameOwnerCoverageRefusalBody,
   readHostingCoverageOverride,
 } from "@/lib/adult-member-hosting-same-owner";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
   request: NextRequest,
@@ -77,6 +78,9 @@ export async function POST(
   const hostingOverride = readHostingCoverageOverride(
     await request.json().catch(() => null),
   );
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -366,6 +370,7 @@ export async function POST(
     booking.checkOut,
     booking.guests.length,
     0,
+    format,
     {
       lodgeId: booking.lodgeId,
       ...(booking.promoRedemption?.promoCode

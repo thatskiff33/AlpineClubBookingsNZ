@@ -32,6 +32,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
@@ -265,6 +266,9 @@ function releaseOneHold(paymentId: string, now: Date) {
 export async function releaseExpiredInternetBankingHolds(
   now = new Date(),
 ): Promise<InternetBankingHoldReleaseResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const candidates = await prisma.payment.findMany({
     where: {
       source: PaymentSource.INTERNET_BANKING,
@@ -329,7 +333,7 @@ export async function releaseExpiredInternetBankingHolds(
       // the cancel branches.
       reason:
         creditRestoredCents > 0
-          ? `Internet Banking payment hold expired before reconciliation. ${formatCents(creditRestoredCents)} of applied account credit was returned.`
+          ? `Internet Banking payment hold expired before reconciliation. ${formatCents(creditRestoredCents, format)} of applied account credit was returned.`
           : "Internet Banking payment hold expired before reconciliation.",
       snapshot: {
         paymentId: payment.id,
@@ -388,6 +392,7 @@ export async function releaseExpiredInternetBankingHolds(
       payment.booking.checkIn,
       payment.booking.checkOut,
       0,
+      format,
       "credit",
       creditRestoredCents,
       payment.booking.lodgeId,
@@ -402,7 +407,7 @@ export async function releaseExpiredInternetBankingHolds(
       checkIn: payment.booking.checkIn,
       checkOut: payment.booking.checkOut,
       lodgeId: payment.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId },
         "Failed to process waitlist after expired Internet Banking hold release",

@@ -269,7 +269,8 @@ function BudgetCard() {
     and therefore `undefined` in the published image, so a club charging in
     anything but New Zealand dollars was told its spend cap was in NZD.
   */
-  const { currencyCode } = useClubFormat();
+  const format = useClubFormat();
+  const { currencyCode } = format;
 
   const [dollars, setDollars] = useState("");
   const [savedCents, setSavedCents] = useState<number | null>(null);
@@ -306,7 +307,7 @@ function BudgetCard() {
   const onSave = useCallback(async () => {
     setError("");
     setSuccess("");
-    const parsed = parseDollarsToCents(dollars);
+    const parsed = parseDollarsToCents(dollars, format);
     if (!parsed.ok) {
       setError(parsed.error);
       return;
@@ -331,7 +332,7 @@ function BudgetCard() {
     } finally {
       setSaving(false);
     }
-  }, [dollars]);
+  }, [dollars, format]);
 
   const editingDisabled = !canEdit || saving || loading;
 
@@ -342,7 +343,7 @@ function BudgetCard() {
         <CardDescription>
           A hard limit on paid AI spend per calendar month, in {currencyCode}.
           Once reached, the assistant stops answering until the next month;
-          curated page help keeps working. Set it to {formatCents(0)} to switch
+          curated page help keeps working. Set it to {formatCents(0, format)} to switch
           paid answers off entirely.
         </CardDescription>
       </CardHeader>
@@ -370,14 +371,14 @@ function BudgetCard() {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Maximum {formatCents(MAX_BUDGET_CENTS)}. Also set a spend limit
+                Maximum {formatCents(MAX_BUDGET_CENTS, format)}. Also set a spend limit
                 in the Anthropic console as the hard backstop.
               </p>
             </div>
 
             {savedCents === 0 ? (
               <p className="text-xs text-warning">
-                The cap is {formatCents(0)} — paid AI answers are currently
+                The cap is {formatCents(0, format)} — paid AI answers are currently
                 switched off.
               </p>
             ) : null}
@@ -430,6 +431,7 @@ function SpendCurrencyCard() {
 // ---------------------------------------------------------------------------
 
 function UsageCard() {
+  const format = useClubFormat();
   // Each failure's `createdAt` is a real INSTANT (CT-4, #2870).
   const clubTime = useClubTime();
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -497,8 +499,8 @@ function UsageCard() {
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
               <UsageStat
                 label="Spent this month"
-                value={formatCents(month.costCents)}
-                detail={`of ${formatCents(usage.budget.limitCents)} cap`}
+                value={formatCents(month.costCents, format)}
+                detail={`of ${formatCents(usage.budget.limitCents, format)} cap`}
               />
               <UsageStat
                 label="Requests"

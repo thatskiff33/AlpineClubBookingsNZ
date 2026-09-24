@@ -9,6 +9,7 @@ import type { Guest } from "@/components/edit-booking/types";
 import { getAgeTierLabel, type AgeTierOption } from "@/lib/use-age-tier-options";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * One guest already on the booking.
@@ -91,6 +92,7 @@ export function ExistingGuestRow({
   onStartLink: () => void;
   onUnlink: () => void;
 }) {
+  const format = useClubFormat();
   // #2337: this placeholder's pending member link, if any.
   const isLinked = Boolean(linkedMember);
   // Only an unlinked, unremoved placeholder on a member whole-lodge
@@ -254,14 +256,14 @@ export function ExistingGuestRow({
         quotedPriceCents !== guest.priceCents ? (
           <span className="text-sm">
             <span className="text-muted-foreground line-through">
-              {formatCents(guest.priceCents)}
+              {formatCents(guest.priceCents, format)}
             </span>{" "}
             <span className="font-medium text-success-11">
-              {formatCents(quotedPriceCents)}
+              {formatCents(quotedPriceCents, format)}
             </span>
           </span>
         ) : (
-          <span className="text-sm">{formatCents(guest.priceCents)}</span>
+          <span className="text-sm">{formatCents(guest.priceCents, format)}</span>
         )}
         {/* #2337: link an unnamed placeholder to a member (admin, member
             whole-lodge only). Unlink reverts to the placeholder. */}

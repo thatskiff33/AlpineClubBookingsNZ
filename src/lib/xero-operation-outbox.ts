@@ -83,6 +83,7 @@ import {
   type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Was this operation REFUSED by a process-global Xero cooldown BEFORE any HTTP
@@ -2904,6 +2905,10 @@ export async function processQueuedXeroOutboxOperations(options?: {
     },
     take: limit,
   });
+  // The club's format (#3565), once for the whole batch: three of the documents
+  // below can render an amount into a Xero line description, and a read per
+  // operation would be a read per row.
+  const format = await clubFormatValues();
 
   const result: ProcessQueuedXeroOutboxOperationsResult = {
     found: queuedOperations.length,
@@ -3042,6 +3047,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         await createUnappliedXeroCreditNote(
           queuedOperation.localId,
           payload.refundAmountCents,
+          format,
           {
             createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
             syncOperationId: queuedOperation.id,
@@ -3056,6 +3062,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingModificationId: payload.bookingModificationId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
+          format,
         });
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
@@ -3071,6 +3078,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           shortfallReviewTaskId: payload.shortfallReviewTaskId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
+          format,
         });
       } else if (payload?.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE) {
         await createXeroCreditNoteForModification({
@@ -3080,6 +3088,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           refundMethod: payload.refundMethod,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
+          format,
         });
       } else if (
         payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE

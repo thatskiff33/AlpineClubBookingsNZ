@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Fork issue #35, review finding F1 — the {{ical}} block and the HTML
 // calendar line embed the booking id in a sessionless bearer URL, and the
@@ -79,6 +80,7 @@ async function send(): Promise<{
     new Date("2026-08-17"),
     2,
     30000,
+    CLUB_FORMAT_TEST,
     {},
   );
   expect(sendEmailMock).toHaveBeenCalledTimes(1);

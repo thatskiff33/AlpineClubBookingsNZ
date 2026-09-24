@@ -31,6 +31,7 @@ import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -116,6 +117,7 @@ export function BookingApprovalsPanel({
   showHeading = true,
   canEdit = true,
 }: BookingApprovalsPanelProps) {
+  const format = useClubFormat();
   /**
    * Real INSTANTS project through the club's PERSISTED timezone (CT-4, #2870;
    * INV-CONFIG-002), not the container's `TZ`. The zone reaches this browser as
@@ -478,7 +480,7 @@ export function BookingApprovalsPanel({
                     </div>
                     <div>
                       <span className="text-muted-foreground">Total:</span>{" "}
-                      {formatCents(booking.finalPriceCents)}
+                      {formatCents(booking.finalPriceCents, format)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Guests:</span>{" "}

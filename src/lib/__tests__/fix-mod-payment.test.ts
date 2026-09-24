@@ -269,6 +269,7 @@ import {
   hostingMemberRow,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -1288,6 +1289,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       })
     );
     expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       paymentId: "p1",
       newPaymentIntentId: "pi_guest_extra",
@@ -1454,6 +1456,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     expect(data.additionalAmountCents).toBe(16500);
     // And the earlier intent is retired rather than left live beside this one.
     expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "bk1",
       paymentId: "p1",
       newPaymentIntentId: "pi_guest_extra",

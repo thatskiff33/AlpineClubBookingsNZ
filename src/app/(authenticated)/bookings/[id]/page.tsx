@@ -35,6 +35,7 @@ import {
   dateOnlyInstantOf,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { clubFormat } from "@/lib/club-format-server";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -99,6 +100,7 @@ export default async function BookingDetailPage({
     which are calendar days and take no zone at all (INV-DATE-010).
   */
   const club = await clubTime();
+  const money = await clubFormat();
   // #3123 — the club's today, as the UTC-midnight instant a `@db.Date` bound
   // round-trips through, derived from the SAME binding this page already holds.
   // THE ONLY RESOLUTION OF THE CLUB'S DAY ON THIS PAGE: it is threaded into
@@ -139,7 +141,12 @@ export default async function BookingDetailPage({
     bookingLodgeEmailSettings,
   });
 
-  const history = await loadBookingDetailHistory({ booking, club, viewer });
+  const history = await loadBookingDetailHistory({
+    booking,
+    club,
+    viewer,
+    format: money.format,
+  });
 
   // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
   // night range, never elapsed milliseconds divided by 24 hours: across a DST
@@ -228,6 +235,7 @@ export default async function BookingDetailPage({
   const messages = renderBookingDetailMessages({
     booking,
     club,
+    money,
     modules,
     bookingMessages,
     bookingLodgeEmailSettings,
@@ -254,7 +262,7 @@ export default async function BookingDetailPage({
   const showCancellationInfo = canCancel && !isDeleted;
   const cancellationSchedule =
     showCancellationInfo && originalPaymentCaptured
-      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
+      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn), money.format)
       : undefined;
   const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
 
@@ -303,6 +311,7 @@ export default async function BookingDetailPage({
       <BookingStatusBanners
         booking={booking}
         club={club}
+        money={money}
         viewer={viewer}
         access={access}
         party={party}
@@ -327,6 +336,7 @@ export default async function BookingDetailPage({
 
       <BookingLinkedPartySections
         booking={booking}
+        money={money}
         viewer={viewer}
         party={party}
         bookingLodgeEmailSettings={bookingLodgeEmailSettings}
@@ -349,6 +359,7 @@ export default async function BookingDetailPage({
       <BookingPaymentCards
         booking={booking}
         club={club}
+        money={money}
         viewer={viewer}
         access={access}
         party={party}
@@ -369,6 +380,7 @@ export default async function BookingDetailPage({
 
       <BookingCancellationOutcome
         booking={booking}
+        money={money}
         payment={payment}
       />
 

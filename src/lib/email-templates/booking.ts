@@ -48,6 +48,7 @@ import {
   splitGuestPortionOwnBookingLine,
 } from "@/lib/email-message-notes";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The "how to get to the lodge" block: travel note, and the door code when the
@@ -96,6 +97,7 @@ export function bookingConfirmedTemplate(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
+  format: ClubFormat,
   options?: {
     discountCents?: number;
     promoAdjustmentCents?: number;
@@ -151,7 +153,7 @@ export function bookingConfirmedTemplate(
     // same stay the flat {{ical}} token describes. Absent when link building
     // failed (the sender fails open on this decoration) — no line renders.
     calendarLinks?: BookingCalendarLinks;
-  }
+  },
 ): string {
   const promoAdjustmentCents = resolvePromoAdjustmentCents(options);
   const provisional = options?.provisionalGuests;
@@ -177,6 +179,7 @@ export function bookingConfirmedTemplate(
   for (const row of promoAdjustmentSummaryRows(
     totalCents,
     promoAdjustmentCents,
+    format,
     options?.promoCode,
   )) {
     // The shared rows are unescaped plain text (the flat token path needs them
@@ -201,6 +204,7 @@ export function bookingConfirmedTemplate(
       unpaid: Boolean(paymentDue),
       outstandingCents: outstandingBalance?.amountCents ?? 0,
     }),
+    format,
     options?.appliedCredit?.settlementMethod ?? "card",
   ).map((row) => ({
     // Labels and formatted money only — no club- or member-entered data — but
@@ -220,23 +224,23 @@ export function bookingConfirmedTemplate(
     // email), the reconciling trio when it does, and a bare "Booking Total"
     // when the ledger contradicts the price — from the shared builder, escaped
     // at this HTML edge on the same principle as the rows above.
-    for (const row of unpaidMoneySummaryRows(totalCents, unpaidNetting)) {
+    for (const row of unpaidMoneySummaryRows(totalCents, unpaidNetting, format)) {
       rows.push({ label: escapeHtml(row.label), value: escapeHtml(row.value) });
     }
   } else if (outstandingBalance) {
     rows.push(
-      { label: "Booking Total", value: formatCents(totalCents) },
+      { label: "Booking Total", value: formatCents(totalCents, format) },
       {
         label: "Paid",
-        value: formatCents(totalCents - outstandingBalance.amountCents),
+        value: formatCents(totalCents - outstandingBalance.amountCents, format),
       },
       // Between "Paid" and "Still Owing": the credit pair breaks down the
       // amount immediately above it, and the balance still owing stays last.
       ...creditRows,
-      { label: "Still Owing", value: formatCents(outstandingBalance.amountCents) },
+      { label: "Still Owing", value: formatCents(outstandingBalance.amountCents, format) },
     );
   } else {
-    rows.push({ label: "Total Paid", value: formatCents(totalCents) }, ...creditRows);
+    rows.push({ label: "Total Paid", value: formatCents(totalCents, format) }, ...creditRows);
   }
 
   // One composed paragraph, from the SHARED composer the {{paymentDueNote}}
@@ -253,19 +257,19 @@ export function bookingConfirmedTemplate(
   // this member is being asked for money at all.
   const paymentDueNote = paymentDue
     ? bookingPaymentDueNote({
-        amount: formatCents(unpaidNetting.toTransferCents),
+        amount: formatCents(unpaidNetting.toTransferCents, format),
         reference: escapeHtml(paymentDue.reference),
         invoiceEmailed: paymentDue.invoiceEmailed,
         accountCredit: unpaidCreditNoteInput(
           totalCents,
           unpaidNetting,
-          formatCents,
+          (cents) => formatCents(cents, format),
         ),
       })
     : "";
   // #2397, same convention: one composed sentence shared with the token path.
   const outstandingBalanceNote = outstandingBalance
-    ? `Your payment of ${formatCents(totalCents - outstandingBalance.amountCents)} has been recorded and your booking is confirmed. ${formatCents(outstandingBalance.amountCents)} is still owing from a later change to this booking.` +
+    ? `Your payment of ${formatCents(totalCents - outstandingBalance.amountCents, format)} has been recorded and your booking is confirmed. ${formatCents(outstandingBalance.amountCents, format)} is still owing from a later change to this booking.` +
       (outstandingBalance.payableOnline
         ? " You can pay it from your booking page."
         : " The club will be in touch to arrange it.")
@@ -354,29 +358,30 @@ export function bookingCancelledTemplate(
   checkIn: Date,
   checkOut: Date,
   refundCents: number,
+  format: ClubFormat,
   // B5 (#2262): "manual" is a cash / off-Xero settlement being handed back by a
   // person. It must NEVER read as "on its way to your card" (no card was
   // charged) nor as account credit (none was minted — a hand-back task was
   // raised instead), so it gets its own honest copy.
   refundMethod: "card" | "credit" | "manual" = "card",
-  creditRestoredCents: number = 0
+  creditRestoredCents: number = 0,
 ): string {
   let refundInfo: string;
   if (refundCents > 0 && refundMethod === "manual") {
     refundInfo = alertBox(
       "You paid for this booking in cash or by bank transfer, so there is no card payment to reverse. The club will arrange your refund of " +
-        formatCents(refundCents) +
+        formatCents(refundCents, format) +
         " directly and will be in touch.",
       "info"
     );
   } else if (refundCents > 0 && refundMethod === "credit") {
     refundInfo = alertBox(
-      "A credit of " + formatCents(refundCents) + " has been added to your account for future bookings.",
+      "A credit of " + formatCents(refundCents, format) + " has been added to your account for future bookings.",
       "success"
     );
   } else if (refundCents > 0) {
     refundInfo = alertBox(
-      "A refund of " + formatCents(refundCents) + " has been processed to your original payment method.",
+      "A refund of " + formatCents(refundCents, format) + " has been processed to your original payment method.",
       "success"
     );
   } else {
@@ -389,7 +394,7 @@ export function bookingCancelledTemplate(
   const creditRestoredInfo =
     creditRestoredCents > 0
       ? alertBox(
-          formatCents(creditRestoredCents) +
+          formatCents(creditRestoredCents, format) +
             " of previously applied account credit has been restored to your account (per the cancellation policy).",
           "success"
         )
@@ -470,7 +475,9 @@ export function bookingModifiedTemplate(params: {
    * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
   financialReviewPending: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const {
     firstName,
     modificationType,
@@ -509,7 +516,7 @@ export function bookingModifiedTemplate(params: {
     changeFeeCents,
     promoCoverageNote,
     promoChangeNotAppliedNote,
-  }).map((row) => ({
+  }, format).map((row) => ({
     label: escapeHtml(row.label),
     value: escapeHtml(row.value),
   }));
@@ -551,12 +558,12 @@ export function bookingModifiedTemplate(params: {
   let settlementNote = "";
   if (refundAmountCents > 0) {
     settlementNote = alertBox(
-      `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
+      `A refund of ${formatCents(refundAmountCents, format)} has been processed to your original payment method.`,
       "success"
     );
   } else if (accountCreditAmountCents > 0) {
     settlementNote = alertBox(
-      `Account credit of ${formatCents(accountCreditAmountCents)} has been added for future bookings.`,
+      `Account credit of ${formatCents(accountCreditAmountCents, format)} has been added for future bookings.`,
       "success"
     );
   } else if (additionalAmountCents > 0) {
@@ -568,12 +575,12 @@ export function bookingModifiedTemplate(params: {
         ? ` Payment reference: ${escapeHtml(paymentReference)}.`
         : "";
       settlementNote = alertBox(
-        `An additional Internet Banking payment of ${formatCents(additionalAmountCents)} is required.${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
+        `An additional Internet Banking payment of ${formatCents(additionalAmountCents, format)} is required.${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
         "warning"
       );
     } else {
       settlementNote = alertBox(
-        `An additional payment of ${formatCents(additionalAmountCents)} is required.`,
+        `An additional payment of ${formatCents(additionalAmountCents, format)} is required.`,
         "warning"
       );
     }

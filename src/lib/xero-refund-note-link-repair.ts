@@ -124,6 +124,7 @@ import {
   sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type StripeRefundNoteLinkPlannedAction =
   | "keep-active"
@@ -271,7 +272,8 @@ function buildPlan(
   options: {
     pendingOperationId: string | null;
     evidence: StripeCashRefundEvidence;
-  }
+  },
+  format: ClubFormat
 ): StripeRefundNoteLinkRepairPlan {
   const target = getRefundNoteCoverageTargetCents(options.evidence);
   const ordered = [...assessedLinks].sort(
@@ -426,8 +428,8 @@ function buildPlan(
   } else if (plannedCoveredCents < target) {
     const remainderCents = target - plannedCoveredCents;
     manualReviewReason = repairable
-      ? `Planned coverage still lands ${formatCents(remainderCents)} short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
-      : `Active coverage is ${formatCents(remainderCents)} short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
+      ? `Planned coverage still lands ${formatCents(remainderCents, format)} short of the provider-backed cash refund target; no recoverable local note fills it. The planned changes are safe to apply — once the ledger is honest, the daily credit-reconciliation self-heal issues one note for exactly the uncovered remainder. Never void anything to force an exact landing.`
+      : `Active coverage is ${formatCents(remainderCents, format)} short of the provider-backed cash refund target and no recoverable inactive note fills it. If the notes exist in Xero, record their statuses (--record-statuses) and re-run; otherwise the daily credit-reconciliation self-heal issues the missing note.`;
   }
 
   return {
@@ -546,7 +548,8 @@ async function findBlockingRefundCreditNoteOperationId(
 
 async function planForPayment(
   payment: RepairPayment,
-  db: Prisma.TransactionClient
+  db: Prisma.TransactionClient,
+  format: ClubFormat
 ): Promise<StripeRefundNoteLinkRepairPlan> {
   const pendingOperationId = await findBlockingRefundCreditNoteOperationId(
     payment.id,
@@ -558,7 +561,7 @@ async function planForPayment(
     select: LINK_SELECT,
   });
   const assessed = await assessLinks(payment.id, links, db);
-  return buildPlan(payment, assessed, { pendingOperationId, evidence });
+  return buildPlan(payment, assessed, { pendingOperationId, evidence }, format);
 }
 
 /**
@@ -582,7 +585,9 @@ function planNeedsAttention(plan: StripeRefundNoteLinkRepairPlan): boolean {
  * Xero expects no credit note, and scanning those buried the real findings in
  * noise (#2901 review F6).
  */
-export async function findStripeRefundNoteLinkRepairs(options?: {
+export async function findStripeRefundNoteLinkRepairs(
+  format: ClubFormat,
+  options?: {
   paymentIds?: string[];
 }): Promise<StripeRefundNoteLinkRepairReport> {
   const payments = await prisma.payment.findMany({
@@ -604,7 +609,7 @@ export async function findStripeRefundNoteLinkRepairs(options?: {
 
   const plans: StripeRefundNoteLinkRepairPlan[] = [];
   for (const payment of payments) {
-    const plan = await planForPayment(payment, prisma);
+    const plan = await planForPayment(payment, prisma, format);
     if (planNeedsAttention(plan)) {
       plans.push(plan);
     }
@@ -631,10 +636,12 @@ type ApplyTransactionOutcome =
  * claims must match the plan exactly and coverage is re-summed after them —
  * any divergence rolls that payment back and reports it, applying nothing.
  */
-export async function applyStripeRefundNoteLinkRepairs(options?: {
+export async function applyStripeRefundNoteLinkRepairs(
+  format: ClubFormat,
+  options?: {
   paymentIds?: string[];
 }): Promise<StripeRefundNoteLinkRepairApplyResult> {
-  const report = await findStripeRefundNoteLinkRepairs(options);
+  const report = await findStripeRefundNoteLinkRepairs(format, options);
 
   let appliedPayments = 0;
   let reactivatedLinks = 0;
@@ -673,7 +680,7 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
               skipped: "The payment no longer exists or is not Stripe-sourced.",
             };
           }
-          const freshPlan = await planForPayment(payment, tx);
+          const freshPlan = await planForPayment(payment, tx, format);
           if (!freshPlan.repairable) {
             return {
               skipped:
@@ -741,7 +748,7 @@ export async function applyStripeRefundNoteLinkRepairs(options?: {
           );
           if (verifiedCoveredCents !== freshPlan.plannedCoveredCents) {
             throw new Error(
-              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents)} where the plan promised ${formatCents(freshPlan.plannedCoveredCents)}; a concurrent writer changed the links, rolled back.`
+              `Coverage verification after the claims found ${formatCents(verifiedCoveredCents, format)} where the plan promised ${formatCents(freshPlan.plannedCoveredCents, format)}; a concurrent writer changed the links, rolled back.`
             );
           }
 

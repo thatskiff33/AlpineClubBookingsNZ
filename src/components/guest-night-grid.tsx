@@ -6,6 +6,7 @@ import {
   formatClubWeekday,
   requireCalendarDate,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * A night column is two stacked lines — weekday above, day-and-month below — so
@@ -69,6 +70,7 @@ export function GuestNightGrid({
   arrivalLabel,
   departureLabel,
 }: GuestNightGridProps) {
+  const format = useClubFormat();
   if (nights.length === 0 || guestLabels.length === 0) {
     return null;
   }
@@ -117,7 +119,7 @@ export function GuestNightGrid({
                   const on = isNightOn(guestIndex, nightKey);
                   const priceCents = priceForNight?.(guestIndex, nightKey) ?? null;
                   const priceText =
-                    priceCents != null ? formatCents(priceCents) : on ? "On" : "Off";
+                    priceCents != null ? formatCents(priceCents, format) : on ? "On" : "Off";
                   return (
                     <td key={nightKey} className="px-1 py-1 text-center">
                       <button

@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ReactNode } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import type { BookingStatus } from "@prisma/client";
 import {

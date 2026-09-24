@@ -5,6 +5,7 @@ import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * What this edit costs, and everything the club owes the member an explanation
@@ -58,6 +59,7 @@ export function PriceSummaryCard({
   onConfirmOverCapacityChange: (checked: boolean) => void;
   onSettlementMethodChange: (method: "card" | "credit") => void;
 }) {
+  const format = useClubFormat();
   return (
     <Card>
       <CardHeader>
@@ -264,7 +266,7 @@ export function PriceSummaryCard({
                     }`}
                   >
                     {item.amountCents > 0 ? "+" : ""}
-                    {formatCents(item.amountCents)}
+                    {formatCents(item.amountCents, format)}
                   </span>
                 </div>
               ))}
@@ -274,11 +276,11 @@ export function PriceSummaryCard({
             <div className="border-t pt-2 space-y-1">
               <div className="flex justify-between text-sm">
                 <span>Current price</span>
-                <span>{formatCents(bookingFinalPriceCents)}</span>
+                <span>{formatCents(bookingFinalPriceCents, format)}</span>
               </div>
               <div className="flex justify-between font-medium">
                 <span>New price</span>
-                <span>{formatCents(quote.newFinalPriceCents)}</span>
+                <span>{formatCents(quote.newFinalPriceCents, format)}</span>
               </div>
               {/* #2266: the mockup's credit lines — what account credit
                   already covers, what the saved election will cover at
@@ -309,7 +311,7 @@ export function PriceSummaryCard({
                         <div className="flex justify-between text-sm text-success-11">
                           <span>Account credit applied</span>
                           <span>
-                            -{formatCents(displayedAppliedCreditCents)}
+                            -{formatCents(displayedAppliedCreditCents, format)}
                           </span>
                         </div>
                       )}
@@ -317,8 +319,8 @@ export function PriceSummaryCard({
                         <div className="flex justify-between text-sm text-success-11">
                           <span>
                             {actingAsAdmin
-                              ? `${formatCents(creditReturnedCents)} returns to the member's account credit`
-                              : `${formatCents(creditReturnedCents)} returns to your account credit`}
+                              ? `${formatCents(creditReturnedCents, format)} returns to the member's account credit`
+                              : `${formatCents(creditReturnedCents, format)} returns to your account credit`}
                           </span>
                           <span />
                         </div>
@@ -326,13 +328,13 @@ export function PriceSummaryCard({
                       {useCredit && desiredElectionCents > 0 && (
                         <div className="flex justify-between text-sm text-success-11">
                           <span>Account credit (when you confirm)</span>
-                          <span>-{formatCents(desiredElectionCents)}</span>
+                          <span>-{formatCents(desiredElectionCents, format)}</span>
                         </div>
                       )}
                       {quote.changeFeeCents > 0 && (
                         <div className="flex justify-between text-sm">
                           <span>Late-notice change fee</span>
-                          <span>+{formatCents(quote.changeFeeCents)}</span>
+                          <span>+{formatCents(quote.changeFeeCents, format)}</span>
                         </div>
                       )}
                       <div className="flex justify-between font-medium">
@@ -345,6 +347,7 @@ export function PriceSummaryCard({
                                 displayedAppliedCreditCents -
                                 (useCredit ? desiredElectionCents : 0),
                             ) + quote.changeFeeCents,
+                            format,
                           )}
                         </span>
                       </div>
@@ -364,11 +367,11 @@ export function PriceSummaryCard({
               >
                 {quote.netChargeCents > 0 ? (
                   <p className="font-medium">
-                    Additional charge: {formatCents(quote.netChargeCents)}
+                    Additional charge: {formatCents(quote.netChargeCents, format)}
                   </p>
                 ) : (
                   <p className="font-medium">
-                    Booking reduction: {formatCents(Math.abs(quote.netChargeCents))}
+                    Booking reduction: {formatCents(Math.abs(quote.netChargeCents), format)}
                   </p>
                 )}
               </div>
@@ -399,7 +402,7 @@ export function PriceSummaryCard({
                       <span>
                         Refund to original card:{" "}
                         <span className="font-medium">
-                          {formatCents(quote.settlementOptions.cardRefundAmountCents)}
+                          {formatCents(quote.settlementOptions.cardRefundAmountCents, format)}
                         </span>{" "}
                         <span className="text-muted-foreground">
                           ({quote.settlementOptions.cardRefundPercentage}%)
@@ -418,7 +421,7 @@ export function PriceSummaryCard({
                       <span>
                         Hold as account credit:{" "}
                         <span className="font-medium">
-                          {formatCents(quote.settlementOptions.accountCreditAmountCents)}
+                          {formatCents(quote.settlementOptions.accountCreditAmountCents, format)}
                         </span>{" "}
                         <span className="text-muted-foreground">
                           ({quote.settlementOptions.accountCreditPercentage}%)

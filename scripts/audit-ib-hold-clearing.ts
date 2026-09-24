@@ -27,6 +27,7 @@ import {
   formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
@@ -62,10 +63,12 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), read once before any audit query.
+  const format = await getClubFormat();
 
   const result = await auditIbHoldClearingUnderclears();
 
-  console.log(formatIbHoldClearingAuditReport(result));
+  console.log(formatIbHoldClearingAuditReport(result, format));
 
   // #1620 — enumerate every Internet-Banking payment carrying applied credit
   // against a full invoice (realized double-pay vs pending exposure). Read-only.
@@ -74,7 +77,7 @@ async function main() {
   console.log("");
   console.log("=".repeat(70));
   console.log("");
-  console.log(formatIbAppliedCreditStrandReport(strandResult));
+  console.log(formatIbAppliedCreditStrandReport(strandResult, format));
 
   // #1641 — enumerate every captured CARD payment that also consumed applied
   // credit against a full-price charge (realized double-pay). Read-only.
@@ -83,7 +86,7 @@ async function main() {
   console.log("");
   console.log("=".repeat(70));
   console.log("");
-  console.log(formatCardAppliedCreditDoublePayReport(cardDoublePayResult));
+  console.log(formatCardAppliedCreditDoublePayReport(cardDoublePayResult, format));
 
   if (args.json) {
     console.log("");

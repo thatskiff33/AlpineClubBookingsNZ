@@ -106,6 +106,7 @@ import {
   buildXeroContactUrl,
   buildXeroInvoiceUrl,
 } from "@/lib/xero-links";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** What a stored `xeroObjectUrl` looks like: generic, no organisation. */
 const STORED_INVOICE_URL = buildXeroInvoiceUrl("xero-inv-1");
@@ -297,7 +298,7 @@ describe("getXeroRecordActivity", () => {
   });
 
   it("scopes the operation, link and inbound-event links together", async () => {
-    const result = await getXeroRecordActivity("Payment", "pay_1", 25);
+    const result = await getXeroRecordActivity("Payment", "pay_1", CLUB_FORMAT_TEST, 25);
 
     expect(result?.operations[0].xeroObjectUrl).toBe(SCOPED_INVOICE_URL);
     expect(result?.links[0].xeroObjectUrl).toBe(SCOPED_INVOICE_URL);
@@ -307,7 +308,7 @@ describe("getXeroRecordActivity", () => {
   // The organisation read is cached and shared, but a panel that resolved the
   // short code once per row would still turn one page into N cache lookups.
   it("resolves the short code once for the whole panel", async () => {
-    await getXeroRecordActivity("Payment", "pay_1", 25);
+    await getXeroRecordActivity("Payment", "pay_1", CLUB_FORMAT_TEST, 25);
 
     expect(mocks.getXeroOrgShortCode).toHaveBeenCalledTimes(1);
   });
@@ -315,7 +316,7 @@ describe("getXeroRecordActivity", () => {
   it("falls back to generic links when no short code is available", async () => {
     mocks.getXeroOrgShortCode.mockResolvedValue(null);
 
-    const result = await getXeroRecordActivity("Payment", "pay_1", 25);
+    const result = await getXeroRecordActivity("Payment", "pay_1", CLUB_FORMAT_TEST, 25);
 
     expect(result?.operations[0].xeroObjectUrl).toBe(STORED_INVOICE_URL);
     expect(result?.links[0].xeroObjectUrl).toBe(STORED_INVOICE_URL);
@@ -344,7 +345,7 @@ describe("getXeroRecordActivity", () => {
       },
     ]);
 
-    const result = await getXeroRecordActivity("Payment", "pay_1", 25);
+    const result = await getXeroRecordActivity("Payment", "pay_1", CLUB_FORMAT_TEST, 25);
 
     expect(result?.links[0].xeroObjectUrl).toBe(SCOPED_INVOICE_URL);
     expect(result?.links[0].xeroObjectUrl).not.toContain("!old99");

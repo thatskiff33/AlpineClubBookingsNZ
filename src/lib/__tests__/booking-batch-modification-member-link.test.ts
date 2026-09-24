@@ -77,6 +77,7 @@ import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } from "@/lib/booking-modify";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -181,6 +182,7 @@ describe("the pre-transaction work belongs to whoever owns the transaction (#323
     // provider work under two locks.
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -199,6 +201,7 @@ describe("the pre-transaction work belongs to whoever owns the transaction (#323
     // owner has twice said fires on every recalculate override.
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -222,6 +225,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -241,6 +245,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -265,6 +270,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -285,6 +291,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },

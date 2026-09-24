@@ -24,6 +24,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
+import type { ClubFormat } from "@/lib/club-format";
 
 export interface IbHoldClearingRow {
   paymentId: string;
@@ -192,6 +193,7 @@ export async function auditIbHoldClearingUnderclears(options?: {
 
 export function formatIbHoldClearingAuditReport(
   result: IbHoldClearingAuditResult,
+  format: ClubFormat,
 ): string {
   const lines: string[] = [];
   lines.push("Internet-Banking hold-expiry invoice-clearing audit (#1597)");
@@ -201,7 +203,7 @@ export function formatIbHoldClearingAuditReport(
   lines.push(`  with an issued invoice:      ${result.invoiceBearingHolds}`);
   lines.push(`  with no invoice (skipped):   ${result.noInvoiceReleasedHolds}`);
   lines.push(`Under-cleared invoices found:  ${result.underCleared.length}`);
-  lines.push(`Total open delta:              ${formatCents(result.totalDeltaCents)}`);
+  lines.push(`Total open delta:              ${formatCents(result.totalDeltaCents, format)}`);
   lines.push("");
 
   if (result.underCleared.length === 0) {
@@ -228,14 +230,14 @@ export function formatIbHoldClearingAuditReport(
     lines.push(`    booking status:   ${finding.bookingStatus}`);
     lines.push(`    invoice:          ${finding.invoiceRef}`);
     lines.push(`    refund note issued: ${finding.refundNoteIssued ? "yes" : "no"}`);
-    lines.push(`    final price:      ${formatCents(finding.finalPriceCents)}`);
-    lines.push(`    change fee:       ${formatCents(finding.changeFeeCents)}`);
+    lines.push(`    final price:      ${formatCents(finding.finalPriceCents, format)}`);
+    lines.push(`    change fee:       ${formatCents(finding.changeFeeCents, format)}`);
     lines.push(
-      `    Xero-allocated credit: ${formatCents(finding.xeroAllocatedAppliedCreditCents)}`,
+      `    Xero-allocated credit: ${formatCents(finding.xeroAllocatedAppliedCreditCents, format)}`,
     );
-    lines.push(`    expected clearing: ${formatCents(finding.expectedClearingCents)}`);
-    lines.push(`    actual clearing:   ${formatCents(finding.enqueuedClearingCents)}`);
-    lines.push(`    OPEN DELTA:        ${formatCents(finding.deltaCents)}`);
+    lines.push(`    expected clearing: ${formatCents(finding.expectedClearingCents, format)}`);
+    lines.push(`    actual clearing:   ${formatCents(finding.enqueuedClearingCents, format)}`);
+    lines.push(`    OPEN DELTA:        ${formatCents(finding.deltaCents, format)}`);
   }
 
   return lines.join("\n");
@@ -477,24 +479,25 @@ export async function auditIbAppliedCreditStrands(options?: {
 
 function formatIbAppliedCreditStrandRow(
   finding: IbAppliedCreditStrandFinding,
+  format: ClubFormat,
 ): string[] {
   const lines: string[] = [];
   lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
-  lines.push(`    final price:       ${formatCents(finding.finalPriceCents)}`);
-  lines.push(`    amountCents:       ${formatCents(finding.amountCents)}`);
-  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents)}`);
-  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents)}`);
-  lines.push(`    mirror vs ledger:  ${formatCents(finding.mirrorLedgerMismatchCents)}`);
-  lines.push(`    mirror invariant delta: ${formatCents(finding.mirrorInvariantDeltaCents)}`);
+  lines.push(`    final price:       ${formatCents(finding.finalPriceCents, format)}`);
+  lines.push(`    amountCents:       ${formatCents(finding.amountCents, format)}`);
+  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents, format)}`);
+  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents, format)}`);
+  lines.push(`    mirror vs ledger:  ${formatCents(finding.mirrorLedgerMismatchCents, format)}`);
+  lines.push(`    mirror invariant delta: ${formatCents(finding.mirrorInvariantDeltaCents, format)}`);
   // #2397: name the legitimate cause of a negative residual on the same row,
   // so an operator never has to guess whether it is drift. When the two are
   // equal and opposite the generalised mirror holds and there is nothing to
   // repair here.
   if (finding.uncollectedAdditionalCents > 0) {
     lines.push(
-      `    uncollected addition: ${formatCents(finding.uncollectedAdditionalCents)}` +
+      `    uncollected addition: ${formatCents(finding.uncollectedAdditionalCents, format)}` +
         (finding.mirrorInvariantDeltaCents +
           finding.uncollectedAdditionalCents ===
         0
@@ -502,12 +505,13 @@ function formatIbAppliedCreditStrandRow(
           : "  (does NOT fully account for the delta above)"),
     );
   }
-  lines.push(`    STRAND EXPOSURE:   ${formatCents(finding.strandExposureCents)}`);
+  lines.push(`    STRAND EXPOSURE:   ${formatCents(finding.strandExposureCents, format)}`);
   return lines;
 }
 
 export function formatIbAppliedCreditStrandReport(
   result: IbAppliedCreditStrandAuditResult,
+  format: ClubFormat,
 ): string {
   const lines: string[] = [];
   lines.push("Internet-Banking + applied-credit strand enumeration (#1620)");
@@ -521,13 +525,13 @@ export function formatIbAppliedCreditStrandReport(
     `REALIZED strands (member double-paid): ${result.realized.length}`,
   );
   lines.push(
-    `  credit already lost:                 ${formatCents(result.realizedStrandedCents)}`,
+    `  credit already lost:                 ${formatCents(result.realizedStrandedCents, format)}`,
   );
   lines.push(
     `PENDING strands (not yet paid):        ${result.pending.length}`,
   );
   lines.push(
-    `  credit at risk:                      ${formatCents(result.pendingExposureCents)}`,
+    `  credit at risk:                      ${formatCents(result.pendingExposureCents, format)}`,
   );
   lines.push("");
 
@@ -548,7 +552,7 @@ export function formatIbAppliedCreditStrandReport(
     );
     lines.push("");
     for (const finding of result.realized) {
-      lines.push(...formatIbAppliedCreditStrandRow(finding));
+      lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
     lines.push("");
   }
@@ -563,7 +567,7 @@ export function formatIbAppliedCreditStrandReport(
     lines.push("before the member pays; no realized loss yet.");
     lines.push("");
     for (const finding of result.pending) {
-      lines.push(...formatIbAppliedCreditStrandRow(finding));
+      lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
   }
 
@@ -739,22 +743,24 @@ export async function auditCardAppliedCreditDoublePays(options?: {
 
 function formatCardAppliedCreditDoublePayRow(
   finding: CardAppliedCreditDoublePayFinding,
+  format: ClubFormat,
 ): string[] {
   const lines: string[] = [];
   lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment source:    ${finding.paymentSource}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
-  lines.push(`    final price:       ${formatCents(finding.finalPriceCents)}`);
-  lines.push(`    charged (card):    ${formatCents(finding.amountCents)}`);
-  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents)}`);
-  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents)}`);
-  lines.push(`    DOUBLE-PAID (local restore): ${formatCents(finding.strandExposureCents)}`);
+  lines.push(`    final price:       ${formatCents(finding.finalPriceCents, format)}`);
+  lines.push(`    charged (card):    ${formatCents(finding.amountCents, format)}`);
+  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents, format)}`);
+  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents, format)}`);
+  lines.push(`    DOUBLE-PAID (local restore): ${formatCents(finding.strandExposureCents, format)}`);
   return lines;
 }
 
 export function formatCardAppliedCreditDoublePayReport(
   result: CardAppliedCreditDoublePayAuditResult,
+  format: ClubFormat,
 ): string {
   const lines: string[] = [];
   lines.push("Card + applied-credit double-pay enumeration (#1641)");
@@ -768,7 +774,7 @@ export function formatCardAppliedCreditDoublePayReport(
     `REALIZED double-pays (member overcharged):       ${result.doublePays.length}`,
   );
   lines.push(
-    `  credit already lost:                           ${formatCents(result.doublePaidCents)}`,
+    `  credit already lost:                           ${formatCents(result.doublePaidCents, format)}`,
   );
   lines.push("");
 
@@ -788,7 +794,7 @@ export function formatCardAppliedCreditDoublePayReport(
   );
   lines.push("");
   for (const finding of result.doublePays) {
-    lines.push(...formatCardAppliedCreditDoublePayRow(finding));
+    lines.push(...formatCardAppliedCreditDoublePayRow(finding, format));
   }
 
   return lines.join("\n");

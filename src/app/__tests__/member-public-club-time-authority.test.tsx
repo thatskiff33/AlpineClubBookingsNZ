@@ -5,6 +5,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import {
   bindClubTime,
   calendarDateOfDateOnlyInstant,
@@ -214,7 +215,11 @@ afterEach(() => {
 });
 
 function renderInClubZone(ui: React.ReactElement, zone = CLUB_ZONE) {
-  return render(<ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>);
+  return render(
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>
+    </ClubFormatTestProvider>,
+  );
 }
 
 /**

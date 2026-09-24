@@ -27,6 +27,7 @@ import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
+import { useClubFormat } from "@/components/club-format-provider";
 import { calendarDayAsLocalDate } from "./_components/host-local-day";
 import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
@@ -35,6 +36,7 @@ import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
 } from "@/lib/admin-dataset-reset-state";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
 // _components/report-charts and mount after the page shell. The placeholders
@@ -137,14 +139,17 @@ function getRevenueDescription(granularity: RevenueGranularity): string {
   return "Booked revenue allocated across selected stay nights and grouped by month for ranges longer than 90 days.";
 }
 
-function getAdditionalLedgerGapWarning(summary: {
-  additionalLedgerGapCents: number;
-  additionalLedgerGapBookings: number;
-}): string | null {
+function getAdditionalLedgerGapWarning(
+  summary: {
+    additionalLedgerGapCents: number;
+    additionalLedgerGapBookings: number;
+  },
+  clubFormat: ClubFormat,
+): string | null {
   if (summary.additionalLedgerGapBookings === 0) return null;
 
   const singular = summary.additionalLedgerGapBookings === 1;
-  return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
+  return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents, clubFormat)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 /**
@@ -209,6 +214,7 @@ function StatCard({
 
 export default function ReportsPage() {
   const club = useClubIdentity();
+  const clubFormat = useClubFormat();
   const {
     lodges,
     failed: lodgeOptionsFailed,
@@ -325,7 +331,7 @@ export default function ReportsPage() {
 
   const occupancyData = data?.occupancy ?? [];
   const additionalLedgerGapWarning = data
-    ? getAdditionalLedgerGapWarning(data.summary)
+    ? getAdditionalLedgerGapWarning(data.summary, clubFormat)
     : null;
   const unreconciledBookingCount =
     data?.summary.moneyReconciliation.byState.UNRECONCILED ?? 0;
@@ -603,19 +609,19 @@ export default function ReportsPage() {
               />
               <StatCard
                 title="Booked Revenue"
-                value={formatCents(data.summary.totalRevenueCents)}
+                value={formatCents(data.summary.totalRevenueCents, clubFormat)}
                 subtitle="Price allocated to selected stay nights; not collected cash"
                 icon={DollarSign}
               />
               <StatCard
                 title="Net Collected Cash"
-                value={formatCents(data.summary.netCollectedCents)}
+                value={formatCents(data.summary.netCollectedCents, clubFormat)}
                 subtitle="Captured payment cash less refunds for overlapping bookings; not allocated by night"
                 icon={DollarSign}
               />
               <StatCard
                 title="Outstanding Additions"
-                value={formatCents(data.summary.outstandingAdditionalCents)}
+                value={formatCents(data.summary.outstandingAdditionalCents, clubFormat)}
                 subtitle={`Still owing across ${data.summary.outstandingAdditionalBookings} overlapping booking${data.summary.outstandingAdditionalBookings === 1 ? "" : "s"}; shown separately from cash`}
                 icon={AlertTriangle}
               />

@@ -21,6 +21,7 @@ import {
 import "@/lib/config-transfer/categories/lodge-config";
 import { getRegisteredEntities } from "@/lib/config-transfer/registry";
 import type { ImportMode, ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #2511 — a config bundle exported BEFORE a cleanup migration still carries the
 // removed value (the exporter selects the DB column verbatim; the applier writes
@@ -323,6 +324,7 @@ async function runApply(
   mode: ImportMode,
 ) {
   return siteContentImporter.apply({
+    format: CLUB_FORMAT_TEST,
     tx: store.db as unknown as TxDb,
     files,
     manifest: { formatVersion: 2 } as never,

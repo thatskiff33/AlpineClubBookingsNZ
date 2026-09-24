@@ -99,6 +99,7 @@ import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // #2264 — the id of the single hint shared by the three amount filter boxes.
 const PAYMENT_AMOUNT_HINT_ID = "payment-amount-filter-hint";
@@ -343,6 +344,7 @@ function SummaryCard({
 }
 
 export default function PaymentsPage() {
+  const format = useClubFormat();
   const router = useRouter();
   const searchParams = useSearchParams();
   // Generate Invoice writes the finance-area generate-invoice route; a view-only
@@ -1023,10 +1025,10 @@ export default function PaymentsPage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <SummaryCard title="Total Revenue" icon={DollarSign}>
-          {formatCents(summary.totalRevenueCents)}
+          {formatCents(summary.totalRevenueCents, format)}
         </SummaryCard>
         <SummaryCard title="Refunded / Credited" icon={CreditCard} valueClassName="text-danger">
-          {formatCents(summary.refundedCents)}
+          {formatCents(summary.refundedCents, format)}
         </SummaryCard>
         <SummaryCard title="Payments" icon={BarChart2}>
           {summary.count}
@@ -1146,10 +1148,10 @@ export default function PaymentsPage() {
                       rendered rather than arithmetized. Gross and refund print
                       underneath, so only the headline figure changed. */}
                   <TableCell className="text-right text-sm font-medium tabular-nums">
-                    {formatCents(p.amountCents - p.refundedAmountCents)}
+                    {formatCents(p.amountCents - p.refundedAmountCents, format)}
                     {p.refundedAmountCents > 0 && (
                       <div className="text-xs font-normal text-muted-foreground">
-                        {formatCents(p.amountCents)} paid, {formatCents(p.refundedAmountCents)} refunded
+                        {formatCents(p.amountCents, format)} paid, {formatCents(p.refundedAmountCents, format)} refunded
                       </div>
                     )}
                   </TableCell>
@@ -1198,7 +1200,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
+                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents, format)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
                       />
                     </div>
                   </TableCell>
@@ -1301,13 +1303,13 @@ export default function PaymentsPage() {
                       {p.refundedAmountCents > 0 ? (
                         <div className="space-y-1 text-xs text-muted-foreground">
                         {settlement.refundToOriginalMethodCents > 0 && (
-                          <p className="tabular-nums">Card refund: {formatCents(settlement.refundToOriginalMethodCents)}</p>
+                          <p className="tabular-nums">Card refund: {formatCents(settlement.refundToOriginalMethodCents, format)}</p>
                         )}
                         {settlement.accountCreditCents > 0 && (
-                          <p className="tabular-nums">Account credit: {formatCents(settlement.accountCreditCents)}</p>
+                          <p className="tabular-nums">Account credit: {formatCents(settlement.accountCreditCents, format)}</p>
                         )}
                         {settlement.restoredAppliedCreditCents > 0 && (
-                          <p className="tabular-nums">Restored credit: {formatCents(settlement.restoredAppliedCreditCents)}</p>
+                          <p className="tabular-nums">Restored credit: {formatCents(settlement.restoredAppliedCreditCents, format)}</p>
                         )}
                       </div>
                       ) : null}

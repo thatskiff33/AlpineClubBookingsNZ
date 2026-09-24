@@ -23,6 +23,7 @@
 import { BookingEventType } from "@prisma/client";
 
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /** Snapshot discriminator marking a REFUNDED event as a #3340 supersede refund. */
 export const SUPERSEDED_ADDITIONAL_REFUND_EVENT_KIND =
@@ -48,9 +49,9 @@ export const SUPERSEDED_ADDITIONAL_REFUND_EVENT_REASON =
  * template and the editor's copy disagreeing about one fact, which is the shape
  * `INV-SSOT-001` exists to prevent. One function, both surfaces.
  */
-export function supersededRefundOwingSentence(amountOwingCents: number): string {
+export function supersededRefundOwingSentence(amountOwingCents: number, format: ClubFormat): string {
   return amountOwingCents > 0
-    ? `There is still ${formatCents(amountOwingCents)} to pay on this booking. You can pay it from your booking page.`
+    ? `There is still ${formatCents(amountOwingCents, format)} to pay on this booking. You can pay it from your booking page.`
     : "Nothing further is owing on this booking.";
 }
 

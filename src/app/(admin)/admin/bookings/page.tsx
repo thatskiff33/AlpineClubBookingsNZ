@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { bookingOwner } from "@/lib/booking-owner";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { BookingsPagination } from "@/components/admin/bookings-pagination";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
@@ -196,6 +196,7 @@ export default async function AdminBookingsPage({
   }>;
 }) {
   const club = await clubTime();
+  const money = await clubFormat();
   const params = await searchParams;
   const parsedQuery = adminBookingsQuerySchema.safeParse(params);
   const query = parsedQuery.success ? parsedQuery.data : adminBookingsQuerySchema.parse({});
@@ -733,7 +734,7 @@ export default async function AdminBookingsPage({
                       {formatAdminBookingGuestCount(booking.guests.length, nonMemberGuestCount)}
                     </TableCell>
                     <TableCell className="text-right text-sm font-medium tabular-nums">
-                      {formatCents(booking.finalPriceCents)}
+                      {money.cents(booking.finalPriceCents)}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -810,7 +811,7 @@ export default async function AdminBookingsPage({
                         ) : null}
                         {outstandingAdditionalCents > 0 ? (
                           <MiniChip tone="warning" icon={AlertTriangle}>
-                            {formatCents(outstandingAdditionalCents)} due
+                            {money.cents(outstandingAdditionalCents)} due
                           </MiniChip>
                         ) : null}
                       </div>

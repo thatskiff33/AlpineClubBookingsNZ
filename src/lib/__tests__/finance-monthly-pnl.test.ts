@@ -17,6 +17,7 @@ vi.mock("@/lib/finance-report-mappings", () => ({
 }));
 
 import { buildFinanceMonthlyPnlSummary } from "@/lib/finance-monthly-pnl";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 interface FactSeed {
   month: string;
@@ -100,6 +101,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
 
   it("sums only the view's rows, groups by mapping, and keeps unmapped visible", async () => {
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: COMPARISON,
@@ -125,6 +127,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
 
   it("builds one trend point per month with a positionally aligned comparison", async () => {
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: COMPARISON,
@@ -170,12 +173,14 @@ describe("buildFinanceMonthlyPnlSummary", () => {
     ]);
 
     const revenue = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: null,
       currentMonth: "2026-07",
     });
     const costs = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "EXPENSE",
       primary: PRIMARY,
       comparison: null,
@@ -204,12 +209,14 @@ describe("buildFinanceMonthlyPnlSummary", () => {
     );
 
     const costs = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "EXPENSE",
       primary: PRIMARY,
       comparison: null,
       currentMonth: "2026-07",
     });
     const revenue = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: null,
@@ -229,6 +236,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
 
   it("returns null comparison fields when no comparison window is selected", async () => {
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: null,
@@ -251,6 +259,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
     ]);
 
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "EXPENSE",
       primary: PRIMARY,
       comparison: null,
@@ -283,6 +292,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
     );
 
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: COMPARISON,
@@ -301,6 +311,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
 
     mockListMonthlyFacts.mockResolvedValue([]);
     const empty = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: null,
@@ -334,6 +345,7 @@ describe("buildFinanceMonthlyPnlSummary", () => {
     );
 
     const summary = await buildFinanceMonthlyPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       primary: PRIMARY,
       comparison: null,

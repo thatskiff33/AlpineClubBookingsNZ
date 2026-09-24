@@ -90,6 +90,7 @@ import type {
   XeroActionRecovery,
 } from "@/lib/admin-member-xero-actions";
 import type { MemberContactCreateRecoveryState } from "@/lib/xero-contact-create-recovery";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   getXeroPartialSuccessGuidance,
   isXeroPartialSuccessRecovery,
@@ -110,6 +111,7 @@ export default function MemberDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const format = useClubFormat();
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -804,7 +806,7 @@ export default function MemberDetailPage({
       creditBalanceCents: creditLoading ? null : creditBalance,
       promoCodeCount: member.promoCodes?.length ?? 0,
       xeroLinked: Boolean(member.xeroContactId),
-    }),
+    }, format),
     committee: formatMemberCommitteePreview({
       assignmentCount: (member.committeeAssignments ?? []).filter(
         (assignment) => assignment.isActive,
