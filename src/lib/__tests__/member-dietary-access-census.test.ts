@@ -6,29 +6,40 @@
  * by a filter: every application Prisma client is constructed with
  * `omit: PRISMA_CLIENT_GLOBAL_OMIT`, so a Member read that does not ask for the
  * column never carries it, and `src/lib/member-dietary.ts` is the one module
- * that asks — for a caller holding a grant.
+ * that asks, for a caller holding a grant.
  *
  * `src/lib/prisma.ts` TYPES the client as the plain `PrismaClient` (an omit-typed
  * client is not assignable to `Prisma.TransactionClient`, and re-typing ~160
  * helpers was measured and rejected there). So the compiler still believes the
- * field is on every row, and this census is what holds the boundary. Five rules:
+ * field is on every row. This census is a TEXT scan over `src/`, `scripts/`,
+ * `prisma/` and `e2e/`, and it holds exactly these rules:
  *
- *  1. SELECT/OMIT — `dietaryRequirements: true|false` (a select, an include, a
+ *  1. SELECT/OMIT: `dietaryRequirements: true|false` (a select, an include, a
  *     local `omit` override) appears only in the canonical module and the omit
  *     constant.
- *  2. RAW SQL — no file that issues raw SQL names the column, and no file reads
- *     a whole row through `SELECT *`, `"Member".*` or a JSON row function
- *     (the one exemption is the diagnostics wrapper, fenced by column grants).
- *  3. CONSTRUCTOR — every `new PrismaClient(` in application code passes
- *     `omit: PRISMA_CLIENT_GLOBAL_OMIT`.
- *  4. REACH — the identifier appears, outside comments, only in a closed,
- *     counted list of files, each with its reason. A new file that handles the
- *     value is an edit here, in the same diff, where a reviewer sees it.
- *  5. EGRESS — none of those files is a Xero, analytics, notification, email,
- *     roster, lodge-screen, kiosk, family, booking or finance-export surface.
+ *  2. RAW SQL: no file that issues raw SQL names the column, and no file reads a
+ *     whole row (`SELECT *` in its spellings, `alias.*`, `TABLE "Member"`, a
+ *     JSON row function). One classified exemption, fenced by column grants.
+ *  3. CONSTRUCTOR: every `new …PrismaClient(`, including namespaced and aliased
+ *     spellings, passes `omit: PRISMA_CLIENT_GLOBAL_OMIT`, except the seeds,
+ *     E2E harnesses and the deploy rehearsal, each classified with its reason.
+ *  4. REACH: in `src/`, the identifier's SPELLING outside comments is confined
+ *     to a listed set of files.
+ *  5. IMPORT: in every root, importing the canonical module is confined to a
+ *     listed set of files, and no file re-exports a grant or reader.
+ *  6. EGRESS: no file on either list sits on a Xero, analytics, notification,
+ *     email, roster, lodge-screen, kiosk, family, booking, finance or logging
+ *     path.
+ *
+ * WHAT IT CANNOT SEE, stated so nobody reads it as stronger than it is. It
+ * matches text, not data flow. A listed file that reads `.dietaryRequirements`
+ * off an ordinary row gets `undefined` (never the value) and stays green; so
+ * does code that walks a row's keys generically. A value, once a listed file
+ * holds it, can be passed on to anything; rules 5 and 6 confine who can obtain
+ * it, not where it goes next. Those are review's job, and INV-PRIV-022 says so.
  *
  * Scanned from disk, so `vitest related` cannot reach it: run it by name,
- * `npm run test:named -- member-dietary-access-census`.
+ * `npm run test:named -- src/lib/__tests__/member-dietary-access-census.test.ts`.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -45,7 +56,7 @@ const CANONICAL_MODULE = "src/lib/member-dietary.ts";
 const OMIT_CONSTANT_MODULE = "src/lib/prisma-global-omit.ts";
 
 /**
- * Rule 4's closed list: every application file allowed to name
+ * Rule 4's list: every application file allowed to SPELL
  * `dietaryRequirements` outside a comment, and why.
  */
 const DIETARY_REACH: Readonly<Record<string, string>> = {
@@ -82,9 +93,33 @@ const DIETARY_REACH: Readonly<Record<string, string>> = {
 };
 
 /**
- * Rule 5: path fragments of surfaces the value must never reach. A reach entry
- * matching one of these fails even when it is listed, so widening the list
- * onto an egress surface is refused rather than rubber-stamped.
+ * Rule 5: the closed list of files that IMPORT the canonical module. Naming the
+ * field is not the only way to reach the value: a file can mint a grant and
+ * call a reader without ever spelling `dietaryRequirements`, so the import is
+ * confined too, and every entry here is also checked against the egress
+ * patterns.
+ */
+const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, string>> = {
+  "src/app/(authenticated)/profile/page.tsx": "self display grant",
+  "src/app/api/profile/route.ts": "self write (profile and onboarding)",
+  "src/app/api/member/onboarding/route.ts": "self display grant",
+  "src/app/api/member/data-export/route.ts": "self data-export grant",
+  "src/app/api/admin/members/[id]/route.ts": "membership grant from requireAdmin",
+  "src/app/api/admin/members/route.ts": "membership grant for create",
+  "src/app/api/admin/members/export/route.ts": "membership grant for the CSV column",
+  "src/app/api/admin/members/import/route.ts": "membership grant for the CSV column",
+  "src/app/api/admin/deletion-requests/[id]/route.ts":
+    "the erasure patch only (no grant, no read)",
+  "src/lib/admin-member-detail-service.ts": "admin detail read and edit",
+  "src/lib/admin-members-service.ts": "admin create write",
+  "src/lib/member-merge.ts": "merge: attach through the scoped merge grant, redact the audit",
+};
+
+/**
+ * Rule 6: path fragments of surfaces the value must never reach. A reach or
+ * importer entry matching one of these fails even when it is listed, so
+ * widening either list onto an egress surface is refused rather than
+ * rubber-stamped.
  */
 const EGRESS_SURFACE_PATTERNS: readonly RegExp[] = [
   /xero/i,
@@ -105,17 +140,72 @@ const RAW_WILDCARD_EXEMPT: Readonly<Record<string, string>> = {
     "(provision-role.ts); PostgreSQL refuses the column (42501)",
 };
 
-const RAW_SQL_API = /\$queryRaw|\$queryRawUnsafe|\$executeRaw|\$executeRawUnsafe|Prisma\.sql|Prisma\.raw/;
+/**
+ * Rule 3's classification: clients that are NOT the application's and so do
+ * not carry the omission. Each is a tool that never returns a Member value to
+ * a person or a payload.
+ */
+const CONSTRUCTOR_EXEMPT: Readonly<Record<string, string>> = {
+  "prisma/seed.ts": "seeds a fresh database; writes rows, returns none to anyone",
+  "prisma/demo-seed.ts": "seeds demo data; writes rows, returns none to anyone",
+  "scripts/rehearse-epic-deploy.ts":
+    "rehearsal against a scratch database with the OLD generated client; reads " +
+    "take:1 per model only to prove the columns resolve, and records counts",
+  "e2e/helpers/rate-limit-counter.ts": "E2E harness against the test database",
+  "e2e/helpers/setup-state.ts": "E2E harness against the test database",
+  "e2e/setup/enable-e2e-modules.ts": "E2E harness against the test database",
+  "e2e/setup/relativize-seasons.ts": "E2E harness against the test database",
+  "e2e/setup/seed-second-lodge.ts": "E2E harness against the test database",
+};
+
+const RAW_SQL_API =
+  /\$queryRaw|\$queryRawUnsafe|\$executeRaw|\$executeRawUnsafe|Prisma\.sql|Prisma\.raw/;
 const SELECT_OR_OMIT = /["']?\bdietaryRequirements\b["']?\s*:\s*(?:true|false)\b/;
 const IDENTIFIER = /\bdietaryRequirements\b/;
-const RAW_WILDCARD = /\bSELECT\s+\*|"Member"\s*\.\s*\*|\b(?:row_to_json|to_jsonb?)\s*\(/i;
+/**
+ * A whole-row raw read: `SELECT *`, `SELECT*`, `SELECT DISTINCT *`,
+ * `SELECT m.*` or `SELECT id, "Member".*`, a bare `TABLE "Member"` statement,
+ * or a whole row turned into JSON (`row_to_json(m)`, `to_json(b)(m)`,
+ * `json(b)_agg(m)`).
+ */
+const RAW_WILDCARD = new RegExp(
+  [
+    String.raw`\bSELECT\s*(?:DISTINCT\s+)?(?:(?:"?[A-Za-z_]\w*"?\s*\.\s*)?\*)`,
+    String.raw`\bSELECT\b[^;\`]{0,400}?,\s*(?:"?[A-Za-z_]\w*"?\s*\.\s*)\*`,
+    // `TABLE "Member"` as a statement of its own, not `ALTER TABLE "Member"`.
+    String.raw`(?:^|[;(\`])\s*TABLE\s+"?Member"?\b`,
+    // A whole row (a bare alias) turned into JSON; `jsonb_agg(col ->> 'x')`
+    // aggregates an expression, not a row, and is not matched.
+    String.raw`\b(?:row_to_json|to_jsonb?|jsonb?_agg)\s*\(\s*"?[A-Za-z_]\w*"?\s*\)`,
+  ].join("|"),
+  "im",
+);
+const DIETARY_MODULE_IMPORT =
+  /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'](?:@\/lib\/|(?:\.{1,2}\/)+(?:[\w-]+\/)*)member-dietary["']/;
+const DIETARY_REEXPORT =
+  /export\s*\*\s*from\s*["'][^"']*member-dietary["']|export\s*\{[^}]*\b(?:grant\w*Dietary\w*|read\w*Dietary\w*|load\w*Dietary\w*|attachMergeDietary\w*)\b/;
 
 type Finding = { rule: string; file: string; detail: string };
+
+/** Every `new …PrismaClient(` call, including aliased and namespaced ones. */
+function prismaConstructorStarts(code: string): number[] {
+  const names = ["PrismaClient"];
+  for (const match of code.matchAll(/\bPrismaClient\s+as\s+([A-Za-z_$][\w$]*)/g)) {
+    names.push(match[1]!);
+  }
+  const alternation = names.map((name) => name.replace(/\$/g, "\\$")).join("|");
+  const pattern = new RegExp(
+    String.raw`\bnew\s+(?:[A-Za-z_$][\w$]*\s*\.\s*)*(?:${alternation})\s*\(`,
+    "g",
+  );
+  return [...code.matchAll(pattern)].map((match) => match.index! + match[0].length);
+}
 
 /** Pure scanner, so the mutation block below can seed it without the tree. */
 export function scanDietaryAccessSource(file: string, source: string): Finding[] {
   const code = stripComments(source);
   const findings: Finding[] = [];
+  const isApplication = file.startsWith("src/");
 
   if (
     SELECT_OR_OMIT.test(code) &&
@@ -141,28 +231,49 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
     findings.push({
       rule: "raw-wildcard",
       file,
-      detail: "reads a whole row through SELECT *, \"Member\".* or a JSON row function",
+      detail:
+        'reads a whole row through SELECT *, alias.*, TABLE "Member" or a JSON row function',
     });
   }
 
-  let index = code.indexOf("new PrismaClient(");
-  while (index !== -1) {
-    const args = constructorArguments(code, index + "new PrismaClient(".length);
-    if (!/\bomit\s*:\s*PRISMA_CLIENT_GLOBAL_OMIT\b/.test(args)) {
-      findings.push({
-        rule: "constructor",
-        file,
-        detail: "constructs a PrismaClient without omit: PRISMA_CLIENT_GLOBAL_OMIT",
-      });
+  if (!(file in CONSTRUCTOR_EXEMPT)) {
+    for (const start of prismaConstructorStarts(code)) {
+      const args = constructorArguments(code, start);
+      if (!/\bomit\s*:\s*PRISMA_CLIENT_GLOBAL_OMIT\b/.test(args)) {
+        findings.push({
+          rule: "constructor",
+          file,
+          detail: "constructs a PrismaClient without omit: PRISMA_CLIENT_GLOBAL_OMIT",
+        });
+      }
     }
-    index = code.indexOf("new PrismaClient(", index + 1);
   }
 
-  if (IDENTIFIER.test(code) && !(file in DIETARY_REACH)) {
+  if (isApplication && IDENTIFIER.test(code) && !(file in DIETARY_REACH)) {
     findings.push({
       rule: "reach",
       file,
       detail: "names dietaryRequirements but is not in DIETARY_REACH",
+    });
+  }
+
+  if (
+    file !== CANONICAL_MODULE &&
+    DIETARY_MODULE_IMPORT.test(code) &&
+    !(file in DIETARY_MODULE_IMPORTERS)
+  ) {
+    findings.push({
+      rule: "import",
+      file,
+      detail: "imports the dietary module but is not in DIETARY_MODULE_IMPORTERS",
+    });
+  }
+
+  if (file !== CANONICAL_MODULE && DIETARY_REEXPORT.test(code)) {
+    findings.push({
+      rule: "reexport",
+      file,
+      detail: "re-exports a dietary grant or reader, widening the importer list unseen",
     });
   }
 
@@ -183,16 +294,30 @@ function constructorArguments(code: string, start: number): string {
   return code.slice(start);
 }
 
-function applicationSourceFiles(dir: string = SRC_ROOT): string[] {
+/**
+ * The scanned roots. `src/` is the application; `scripts/`, `prisma/` and
+ * `e2e/` hold operator CLIs, seeds and harnesses, which are held to every rule
+ * except REACH (they may not name the field either way — none do) and whose
+ * non-application clients are classified in CONSTRUCTOR_EXEMPT.
+ */
+const SCANNED_ROOTS = ["src", "scripts", "prisma", "e2e"] as const;
+
+function sourceFiles(dir: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "__tests__" || entry.name === "node_modules") continue;
-      files.push(...applicationSourceFiles(full));
+      if (
+        entry.name === "__tests__" ||
+        entry.name === "node_modules" ||
+        entry.name === "migrations"
+      ) {
+        continue;
+      }
+      files.push(...sourceFiles(full));
     } else if (
-      /\.(ts|tsx)$/.test(entry.name) &&
-      !/\.(test|spec)\.(ts|tsx)$/.test(entry.name) &&
+      /\.(ts|tsx|mts|cts|mjs|js)$/.test(entry.name) &&
+      !/\.(test|spec)\.(ts|tsx|mts|mjs|js)$/.test(entry.name) &&
       !entry.name.endsWith(".d.ts")
     ) {
       files.push(full);
@@ -205,19 +330,30 @@ function relative(file: string): string {
   return path.relative(REPO_ROOT, file).split(path.sep).join("/");
 }
 
-let cached: { files: string[]; findings: Finding[]; reached: string[] } | null =
-  null;
+let cached: {
+  files: string[];
+  findings: Finding[];
+  reached: string[];
+  importers: string[];
+} | null = null;
 function census() {
   if (cached) return cached;
-  const files = applicationSourceFiles().map(relative);
+  const files = SCANNED_ROOTS.flatMap((root) =>
+    sourceFiles(path.join(REPO_ROOT, root)),
+  ).map(relative);
   const findings: Finding[] = [];
   const reached: string[] = [];
+  const importers: string[] = [];
   for (const file of files) {
     const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
     findings.push(...scanDietaryAccessSource(file, source));
-    if (IDENTIFIER.test(stripComments(source))) reached.push(file);
+    const code = stripComments(source);
+    if (file.startsWith("src/") && IDENTIFIER.test(code)) reached.push(file);
+    if (file !== CANONICAL_MODULE && DIETARY_MODULE_IMPORT.test(code)) {
+      importers.push(file);
+    }
   }
-  cached = { files, findings, reached: reached.sort() };
+  cached = { files, findings, reached: reached.sort(), importers: importers.sort() };
   return cached;
 }
 
@@ -226,10 +362,14 @@ function report(findings: Finding[]): string {
 }
 
 describe(`member dietary access census (${INVARIANT_ID})`, () => {
-  it("walks the application tree", () => {
+  it("walks every scanned root", () => {
     // A walk that found nothing would pass every rule below vacuously.
-    expect(census().files.length).toBeGreaterThan(500);
-    expect(census().files).toContain(CANONICAL_MODULE);
+    const { files } = census();
+    expect(files.filter((f) => f.startsWith("src/")).length).toBeGreaterThan(500);
+    for (const root of ["scripts/", "prisma/", "e2e/"]) {
+      expect(files.some((f) => f.startsWith(root)), root).toBe(true);
+    }
+    expect(files).toContain(CANONICAL_MODULE);
   });
 
   it("the client-wide omission names Member.dietaryRequirements", () => {
@@ -244,6 +384,8 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "raw-wildcard",
     "constructor",
     "reach",
+    "import",
+    "reexport",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -257,17 +399,29 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
   }
 
   it("every application PrismaClient constructor was actually seen", () => {
-    // prisma.ts and the audit archive client. If this drops, the constructor
-    // rule above could be passing because the scan no longer sees either one.
-    const constructing = census().files.filter((file) =>
-      stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")).includes(
-        "new PrismaClient(",
-      ),
+    // If this drops, the constructor rule could be passing because the scan no
+    // longer sees either client.
+    const constructing = census().files.filter(
+      (file) =>
+        !(file in CONSTRUCTOR_EXEMPT) &&
+        prismaConstructorStarts(
+          stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")),
+        ).length > 0,
     );
     expect(constructing.sort()).toEqual([
       "src/lib/audit-retention.ts",
       "src/lib/prisma.ts",
     ]);
+  });
+
+  it("the constructor exemptions are exact: each still constructs a client", () => {
+    const stale = Object.keys(CONSTRUCTOR_EXEMPT).filter(
+      (file) =>
+        prismaConstructorStarts(
+          stripComments(readFileSync(path.join(REPO_ROOT, file), "utf8")),
+        ).length === 0,
+    );
+    expect(stale).toEqual([]);
   });
 
   it("the reach list is exact: every listed file still names the field", () => {
@@ -276,15 +430,20 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     );
     expect(
       stale,
-      `${INVARIANT_ID}: these DIETARY_REACH entries no longer name dietaryRequirements; remove them so the list stays the population.`,
+      `${INVARIANT_ID}: these DIETARY_REACH entries no longer name dietaryRequirements; remove them so the list matches the tree.`,
     ).toEqual([]);
     expect(census().reached).toEqual(Object.keys(DIETARY_REACH).sort());
   });
 
-  it("no reach entry is an egress surface", () => {
-    const egress = Object.keys(DIETARY_REACH).filter((file) =>
-      EGRESS_SURFACE_PATTERNS.some((pattern) => pattern.test(file)),
-    );
+  it("the importer list is exact: every listed file still imports the module", () => {
+    expect(census().importers).toEqual(Object.keys(DIETARY_MODULE_IMPORTERS).sort());
+  });
+
+  it("no reach or importer entry is an egress surface", () => {
+    const egress = [
+      ...Object.keys(DIETARY_REACH),
+      ...Object.keys(DIETARY_MODULE_IMPORTERS),
+    ].filter((file) => EGRESS_SURFACE_PATTERNS.some((pattern) => pattern.test(file)));
     expect(
       egress,
       `${INVARIANT_ID}: dietary/allergy data must not reach Xero, analytics, notifications, email, rosters, lodge screens, family views, booking or finance exports, or logs.`,
@@ -294,85 +453,104 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
 
 describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation proofs`, () => {
   const file = "src/lib/some-new-reader.ts";
+  const rulesOf = (source: string, at = file) =>
+    scanDietaryAccessSource(at, source).map((f) => f.rule);
 
   it("reports a select outside the canonical module", () => {
-    const rules = scanDietaryAccessSource(
-      file,
-      `await prisma.member.findMany({ select: { id: true, dietaryRequirements: true } });`,
-    ).map((f) => f.rule);
-    expect(rules).toContain("select-or-omit");
+    expect(
+      rulesOf(`await prisma.member.findMany({ select: { id: true, dietaryRequirements: true } });`),
+    ).toContain("select-or-omit");
   });
 
   it("reports a local omit override, quoted key included", () => {
-    const rules = scanDietaryAccessSource(
-      file,
-      `await prisma.member.findMany({ omit: { "dietaryRequirements": false } });`,
-    ).map((f) => f.rule);
-    expect(rules).toContain("select-or-omit");
+    expect(
+      rulesOf(`await prisma.member.findMany({ omit: { "dietaryRequirements": false } });`),
+    ).toContain("select-or-omit");
   });
 
   it("allows the select inside the canonical module", () => {
-    const rules = scanDietaryAccessSource(
-      CANONICAL_MODULE,
+    const rules = rulesOf(
       `await db.member.findUnique({ where: { id }, select: { dietaryRequirements: true } });`,
-    ).map((f) => f.rule);
+      CANONICAL_MODULE,
+    );
     expect(rules).not.toContain("select-or-omit");
     expect(rules).not.toContain("reach");
   });
 
   it("reports a raw-SQL read of the column", () => {
-    const rules = scanDietaryAccessSource(
-      file,
-      'await prisma.$queryRaw`SELECT "dietaryRequirements" FROM "Member"`;',
-    ).map((f) => f.rule);
-    expect(rules).toContain("raw-sql");
+    expect(
+      rulesOf('await prisma.$queryRaw`SELECT "dietaryRequirements" FROM "Member"`;'),
+    ).toContain("raw-sql");
   });
 
-  it("reports a whole-row raw read", () => {
+  it("reports every whole-row raw read spelling", () => {
     for (const sql of [
       'SELECT * FROM "Member" WHERE id = $1',
+      'SELECT* FROM "Member"',
+      'SELECT DISTINCT * FROM "Member"',
+      'SELECT m.* FROM "Member" m',
       'SELECT m.id, "Member".* FROM "Member"',
+      'SELECT id, m.* FROM "Member" m',
+      'TABLE "Member"',
       'SELECT row_to_json(m) FROM "Member" m',
+      'SELECT to_jsonb(m) FROM "Member" m',
+      'SELECT json_agg(m) FROM "Member" m',
+      'SELECT jsonb_agg(m) FROM "Member" m',
     ]) {
-      const rules = scanDietaryAccessSource(
-        file,
-        `await prisma.$queryRawUnsafe(\`${sql}\`);`,
-      ).map((f) => f.rule);
-      expect(rules, sql).toContain("raw-wildcard");
+      expect(rulesOf(`await prisma.$queryRawUnsafe(\`${sql}\`);`), sql).toContain(
+        "raw-wildcard",
+      );
+    }
+    for (const sql of [
+      'SELECT count(*) FROM "Member"',
+      'ALTER TABLE "Member" ADD COLUMN "x" TEXT',
+      "SELECT jsonb_agg(row_value ->> 'guestRef') FROM t",
+    ]) {
+      expect(rulesOf(`await prisma.$queryRawUnsafe(\`${sql}\`);`), sql).not.toContain(
+        "raw-wildcard",
+      );
     }
   });
 
-  it("reports a PrismaClient constructed without the omission", () => {
-    const rules = scanDietaryAccessSource(
-      file,
-      `const client = new PrismaClient({ adapter: createPrismaPgAdapter(url) });`,
-    ).map((f) => f.rule);
-    expect(rules).toContain("constructor");
+  it("reports a PrismaClient constructed without the omission, however it is spelled", () => {
+    for (const source of [
+      `const client = new PrismaClient({ adapter: a() });`,
+      `import * as P from "@prisma/client";\nconst client = new P.PrismaClient({ adapter: a() });`,
+      `import { PrismaClient as Db } from "@prisma/client";\nconst client = new Db({ adapter: a() });`,
+    ]) {
+      expect(rulesOf(source), source).toContain("constructor");
+    }
     expect(
-      scanDietaryAccessSource(
-        file,
-        `const client = new PrismaClient({ adapter: a(), omit: PRISMA_CLIENT_GLOBAL_OMIT });`,
-      ).map((f) => f.rule),
+      rulesOf(`const client = new PrismaClient({ adapter: a(), omit: PRISMA_CLIENT_GLOBAL_OMIT });`),
     ).not.toContain("constructor");
   });
 
   it("reports an unlisted file that names the field, and ignores a comment", () => {
+    expect(rulesOf(`const x = row.dietaryRequirements;`)).toContain("reach");
+    expect(rulesOf(`// dietaryRequirements is discussed here only\nconst y = 1;`)).toEqual([]);
+  });
+
+  it("reports an unlisted file that imports the module without naming the field", () => {
+    const source = [
+      `import { grantMemberMergeDietaryAccess, readMemberDietaryRequirementsByIds } from "@/lib/member-dietary";`,
+      `const grant = await grantMemberMergeDietaryAccess(db, scope);`,
+      `const values = await readMemberDietaryRequirementsByIds(grant!, ids);`,
+    ].join("\n");
+    expect(rulesOf(source)).toContain("import");
+    expect(rulesOf(`const m = await import("../lib/member-dietary");`)).toContain("import");
     expect(
-      scanDietaryAccessSource(file, `const x = row.dietaryRequirements;`).map(
-        (f) => f.rule,
-      ),
-    ).toContain("reach");
+      rulesOf(`import { x } from "@/lib/member-dietary-field";`),
+    ).not.toContain("import");
+  });
+
+  it("reports a re-export of a grant or reader", () => {
     expect(
-      scanDietaryAccessSource(
-        file,
-        `// dietaryRequirements is discussed here only\nconst y = 1;`,
-      ),
-    ).toEqual([]);
+      rulesOf(`export { readMemberDietaryRequirementsByIds } from "@/lib/member-dietary";`),
+    ).toContain("reexport");
+    expect(rulesOf(`export * from "@/lib/member-dietary";`)).toContain("reexport");
   });
 
   it("does not mistake the settings toggle for the field", () => {
-    expect(
-      scanDietaryAccessSource(file, `const on = flags.showDietaryRequirements;`),
-    ).toEqual([]);
+    expect(rulesOf(`const on = flags.showDietaryRequirements;`)).toEqual([]);
   });
 });

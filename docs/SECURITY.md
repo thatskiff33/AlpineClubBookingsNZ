@@ -111,14 +111,20 @@ this section records how it is enforced.
   column (`src/lib/prisma-global-omit.ts`), so a Member read that does not ask
   for it does not carry it — including nested includes and the row an update
   returns. `src/lib/member-dietary.ts` is the only module that asks, and only for
-  a caller holding a grant: the member themself, their own data export, or an
-  admin whose DB-verified permission matrix reaches **membership**.
+  a caller holding a grant: the member themself (the grant takes their session),
+  their own data export, an admin whose `requireAdmin` result carries a
+  **membership** matrix, or a merge whose Full Admin the grant re-checks in the
+  database, scoped to the two members being merged.
 - **The type does not say so.** `src/lib/prisma.ts` keeps the plain
   `PrismaClient` type, so the compiler still shows the field on every row; a read
   outside the module gets `undefined`, never the value.
-  `member-dietary-access-census.test.ts` fails on any other select, local omit
-  override, raw-SQL read, whole-row raw read or omit-less client, and limits the
-  identifier to a counted list of files, none of them an egress surface.
+  `member-dietary-access-census.test.ts` is a TEXT scan of `src/`, `scripts/`,
+  `prisma/` and `e2e/`. It fails on any other select, local omit override,
+  raw-SQL read of the column, whole-row raw read or omit-less client; it confines
+  the field's spelling (in `src/`) and imports of the module to listed files,
+  none on an egress path, and refuses a re-export of a grant or reader. It does
+  NOT trace data flow: a listed file reading the field off an ordinary row, or
+  passing a value it legitimately holds onward, stays green. Review covers that.
 - **Redaction as a backstop.** The log/Sentry redactor strips `dietary`/`allerg`
   keys, and the audit sanitizer redacts any string or structure under such a key
   while keeping the booleans that record which field changed.

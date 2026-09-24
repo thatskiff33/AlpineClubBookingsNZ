@@ -869,6 +869,7 @@ grant. Owner-approved blueprint and decision, 20 Sep 2026, on
   audit sanitizer redacts any value under one.
 - **Merge fills if blank.** The loser's value survives only when the master has
   none. **Erasure clears it:** an approved account deletion nulls it.
-- Proof: `member-dietary-access-census.test.ts` (select, omit override, raw SQL,
-  whole-row raw read, omit-less client, closed reach list, no egress file),
-  `member-dietary-privacy.test.ts`, `member-dietary-routes.test.ts`.
+- Proof: `member-dietary-access-census.test.ts`, a text scan (no other select,
+  omit override, raw read or omit-less client; spelling and imports confined to
+  listed non-egress files; no data-flow tracing), plus the privacy, routes,
+  writers and real-database tests.
