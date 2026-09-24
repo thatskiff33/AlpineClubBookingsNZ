@@ -15,9 +15,18 @@ function store(overrides: {
   createMany?: ReturnType<typeof vi.fn>;
 } = {}) {
   const createMany = overrides.createMany ?? vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
-  const findMany = vi.fn(async () => overrides.posted ?? []);
-  const findUnique = vi.fn(async () =>
-    overrides.payment === undefined
+  const order: string[] = [];
+  const findMany = vi.fn(async () => {
+    order.push("lines");
+    return overrides.posted ?? [];
+  });
+  const findUnique = vi.fn(async (args: { select?: Record<string, unknown> }) => {
+    const isRowsRead = Boolean(args?.select?.transactions);
+    order.push(isRowsRead ? "rows" : "owner");
+    if (!isRowsRead) {
+      return overrides.payment === null ? null : { bookingId: "b1" };
+    }
+    return overrides.payment === undefined
       ? {
           bookingId: "b1",
           manuallyMarkedPaidAt: null,
@@ -26,13 +35,14 @@ function store(overrides: {
           transactions: [{ id: "t1", source: "STRIPE", status: "SUCCEEDED", amountCents: 10_000 }],
           refunds: [],
         }
-      : overrides.payment,
-  );
+      : overrides.payment;
+  });
   return {
     s: { payment: { findUnique }, bookingLedgerLine: { findMany, createMany } } as never,
     createMany,
     findMany,
     findUnique,
+    order,
   };
 }
 
@@ -54,6 +64,15 @@ describe("syncBookingLedgerSettlements", () => {
         where: { bookingId: "b1", anchorKind: { in: ["PAYMENT_TRANSACTION", "PAYMENT_REFUND"] } },
       }),
     );
+  });
+
+  it("reads the posted lines BEFORE the payment's rows, so a mixed snapshot can never reverse wrongly", async () => {
+    // Review of #3604: rows-then-lines let an older "not captured" row meet a
+    // newer line and post a permanent wrong reversal. Lines-then-rows can only
+    // re-plan a line already there, which the key turns into a skip.
+    const { s, order } = store();
+    await syncBookingLedgerSettlements({ paymentId: "p1", store: s });
+    expect(order).toEqual(["owner", "lines", "rows"]);
   });
 
   it("does nothing for a payment that no longer exists", async () => {

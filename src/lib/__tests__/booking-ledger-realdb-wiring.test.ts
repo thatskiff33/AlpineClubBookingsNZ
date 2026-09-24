@@ -31,7 +31,10 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "utf8",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
-    expect(suite).toContain("leaves the ledger's settled total equal to the mirror the same chokepoint derives");
+    expect(suite).toContain("matches the mirror's own arithmetic where both read the same rows: captures, and refunds with a refund row");
+    expect(suite).toContain("while the mirror keeps counting it");
+    expect(suite).toContain("posts through a REAL writer");
+    expect(suite).toContain("posts a row paid AGAIN after its mark-paid was reversed");
   });
 
   it("still gates on the harness's variable and carries its three proofs", () => {

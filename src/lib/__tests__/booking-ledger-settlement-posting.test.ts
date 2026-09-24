@@ -188,6 +188,57 @@ describe("planSettlementLines — a source that stops holding is reversed, never
   });
 });
 
+describe("planSettlementLines — a source can hold, stop, and hold again (review of #3604)", () => {
+  /*
+    A mark-paid is reversed (its row flips to FAILED, the cash line is
+    reversed), an invoice is minted onto that same row, and the member pays
+    through Xero — the inbound path revives the FAILED row to SUCCEEDED. The
+    first cut saw `capture:t1` already posted and posted nothing: the real
+    receipt was silently lost. The chain fixes it.
+  */
+  const cash = posted({ id: "L1", postingKey: "capture:t1" });
+  const reversal = posted({ id: "R1", postingKey: "reversal:L1", reversesLineId: "L1", sign: -1 });
+
+  it("posts the revived source afresh, keyed off the reversal that retired its predecessor", () => {
+    const plan = planSettlementLines(
+      input({ transactions: [bank("t1", 10_000, "SUCCEEDED")], postedLines: [cash, reversal] }),
+    );
+    expect(plan.postings).toHaveLength(1);
+    // Provenance was cleared by the reversal, so this is a genuine receipt.
+    expect(plan.postings[0]).toMatchObject({
+      kind: "BANK_RECEIPT",
+      sign: 1,
+      unitCents: 10_000,
+      postingKey: "capture:t1:after:R1",
+      anchorId: "t1",
+    });
+  });
+
+  it("posts nothing more once the revived line is there — a replay finds its own key", () => {
+    const revived = posted({ id: "L2", postingKey: "capture:t1:after:R1", kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING" });
+    const plan = planSettlementLines(
+      input({ transactions: [bank("t1", 10_000, "SUCCEEDED")], postedLines: [cash, reversal, revived] }),
+    );
+    expect(plan.postings).toEqual([]);
+  });
+
+  it("reverses the LIVE line of the chain, never one already reversed", () => {
+    const revived = posted({ id: "L2", postingKey: "capture:t1:after:R1", kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING" });
+    const plan = planSettlementLines(
+      input({ transactions: [bank("t1", 10_000, "FAILED")], postedLines: [cash, reversal, revived] }),
+    );
+    expect(plan.postings).toHaveLength(1);
+    expect(plan.postings[0]).toMatchObject({ reversesLineId: "L2", postingKey: "reversal:L2", kind: "BANK_RECEIPT", sign: -1 });
+  });
+
+  it("nets to exactly what is captured now, however many times the source flipped", () => {
+    const revived = posted({ id: "L2", postingKey: "capture:t1:after:R1", kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING" });
+    const lines = [cash, reversal, revived];
+    const settled = lines.reduce((sum, line) => sum + line.sign * line.unitCents * line.quantity, 0);
+    expect(settled).toBe(10_000);
+  });
+});
+
 describe("planSettlementLines — refunds", () => {
   it("posts a recorded card refund as CARD_REFUND, negative, keyed on the refund", () => {
     const [line] = planSettlementLines(

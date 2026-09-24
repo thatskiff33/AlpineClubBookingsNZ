@@ -10,7 +10,7 @@
  * client, no logger, no `server-only` — so a census, a route and a page can all
  * import it without dragging anything behind it.
  *
- * NOT the same list as `isCapturedTransactionStatus` in `payment-transactions.ts`,
+ * NOT the same list as `isCapturedTransactionStatus` in `payment-transaction-status.ts`,
  * which asks the question of ONE `PaymentTransaction` rather than of the
  * aggregate. The two spell the same three values today and answer different
  * questions; merging them would be a claim about the ledger that this list is not
@@ -122,7 +122,7 @@ export interface BookingPaymentState {
  * came to sit in four modules. Now it asks this.
  *
  * Still the AGGREGATE `Payment` question. Not `isCapturedTransactionStatus` in
- * `payment-transactions.ts`, which asks it of one `PaymentTransaction`; the two
+ * `payment-transaction-status.ts`, which asks it of one `PaymentTransaction`; the two
  * spell the same three values and answer different questions, and the docblock
  * at the top of this file is the standing warning against merging them.
  */

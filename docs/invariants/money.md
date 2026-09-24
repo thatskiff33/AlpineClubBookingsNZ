@@ -489,9 +489,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 
 - **A booking's settlement lines converge from its payment rows, at the place
   the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
-  runs at the end of `reconcilePaymentAggregates` — which every capture,
-  receipt and refund writer already ends in — and from the two paths that
-  bypass it (the manual mark-paid settle and its reversal). It posts one line
+  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  that set the payment's columns themselves: the manual mark-paid settle, its
+  reversal, and the Xero payment-received receipt. It posts one line
   per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
   when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
   refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
@@ -500,14 +500,17 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   **A source that stops holding is reversed, never edited.** A mark-paid
   reversal flips its row to `FAILED` (`INV-PAY-045`) and a refund can fail
   after it was recorded; the sync then posts a reversal copied from the line,
-  once, keyed by the line's id. It never re-derives a method from a row whose
-  reason has since changed.
+  once, keyed by the line's id. It never re-derives a method from the
+  payment's provenance, which a reversal clears.
 
   **"Captured" and "recorded" are the mirror's own predicates**, in
-  `payment-transaction-status.ts`, imported by both, so the ledger's settled
-  total equals `amountCents - refundedAmountCents` for the rows it posts —
-  proved against PostgreSQL in `booking-ledger-settlement-sync.realdb.test.ts`.
-  A line whose source amount later changes is reported, not corrected.
+  `payment-transaction-status.ts`, so the ledger's captures equal
+  `Payment.amountCents` whenever anything is captured. Its refunds do NOT
+  always equal `refundedAmountCents`: that column only rises, is seeded
+  without rows on legacy payments, and is moved by credit and hand-back
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
+  (#3583) classifies those as known divergences. A line whose source amount
+  later changes is reported, not corrected.
 
 ## INV-MONEY-006
 

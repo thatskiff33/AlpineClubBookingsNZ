@@ -6,26 +6,36 @@
  * posted for it, it returns what must be posted to make the two agree — and
  * nothing else. It reads nothing and writes nothing.
  *
- * IT CONVERGES RATHER THAN RECORDING EVENTS. Every capture, receipt and refund
- * writer ends in `reconcilePaymentAggregates`, the one place the `Payment`
- * mirror is derived from these same rows; the sync runs there (and from the two
- * manual paths that bypass it), so the ledger is re-derived from the rows each
- * time and a writer nobody has thought of yet is covered anyway. Keys
- * (`INV-MONEY-033`) make a re-run post nothing.
+ * IT CONVERGES RATHER THAN RECORDING EVENTS. The sync runs where the `Payment`
+ * mirror is derived from these same rows (`reconcilePaymentAggregates`) and
+ * from the three writers that set the mirror themselves (the manual settle, its
+ * reversal, the Xero receipt path), so the ledger is re-derived from the rows
+ * each time rather than from each writer's idea of what happened. Keys
+ * (`INV-MONEY-033`) make a re-run post nothing. "Every writer" is a claim to
+ * CHECK, not to assume: review of #3604 traced them all and found one the
+ * first cut had missed.
  *
  * INSERT-ONLY WOULD NOT BE SOUND, and that was checked, not assumed. A captured
  * transaction can stop being captured: reversing a manual mark-paid flips the
  * row from SUCCEEDED to FAILED (`INV-PAY-045`), and a Stripe refund can fail
  * after it was recorded. So a posted line whose source no longer holds is
- * REVERSED — a new line, the original never touched. Each source flips at most
- * once (a reversed mark-paid is never resurrected; the settle mints a new row),
- * so each line is reversed at most once, and the reversal is keyed by the
- * reversed line's id.
+ * REVERSED — a new line, the original never touched, keyed by that line's id.
+ *
+ * AND A SOURCE CAN HOLD AGAIN. The first cut assumed each source flips at most
+ * once; review of #3604 showed a reversed mark-paid row can be paid through
+ * Xero later (the inbound path revives a FAILED Internet Banking row). So each
+ * source's lines form a chain — capture, reversal, capture again — and the
+ * planner walks it to find the one line live now (see `walk`).
  */
 import type { PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
-import { captureKey, refundKey, reversalKey } from "@/lib/booking-ledger-posting-keys";
+import {
+  afterReversalKey,
+  captureKey,
+  refundKey,
+  reversalKey,
+} from "@/lib/booking-ledger-posting-keys";
 import { isCapturedTransactionStatus, isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 
 export type SettlementSourceTransaction = {
@@ -93,7 +103,7 @@ function captureShape(
   }
   return manuallySettled
     ? { kind: "CASH_RECORDED", settlementMethod: "CASH", narration: "Payment recorded by an officer" }
-    : { kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING", narration: "Bank transfer received" };
+    : { kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING", narration: "Internet Banking payment received" };
 }
 
 export function planSettlementLines(input: SettlementPlanInput): SettlementPlan {
@@ -101,93 +111,103 @@ export function planSettlementLines(input: SettlementPlanInput): SettlementPlan 
   const amountDrift: SettlementPlan["amountDrift"] = [];
 
   const byKey = new Map<string, PostedSettlementLine>();
-  const reversedIds = new Set<string>();
+  const reversalOf = new Map<string, PostedSettlementLine>();
   for (const line of input.postedLines) {
     if (line.postingKey) byKey.set(line.postingKey, line);
-    if (line.reversesLineId) reversedIds.add(line.reversesLineId);
+    if (line.reversesLineId) reversalOf.set(line.reversesLineId, line);
   }
 
   const base = { bookingId: input.bookingId, lodgeId: input.lodgeId, side: "SETTLEMENT" as const };
 
-  /** Post a line for a source that holds, unless it is already there. */
-  const ensure = (
-    key: string,
-    cents: number,
-    make: () => BookingLedgerPosting,
-  ): void => {
-    const posted = byKey.get(key);
-    if (posted) {
-      const postedCents = posted.unitCents * posted.quantity;
-      if (postedCents !== cents) {
-        amountDrift.push({ postingKey: key, postedCents, sourceCents: cents });
-      }
-      return;
+  /**
+   * THE SOURCE'S CHAIN. A source can hold, stop holding, and hold again — a
+   * mark-paid reversed, then the same row paid through Xero (review of #3604).
+   * Its lines form a chain: the first under the base key, each later one under
+   * `afterReversalKey(base, <the reversal that retired its predecessor>)`.
+   * Walking it gives the one line that is live now (if any) and the key the
+   * next line would take. Keyed by the reversal, so a replay finds its own
+   * line and posts nothing.
+   */
+  const walk = (baseKey: string): { live: PostedSettlementLine | null; nextKey: string } => {
+    let current = byKey.get(baseKey);
+    let nextKey = baseKey;
+    while (current) {
+      const reversal = reversalOf.get(current.id);
+      if (!reversal) return { live: current, nextKey };
+      nextKey = afterReversalKey(baseKey, reversal.id);
+      current = byKey.get(nextKey);
     }
-    postings.push(make());
+    return { live: null, nextKey };
   };
 
-  /** Reverse a posted line whose source no longer holds, unless already reversed. */
-  const retire = (key: string): void => {
-    const posted = byKey.get(key);
-    if (!posted || reversedIds.has(posted.id)) return;
+  /** Converge one source: post if it holds and nothing live stands; reverse if it does not. */
+  const converge = (
+    baseKey: string,
+    holds: boolean,
+    cents: number,
+    make: (postingKey: string) => BookingLedgerPosting,
+  ): void => {
+    const { live, nextKey } = walk(baseKey);
+    if (holds) {
+      if (live) {
+        const postedCents = live.unitCents * live.quantity;
+        if (postedCents !== cents) {
+          amountDrift.push({ postingKey: live.postingKey ?? baseKey, postedCents, sourceCents: cents });
+        }
+        return;
+      }
+      postings.push(make(nextKey));
+      return;
+    }
+    if (!live) return;
     postings.push({
       ...base,
-      kind: posted.kind,
-      sign: posted.sign === 1 ? -1 : 1,
-      quantity: posted.quantity,
-      unitCents: posted.unitCents,
-      anchorKind: posted.anchorKind,
-      anchorId: posted.anchorId,
-      // Copied from the line, never re-derived from the source: by now the
-      // source's reason or the payment's provenance may say something else.
-      settlementMethod: posted.settlementMethod,
-      narration: `Reversed: ${posted.narration}`,
-      reversesLineId: posted.id,
-      postingKey: reversalKey(posted.id),
+      kind: live.kind,
+      sign: live.sign === 1 ? -1 : 1,
+      quantity: live.quantity,
+      unitCents: live.unitCents,
+      anchorKind: live.anchorKind,
+      anchorId: live.anchorId,
+      // Copied from the line, never re-derived: by now the payment's
+      // provenance may have been cleared by the very reversal being recorded.
+      settlementMethod: live.settlementMethod,
+      narration: `Reversed: ${live.narration}`,
+      reversesLineId: live.id,
+      postingKey: reversalKey(live.id),
     });
   };
 
   for (const transaction of input.transactions) {
-    const key = captureKey(transaction.id);
     // A $0 capture moves no money, so it posts nothing (§9: INV-PAY-007).
-    if (isCapturedTransactionStatus(transaction.status) && transaction.amountCents > 0) {
-      ensure(key, transaction.amountCents, () => ({
-        ...base,
-        ...captureShape(transaction.source, input.manuallySettled),
-        sign: 1,
-        quantity: 1,
-        unitCents: transaction.amountCents,
-        anchorKind: "PAYMENT_TRANSACTION",
-        anchorId: transaction.id,
-        postedByMemberId:
-          transaction.source !== "STRIPE" && input.manuallySettled
-            ? input.manualActorMemberId
-            : null,
-        postingKey: key,
-      }));
-    } else {
-      retire(key);
-    }
+    const holds = isCapturedTransactionStatus(transaction.status) && transaction.amountCents > 0;
+    converge(captureKey(transaction.id), holds, transaction.amountCents, (postingKey) => ({
+      ...base,
+      ...captureShape(transaction.source, input.manuallySettled),
+      sign: 1,
+      quantity: 1,
+      unitCents: transaction.amountCents,
+      anchorKind: "PAYMENT_TRANSACTION",
+      anchorId: transaction.id,
+      postedByMemberId:
+        transaction.source !== "STRIPE" && input.manuallySettled ? input.manualActorMemberId : null,
+      postingKey,
+    }));
   }
 
   for (const refund of input.refunds) {
-    const key = refundKey(refund.id);
-    if (isRecordedRefundStatus(refund.status) && refund.amountCents > 0) {
-      ensure(key, refund.amountCents, () => ({
-        ...base,
-        kind: "CARD_REFUND",
-        sign: -1,
-        quantity: 1,
-        unitCents: refund.amountCents,
-        anchorKind: "PAYMENT_REFUND",
-        anchorId: refund.id,
-        settlementMethod: "CARD",
-        narration: "Card refund",
-        postingKey: key,
-      }));
-    } else {
-      retire(key);
-    }
+    const holds = isRecordedRefundStatus(refund.status) && refund.amountCents > 0;
+    converge(refundKey(refund.id), holds, refund.amountCents, (postingKey) => ({
+      ...base,
+      kind: "CARD_REFUND",
+      sign: -1,
+      quantity: 1,
+      unitCents: refund.amountCents,
+      anchorKind: "PAYMENT_REFUND",
+      anchorId: refund.id,
+      settlementMethod: "CARD",
+      narration: "Card refund",
+      postingKey,
+    }));
   }
 
   return { postings, amountDrift };

@@ -89,6 +89,31 @@ function createRefundStore() {
           };
         }
 
+        // #3581: the booking ledger's settlement sync, which
+        // `reconcilePaymentAggregates` now ends in, reads this shape. Answered
+        // honestly so the sync RUNS here — a double that returned the bare
+        // payment would send it down its error path on every test and prove
+        // nothing (review of #3604).
+        if (args.select?.refunds && args.select?.transactions) {
+          return {
+            bookingId: payment.bookingId,
+            manuallyMarkedPaidAt: null,
+            manuallyMarkedPaidByMemberId: null,
+            booking: { lodgeId: "lodge_1" },
+            transactions: transactions.map(({ id, source, status, amountCents }) => ({
+              id,
+              source,
+              status,
+              amountCents,
+            })),
+            refunds: [...refunds.values()].map((refund) => ({
+              id: refund.id as string,
+              status: refund.status as string,
+              amountCents: refund.amountCents as number,
+            })),
+          };
+        }
+
         if (args.select?.refundedAmountCents) {
           return { refundedAmountCents: payment.refundedAmountCents };
         }
