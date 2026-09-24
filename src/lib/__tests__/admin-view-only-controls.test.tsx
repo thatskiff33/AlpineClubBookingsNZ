@@ -1500,31 +1500,51 @@ describe("AdminMemberFieldsPage view-only gating (#1940, membership)", () => {
     vi.restoreAllMocks();
   });
 
-  it("disables field toggles and Save for a membership:view admin", async () => {
+  it("disables Edit and every field toggle for a membership:view admin", async () => {
     sessionMatrix = matrix("view", { membership: "view" });
     render(<AdminMemberFieldsPage />);
 
     expect(
-      await screen.findByRole("button", { name: /^Save$/i }),
+      await screen.findByRole("button", { name: /Edit member fields/i }),
     ).toBeDisabled();
+    for (const checkbox of screen.getAllByRole("checkbox")) {
+      expect(checkbox).toBeDisabled();
+    }
     expect(
       screen.getByText(/can view member fields but cannot change/i),
     ).toBeInTheDocument();
   });
 
-  it("enables Save for a membership:edit admin once a field is toggled", async () => {
+  // #2941: the section follows the canonical staged pattern — read-only on
+  // mount, Edit reveals Save/Cancel, Save is dirty-gated, Cancel restores.
+  it("loads read-only, and Edit then a toggle arms Save for a membership:edit admin", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
     render(<AdminMemberFieldsPage />);
 
-    const checkboxes = await screen.findAllByRole("checkbox");
+    const edit = await screen.findByRole("button", { name: /Edit member fields/i });
+    for (const checkbox of screen.getAllByRole("checkbox")) {
+      expect(checkbox).toBeDisabled();
+    }
+    expect(screen.queryByRole("button", { name: /^Save$/i })).toBeNull();
+
+    fireEvent.click(edit);
+    expect(screen.getByRole("button", { name: /^Save$/i })).toBeDisabled();
+    const checkboxes = screen.getAllByRole("checkbox");
     fireEvent.click(checkboxes[0]);
     expect(screen.getByRole("button", { name: /^Save$/i })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+    expect(screen.queryByRole("button", { name: /^Save$/i })).toBeNull();
+    expect(screen.getAllByRole("checkbox")[0]).toBeDisabled();
   });
 
   it("focuses the failure when a save is rejected with 403 (#2934)", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
     render(<AdminMemberFieldsPage />);
-    const checkboxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Edit member fields/i }),
+    );
+    const checkboxes = screen.getAllByRole("checkbox");
     fireEvent.click(checkboxes[0]);
 
     vi.stubGlobal(

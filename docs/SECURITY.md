@@ -98,6 +98,45 @@ The browser spec covers programmatic paste and keyboard entry. HTML autofill set
 the `value` property rather than the attribute, which is the same seam typing
 uses, so it is reasoned rather than observed.
 
+## Dietary/allergy information (special-category data)
+
+Audience: Developer, Agent, Operator.
+
+`Member.dietaryRequirements` (#2941) holds health-related personal information,
+children's included. The rule is `INV-PRIV-022` in
+[`invariants/analytics-and-privacy.md`](invariants/analytics-and-privacy.md#inv-priv-022);
+this section records how it is enforced.
+
+- **Absent by default, not filtered.** Every application Prisma client omits the
+  column (`src/lib/prisma-global-omit.ts`), so a Member read that does not ask
+  for it does not carry it — including nested includes and the row an update
+  returns. `src/lib/member-dietary.ts` is the only module that asks, and only for
+  a caller holding a grant: the member themself (the grant takes their session),
+  their own data export, an admin whose OWN database row and access roles reach
+  **membership** (the grant re-reads them and ignores any session matrix), or a
+  merge whose Full Admin the grant re-checks in the database, scoped to the two
+  members being merged. A grant is an opaque object whose authority lives in a
+  module-private map, so a copy of one is not a grant.
+- **The type does not say so.** `src/lib/prisma.ts` keeps the plain
+  `PrismaClient` type, so the compiler still shows the field on every row; a read
+  outside the module gets `undefined`, never the value.
+  `member-dietary-access-census.test.ts` is a TEXT scan of `src/`, `scripts/`,
+  `prisma/` and `e2e/`. It fails on any other select, local omit override,
+  raw-SQL read of the column, whole-row raw read or omit-less client; it confines
+  the field's spelling (in `src/`), imports of the module, and calls of the merge
+  engine (which mints a scoped grant internally) to listed files, none on an
+  egress path, and refuses a re-export, exported alias or minting wrapper of a
+  grant or reader. It does
+  NOT trace data flow: a listed file reading the field off an ordinary row, or
+  passing a value it legitimately holds onward, stays green. Review covers that.
+- **Redaction as a backstop.** The log/Sentry redactor strips `dietary`/`allerg`
+  keys, and the audit sanitizer redacts any string or structure under such a key
+  while keeping the booleans that record which field changed.
+- **The AI diagnostics role cannot read it.** Its Member grant is a column
+  allowlist (`provision-role.ts`) that does not include the column.
+- **Backups contain it**, like every other column; see
+  [`guides/backups.md`](guides/backups.md).
+
 ## Token-bearing URL paths
 
 ### Context

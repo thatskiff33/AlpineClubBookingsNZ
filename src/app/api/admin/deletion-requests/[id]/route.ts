@@ -82,6 +82,7 @@ import {
   XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
   XeroContactCreateBlocksDeletionError,
 } from "@/lib/xero-contact-create-recovery";
+import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -959,6 +960,9 @@ export async function POST(
           // Billing-family removal sweep (#1932, E6): the member is leaving all
           // families here, so clear any billing-family selection they hold.
           billingFamilyGroupId: null,
+          // #2941 (INV-PRIV-022): dietary/allergy information is erased with
+          // the rest of the person, regardless of the club toggle.
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 
