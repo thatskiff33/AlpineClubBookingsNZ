@@ -12,6 +12,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import type { RefundMethod } from "@/lib/xero-refund-method";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * HOW THE MONEY WENT BACK, as the Xero document will say it (`INV-PAY-101`,
@@ -108,6 +109,7 @@ export async function dispatchEditReviewXeroSettlement({
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
   additionalPaymentIntentId,
+  format,
 }: {
   bookingId: string;
   taskId: string;
@@ -132,6 +134,8 @@ export async function dispatchEditReviewXeroSettlement({
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
   additionalPaymentIntentId: string | null;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   /**
    * Every edit-time settlement in this repository computes an
@@ -294,6 +298,7 @@ export async function dispatchEditReviewXeroSettlement({
       await recordShortEditReviewChargeInvoice({
         outcome: queued.supplementaryInvoice,
         bookingId,
+        format,
         bookingModificationId: ask.bookingModificationId,
         // #3193: THIS TASK, and THIS TASK'S OWN SHARE, are what a second ask is
         // anchored to and what it bills. The combined total above is what the

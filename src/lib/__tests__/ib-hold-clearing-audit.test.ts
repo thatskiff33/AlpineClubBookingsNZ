@@ -9,6 +9,7 @@ import {
   type IbAppliedCreditStrandRow,
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-audit";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeRow(overrides: Partial<IbHoldClearingRow> = {}): IbHoldClearingRow {
   return {
@@ -329,7 +330,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
       noInvoiceReleasedHolds: 0,
       underCleared: [],
       totalDeltaCents: 0,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(report).toContain("Total open delta:              $0.00");
     expect(report).toContain("No under-cleared invoices. Nothing to repair.");
@@ -366,7 +367,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
       noInvoiceReleasedHolds: 0,
       underCleared: [finding],
       totalDeltaCents: 122956,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Thousands grouping, as `formatCents` renders it everywhere else: catches
     // a swap back to a hand-rolled `toFixed(2)` (which would print "$1234.56").

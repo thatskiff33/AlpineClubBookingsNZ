@@ -136,6 +136,7 @@ import type {
 import { POST } from "@/app/api/bookings/[id]/exception-requests/route";
 import { requireCalendarDate } from "@/lib/club-time";
 import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -215,6 +216,7 @@ function snapshotOf(base: ProposalParty, proposed: ProposalParty) {
 
 function approvalHooks() {
   return buildPolicyExceptionApprovalHooks({
+    format: CLUB_FORMAT_TEST,
     todayAtClub: FIXTURE_CLUB_DAY,
     // #3232 (`INV-LOCK-004`): resolved before the approval opens its transaction,
     // exactly as the club day above is. This suite is about the frozen frame, not

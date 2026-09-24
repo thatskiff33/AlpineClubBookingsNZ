@@ -87,6 +87,7 @@ import {
 } from "@/lib/audit-structured-detail";
 import { getAuditTimelinePage } from "@/lib/audit-query";
 import { buildBookingHistoryItems } from "@/lib/booking-history";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ACTOR = "officer-1";
 const SUBJECT = "member-1";
@@ -161,6 +162,7 @@ async function timelineEntry(
     member: { findMany: async () => [] },
   };
   const page = await getAuditTimelinePage({
+    format: CLUB_FORMAT_TEST,
     db: db as never,
     where: {},
     page: 1,
@@ -718,7 +720,7 @@ describe("who the recovered detail reaches (#2704 with #2695)", () => {
           createdAt: new Date("2026-06-02T00:00:00.000Z"),
         },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
     const detail = items.find((item) => item.id === "audit-audit-1")?.detail ?? "";
 
     expect(detail).toContain("Your card was declined.");

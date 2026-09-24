@@ -29,6 +29,7 @@ import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // N-02: Admin alert - new booking
 export async function sendAdminNewBookingAlert(data: {
@@ -40,18 +41,20 @@ export async function sendAdminNewBookingAlert(data: {
   status: string;
   reviewReason?: string | null;
   memberJustification?: string | null;
-}) {
+},
+  format: ClubFormat,
+) {
   await sendToAdmins({
     subject: data.reviewReason
       ? `Booking Review Required: ${data.memberName}`
       : `New Booking: ${data.memberName} (${data.status})`,
-    html: await renderEmailHtml(() => adminNewBookingTemplate(data)),
+    html: await renderEmailHtml(() => adminNewBookingTemplate(data, format)),
     templateName: "admin-new-booking",
     templateData: {
       ...data,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      total: formatMoneyCents(data.totalCents),
+      total: formatMoneyCents(data.totalCents, format),
       reviewReason: data.reviewReason ?? "",
       // #2268: pre-composed optional line — the flat body has no conditional
       // syntax, so a routine booking must not print an empty review paragraph.
@@ -350,7 +353,9 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
   guestCount: number;
   totalCents: number;
   holdUntil: Date;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/bookings`;
 
@@ -364,14 +369,14 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
       totalCents: data.totalCents,
       holdUntil: data.holdUntil,
       reviewUrl,
-    })),
+    }, format)),
     templateName: "admin-booking-request-hold-expired",
     templateData: {
       requesterName: data.requesterName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
-      total: formatMoneyCents(data.totalCents),
+      total: formatMoneyCents(data.totalCents, format),
       holdUntil: emailClubDateTime(data.holdUntil),
       reviewUrl,
     },
@@ -394,7 +399,9 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
   checkOut: Date;
   guestCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/bookings`;
 
@@ -407,14 +414,14 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
       guestCount: data.guestCount,
       totalCents: data.totalCents,
       reviewUrl,
-    })),
+    }, format)),
     templateName: "admin-booking-request-hold-cancelled",
     templateData: {
       requesterName: data.requesterName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
-      total: formatMoneyCents(data.totalCents),
+      total: formatMoneyCents(data.totalCents, format),
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",
@@ -440,7 +447,9 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
   totalCents: number;
   holdUntil: Date;
   parentUnpaid: boolean;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/bookings`;
 
@@ -455,14 +464,14 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
       holdUntil: data.holdUntil,
       reviewUrl,
       parentUnpaid: data.parentUnpaid,
-    })),
+    }, format)),
     templateName: "admin-split-settlement-unpaid",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
-      total: formatMoneyCents(data.totalCents),
+      total: formatMoneyCents(data.totalCents, format),
       holdUntil: emailClubDateTime(data.holdUntil),
       // #2268: the outcome-dependent lead paragraph, built from the same
       // helper as the hand-built HTML. The flat body used to assert that a
@@ -492,7 +501,9 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
   guestCount: number;
   totalCents: number;
   parentUnpaid: boolean;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/bookings`;
 
@@ -506,14 +517,14 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
       totalCents: data.totalCents,
       reviewUrl,
       parentUnpaid: data.parentUnpaid,
-    })),
+    }, format)),
     templateName: "admin-split-settlement-cancelled",
     templateData: {
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
-      total: formatMoneyCents(data.totalCents),
+      total: formatMoneyCents(data.totalCents, format),
       // #2268: the outcome-dependent lead paragraph, built from the same
       // helper as the hand-built HTML. The flat body used to assert that the
       // member's own linked booking was settled and unaffected even when it
@@ -535,7 +546,9 @@ export async function sendAdminSchoolManualInvoiceEmail(data: {
   checkOut: Date;
   guestCount: number;
   totalCents: number;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", {})}`;
 
@@ -549,7 +562,7 @@ export async function sendAdminSchoolManualInvoiceEmail(data: {
       guestCount: data.guestCount,
       totalCents: data.totalCents,
       reviewUrl,
-    })),
+    }, format)),
     templateName: "admin-school-manual-invoice",
     templateData: {
       schoolName: data.schoolName,
@@ -558,7 +571,7 @@ export async function sendAdminSchoolManualInvoiceEmail(data: {
       checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       totalCents: data.totalCents,
-      amount: formatMoneyCents(data.totalCents),
+      amount: formatMoneyCents(data.totalCents, format),
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",
@@ -594,7 +607,9 @@ export async function sendAdminWholeLodgeManualInvoiceEmail(data: {
    */
   appliedCreditCents?: number;
   paymentReference: string;
-}) {
+},
+  format: ClubFormat,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", {})}`;
 
@@ -610,7 +625,7 @@ export async function sendAdminWholeLodgeManualInvoiceEmail(data: {
       appliedCreditCents: data.appliedCreditCents ?? 0,
       paymentReference: data.paymentReference,
       reviewUrl,
-    })),
+    }, format)),
     templateName: "admin-whole-lodge-manual-invoice",
     templateData: {
       memberName: data.memberName,
@@ -626,6 +641,7 @@ export async function sendAdminWholeLodgeManualInvoiceEmail(data: {
           data.totalCents,
           data.appliedCreditCents ?? 0,
         ),
+        format,
       ),
       paymentReference: data.paymentReference,
       reviewUrl,

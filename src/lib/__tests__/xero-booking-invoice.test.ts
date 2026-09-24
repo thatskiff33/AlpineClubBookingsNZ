@@ -260,6 +260,7 @@ import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // encryptToken is async (#2079); precompute the fixture ciphertexts once so the
 // synchronous mock-setup blocks below need no await. The stubbed token key
@@ -2515,6 +2516,7 @@ describe("createXeroCreditNoteForModification", () => {
 
     await expect(
       createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1",
         refundAmountCents: 3200,
         bookingModificationId: "mod_1",

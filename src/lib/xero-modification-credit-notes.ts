@@ -37,6 +37,7 @@ import {
   type RefundMethod,
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
+import type { ClubFormat } from "@/lib/club-format";
 
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;
@@ -53,6 +54,12 @@ export async function createXeroCreditNoteForModification(params: {
    * existed, which were all card refunds by this builder's own history.
    */
   refundMethod?: RefundMethod;
+  /**
+   * The club's format (#3565), for any amount a line description renders (a
+   * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
+   * by the job or request that raised this document, never here.
+   */
+  format: ClubFormat;
 }): Promise<string | null> {
   const {
     bookingId,
@@ -121,7 +128,7 @@ export async function createXeroCreditNoteForModification(params: {
         bookingModificationId,
         document: "MODIFICATION_CREDIT_NOTE",
         billedCents: refundAmountCents,
-      })
+      }, params.format)
     : // A legacy row anchored on the booking has no edit behind it; nothing
       // to itemise and nothing to record, as the account-credit note does.
       null;

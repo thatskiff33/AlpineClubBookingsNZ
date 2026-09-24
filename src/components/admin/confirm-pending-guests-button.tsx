@@ -23,6 +23,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { isPaymentReceivedFinalisationPending } from "@/lib/payment-recovery-contract";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const CAPTURED_CARD_RECOVERY_MESSAGE =
   "The saved card was charged, but the booking could not be finalised yet. Do not charge again. Reload the booking and check its payment status before taking another payment action.";
@@ -61,6 +62,7 @@ export function ConfirmPendingGuestsButton({
   finalPriceCents,
   noEmails = false,
 }: ConfirmPendingGuestsButtonProps) {
+  const format = useClubFormat();
   const router = useRouter();
   // Writes /api/admin/bookings/[id]/confirm-pending-guests (bookings area). A
   // view-only bookings admin sees the action disabled (#1997); the notify
@@ -89,7 +91,7 @@ export function ConfirmPendingGuestsButton({
   const consequence = isZeroDollar
     ? "This will confirm the booking at no charge."
     : hasSavedPaymentMethod
-      ? `The member's saved card will be charged ${formatCents(finalPriceCents)}.`
+      ? `The member's saved card will be charged ${formatCents(finalPriceCents, format)}.`
       : "This will move the booking to payment-owed (no card on file).";
 
   function showActionError(message: string) {
@@ -212,7 +214,7 @@ export function ConfirmPendingGuestsButton({
           {isZeroDollar
             ? " There is no charge for this booking."
             : hasSavedPaymentMethod
-              ? ` The member's saved card will be charged ${formatCents(finalPriceCents)}.`
+              ? ` The member's saved card will be charged ${formatCents(finalPriceCents, format)}.`
               : " There is no saved card, so the booking will move to payment-owed for payment to be arranged separately."}
         </p>
         <FocusedActionError

@@ -34,6 +34,7 @@
  * environment and got lucky" is measuring nothing.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTAINER_ZONE = "America/Denver";
 process.env.NEXT_PUBLIC_TZ = CONTAINER_ZONE;
@@ -99,7 +100,7 @@ function rows(): Array<{ label: string; value: string }> {
     oldFinalPriceCents: 12000,
     newFinalPriceCents: 12000,
     changeFeeCents: 0,
-  });
+  }, CLUB_FORMAT_TEST);
 }
 
 const valueOf = (label: string) =>
@@ -177,7 +178,7 @@ describe("the modification rows name the stored nights, under every zone", () =>
       oldFinalPriceCents: 12000,
       newFinalPriceCents: 18000,
       changeFeeCents: 0,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(unchanged.find((row) => row.label === "Dates")?.value).toBe(
       "1 Aug 2026 – 3 Aug 2026"
@@ -199,7 +200,7 @@ describe("the modification rows name the stored nights, under every zone", () =>
         oldFinalPriceCents: 12000,
         newFinalPriceCents: 12000,
         changeFeeCents: 0,
-      })
+      }, CLUB_FORMAT_TEST)
     ).toThrow(/takes a stored calendar day, not a moment/);
   });
 });

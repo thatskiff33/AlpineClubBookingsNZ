@@ -9,6 +9,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * E14 (#1944): audited manual mark-paid / mark-unpaid for a member subscription,
@@ -184,6 +185,9 @@ function receiptAmountCents(
 export async function applyManualSubscriptionPayment(
   input: ApplyManualSubscriptionPaymentInput,
 ): Promise<ManualSubscriptionPaymentResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const trimmedNote = input.note?.trim() ? input.note.trim() : null;
   const note = trimmedNote ? trimmedNote.slice(0, MANUAL_PAYMENT_NOTE_MAX) : null;
   const notifyMember = input.direction === "paid" && input.notifyMember;
@@ -471,7 +475,7 @@ export async function applyManualSubscriptionPayment(
           seasonYear: recipient.seasonYear,
           amountCents: recipient.amountCents,
           recordedAt: recipient.recordedAt,
-        });
+        }, format);
         // "sent" means the mailer accepted and dispatched it. Anything else —
         // a suppression, a club-internal placeholder address — means the member
         // will not read this, and the admin has to hear that.

@@ -101,6 +101,19 @@ vi.mock("@/lib/prisma", () => {
   return { prisma: client };
 });
 
+// #3565: the outbox reads the club's format once per batch through the
+// request-scoped server reader; the fake prisma above has no
+// `clubFormatSettings`, so pin the test fixture rather than fall through to
+// the environment seed.
+vi.mock("@/lib/club-format-server", async () => {
+  const { bindClubFormat } = await import("@/lib/club-format-bound");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+  return {
+    clubFormatValues: vi.fn(async () => CLUB_FORMAT_TEST),
+    clubFormat: vi.fn(async () => bindClubFormat(CLUB_FORMAT_TEST)),
+  };
+});
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
@@ -226,6 +239,7 @@ import {
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
@@ -1906,7 +1920,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 0,
     });
 
-    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, {
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       syncOperationId: "op_account_credit_1",
     });
@@ -1949,6 +1963,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       shortfallReviewTaskId: undefined,
       createdByMemberId: "admin_1",
       syncOperationId: "op_supplementary_1",
+      format: CLUB_FORMAT_TEST,
     });
   });
 
@@ -1999,6 +2014,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       shortfallReviewTaskId: "task_2",
       createdByMemberId: "admin_1",
       syncOperationId: "op_second_ask_1",
+      format: CLUB_FORMAT_TEST,
     });
   });
 
@@ -2033,6 +2049,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       bookingModificationId: "mod_1",
       createdByMemberId: "admin_1",
       syncOperationId: "op_mod_credit_note_1",
+      format: CLUB_FORMAT_TEST,
     });
   });
 
@@ -3545,6 +3562,7 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
         bookingModificationId: "mod_1",
       });
       await recordShortEditReviewChargeInvoice({
+        format: CLUB_FORMAT_TEST,
         outcome: queued.outcome,
         bookingId: "booking_1",
         bookingModificationId: "mod_1",
@@ -3760,6 +3778,7 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
     expect(queued.outcome).toBe("short-sent");
 
     await recordShortEditReviewChargeInvoice({
+      format: CLUB_FORMAT_TEST,
       outcome: queued.outcome,
       bookingId: "booking_1",
       bookingModificationId: "mod_1",
@@ -3795,6 +3814,7 @@ describe("enqueueXeroSecondSupplementaryInvoiceOperation: the second ask (#3193)
     operations[0].status = "RUNNING";
 
     await recordShortEditReviewChargeInvoice({
+      format: CLUB_FORMAT_TEST,
       outcome: "short-in-flight",
       bookingId: "booking_1",
       bookingModificationId: "mod_1",

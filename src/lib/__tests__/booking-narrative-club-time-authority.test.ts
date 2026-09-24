@@ -50,6 +50,7 @@ import {
   type NarrativeBooking,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** 1 July 14:00 in Auckland, 30 June 20:00 in Denver. */
 const OCCURRED_AT = "2026-07-01T02:00:00.000Z";
@@ -115,7 +116,7 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
           amountCents: 12000,
         }),
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Before this migration the message read "30 Jun 2026" — the day it was in
     // Denver, where nobody involved in this booking lives.
@@ -131,12 +132,12 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
       club: KIRITIMATI,
       booking: booking(),
       events: paid,
-    });
+    }, CLUB_FORMAT_TEST);
     const behind = resolveBookingNarrative({
       club: PAGO,
       booking: booking(),
       events: paid,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(ahead.message).toContain("payment of $120.00 on 1 Jul 2026");
     expect(behind.message).toContain("payment of $120.00 on 30 Jun 2026");
@@ -153,12 +154,12 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
       club: AUCKLAND,
       booking: booking({ status: "CANCELLED" }),
       events,
-    });
+    }, CLUB_FORMAT_TEST);
     const behindGreenwich = resolveBookingNarrative({
       club: PAGO,
       booking: booking({ status: "CANCELLED" }),
       events,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(atTheClub.state).toBe("cancelled_post_payment");
     // Cancelled on / paid on / refunded on — all three stamps, one zone.
@@ -175,14 +176,14 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
         club: AUCKLAND,
         booking: booking({ status: "BUMPED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("released on 1 Jul 2026");
     expect(
       resolveBookingNarrative({
         club: PAGO,
         booking: booking({ status: "BUMPED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("released on 30 Jun 2026");
   });
 
@@ -194,14 +195,14 @@ describe("an instant is read in the club's zone (#3123's lead defect)", () => {
         club: AUCKLAND,
         booking: booking({ status: "CANCELLED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("was cancelled on 1 Jul 2026");
     expect(
       resolveBookingNarrative({
         club: PAGO,
         booking: booking({ status: "CANCELLED" }),
         events,
-      }).message
+      }, CLUB_FORMAT_TEST).message
     ).toContain("was cancelled on 30 Jun 2026");
   });
 });
@@ -214,7 +215,7 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
           club,
           booking: booking({ status: "PENDING" }),
           events: [],
-        }).message
+        }, CLUB_FORMAT_TEST).message
     );
 
     for (const message of rendered) {
@@ -231,12 +232,12 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
       club: KIRITIMATI,
       booking: booking(),
       events: paid,
-    }).message;
+    }, CLUB_FORMAT_TEST).message;
     const behind = resolveBookingNarrative({
       club: PAGO,
       booking: booking(),
       events: paid,
-    }).message;
+    }, CLUB_FORMAT_TEST).message;
 
     // One sentence, two kinds of date, and only one of them is allowed to move.
     expect(ahead).toContain("stay from 1 Aug 2026 to 3 Aug 2026 is confirmed");
@@ -258,7 +259,7 @@ describe("a lodge night takes no zone at all — the half a sweep would break", 
           checkIn: new Date("2026-08-01T11:30:00.000Z"),
         }),
         events: [],
-      })
+      }, CLUB_FORMAT_TEST)
     ).toThrow(/takes a stored calendar day, not a moment/);
   });
 });

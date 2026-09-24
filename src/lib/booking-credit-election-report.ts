@@ -4,6 +4,7 @@ import logger from "@/lib/logger";
 import { UNAPPLIED_CREDIT_ELECTION_AUDIT_ACTION } from "@/lib/booking-credit-election";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Reporting for a stored credit election (#2265) that a settlement had to CLEAR
@@ -55,7 +56,8 @@ import { formatCents } from "@/lib/utils";
 function operatorAvailabilitySentence(
   electionCents: number,
   availableCreditCents: number | null,
-  refundableCents: number | null
+  refundableCents: number | null,
+  format: ClubFormat,
 ): string {
   if (availableCreditCents == null || refundableCents == null) {
     return "Their live credit balance could not be read just now, so check it in the admin before deciding anything: refund at most what the account actually holds, or leave the credit for their next stay.";
@@ -65,9 +67,9 @@ function operatorAvailabilitySentence(
   }
   const movedNote =
     refundableCents < electionCents
-      ? ` — less than the ${formatCents(electionCents)} they elected, because their balance has moved since`
+      ? ` — less than the ${formatCents(electionCents, format)} they elected, because their balance has moved since`
       : "";
-  return `They now hold ${formatCents(availableCreditCents)} of account credit, so at most ${formatCents(refundableCents)} could be refunded against this booking${movedNote}. Decide whether to refund that or leave the credit for their next stay.`;
+  return `They now hold ${formatCents(availableCreditCents, format)} of account credit, so at most ${formatCents(refundableCents, format)} could be refunded against this booking${movedNote}. Decide whether to refund that or leave the credit for their next stay.`;
 }
 
 export async function reportUnappliedCreditElection({
@@ -82,6 +84,7 @@ export async function reportUnappliedCreditElection({
   source,
   reference,
   extraDetails = {},
+  format,
 }: {
   bookingId: string;
   /**
@@ -122,6 +125,8 @@ export async function reportUnappliedCreditElection({
   reference: string;
   /** Source-specific identifiers to carry into the audit row. */
   extraDetails?: Record<string, string | number | null>;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
   // The member's live balance, read once and shared by the audit row, the
   // member-visible history note and the operator alert, so the three cannot
@@ -197,13 +202,14 @@ export async function reportUnappliedCreditElection({
     // election — an operator reading "Amount: $450" against a $50 balance would
     // be reading an instruction to overpay.
     amountCents: refundableCents ?? electionCents,
-    errorMessage: `This member had asked to put ${formatCents(electionCents)} of account credit towards this booking, but it was settled for ${formatCents(paidAmountCents)} before the credit could be applied, so the saved choice has been cleared. Their account credit balance was never debited and the booking is fully settled — no money is missing and nothing was charged twice. ${operatorAvailabilitySentence(
+    errorMessage: `This member had asked to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was settled for ${formatCents(paidAmountCents, format)} before the credit could be applied, so the saved choice has been cleared. Their account credit balance was never debited and the booking is fully settled — no money is missing and nothing was charged twice. ${operatorAvailabilitySentence(
       electionCents,
       availableCreditCents,
-      refundableCents
+      refundableCents,
+      format
     )}`,
     paymentIntentId: reference,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId, source },
       "Failed to alert admins about a cleared credit election"

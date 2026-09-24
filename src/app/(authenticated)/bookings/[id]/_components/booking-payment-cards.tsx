@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
@@ -37,6 +37,7 @@ import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 export function BookingPaymentCards({
   booking,
   club,
+  money,
   viewer,
   access,
   party,
@@ -45,6 +46,7 @@ export function BookingPaymentCards({
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
+  money: BoundClubFormat;
   viewer: BookingDetailViewer;
   access: BookingDetailEditAccess;
   party: BookingDetailLinkedParty;
@@ -200,7 +202,7 @@ export function BookingPaymentCards({
                 <div>
                   <span className="text-warning-11">Amount due:</span>{" "}
                   <span className="font-medium">
-                    {formatCents(internetBankingPayment.amountCents)}
+                    {money.cents(internetBankingPayment.amountCents)}
                   </span>
                 </div>
                 {internetBankingPayment.reference ? (
@@ -293,15 +295,15 @@ export function BookingPaymentCards({
               <div className="mb-4 space-y-1 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <div className="flex items-center justify-between">
                   <span>Booking total</span>
-                  <span>{formatCents(booking.finalPriceCents)}</span>
+                  <span>{money.cents(booking.finalPriceCents)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Credit applied</span>
-                  <span>-{formatCents(creditAppliedCents)}</span>
+                  <span>-{money.cents(creditAppliedCents)}</span>
                 </div>
                 <div className="flex items-center justify-between font-medium">
                   <span>Amount due</span>
-                  <span>{formatCents(amountDueAfterCreditCents)}</span>
+                  <span>{money.cents(amountDueAfterCreditCents)}</span>
                 </div>
               </div>
             )}

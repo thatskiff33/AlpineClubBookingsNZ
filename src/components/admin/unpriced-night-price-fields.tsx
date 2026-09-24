@@ -15,6 +15,7 @@ import {
   type StoredNightPriceRepairCheck,
   type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * #3191: the part of the settle screen that asks what a booking's unpriced
@@ -107,6 +108,7 @@ export function UnpricedNightPriceFields({
   fieldIdPrefix?: string;
   disabled: boolean;
 }) {
+  const format = useClubFormat();
   const inputIdPrefix = fieldIdPrefix ?? "unpriced-night";
   /*
     #3191 fix round. Deterministic ids rather than `useFieldHint()`, because
@@ -222,7 +224,7 @@ export function UnpricedNightPriceFields({
                   number on money copy an officer reads as a receipt is how the
                   screen ends up printing a total it did not submit.
                 */
-                `These nights come to ${formatCents(check.targetCents)}, which is what this guest's stay works out to. Recording them stops this guest's nights sending the booking back here.`
+                `These nights come to ${formatCents(check.targetCents, format)}, which is what this guest's stay works out to. Recording them stops this guest's nights sending the booking back here.`
               : check.message}
       </p>
       <FieldHint id={hintId}>

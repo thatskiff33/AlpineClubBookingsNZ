@@ -91,6 +91,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { syncInternetBankingPaymentsForPaidInvoice } from "@/lib/xero-inbound/invoice-paid-effects";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const INVOICE_ID = "inv-xero-1";
 
@@ -165,7 +166,8 @@ describe("the inbound reciprocal fence", () => {
 
       const result = await syncInternetBankingPaymentsForPaidInvoice(
         invoice(),
-        ["payment-1"]
+        ["payment-1"],
+        CLUB_FORMAT_TEST
       );
 
       expect(result.manualSettlementConflicts).toBe(1);
@@ -184,7 +186,8 @@ describe("the inbound reciprocal fence", () => {
           xeroInvoiceNumber: "INV-001",
           // Cross-lane #2283: a BUILT Xero deep link, never hand-rolled.
           xeroInvoiceUrl: expect.stringContaining(INVOICE_ID),
-        })
+        }),
+        CLUB_FORMAT_TEST
       );
       expect(mocks.error).toHaveBeenCalled();
     });
@@ -200,7 +203,7 @@ describe("the inbound reciprocal fence", () => {
 
     const result = await syncInternetBankingPaymentsForPaidInvoice(invoice(), [
       "payment-1",
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(result.manualSettlementConflicts).toBe(1);
   });
@@ -211,7 +214,7 @@ describe("the inbound reciprocal fence", () => {
 
     const result = await syncInternetBankingPaymentsForPaidInvoice(invoice(), [
       "payment-1",
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(result.manualSettlementConflicts).toBe(1);
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
@@ -223,7 +226,7 @@ describe("the inbound reciprocal fence", () => {
 
     const result = await syncInternetBankingPaymentsForPaidInvoice(invoice(), [
       "payment-1",
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(result.manualSettlementConflicts).toBe(1);
     expect(mocks.sendAdminManualSettlementConflictAlert).not.toHaveBeenCalled();

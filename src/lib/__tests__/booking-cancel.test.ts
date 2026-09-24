@@ -226,6 +226,7 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** The club's zone, named rather than taken from a helper default (#3123). */
 const CLUB_ZONE = "Pacific/Auckland";
@@ -412,6 +413,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "credit"
     );
 
@@ -474,7 +476,7 @@ describe("cancelBooking credit refunds", () => {
       ordering assertion is what makes "resolved before the transaction opens"
       a measured property of this path rather than a comment.
     */
-    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", "credit");
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
 
     expect(mocks.daysUntilDate).toHaveBeenCalledWith(
       expect.anything(),
@@ -529,6 +531,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -605,6 +608,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -672,6 +676,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "credit"
     );
 
@@ -759,6 +764,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -842,6 +848,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -913,6 +920,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -995,6 +1003,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1051,6 +1060,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1120,6 +1130,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1182,6 +1193,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1255,6 +1267,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1305,6 +1318,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "credit"
     );
 
@@ -1363,6 +1377,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1389,6 +1404,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1477,6 +1493,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1517,6 +1534,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1531,6 +1549,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1548,6 +1567,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1570,6 +1590,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1608,6 +1629,7 @@ describe("cancelBooking credit refunds", () => {
         paymentId: "payment_1",
         amountCents: 5000,
         allocation: [{ paymentTransactionId: "ptx_1", amountCents: 5000 }],
+        format: CLUB_FORMAT_TEST,
         metadata: {
           bookingId: "booking_1",
           reason: "cancellation",
@@ -1641,6 +1663,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1680,6 +1703,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "credit"
       );
       expect(credit.status).toBe(200);
@@ -1698,6 +1722,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
       expect(zero.status).toBe(200);
@@ -1720,6 +1745,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1765,6 +1791,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -1827,6 +1854,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
     const second = await cancelBooking(
@@ -1834,6 +1862,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1847,7 +1876,7 @@ describe("cancelBooking credit refunds", () => {
       expect.anything(),
       1500
     );
-    // The tiered restored amount is threaded to the cancellation email (7th arg)
+    // The tiered restored amount is threaded to the cancellation email (8th arg)
     // so the member sees the policy-adjusted restore, not the full applied sum.
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
       { bookingId: "booking_credit", recipientMemberId: "member_1" },
@@ -1856,6 +1885,7 @@ describe("cancelBooking credit refunds", () => {
       expect.anything(),
       expect.anything(),
       5000,
+      CLUB_FORMAT_TEST,
       "card",
       1500,
       // The booking's lodge. This read `undefined` while the fixture carried no
@@ -1877,6 +1907,7 @@ describe("cancelBooking credit refunds", () => {
       "member_1",
       "MEMBER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card"
     );
 
@@ -1921,6 +1952,7 @@ describe("cancelBooking credit refunds", () => {
         "officer-1", // NOT the owner (member_1)
         "USER", // an officer keeps their honest legacy authorization role
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { hasBookingsEditAccess: true }
       );
@@ -1945,6 +1977,7 @@ describe("cancelBooking credit refunds", () => {
         "intruder-1",
         "USER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
         // No hasBookingsEditAccess: the member-facing route passes `false` for a
         // plain member and for a read-only admin (bookings:view, not :edit).
@@ -1962,6 +1995,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "USER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
       expect(result.status).toBe(200);
@@ -1976,6 +2010,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
       expect(result.status).toBe(200);
@@ -1987,6 +2022,7 @@ describe("cancelBooking credit refunds", () => {
         "officer-1",
         "USER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { hasBookingsEditAccess: true }
       );
@@ -1995,6 +2031,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2056,6 +2093,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { notifyMember: false }
       );
@@ -2077,6 +2115,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2091,6 +2130,7 @@ describe("cancelBooking credit refunds", () => {
         "officer-1",
         "USER", // the officer keeps their honest legacy role (#1313 A2)
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { hasBookingsEditAccess: true, notifyMember: false }
       );
@@ -2106,6 +2146,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "USER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { notifyMember: false }
       );
@@ -2121,6 +2162,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "credit",
         { notifyMember: false }
       );
@@ -2157,6 +2199,7 @@ describe("cancelBooking credit refunds", () => {
         "admin-1",
         "ADMIN",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
         { notifyMember: false }
       );
@@ -2223,6 +2266,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2269,8 +2313,8 @@ describe("cancelBooking credit refunds", () => {
         })
       );
       const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
-      expect(emailCall[6]).toBe("card");
-      expect(emailCall[7]).toBe(2000);
+      expect(emailCall[7]).toBe("card");
+      expect(emailCall[8]).toBe(2000);
     });
 
     it("returns 409 and restores nothing when the under-lock re-read finds the booking already CANCELLED", async () => {
@@ -2286,6 +2330,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2310,6 +2355,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2345,7 +2391,8 @@ describe("cancelBooking credit refunds", () => {
         "bk_pending",
         "member_1",
         "MEMBER",
-        "127.0.0.1"
+        "127.0.0.1",
+        CLUB_FORMAT_TEST
       );
 
       expect(result.status).toBe(200);
@@ -2370,7 +2417,8 @@ describe("cancelBooking credit refunds", () => {
         "bk_pending",
         "member_1",
         "MEMBER",
-        "127.0.0.1"
+        "127.0.0.1",
+        CLUB_FORMAT_TEST
       );
 
       expect(result.status).toBe(409);
@@ -2401,6 +2449,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2443,6 +2492,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
       expect(resultA.status).toBe(200);
@@ -2481,6 +2531,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
       expect(resultB.status).toBe(200);
@@ -2529,6 +2580,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card",
       );
 
@@ -2569,7 +2621,8 @@ describe("cancelBooking credit refunds", () => {
         "bk_wl",
         "member_1",
         "MEMBER",
-        "127.0.0.1"
+        "127.0.0.1",
+        CLUB_FORMAT_TEST
       );
 
       const data = expectSuccess(result);
@@ -2598,6 +2651,7 @@ describe("cancelBooking credit refunds", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
         "card"
       );
 
@@ -2640,7 +2694,7 @@ describe("cancelBooking credit refunds", () => {
     // The stable contract, not an opaque failure: the fixed retry code and its
     // 409, which is what every caller of this service already keys off.
     await expect(
-      cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", "credit"),
+      cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "credit"),
     ).rejects.toMatchObject({
       code: "HOSTING_COVERAGE_PARTICIPANT_RETRY",
       statusCode: 409,
@@ -2742,7 +2796,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       payment: null,
     });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The dangling pointer is detached so a later re-quote creates a fresh hold
@@ -2775,7 +2829,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
     // lodgeId as the outer snapshot for this assertion to be meaningful.
     mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
@@ -2785,6 +2839,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       heldBooking.checkIn,
       heldBooking.checkOut,
       0,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       "lodge-1",
@@ -2799,6 +2854,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       "admin-1",
       "ADMIN",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { suppressCustomerNotification: true },
     );
@@ -2892,7 +2948,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
     mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     // The advisory lock is acquired inside the claim tx — this is the only part
@@ -2935,7 +2991,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
     mocks.txBookingFindUnique.mockResolvedValue({ status: "PENDING" });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     // The loser gets a real 409, never a false 200.
     expect(result.status).toBe(409);
@@ -2959,7 +3015,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
     mocks.txBookingFindUnique.mockResolvedValue({ status: "CANCELLED" });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(409);
     expect(lockWasAcquired()).toBe(true);
@@ -3007,7 +3063,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       payment: null,
     });
 
-    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(lockWasAcquired()).toBe(true);
@@ -3021,6 +3077,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       freshCheckIn,
       freshCheckOut,
       0,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       "lodge-fresh",
@@ -3035,6 +3092,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(),
     );
 
     // Waitlist re-process (WAITLIST_OFFERED) uses the under-lock dates + lodge.
@@ -3042,7 +3100,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       checkIn: freshCheckIn,
       checkOut: freshCheckOut,
       lodgeId: "lodge-fresh",
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Audit metadata (checkIn/checkOut/statusBefore) is derived from the
     // under-lock row: the ISO dates match the fresh window, not the stale one.
@@ -3072,7 +3130,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingFindUnique.mockResolvedValue({ ...offered });
     mocks.txBookingFindUnique.mockResolvedValue({ ...offered });
 
-    const result = await cancelBooking("held-1", "owner-1", "USER", "127.0.0.1");
+    const result = await cancelBooking("held-1", "owner-1", "USER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
@@ -3186,6 +3244,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       "admin-1",
       "ADMIN",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { requireRequestHold: true },
     );
@@ -3215,6 +3274,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       "admin-1",
       "ADMIN",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { requireRequestHold: true },
     );
@@ -3260,6 +3320,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       "admin-1",
       "ADMIN",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { requireRequestHold: true },
     );
@@ -3294,7 +3355,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
     // under lock(1); mirror the outer read so the claim commits.
     mocks.txBookingFindUnique.mockResolvedValue(pendingBooking);
 
-    const result = await cancelBooking("pending-1", "owner-1", "USER", "127.0.0.1");
+    const result = await cancelBooking("pending-1", "owner-1", "USER", "127.0.0.1", CLUB_FORMAT_TEST);
 
     expect(result.status).toBe(200);
     expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
@@ -3346,6 +3407,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
         "member_1",
         "MEMBER",
         "127.0.0.1",
+        CLUB_FORMAT_TEST,
       );
 
       expect(result.status).toBe(200);
@@ -3366,7 +3428,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       mocks.bookingFindUnique.mockResolvedValue(heldPaidBooking);
       mocks.txBookingFindUnique.mockResolvedValue(heldPaidBooking);
 
-      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1");
+      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
       const released = mocks.logAudit.mock.calls.find(
         (call) => call[0]?.action === "booking.exclusiveHold.released",
@@ -3386,7 +3448,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
       mocks.bookingFindUnique.mockResolvedValue(unheld);
       mocks.txBookingFindUnique.mockResolvedValue(unheld);
 
-      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1");
+      await cancelBooking("booking_held", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
 
       const released = mocks.logAudit.mock.calls.find(
         (call) => call[0]?.action === "booking.exclusiveHold.released",

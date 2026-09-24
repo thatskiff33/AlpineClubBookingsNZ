@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { AppProvidersClient } from "@/components/app-providers-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
-import { getClubFormat } from "@/lib/club-format-settings";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
@@ -41,13 +41,21 @@ import { clubTimeZone } from "@/lib/club-time/server";
  * New Zealand. `club-format-provider.tsx` has the reasoning and
  * `club-format-provider-mount-census.test.tsx` is its guard.
  *
- * BOTH READS HAPPEN ONCE PER RENDER PASS, side by side. `clubTimeZone()` is
- * request-memoised with React `cache()`; `getClubFormat()` deliberately is not
- * — stage 1's reader records that the caching contract belongs to #3565, which
- * is where the hot per-format call sites arrive, and this component adds
- * exactly one primary-key read of a one-row table to a render that already
- * performs several. Choosing a cross-request cache here would mean inventing an
- * invalidation contract for the admin writer a stage early.
+ * BOTH READS HAPPEN ONCE PER RENDER PASS, side by side, AND BOTH ARE MEMOISED.
+ * `clubTimeZone()` has been request-memoised with React `cache()` since CT-4.
+ * This component read the club's format through the raw `getClubFormat()` until
+ * #3565, because stage 1's reader deliberately cached nothing and recorded that
+ * the caching contract belonged to this stage, "where the hot per-format call
+ * sites arrive". #3565 chose it — React `cache()`, in
+ * `club-format-server.ts` — so the wait is over and this component takes
+ * `clubFormatValues()` like everything else.
+ *
+ * THAT IS NOT A TIDY-UP. React `cache()` memoises per FUNCTION IDENTITY, so a
+ * page that renders an amount through `clubFormat()` while this component calls
+ * `getClubFormat()` directly holds two memo entries that never share, and reads
+ * the same one-row table twice in one render pass. The values are what the
+ * browser seam needs; `clubFormatValues()` is the reader that hands them over
+ * and is the same memo `clubFormat()` builds its binding from.
  */
 
 interface AppProvidersProps {
@@ -61,7 +69,7 @@ export async function AppProviders({
   clubIdentity,
   nonce,
 }: AppProvidersProps) {
-  const [zone, format] = await Promise.all([clubTimeZone(), getClubFormat()]);
+  const [zone, format] = await Promise.all([clubTimeZone(), clubFormatValues()]);
   return (
     <AppProvidersClient
       clubIdentity={clubIdentity}

@@ -34,6 +34,7 @@ import {
   type SavedCardChargeAttempt,
   type SavedCardToCharge,
 } from "./saved-card-charge-attempt";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * Stripe API error types under which a CHARGE request was ANSWERED, so we know
@@ -249,7 +250,10 @@ export async function chargeSavedCardAttempt(params: {
   memberId: string | null;
   amountCents: number;
   card: SavedCardToCharge;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<Stripe.PaymentIntent> {
+  const { format } = params;
   const { attempt, bookingId, memberId, amountCents, card } = params;
 
   const answered = await cancelSupersededAttemptIntents(attempt, bookingId);
@@ -265,6 +269,7 @@ export async function chargeSavedCardAttempt(params: {
       return await getPaymentIntent(retrievingIntentId);
     }
     return await chargePaymentMethod({
+      format,
       amountCents,
       currency: APP_STRIPE_CURRENCY,
       customerId: card.stripeCustomerId,

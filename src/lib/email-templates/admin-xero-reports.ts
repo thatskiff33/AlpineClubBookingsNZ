@@ -22,6 +22,7 @@ import { sanitizeEmailHref } from "@/lib/app-url";
 import { emailPalette } from "@/lib/email-theme";
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
 
@@ -370,7 +371,7 @@ function creditSyncDriftDirectionLabel(kind: CreditSyncDriftItemEmail["kind"]): 
   }
 }
 
-export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail): string {
+export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail, format: ClubFormat): string {
   const p = emailPalette();
   const driftCount = report.drifts.length;
 
@@ -380,7 +381,7 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail)
     { label: "Bookings checked", value: String(report.checkedBookings) },
     { label: "Bookings deferred", value: String(report.deferredBookings) },
     { label: "Bookings with drift", value: String(driftCount) },
-    { label: "Total drift", value: formatMoneyCents(report.totalDriftCents) },
+    { label: "Total drift", value: formatMoneyCents(report.totalDriftCents, format) },
   ];
 
   const driftRows = report.drifts
@@ -390,7 +391,7 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail)
           ? drift.notes
               .map(
                 (note) =>
-                  `${escapeHtml(note.creditNoteNumber ?? "credit note")}: ${formatMoneyCents(note.appliedCents)}`
+                  `${escapeHtml(note.creditNoteNumber ?? "credit note")}: ${formatMoneyCents(note.appliedCents, format)}`
               )
               .join("; ")
           : "None allocated";
@@ -402,9 +403,9 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail)
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(drift.memberName)}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(drift.bookingId.slice(0, 8))}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(creditSyncDriftDirectionLabel(drift.kind))}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.localCents)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.xeroCents)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; font-weight: 700; border-bottom: 1px solid ${p.mist}; color: #dc2626;">${formatMoneyCents(drift.deltaCents)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.localCents, format)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatMoneyCents(drift.xeroCents, format)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; font-weight: 700; border-bottom: 1px solid ${p.mist}; color: #dc2626;">${formatMoneyCents(drift.deltaCents, format)}</td>
         <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${invoiceCell}<br><span style="color: ${p.ridge}; font-size: 12px;">${noteDetail}</span></td>
       </tr>`;
     })
@@ -413,7 +414,7 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail)
   return layout(`
     ${heading("Xero Credit Sync Drift")}
     ${alertBox(
-      `${driftCount} booking${driftCount === 1 ? "" : "s"} have applied account credit that does not match Xero's live invoice allocation (total drift ${formatMoneyCents(report.totalDriftCents)}). BookingApp uses its own known credit to net member emails (#2483); each row below shows exactly where its ledger and Xero disagree. Nothing has been changed — review and reconcile in Xero.`,
+      `${driftCount} booking${driftCount === 1 ? "" : "s"} have applied account credit that does not match Xero's live invoice allocation (total drift ${formatMoneyCents(report.totalDriftCents, format)}). BookingApp uses its own known credit to net member emails (#2483); each row below shows exactly where its ledger and Xero disagree. Nothing has been changed — review and reconcile in Xero.`,
       "warning"
     )}
     ${infoTable(summaryRows)}

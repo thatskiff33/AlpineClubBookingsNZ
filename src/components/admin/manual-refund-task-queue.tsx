@@ -67,6 +67,8 @@ import {
 } from "@/components/admin/manual-refund-task-reopen-card";
 
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
+import type { ClubFormat } from "@/lib/club-format";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -202,8 +204,8 @@ function isWithheldShare(task: ManualRefundTask): boolean {
  * an unpriced EDIT_FINANCIAL_REVIEW task shows that it is waiting for the club
  * to price it, so nobody mistakes an unknown amount for a settled $0.00.
  */
-function formatTaskAmount(task: ManualRefundTask): string {
-  if (task.amountCents !== null) return formatCents(task.amountCents);
+function formatTaskAmount(task: ManualRefundTask, format: ClubFormat): string {
+  if (task.amountCents !== null) return formatCents(task.amountCents, format);
   /*
     #3213: "unknown" means two different things on the two kinds that allow it,
     and one sentence for both would be wrong on one of them.
@@ -226,8 +228,8 @@ function formatTaskAmount(task: ManualRefundTask): string {
  * raised the task in the first place; collapsing them would hide the thing an
  * admin is being asked to look at (`StoredNightPriceEvidence`).
  */
-function formatStoredNightPrice(priceCents: number | null): string {
-  return priceCents === null ? "no stored price" : formatCents(priceCents);
+function formatStoredNightPrice(priceCents: number | null, format: ClubFormat): string {
+  return priceCents === null ? "no stored price" : formatCents(priceCents, format);
 }
 
 /** A list of lodge nights, or an explicit "none" — never an empty bullet. */
@@ -307,6 +309,7 @@ function EditFinancialReviewStrandBlock({
   heading?: string | null;
   testId?: string;
 }) {
+  const format = useClubFormat();
   const moved = strandMovedNights(strand);
   return (
     <div className="space-y-1" data-testid={testId}>
@@ -337,7 +340,7 @@ function EditFinancialReviewStrandBlock({
         Stored total for this guest:{" "}
         {strand.storedEvidence.guestTotalCents === null
           ? "none stored"
-          : formatCents(strand.storedEvidence.guestTotalCents)}
+          : formatCents(strand.storedEvidence.guestTotalCents, format)}
       </p>
       <p>
         Stored night prices before the change:{" "}
@@ -346,7 +349,7 @@ function EditFinancialReviewStrandBlock({
           : strand.storedEvidence.nightPrices
               .map(
                 (night) =>
-                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents)}`,
+                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents, format)}`,
               )
               .join(" · ")}
       </p>
@@ -359,6 +362,7 @@ function EditFinancialReviewEvidenceBlock({
 }: {
   evidence: EditFinancialReviewEvidence;
 }) {
+  const format = useClubFormat();
   /*
     #3498: DEFAULTED, because this arrives over the wire. A browser holding a
     cached bundle for the minutes after a deploy receives rows from the older
@@ -452,7 +456,7 @@ function EditFinancialReviewEvidenceBlock({
           at{" "}
           {evidence.guestsAddedByEdit.totalPriceCents === null
             ? "an amount that could not be read"
-            : formatCents(evidence.guestsAddedByEdit.totalPriceCents)}
+            : formatCents(evidence.guestsAddedByEdit.totalPriceCents, format)}
           . The booking&rsquo;s own total was left as it was, so that amount has
           not been charged.
         </p>
@@ -527,7 +531,7 @@ const DIRECTION_CHOICES: ReadonlyArray<{
   },
 ];
 
-function completionTitle({ task, resolution }: ResolutionTarget): string {
+function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFormat): string {
   if (resolution === "dismissed") {
     if (isWithheldShare(task)) {
       // #3213: not "dismiss", which on every other row means the club decided
@@ -552,7 +556,7 @@ function completionTitle({ task, resolution }: ResolutionTarget): string {
 
   return task.amountCents === null
     ? `Record this refund as paid back to ${task.memberName}?`
-    : `Record ${formatCents(task.amountCents)} as paid back to ${task.memberName}?`;
+    : `Record ${formatCents(task.amountCents, format)} as paid back to ${task.memberName}?`;
 }
 
 function resolutionDescription({
@@ -643,6 +647,7 @@ interface AutoRefundedNotice {
  * finance operator needs to quote it to somebody who can.
  */
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
+  const format = useClubFormat();
   /**
    * `refundedAt` is the payment task's `completedAt` - a real INSTANT, not a
    * lodge night - so it projects through the club's PERSISTED timezone (CT-4,
@@ -654,7 +659,7 @@ function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
   return (
     <li className="space-y-1 rounded-md border border-border px-3 py-2 text-sm">
       <p className="font-medium text-foreground">
-        {notice.memberName} - {formatCents(notice.amountCents)} refunded
+        {notice.memberName} - {formatCents(notice.amountCents, format)} refunded
         {notice.refundedAt
           ? ` on ${clubTime.instantDate(new Date(notice.refundedAt))}`
           : ""}
@@ -910,6 +915,7 @@ function AutomaticRefundNoticesCard({
  * put back and the member charged again, and the card says so in those words.
  */
 export function ManualRefundTaskQueue() {
+  const format = useClubFormat();
   const canEdit = useAdminAreaEditAccess("finance");
   const [tasks, setTasks] = useState<ManualRefundTask[] | null>(null);
   const [autoRefunded, setAutoRefunded] = useState<AutoRefundedNotice[]>([]);
@@ -1210,6 +1216,7 @@ export function ManualRefundTaskQueue() {
               targetCents: unpricedNightTargetCents(summary, deltaCents),
             }
           : checkStoredNightPriceRepair({
+              format,
               summary,
               entries,
               deltaCents,
@@ -1475,7 +1482,7 @@ export function ManualRefundTaskQueue() {
                   >
                     <div className="space-y-1 text-sm">
                       <p className="font-medium text-foreground">
-                        {task.memberName} — {formatTaskAmount(task)}
+                        {task.memberName} — {formatTaskAmount(task, format)}
                         {/*
                           #3033: the row says on its face when the amount has
                           been amended since the task was raised, rather than
@@ -1490,7 +1497,7 @@ export function ManualRefundTaskQueue() {
                         task.raisedAmountCents !== task.amountCents ? (
                           <span className="font-normal text-muted-foreground">
                             {" "}
-                            (raised at {formatCents(task.raisedAmountCents)})
+                            (raised at {formatCents(task.raisedAmountCents, format)})
                           </span>
                         ) : null}
                       </p>
@@ -1554,7 +1561,7 @@ export function ManualRefundTaskQueue() {
                         >
                           {task.amountCents === null
                             ? "Open this booking's invoices in Xero and compare them against the settled total on the change. This item cannot say how much is missing — it was raised by the recovery pass, which knows the change's combined total but not which part the sent invoice already carried. If the invoices fall short, bill the difference by hand. Then close the item with a note saying what Xero showed and what you billed."
-                            : `Open this booking's invoices in Xero and check whether they already include ${formatCents(task.amountCents)}. If they do, nothing is owed. If they fall short, raise a supplementary invoice for that amount only — never for the change's full total, which the member has already been asked for. Then close the item with a note saying what Xero showed and what you billed.`}
+                            : `Open this booking's invoices in Xero and check whether they already include ${formatCents(task.amountCents, format)}. If they do, nothing is owed. If they fall short, raise a supplementary invoice for that amount only — never for the change's full total, which the member has already been asked for. Then close the item with a note saying what Xero showed and what you billed.`}
                         </p>
                       ) : null}
                       {task.reviewEvidence ? (
@@ -1710,7 +1717,7 @@ export function ManualRefundTaskQueue() {
               {target && (
                 <>
                   <DialogHeader>
-                    <DialogTitle>{completionTitle(target)}</DialogTitle>
+                    <DialogTitle>{completionTitle(target, format)}</DialogTitle>
                     <DialogDescription>
                       {/*
                         #3033: four sentences, not two, because a dismissal means

@@ -30,6 +30,7 @@ import {
   UNMAPPED_FINANCE_CATEGORY_ID,
   validateFinanceReportMappingsInput,
 } from "@/lib/finance-report-mappings";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function row(label: string, amount: string, accountId: string | null = null) {
   return {
@@ -187,6 +188,7 @@ describe("finance report mappings", () => {
 
   it("aggregates mapped, unmapped, account-code, subtype, and comparison totals in cents", async () => {
     const summary = await buildFinanceMappedPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       from: "2026-04-01",
       to: "2026-04-30",
@@ -251,6 +253,7 @@ describe("finance report mappings", () => {
     });
 
     const summary = await buildFinanceMappedPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "REVENUE",
       from: "2026-04-01",
       to: "2026-04-30",
@@ -288,6 +291,7 @@ describe("finance report mappings", () => {
     });
 
     const summary = await buildFinanceMappedPnlSummary({
+      format: CLUB_FORMAT_TEST,
       kind: "EXPENSE",
       from: "2026-04-01",
       to: "2026-04-30",

@@ -92,6 +92,7 @@ vi.mock("@/lib/module-settings", async () => {
 });
 
 import { POST } from "@/app/api/payments/switch-to-internet-banking/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // buildInternetBankingPaymentReference uppercases the first 8 chars of the id.
 const BOOKING_ID = "abcd1234-booking";
@@ -372,6 +373,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
       2_000,
       BOOKING_ID,
       expect.anything(),
+      CLUB_FORMAT_TEST,
       expect.objectContaining({
         description: expect.stringContaining("price source STORED"),
       }),

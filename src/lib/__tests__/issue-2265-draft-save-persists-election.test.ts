@@ -118,6 +118,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { createConfirmedBooking, createDraftBooking } from "@/lib/booking-create";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const GUESTS = [
   {
@@ -139,6 +140,7 @@ function draftInput(overrides: Record<string, unknown> = {}) {
     guests: GUESTS,
     lodgeId: "lodge-1",
     guestDietarySeeding: bookingGuestDietarySeeding(false),
+    format: CLUB_FORMAT_TEST,
     ...overrides,
   };
 }
@@ -225,6 +227,7 @@ describe("#2265 a booking held for admin review keeps the election", () => {
       holdDays: 0,
       lodgeId: "lodge-1",
       guestDietarySeeding: bookingGuestDietarySeeding(false),
+      format: CLUB_FORMAT_TEST,
       ...overrides,
     };
   }
@@ -266,6 +269,7 @@ describe("#2265 a booking held for admin review keeps the election", () => {
       4_000,
       expect.any(String),
       expect.anything(),
+      CLUB_FORMAT_TEST,
     );
   });
 });

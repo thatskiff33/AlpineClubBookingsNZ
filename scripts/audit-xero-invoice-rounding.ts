@@ -24,6 +24,7 @@
  */
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
+import { getClubFormat } from "../src/lib/club-format-settings";
 import {
   formatRoundingAuditReport,
   scanXeroInvoiceRoundingDrift,
@@ -110,6 +111,8 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // The club's format (#3565), read once before the scan.
+  const format = await getClubFormat();
   const result = await scanXeroInvoiceRoundingDrift(
     prisma as unknown as RoundingAuditPrismaClient,
     {
@@ -119,7 +122,7 @@ async function main() {
     }
   );
 
-  console.log(formatRoundingAuditReport(result));
+  console.log(formatRoundingAuditReport(result, format));
 
   if (args.json) {
     console.log("");

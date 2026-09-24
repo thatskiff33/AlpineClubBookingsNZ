@@ -27,6 +27,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -161,7 +162,7 @@ async function clean(): Promise<void> {
     });
 
     it("posts credit applied and a clamp give-back one line per row, summing to what the booking holds applied", async () => {
-      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx));
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
       await prisma.$transaction((tx) =>
         credit.clampAppliedCreditToBookingPrice({ memberId: MEMBER_ID, bookingId: BOOKING_ID, newFinalPriceCents: 6_000 }, tx),
       );
@@ -174,7 +175,7 @@ async function clean(): Promise<void> {
     });
 
     it("posts a TIERED restore for exactly what was restored, anchored on the cancellation — and a second restore posts nothing and still commits", async () => {
-      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx));
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
       // The cancel path's tier restores part of it (#1164).
       const first = await prisma.$transaction((tx) => credit.restoreCreditFromBooking(MEMBER_ID, BOOKING_ID, tx, 6_000));
       expect(first).toBe(6_000);
@@ -232,7 +233,7 @@ async function clean(): Promise<void> {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      });
+      }, CLUB_FORMAT_TEST);
       expect((await lines()).filter((l) => l.kind === "BANK_REFUND")).toEqual([]);
     });
 
@@ -262,7 +263,7 @@ async function clean(): Promise<void> {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      });
+      }, CLUB_FORMAT_TEST);
 
       // A second completion is refused (the task is closed) and posts nothing.
       await expect(
@@ -274,7 +275,7 @@ async function clean(): Promise<void> {
           confirmedAmountCents: null,
           direction: "REFUND_TO_MEMBER",
           recordedNightPrices: null,
-        }),
+        }, CLUB_FORMAT_TEST),
       ).rejects.toThrow();
 
       const handBack = (await lines()).filter((l) => l.kind === "BANK_REFUND");

@@ -119,6 +119,7 @@ import { GET as dataExportGet } from "@/app/api/member/data-export/route";
 import { POST as requestDeletionPost } from "@/app/api/member/request-deletion/route";
 import { GET as adminDeletionRequestsGet } from "@/app/api/admin/deletion-requests/route";
 import { POST as adminDeletionActionPost } from "@/app/api/admin/deletion-requests/[id]/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
@@ -586,7 +587,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
     expect(isDeletedAccountRecord({ email: anonymisedEmail, deletedAt: null })).toBe(true);
 
     // Booking was cancelled
-    expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String));
+    expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String), CLUB_FORMAT_TEST);
     expect(mockedPrisma.booking.findMany).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

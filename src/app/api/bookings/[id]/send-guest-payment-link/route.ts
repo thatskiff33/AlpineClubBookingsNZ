@@ -7,6 +7,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { issueSplitGuestPaymentLink } from "@/lib/payment-link-split-guest";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * Split-booking guest-portion payment link, on demand (#1967).
@@ -101,9 +102,11 @@ export async function POST(
   // again — a transient database fault must never be reported as an
   // undeliverable address.
   let transientFailure = 0;
+  // The club's format (#3565), resolved once per request, before the loop.
+  const format = await clubFormatValues();
   for (const child of children) {
     try {
-      const result = await issueSplitGuestPaymentLink(child.id);
+      const result = await issueSplitGuestPaymentLink(child.id, format);
       if (result.outcome === "sent") sent += 1;
       else if (result.outcome === "just_sent") justSent += 1;
       else if (result.outcome === "suppressed") suppressed += 1;

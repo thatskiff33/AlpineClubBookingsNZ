@@ -11,6 +11,7 @@ import {
 import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import type { ClubFormat } from "@/lib/club-format";
 import {
   checkStoredNightPriceRepair,
   unpricedNightsExplanation,
@@ -326,6 +327,7 @@ export async function planStoredNightPriceRepair({
   requested,
   settled,
   store,
+  format,
 }: {
   task: { kind: ManualRefundTaskKind | string | null; reviewContext: unknown };
   /**
@@ -337,6 +339,8 @@ export async function planStoredNightPriceRepair({
   /** What this settle moves, or null on a dismissal, which moves nothing. */
   settled: { direction: SettlementDirectionValue; amountCents: number } | null;
   store: Prisma.TransactionClient;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
 }): Promise<StoredNightPriceRepairPlan[]> {
   /*
     #3498: EVERY repairable strand this one item covers, in the item's own
@@ -426,6 +430,7 @@ export async function planStoredNightPriceRepair({
     const check = checkStoredNightPriceRepair({
       summary,
       entries: requested[index]?.nightPrices ?? [],
+      format,
       /*
         THE SETTLED AMOUNT MOVES AT MOST ONE STRAND'S WORTH, and never a strand
         it is not about. `absorbsSettlement` says which, and says FALSE for all

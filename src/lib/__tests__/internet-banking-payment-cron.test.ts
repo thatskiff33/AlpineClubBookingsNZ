@@ -317,7 +317,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
       }),
     );
     const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
-    expect(emailCall[7]).toBe(2000);
+    expect(emailCall[8]).toBe(2000);
   });
 
   it("skips the kick when the enqueue deduped to no new operation", async () => {

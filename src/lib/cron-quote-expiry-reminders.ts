@@ -14,6 +14,7 @@ import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -30,6 +31,9 @@ export async function sendQuoteExpiryReminders(): Promise<{
   failedCount: number;
   releasedHoldCount: number;
 }> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = new Date();
   const settings = await getBookingRequestSettings();
   const leadDays = settings.quoteReminderLeadDays;
@@ -90,7 +94,7 @@ export async function sendQuoteExpiryReminders(): Promise<{
         message: quote.message,
         expiresAt,
         isReminder: true,
-      });
+      }, format);
 
       /*
         NOTHING IS STAMPED AND NO SUCCESS IS AUDITED FOR A MESSAGE THAT DID NOT

@@ -99,6 +99,7 @@ import {
   groupSettlementReapDeadline,
   reapStaleGroupSettlements,
 } from "@/lib/cron-group-settlement-reaper";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const HOUR = 60 * 60 * 1000;
@@ -272,6 +273,7 @@ describe("reapStaleGroupSettlements", () => {
         checkOut: new Date(NOW.getTime() + 16 * 24 * HOUR),
         lodgeId: "lodge-remote",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -592,7 +594,8 @@ describe("resume of interrupted organiser-cancel cleanups (#1236)", () => {
     expect(mocks.settleGroupBookingOnOrganiserCancel).toHaveBeenCalledWith(
       "org-booking-9",
       "member-9",
-      "cron:group-cancel-resume"
+      "cron:group-cancel-resume",
+      CLUB_FORMAT_TEST,
     );
     expect(result.scannedInterruptedCancels).toBe(1);
     expect(result.resumedInterruptedCancels).toBe(1);

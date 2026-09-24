@@ -53,6 +53,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -294,6 +295,9 @@ export async function PUT(
   // policy-exception path — `INV-LOCK-004`, and the reason its `todayAtClub` is
   // a required parameter.
   const todayAtClub = (await clubTime()).today();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result =
@@ -313,6 +317,7 @@ export async function PUT(
             ipAddress,
           })
         : await modifyBookingWithLinkedMoveSupport({
+            format,
             bookingId,
             actor: { id: session.user.id, role: actorRole },
             ...(parsed.data.hostingCoverageOverride

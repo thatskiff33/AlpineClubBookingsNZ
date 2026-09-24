@@ -16,6 +16,7 @@ import {
   type RoundingAuditPrismaClient,
   type RoundingAuditSettlement,
 } from "@/lib/xero-invoice-rounding-audit";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Date-only UTC-midnight helper so formatDate contiguity is stable.
 const day = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
@@ -285,7 +286,7 @@ describe("formatRoundingAuditReport", () => {
   };
 
   it("states both sources are covered and reports per-source counts", () => {
-    const report = formatRoundingAuditReport(emptyResult);
+    const report = formatRoundingAuditReport(emptyResult, CLUB_FORMAT_TEST);
     expect(report).toContain("scans BOTH per-booking invoices");
     expect(report).toContain("group-booking settlement invoices");
     expect(report).toContain("booking 4, settlement 1");
@@ -322,7 +323,7 @@ describe("formatRoundingAuditReport", () => {
       affected: [settlementDrift],
       affectedCount: 1,
       totalDriftCents: 1,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(report).toContain("[GROUP SETTLEMENT]");
     expect(report).toContain("Settlement: s9 (group g9)");
   });
@@ -338,7 +339,7 @@ describe("formatRoundingAuditReport", () => {
       affected: [],
       affectedCount: 0,
       totalDriftCents: 1,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(report).toContain("Net drift across candidates: $0.01 (+1c)");
   });
 
@@ -357,7 +358,7 @@ describe("formatRoundingAuditReport", () => {
       affected: [],
       affectedCount: 0,
       totalDriftCents: 100000,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(positive).toContain("Net drift across candidates: $1,000.00 (+100000c)");
 
     const negative = formatRoundingAuditReport({
@@ -365,7 +366,7 @@ describe("formatRoundingAuditReport", () => {
       affected: [],
       affectedCount: 0,
       totalDriftCents: -100000,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(negative).toContain("Net drift across candidates: -$1,000.00 (-100000c)");
   });
 });
@@ -663,7 +664,7 @@ describe("scanXeroInvoiceRoundingDrift (combined, read-only)", () => {
 
     expect(result.scannedInvoices).toBe(2);
     expect(result.affectedCount).toBe(0);
-    expect(formatRoundingAuditReport(result)).toContain(
+    expect(formatRoundingAuditReport(result, CLUB_FORMAT_TEST)).toContain(
       "both per-booking and group-settlement invoices are clean"
     );
   });

@@ -132,6 +132,7 @@ import {
   executeGroupSettlementRefundPlan,
   settleGroupBookingOnOrganiserCancel,
 } from "@/lib/group-cancel";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ORG_BOOKING = "org-booking-1";
 const GROUP_ID = "group-1";
@@ -209,7 +210,7 @@ beforeEach(() => {
 describe("settleGroupBookingOnOrganiserCancel", () => {
   it("is a no-op when the cancelled booking does not host a group", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue(null);
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
     expect(mocks.bookingFindMany).not.toHaveBeenCalled();
     expect(mocks.groupBookingUpdate).not.toHaveBeenCalled();
     expect(mocks.processRefund).not.toHaveBeenCalled();
@@ -221,7 +222,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       paymentMode: GroupBookingPaymentMode.EACH_PAYS_OWN,
       settlement: null,
     });
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
     expect(mocks.bookingFindMany).not.toHaveBeenCalled();
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
@@ -241,7 +242,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       child({ id: "child-2", status: BookingStatus.PAYMENT_PENDING }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.processRefund).not.toHaveBeenCalled();
     expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
@@ -265,6 +266,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       undefined
@@ -301,7 +303,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // Exactly one Stripe refund for the combined total.
     expect(mocks.processRefund).toHaveBeenCalledTimes(1);
@@ -346,6 +348,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       4500,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       undefined
@@ -376,7 +379,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.processRefund).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -400,7 +403,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       child({ id: "child-1", status: BookingStatus.CONFIRMED }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_settle_1");
     // #1881 — the FAILED claim is now a status-guarded updateMany under lock(1),
@@ -432,6 +435,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       undefined
@@ -459,7 +463,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
       where: { id: GROUP_ID },
@@ -523,7 +527,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // The FAILED claim ran but was a no-op against the now-SUCCEEDED settlement
     // (the notIn guard excludes SUCCEEDED), so it never clobbered the capture.
@@ -597,7 +601,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       child({ id: "late-child", status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 4500, payment: null }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.processRefund).toHaveBeenCalledTimes(1);
     expect(mocks.processRefund).toHaveBeenCalledWith(
@@ -643,7 +647,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // The enqueue joined the SAME transaction client the booking cancel + refund
     // mirror ran on, so the outbox row commits atomically with the child cancel:
@@ -683,7 +687,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // Internet-Banking children carry no per-child xeroInvoiceId, so the #1354
     // daily reconcile self-heal cannot recover a dropped credit note for them.
@@ -711,7 +715,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
     expect(mocks.settlementUpdateMany).not.toHaveBeenCalled();
@@ -744,7 +748,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_current");
     expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalledWith("pi_stale");
@@ -775,7 +779,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueXeroGroupSettlementVoid).toHaveBeenCalledWith(
       "settle-ib",
@@ -794,7 +798,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       child({ id: "child-1", status: BookingStatus.PAYMENT_PENDING }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
     // The child is still cancelled and its bed released.
@@ -841,7 +845,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // The plan (record of record) is persisted before any money moves.
     expect(mocks.settlementUpdate).toHaveBeenCalledWith({
@@ -875,7 +879,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // No new money move — the refund already ran on the interrupted first run.
     expect(mocks.processRefund).not.toHaveBeenCalled();
@@ -922,7 +926,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // Reused, not recomputed.
     expect(mocks.calculateRefundAmount).not.toHaveBeenCalled();
@@ -960,7 +964,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
     mocks.processRefund.mockRejectedValueOnce(new Error("stripe down"));
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     // The frozen plan MUST survive: the retry executes the recorded tier.
     // (Pre-#1351 this branch nulled it, permanently abandoning the refund.)
@@ -1018,6 +1022,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
+      CLUB_FORMAT_TEST,
       "card",
       0,
       undefined
@@ -1038,7 +1043,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueGroupSettlementRefundRecovery).toHaveBeenCalledTimes(1);
     expect(
@@ -1077,7 +1082,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       paidChild("child-neg", "pay-neg"),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.processRefund).not.toHaveBeenCalled();
     // Only the valid entry applies a mirror.
@@ -1104,7 +1109,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.processRefund).not.toHaveBeenCalled();
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
@@ -1163,7 +1168,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     // never consult the policy machinery at all.
     mocks.daysUntilDate.mockReturnValue(0);
 
-    const result = await executeGroupSettlementRefundPlan("settle-1");
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "refunded", mirroredChildren: 2 });
     expect(mocks.processRefund).toHaveBeenCalledWith({
@@ -1219,7 +1224,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
       .mockResolvedValueOnce(cancelledChild("child-1", "pay-1"))
       .mockResolvedValueOnce(cancelledChild("child-2", "pay-2", 4500));
 
-    const result = await executeGroupSettlementRefundPlan("settle-1");
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "already_refunded", mirroredChildren: 1 });
     expect(mocks.processRefund).not.toHaveBeenCalled();
@@ -1250,7 +1255,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
       },
     });
 
-    const result = await executeGroupSettlementRefundPlan("settle-1");
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
 
     // The refund itself still executes (settlement was SUCCEEDED)...
     expect(result.outcome).toBe("refunded");
@@ -1266,7 +1271,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
       settlement({ status: PaymentStatus.FAILED })
     );
 
-    const result = await executeGroupSettlementRefundPlan("settle-1");
+    const result = await executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "not_refundable", mirroredChildren: 0 });
     expect(mocks.processRefund).not.toHaveBeenCalled();
@@ -1277,7 +1282,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement());
     mocks.processRefund.mockRejectedValueOnce(new Error("stripe still down"));
 
-    await expect(executeGroupSettlementRefundPlan("settle-1")).rejects.toThrow(
+    await expect(executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST)).rejects.toThrow(
       "stripe still down"
     );
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -1293,7 +1298,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     );
     mocks.enqueueXeroRefund.mockRejectedValueOnce(new Error("outbox unavailable"));
 
-    await expect(executeGroupSettlementRefundPlan("settle-1")).rejects.toThrow(
+    await expect(executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST)).rejects.toThrow(
       "outbox unavailable"
     );
     expect(mocks.paymentUpdateMany).toHaveBeenCalledWith(
@@ -1306,7 +1311,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
 
   it("is a no-op for a missing settlement or an empty plan", async () => {
     mocks.settlementFindUnique.mockResolvedValueOnce(null);
-    await expect(executeGroupSettlementRefundPlan("gone")).resolves.toEqual({
+    await expect(executeGroupSettlementRefundPlan("gone", CLUB_FORMAT_TEST)).resolves.toEqual({
       outcome: "nothing_to_do",
       mirroredChildren: 0,
     });
@@ -1314,7 +1319,7 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     mocks.settlementFindUnique.mockResolvedValueOnce(
       settlement({ refundPlan: null })
     );
-    await expect(executeGroupSettlementRefundPlan("settle-1")).resolves.toEqual({
+    await expect(executeGroupSettlementRefundPlan("settle-1", CLUB_FORMAT_TEST)).resolves.toEqual({
       outcome: "nothing_to_do",
       mirroredChildren: 0,
     });
@@ -1342,7 +1347,7 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
       child({ id: "child-2", status: BookingStatus.PAID }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(
       mocks.reconcileHostingReviewForSystemCancellation.mock.calls.map(
@@ -1367,7 +1372,7 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
       child({ id: "child-2", status: BookingStatus.CONFIRMED }),
     ]);
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(mocks.settleHostingCoverageAfterCommit.mock.calls).toEqual([
       [{ bookingId: "child-1" }],
@@ -1385,7 +1390,7 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
     ]);
     mocks.bookingUpdate.mockResolvedValue({ count: 0 });
 
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
     expect(
       mocks.reconcileHostingReviewForSystemCancellation,
@@ -1411,7 +1416,7 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
     );
 
     await expect(
-      settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4"),
+      settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST),
     ).resolves.toBeUndefined();
 
     expect(mocks.reconcileHostingReviewForSystemCancellation).toHaveBeenCalledTimes(

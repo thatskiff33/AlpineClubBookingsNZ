@@ -15,6 +15,7 @@ import type {
   TxDb,
 } from "@/lib/config-transfer/import-types";
 import type { ExportContext } from "@/lib/config-transfer/export-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const AGE_TIERS_FILE = "membership-fees/age-tiers.csv";
 
@@ -57,7 +58,7 @@ function planCtx(
   db: ReadDb,
   mode: "merge" | "overwrite" = "merge",
 ): PlanContext {
-  return { db, files, manifest: {} as never, mode, resolutions: new Map() } as PlanContext;
+  return { db, files, manifest: {} as never, mode, resolutions: new Map(), format: CLUB_FORMAT_TEST } as PlanContext;
 }
 
 type TierSpy = { findMany: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
@@ -74,6 +75,7 @@ function applyCtx(files: Map<string, Uint8Array>, tx: TxDb, mode: "merge" | "ove
   return {
     tx, files, manifest: {} as never, mode,
     resolutions: new Map(), actorMemberId: "admin-1",
+    format: CLUB_FORMAT_TEST,
     imageRemap: new Map(), notes: { doorCodesWritten: [] },
   } as ApplyContext;
 }

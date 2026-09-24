@@ -121,6 +121,7 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -658,6 +659,9 @@ export async function joinGroupBookingAsMember(
   sessionUserId: string,
   sessionRole: string
 ): Promise<JoinGroupBookingResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const code = normaliseJoinCode(input.code);
   const group = code
     ? await prisma.groupBooking.findUnique({
@@ -1021,6 +1025,7 @@ export async function joinGroupBookingAsMember(
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
     outcome = await createConfirmedBooking({
+      format,
       // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved at the top of this
       // function, outside every transaction. `createConfirmedBooking` is
       // transaction-aware and so cannot read the club's zone for itself
@@ -1434,6 +1439,9 @@ export function parseNonMemberJoinGuests(
 export async function verifyAndCreateNonMemberJoin(
   token: string
 ): Promise<VerifyNonMemberJoinResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const tokenHash = hashActionToken(token);
   const join = await prisma.groupBookingJoin.findUnique({
     where: { verificationTokenHash: tokenHash },
@@ -1884,7 +1892,7 @@ export async function verifyAndCreateNonMemberJoin(
       priceCents,
       bookingReference: created.bookingId,
       expiresAt: paymentLinkExpiresAt,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, bookingId: created.bookingId },

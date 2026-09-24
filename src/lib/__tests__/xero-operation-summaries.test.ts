@@ -3,6 +3,7 @@ import {
   summarizeXeroOperation,
   type XeroOperationSummary,
 } from "@/lib/xero-operation-summaries";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function factValue(summary: XeroOperationSummary, label: string): string | undefined {
   return summary.facts.find((fact) => fact.label === label)?.value;
@@ -15,7 +16,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
       operationType: "CREATE",
       requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking-abcdefghijklmno" },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: create booking invoice");
     // shortId truncates ids longer than 12 chars.
     expect(factValue(summary!, "Booking")).toBe("booking-abcd...");
@@ -33,7 +34,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         description: "Joining fee",
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: create entrance-fee invoice");
     expect(factValue(summary!, "Category")).toBe("ADULT");
     expect(factValue(summary!, "Fee")).toBe("$50.00");
@@ -53,7 +54,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         waitForConfirmedAdditionalPayment: true,
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(factValue(summary!, "Price difference")).toBe("$40.00");
     expect(factValue(summary!, "Change fee")).toBe("$10.00");
     expect(factValue(summary!, "Net to bill")).toBe("$50.00");
@@ -71,7 +72,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         settlementId: "settlement-abcdefghijklmno",
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: void cancelled group-settlement invoice");
     expect(factValue(summary!, "Settlement")).toBe("settlement-a...");
   });
@@ -86,7 +87,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         watermarkCents: 7500,
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: create refund credit note");
     expect(factValue(summary!, "Refund amount")).toBe("$25.00");
     expect(factValue(summary!, "Covers refunds up to")).toBe("$75.00");
@@ -104,7 +105,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         role: "REPAIR",
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: allocate credit note to invoice");
     expect(factValue(summary!, "Amount")).toBe("$123.45");
     expect(factValue(summary!, "Role")).toBe("REPAIR");
@@ -125,7 +126,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         },
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: reduce applied credit on Xero invoice");
     expect(factValue(summary!, "Current allocation")).toBe("$40.00");
     expect(factValue(summary!, "Target allocation")).toBe("$25.00");
@@ -143,7 +144,7 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         participantId: "participant-1",
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: archive membership-cancellation contact");
     expect(factValue(summary!, "Member")).toBe("member-1");
   });
@@ -181,7 +182,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
           ],
         },
       },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Create invoice in Xero");
     expect(factValue(summary!, "Reference")).toBe("Booking abcdef12");
     expect(factValue(summary!, "Invoice number")).toBe("INV-0042");
@@ -199,7 +200,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
       operationType: "UPDATE",
       requestPayload: { invoices: [{ reference: "Booking abcdef12", lineItems: [] }], bookingId: "b1", invoiceId: "i1" },
       responsePayload: { invoice: { invoices: [{ invoiceNumber: "INV-0042", total: 90 }] } },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Update invoice in Xero");
     expect(factValue(summary!, "Total")).toBe("$90.00");
   });
@@ -219,7 +220,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
           ],
         },
       },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Create credit note in Xero");
     expect(factValue(summary!, "Credit note number")).toBe("CN-0007");
     expect(factValue(summary!, "Total")).toBe("$30.00");
@@ -233,7 +234,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
       operationType: "CREATE",
       requestPayload: { creditNotes: [{ reference: "x" }] },
       responsePayload: { existingCreditNoteId: "cn-exist-1" },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Reused existing credit note");
     expect(factValue(summary!, "Credit note")).toBe("cn-exist-1");
   });
@@ -244,7 +245,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
       operationType: "ALLOCATE",
       requestPayload: { creditNoteId: "cn-1", invoiceId: "inv-1", amountCents: 5000 },
       responsePayload: { allocations: [{ amount: 50 }] },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Allocate credit note to invoice");
     expect(factValue(summary!, "Amount")).toBe("$50.00");
     expect(factValue(summary!, "Credit note")).toBe("cn-1");
@@ -270,7 +271,7 @@ describe("summarizeXeroOperation — persisted Xero API shapes", () => {
         removedGroupIds: ["g0"],
         resultingGroups: [{ id: "g1", name: "Adult Members" }],
       },
-    });
+    }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Sync managed Xero contact groups");
     expect(factValue(summary!, "Member")).toBe("m1");
     expect(factValue(summary!, "Age tier")).toBe("ADULT");
@@ -289,7 +290,7 @@ describe("summarizeXeroOperation — redaction and fallback", () => {
         operationType: "CREATE",
         requestPayload: { some: "thing" },
         responsePayload: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).toBeNull();
 
     expect(
@@ -298,7 +299,7 @@ describe("summarizeXeroOperation — redaction and fallback", () => {
         operationType: "CREATE",
         requestPayload: { unexpected: true },
         responsePayload: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).toBeNull();
   });
 
@@ -316,7 +317,7 @@ describe("summarizeXeroOperation — redaction and fallback", () => {
         ],
       },
       responsePayload: null,
-    });
+    }, CLUB_FORMAT_TEST);
     const serialized = JSON.stringify(summary);
     expect(serialized).not.toContain("secret@example.com");
     expect(serialized).not.toContain("guest@example.com");

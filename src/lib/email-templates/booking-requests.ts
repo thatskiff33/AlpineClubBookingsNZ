@@ -21,6 +21,7 @@ import {
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import type { ClubFormat } from "@/lib/club-format";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -54,7 +55,9 @@ export function bookingRequestApprovedTemplate(data: {
   guestCount: number;
   priceCents: number;
   expiresAt: Date;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Your Booking Request Has Been Approved")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", good news — the club has approved your booking request.")}
@@ -62,7 +65,7 @@ export function bookingRequestApprovedTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Price", value: formatCents(data.priceCents) },
+      { label: "Price", value: formatCents(data.priceCents, format) },
     ])}
     ${paragraph("Use the secure link below to pay and confirm your stay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
     ${button("Pay for My Stay", data.payUrl)}
@@ -86,7 +89,9 @@ export function splitGuestPaymentLinkTemplate(data: {
   guestCount: number;
   priceCents: number;
   expiresAt: Date;
-}): string {
+},
+  format: ClubFormat,
+): string {
   return layout(`
     ${heading("Pay for Your Guests to Confirm Their Place")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", your own place is taken care of separately, but your non-member guests still need to be paid for before we can hold beds for them. Because there is no card on file for this part of your booking, please use the secure link below to pay for your guests.")}
@@ -94,7 +99,7 @@ export function splitGuestPaymentLinkTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount due", value: formatCents(data.priceCents) },
+      { label: "Amount due", value: formatCents(data.priceCents, format) },
     ])}
     ${paragraph("Use the secure link below to pay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
     ${button("Pay for My Guests", data.payUrl)}
@@ -114,10 +119,12 @@ export function bookingRequestQuoteTemplate(data: {
   expiresAt: Date;
   schoolName?: string | null;
   isReminder?: boolean;
-}): string {
+},
+  format: ClubFormat,
+): string {
   const optionRows = data.options.map((option) => ({
     label: option.label,
-    value: formatCents(option.totalCents),
+    value: formatCents(option.totalCents, format),
   }));
 
   return layout(`

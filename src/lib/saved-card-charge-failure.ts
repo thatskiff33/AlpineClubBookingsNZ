@@ -41,6 +41,7 @@ import {
   sendAdminPaymentFailureAlert,
   sendSavedCardChargeFailedEmail,
 } from "./email";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type SavedCardChargeFailureReason =
   /** Stripe rejected the payment method itself; no retry can change that. */
@@ -374,7 +375,10 @@ export async function retireAndEscalateUnusableSavedCard(params: {
   failure: Extract<SavedCardChargeFailureClassification, { outcome: "terminal" }>;
   /** Whether `releaseChargeClaim` succeeded; false changes the alert's wording. */
   claimReleased: boolean;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { booking, failure } = params;
   const { clearedPaymentRows, clearedLedgerRows } = await retireUnusableSavedCard({
     paymentMethodId: params.paymentMethodId,
@@ -424,7 +428,7 @@ export async function retireAndEscalateUnusableSavedCard(params: {
         claimReleased: params.claimReleased,
       }),
       paymentIntentId: params.paymentIntentId,
-    });
+    }, format);
   } catch (alertErr) {
     logger.error(
       { err: alertErr, bookingId: booking.id, job: "confirmPendingBookings" },

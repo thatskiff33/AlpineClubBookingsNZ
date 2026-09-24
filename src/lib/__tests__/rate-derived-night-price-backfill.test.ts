@@ -18,6 +18,7 @@ import {
   rateDerivedBackfillAuditRows,
   type StoredStrand,
 } from "@/lib/rate-derived-night-price-backfill";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const MEMBER_TYPE = "type-member";
@@ -261,7 +262,7 @@ describe("the report and the audit metadata", () => {
     expect(report).toContain("rewrite guest a (total 13000c): 2026-08-15 6500->6000, 2026-08-16 6500->7000");
     // One row per rewritten strand (its before/after pairs, small enough to
     // survive the audit writer's metadata cap), then the booking's own.
-    expect(rateDerivedBackfillAuditRows(plans[0]!)).toEqual([
+    expect(rateDerivedBackfillAuditRows(plans[0]!, CLUB_FORMAT_TEST)).toEqual([
       {
         entityType: "BookingGuest",
         entityId: "a",

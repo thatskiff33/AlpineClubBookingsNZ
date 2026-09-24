@@ -7,6 +7,7 @@ import {
   useElements,
 } from "@stripe/react-stripe-js";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface PaymentFormProps {
   bookingId?: string;
@@ -45,6 +46,7 @@ export default function PaymentForm({
   onError,
   returnUrl,
 }: PaymentFormProps) {
+  const format = useClubFormat();
   const stripe = useStripe();
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -72,7 +74,7 @@ export default function PaymentForm({
     isSplitDisplay && chargedAmountCents != null
       ? chargedAmountCents
       : amountCents;
-  const formattedAmount = formatCents(chargedToday);
+  const formattedAmount = formatCents(chargedToday, format);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,7 +150,7 @@ export default function PaymentForm({
       {isSplitDisplay && (
         <p className="text-sm text-muted-foreground">
           This covers the member places on your booking. Your non-member
-          guests&apos; places (about {formatCents(deferredGuestAmountCents!)})
+          guests&apos; places (about {formatCents(deferredGuestAmountCents!, format)})
           are charged closer to your stay, not today.
         </p>
       )}

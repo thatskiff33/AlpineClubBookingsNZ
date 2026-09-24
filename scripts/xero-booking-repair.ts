@@ -2,6 +2,7 @@ import "dotenv/config";
 import { formatBookingXeroRepairHumanSummary, runBookingXeroRepair } from "../src/lib/xero-booking-repair";
 import { prisma } from "../src/lib/prisma";
 import { parseRepairScopeDay } from "../src/lib/xero-booking-repair-utils";
+import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
@@ -138,7 +139,9 @@ async function main() {
     throw new Error("--apply-action requires --apply.");
   }
 
-  const report = await runBookingXeroRepair({
+  // The club's format (#3565), resolved once per run.
+  const format = await getClubFormat();
+  const report = await runBookingXeroRepair(format, {
     apply: args.apply,
     applyActionKeys: args.applyActionKeys,
     scope: {

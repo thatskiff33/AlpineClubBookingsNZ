@@ -157,6 +157,8 @@ import {
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
 } from "@/lib/booking-modification-lines";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -335,6 +337,9 @@ export async function modifyBookingDates({
   // money, and two todays on one date change would price it against itself.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+  // The club's format (#3565), for the same reason and at the same point: the
+  // edit renders money under both locks, so it is read before either is taken.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
@@ -1196,6 +1201,7 @@ export async function modifyBookingDates({
     // stored prices; its nights stay UNKNOWN for the reviewer.
     if (!parked) {
       await recordBookingNightAdjustments(tx, {
+        format,
         bookingId,
         guestIds: guestsForPricing.map((guest) => guest.bookingGuestId),
         targets: adjustmentTargets,
@@ -1465,6 +1471,7 @@ export async function modifyBookingDates({
   });
 
   const stripeRefundId = await executeBookingModificationRefund({
+    format,
     bookingId,
     result,
     metadataReason: "date_change_price_decrease",
@@ -1476,6 +1483,7 @@ export async function modifyBookingDates({
 
   const { additionalPaymentClientSecret, additionalPaymentIntentId } =
     await createModificationAdditionalPaymentIntent({
+      format,
       bookingId,
       result,
       reason: "date_change_price_increase",
@@ -1507,6 +1515,7 @@ export async function modifyBookingDates({
     result,
     additionalPaymentIntentId,
     linkedChangeRequestId,
+    format,
   });
 
   return {
@@ -1534,6 +1543,7 @@ async function dispatchDatePostTransactionSideEffects({
   result,
   additionalPaymentIntentId,
   linkedChangeRequestId,
+  format,
 }: {
   bookingId: string;
   actorMemberId: string;
@@ -1541,6 +1551,8 @@ async function dispatchDatePostTransactionSideEffects({
   result: DateModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
   linkedChangeRequestId: string | null;
+  /** The club's format (#3565), resolved before the edit's transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // Issue #1668: an admin override records the pricing mode, capacity decision
   // and linked change request alongside the standard date-change audit fields.
@@ -1560,7 +1572,7 @@ async function dispatchDatePostTransactionSideEffects({
       ? {}
       : { notifyMember: false };
   // #3530: what the figure is made of, line by line and in dollars.
-  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+  const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
   logAudit({
     action: result.adminOverride
       ? "booking.modify.admin_override"
@@ -1713,7 +1725,7 @@ async function dispatchDatePostTransactionSideEffects({
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
     );
   }
@@ -1726,7 +1738,7 @@ async function dispatchDatePostTransactionSideEffects({
       checkIn: result.oldCheckIn,
       checkOut: result.oldCheckOut,
       lodgeId: result.booking.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
     );
   }
@@ -1784,6 +1796,8 @@ export async function adminShiftBookingDates({
   // `clubTimeSettings.findUnique` on a second pooled connection while the global
   // cohort key and the lodge capacity key are both held (`INV-LOCK-004`).
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), before the transaction for the same reason.
+  const format = await clubFormatValues();
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
@@ -2251,7 +2265,7 @@ export async function adminShiftBookingDates({
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
       lodgeId: result.lodgeId,
-    }).catch((err) =>
+    }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),
     );
   }
@@ -2262,7 +2276,7 @@ export async function adminShiftBookingDates({
     checkIn: result.oldCheckIn,
     checkOut: result.oldCheckOut,
     lodgeId: result.lodgeId,
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error({ err, bookingId }, "Failed to process waitlist after admin date shift"),
   );
 

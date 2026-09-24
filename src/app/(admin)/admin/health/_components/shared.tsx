@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 import type { ClubFormat } from "@/lib/club-format";
 import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 export function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -150,6 +151,7 @@ export function CronError({ error }: { error: string }) {
 }
 
 export function CronResultSummary({ summary }: { summary: Record<string, unknown> }) {
+  const format = useClubFormat();
   const healthSignal = typeof summary.healthSignal === "string" ? summary.healthSignal : null;
   const sizeBytes = typeof summary.sizeBytes === "number" ? summary.sizeBytes : null;
   const minSizeBytes = typeof summary.minSizeBytes === "number" ? summary.minSizeBytes : null;
@@ -169,7 +171,7 @@ export function CronResultSummary({ summary }: { summary: Record<string, unknown
     if (driftBookings > 0) {
       return (
         <span className="text-xs font-medium text-danger-11">
-          {driftBookings} credit drift ({formatCents(totalDriftCents)})
+          {driftBookings} credit drift ({formatCents(totalDriftCents, format)})
         </span>
       );
     }

@@ -13,6 +13,7 @@ import {
   type CancellationRule,
 } from "@/lib/policies";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 describe("booking route policy decisions", () => {
   it("normalizes enabled group discount settings and ignores disabled settings", () => {
@@ -344,6 +345,7 @@ describe("booking route policy decisions", () => {
   it("validates booking credit application against balance, status, and price", () => {
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 2500,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
@@ -353,6 +355,7 @@ describe("booking route policy decisions", () => {
 
     expect(() =>
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 5000,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
@@ -362,6 +365,7 @@ describe("booking route policy decisions", () => {
 
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: 2500,
         creditBalanceCents: 3000,
         finalPriceCents: 4000,
