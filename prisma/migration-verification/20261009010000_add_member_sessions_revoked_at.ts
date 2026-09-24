@@ -67,6 +67,10 @@ const verification: DataMigrationVerification = {
         ('dmv-revoke-h-stays-off', 'dmv-revoke-h@example.invalid', 'x', 'Stays', 'Off', false, now())
       `),
       afterMigration: `
+        -- A non-UTC session, so a stamp written in session-local time lands
+        -- hours away from the UTC window checked below, even on a UTC server.
+        SET TIME ZONE 'Pacific/Auckland';
+
         -- Give the two already-off members a revocation time the trigger could
         -- never write, so a re-stamp would be visible below.
         UPDATE "Member"
@@ -78,6 +82,8 @@ const verification: DataMigrationVerification = {
         UPDATE "Member" SET "canLogin" = true WHERE "id" = 'dmv-revoke-f-re-enabled';
         UPDATE "Member" SET "canLogin" = true WHERE "id" = 'dmv-revoke-g-stays-on';
         UPDATE "Member" SET "canLogin" = false WHERE "id" = 'dmv-revoke-h-stays-off';
+
+        RESET TIME ZONE;
       `,
       expectations: [
         {
@@ -115,6 +121,19 @@ const verification: DataMigrationVerification = {
             { id: "dmv-revoke-h-stays-off", revokedAt: EARLIER },
           ],
         },
+        {
+          claim:
+            "the switch-off is stamped with the write's own UTC time, not a fixed or session-local value",
+          sql: `
+            SELECT COUNT(*)::integer AS "stampedNearNow"
+            FROM "Member"
+            WHERE "id" = 'dmv-revoke-d-switched-off'
+              AND "sessionsRevokedAt" BETWEEN
+                timezone('UTC', clock_timestamp()) - interval '1 hour'
+                AND timezone('UTC', clock_timestamp()) + interval '1 minute'
+          `,
+          rows: [{ stampedNearNow: 1 }],
+        },
       ],
     },
   ],
@@ -139,6 +158,20 @@ const verification: DataMigrationVerification = {
         "No path that switches login off stamps the column, so every later switch-off is revivable.",
       find: `BEFORE UPDATE OF "canLogin" ON "Member"`,
       replace: `BEFORE UPDATE OF "firstName" ON "Member"`,
+    },
+    {
+      name: "stamp a fixed time instead of the write's own",
+      harm:
+        "The recorded switch-off time is fiction; an old enough constant refuses no session at all, so every switch-off becomes revivable.",
+      find: `NEW."sessionsRevokedAt" := timezone('UTC', statement_timestamp());`,
+      replace: `NEW."sessionsRevokedAt" := TIMESTAMP '1970-01-01 00:00:00';`,
+    },
+    {
+      name: "stamp session-local time instead of UTC",
+      harm:
+        "On a database whose session zone is ahead of UTC the stamp lands in the future and refuses sessions started after the member signs in again; behind UTC it lands in the past and lets an earlier session through.",
+      find: `NEW."sessionsRevokedAt" := timezone('UTC', statement_timestamp());`,
+      replace: `NEW."sessionsRevokedAt" := statement_timestamp();`,
     },
     {
       name: "install no trigger",
