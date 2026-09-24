@@ -52,7 +52,7 @@ import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import {
-  captureBookingGuestDietaryCarries,
+  carryBookingGuestDietaryFrom,
   resolveBookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
@@ -690,9 +690,11 @@ export async function confirmCrossLodgeWaitlistOffer(
   // #3029 (W18, `INV-MOD-059`): this is the SAME stay rebuilt at another lodge,
   // so every guest row carries its source row's dietary/allergy value as it is
   // — null included, and even while the field is OFF. Carrying preserves; only
-  // a genuinely new guest is seeded, and there is none here.
-  const carriedDietary = await captureBookingGuestDietaryCarries(
-    prisma,
+  // a genuinely new guest is seeded, and there is none here. Nothing is read
+  // here: `createConfirmedBooking` reads each source value inside its own
+  // transaction, after the global and lodge locks, through its `tx`, so an edit
+  // committed since Phase 1 is the value carried.
+  const carriedDietary = carryBookingGuestDietaryFrom(
     entry.id,
     entry.guests.map((guest) => guest.id),
   );
@@ -748,7 +750,8 @@ export async function confirmCrossLodgeWaitlistOffer(
       // check-in; the offered stay was validated when the offer was issued.
       allowPastCheckIn: true,
       // #3029: every row carries (above), so this only matters for a source
-      // row that vanished between the two reads — then seeded like any new row.
+      // row gone by the time the create transaction reads it — then seeded like
+      // any new row.
       guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });
   } catch (err) {

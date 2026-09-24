@@ -79,40 +79,67 @@ const consentPending = (guest: ConsentShape) =>
 declare const CARRY_BRAND: unique symbol;
 
 /**
- * An existing guest row's stored value, captured before that row is replaced,
- * so the replacement row carries it as it is — null included, and even while
- * the field is OFF (carrying preserves; it never seeds). Opaque: the value
- * lives in a module-private map, so the writer holding a carry cannot read it.
+ * An existing guest row's stored value, carried onto the row that replaces it —
+ * null included, and even while the field is OFF (carrying preserves; it never
+ * seeds). Opaque: the value (or where to read it) lives in a module-private
+ * map, so the writer holding a carry cannot read it.
  */
 export interface CarriedBookingGuestDietary {
   readonly [CARRY_BRAND]: true;
 }
 
-const CARRIED_VALUES = new WeakMap<object, string | null>();
+/** A value already read under the caller's locks, or a row to read it from. */
+type CarrySource =
+  | { readonly kind: "value"; readonly value: string | null }
+  | { readonly kind: "row"; readonly bookingId: string; readonly guestId: string };
 
-function mintCarry(value: string | null): CarriedBookingGuestDietary {
+const CARRIES = new WeakMap<object, CarrySource>();
+
+function mintCarry(source: CarrySource): CarriedBookingGuestDietary {
   const carry = Object.freeze({}) as CarriedBookingGuestDietary;
-  CARRIED_VALUES.set(carry, value);
+  CARRIES.set(carry, source);
   return carry;
 }
 
 /**
- * Capture the stored values of the named guest rows OF ONE BOOKING, keyed by
- * guest id. A guest id from any other booking matches nothing (S3).
+ * Name the guest rows OF ONE BOOKING whose values the replacement rows carry,
+ * keyed by guest id (W18). Nothing is read here: {@link resolveBookingGuestDietary}
+ * reads each value inside the create transaction, after its locks, through the
+ * caller's client — so the carry is the value as it stands when the new row is
+ * written, not as it stood before the transaction opened. The read is scoped to
+ * the source booking, so a guest id from any other booking matches nothing
+ * (S3); a source row gone by then carries nothing and the guest is seeded.
  */
-export async function captureBookingGuestDietaryCarries(
-  db: BookingGuestDb,
+export function carryBookingGuestDietaryFrom(
   sourceBookingId: string,
   guestIds: readonly string[],
-): Promise<Map<string, CarriedBookingGuestDietary>> {
-  const result = new Map<string, CarriedBookingGuestDietary>();
-  if (guestIds.length === 0) return result;
-  const rows = await db.bookingGuest.findMany({
-    where: { id: { in: [...new Set(guestIds)] }, bookingId: sourceBookingId },
-    select: { id: true, dietaryRequirements: true },
-  });
-  for (const row of rows) result.set(row.id, mintCarry(row.dietaryRequirements ?? null));
-  return result;
+): Map<string, CarriedBookingGuestDietary> {
+  return new Map(
+    guestIds.map((guestId) => [
+      guestId,
+      mintCarry({ kind: "row", bookingId: sourceBookingId, guestId }),
+    ]),
+  );
+}
+
+/** Read every row-sourced carry through the caller's client, one query per source booking. */
+async function readCarriedRows(
+  db: BookingGuestDb,
+  sources: readonly Extract<CarrySource, { kind: "row" }>[],
+): Promise<Map<string, string | null>> {
+  const byBooking = new Map<string, Set<string>>();
+  for (const { bookingId, guestId } of sources) {
+    byBooking.set(bookingId, (byBooking.get(bookingId) ?? new Set()).add(guestId));
+  }
+  const values = new Map<string, string | null>();
+  for (const [bookingId, guestIds] of byBooking) {
+    const rows = await db.bookingGuest.findMany({
+      where: { id: { in: [...guestIds] }, bookingId },
+      select: { id: true, dietaryRequirements: true },
+    });
+    for (const row of rows) values.set(`${bookingId}:${row.id}`, row.dietaryRequirements ?? null);
+  }
+  return values;
 }
 
 declare const WRITE_BRAND: unique symbol;
@@ -153,34 +180,48 @@ async function readProfileValues(
 
 /**
  * Decide what each NEW guest row carries, in input order (`INV-MOD-059`):
- *  - a carried value, as it is (null included), whatever the toggle says;
+ *  - a carried value, as it is (null included), whatever the toggle says — read
+ *    here, through the caller's client, when the carry names a source row;
  *  - otherwise, while seeding is ON, a linked member's CURRENT profile value —
  *    unless their consent to be on the booking is still PENDING (S5);
  *  - otherwise nothing (a non-member, seeding OFF, or consent pending).
  * Runs inside the caller's booking transaction, through its client.
  */
 export async function resolveBookingGuestDietary(
-  db: ProfileDb,
+  db: ProfileDb & BookingGuestDb,
   seeding: BookingGuestDietarySeeding,
   guests: readonly BookingGuestDietarySubject[],
 ): Promise<BookingGuestDietaryWrite[]> {
-  const seeds = (guest: BookingGuestDietarySubject) =>
-    seeding.seedFromProfile && !guest.carriedDietary && !consentPending(guest) && guest.memberId
+  const sources = guests.map((guest) => {
+    if (!guest.carriedDietary) return undefined;
+    const source = CARRIES.get(guest.carriedDietary);
+    if (source === undefined) {
+      throw new Error("A carried booking dietary value must come from carryBookingGuestDietaryFrom");
+    }
+    return source;
+  });
+  const rows = await readCarriedRows(
+    db,
+    sources.flatMap((source) => (source?.kind === "row" ? [source] : [])),
+  );
+  // `undefined`: nothing carried (no carry, or its source row is gone).
+  const carried = sources.map((source): string | null | undefined => {
+    if (source === undefined) return undefined;
+    if (source.kind === "value") return source.value;
+    return rows.get(`${source.bookingId}:${source.guestId}`);
+  });
+  const seeds = (guest: BookingGuestDietarySubject, index: number) =>
+    seeding.seedFromProfile && carried[index] === undefined && !consentPending(guest) && guest.memberId
       ? guest.memberId
       : null;
   const profiles = await readProfileValues(
     db,
-    guests.flatMap((guest) => seeds(guest) ?? []),
+    guests.flatMap((guest, index) => seeds(guest, index) ?? []),
   );
-  return guests.map((guest) => {
-    if (guest.carriedDietary) {
-      const carried = CARRIED_VALUES.get(guest.carriedDietary);
-      if (carried === undefined) {
-        throw new Error("A carried booking dietary value must come from captureBookingGuestDietaryCarries");
-      }
-      return mintWrite(carried);
-    }
-    const memberId = seeds(guest);
+  return guests.map((guest, index) => {
+    const value = carried[index];
+    if (value !== undefined) return mintWrite(value);
+    const memberId = seeds(guest, index);
     return mintWrite(memberId ? (profiles.get(memberId) ?? null) : null);
   });
 }
@@ -266,7 +307,9 @@ export async function planHeldPartyRebuildDietary(
       ? oldByKey.get(key)
       : undefined;
     const base = { memberId: guest.memberId, memberGuestConsent: guest.memberGuestConsent };
-    return old ? { ...base, carriedDietary: mintCarry(old.dietaryRequirements ?? null) } : base;
+    return old
+      ? { ...base, carriedDietary: mintCarry({ kind: "value", value: old.dietaryRequirements ?? null }) }
+      : base;
   });
   return resolveBookingGuestDietary(db, seeding, subjects);
 }

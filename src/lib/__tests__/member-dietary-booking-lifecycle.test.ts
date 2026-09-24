@@ -22,7 +22,7 @@ import {
   bookingGuestDietaryCreateData,
   bookingGuestDietarySeeding,
   bookingGuestDietaryUpdateData,
-  captureBookingGuestDietaryCarries,
+  carryBookingGuestDietaryFrom,
   fillBookingGuestDietaryFromProfileIfEmpty,
   isSameBookingGuestOccupant,
   planGuestRenameDietary,
@@ -101,30 +101,46 @@ describe(`seeding a new guest row (${ID})`, () => {
   });
 
   it("a carried value wins over the profile, is written even while OFF, and a carried null writes nothing", async () => {
-    const source = profileDb({}, [
+    const carries = carryBookingGuestDietaryFrom("bk-old", ["old-1", "old-2", "gone"]);
+    const db = profileDb({ "m-1": PROFILE, "m-2": PROFILE, "m-3": PROFILE }, [
       { id: "old-1", dietaryRequirements: "Trip-specific: no dairy" },
       { id: "old-2", dietaryRequirements: null },
     ]);
-    const carries = await captureBookingGuestDietaryCarries(source, "bk-old", ["old-1", "old-2"]);
-    // S3: the capture is scoped to its source booking.
-    expect(source.bookingGuest.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ["old-1", "old-2"] }, bookingId: "bk-old" },
-      select: { id: true, dietaryRequirements: true },
-    });
-    const db = profileDb({ "m-1": PROFILE, "m-2": PROFILE });
     expect(
       await createData(db, OFF, [
         { memberId: "m-1", carriedDietary: carries.get("old-1") },
         { memberId: "m-2", carriedDietary: carries.get("old-2") },
       ]),
     ).toEqual([{ dietaryRequirements: "Trip-specific: no dairy" }, {}]);
+    // S3: the read is scoped to its source booking, through the caller's client.
+    expect(db.bookingGuest.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["old-1", "old-2"] }, bookingId: "bk-old" },
+      select: { id: true, dietaryRequirements: true },
+    });
     expect(db.member.findMany).not.toHaveBeenCalled();
+    // A source row gone by then carries nothing, so its guest is seeded.
+    const later = profileDb({ "m-3": PROFILE }, []);
+    expect(await createData(later, ON, [{ memberId: "m-3", carriedDietary: carries.get("gone") }])).toEqual([
+      { dietaryRequirements: PROFILE },
+    ]);
+  });
+
+  it("naming the carry reads nothing: the value is read when the row is written, not before (W18)", async () => {
+    const values = [{ id: "old-1", dietaryRequirements: "Before" }];
+    const db = profileDb({}, values);
+    const carries = carryBookingGuestDietaryFrom("bk-old", ["old-1"]);
+    expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
+    // An admin edit committed after the carry was named, before the create.
+    values[0] = { id: "old-1", dietaryRequirements: "Edited since" };
+    expect(await createData(db, OFF, [{ carriedDietary: carries.get("old-1") }])).toEqual([
+      { dietaryRequirements: "Edited since" },
+    ]);
   });
 
   it("refuses a hand-made carry or write token", async () => {
     await expect(
       resolveBookingGuestDietary(profileDb({}), ON, [{ carriedDietary: {} as never }]),
-    ).rejects.toThrow(/captureBookingGuestDietaryCarries/);
+    ).rejects.toThrow(/carryBookingGuestDietaryFrom/);
     expect(() => bookingGuestDietaryCreateData({} as never)).toThrow(ID);
     expect(() => bookingGuestDietaryCreateData(undefined)).toThrow(ID);
   });
@@ -518,13 +534,13 @@ describe(`the rebuild and copy writers (W18, W19, ${ID})`, () => {
 
   it("the cross-lodge offer carries every source row's value (W18)", () => {
     const text = source("src/lib/waitlist-cross-lodge.ts");
-    expect(text).toMatch(/captureBookingGuestDietaryCarries\(/);
+    expect(text).toMatch(/carryBookingGuestDietaryFrom\(/);
     expect(text).toMatch(/carriedDietary: carriedDietary\.get\(guest\.id\)/);
   });
 
   it("an admin copy re-seeds and carries nothing from the source booking (W19)", () => {
     const text = source("src/lib/admin-booking-copy.ts");
     expect(text).toMatch(/guestDietarySeeding: await resolveBookingGuestDietarySeeding\(\)/);
-    expect(text).not.toMatch(/carriedDietary|captureBookingGuestDietaryCarries/);
+    expect(text).not.toMatch(/carriedDietary|carryBookingGuestDietaryFrom/);
   });
 });
