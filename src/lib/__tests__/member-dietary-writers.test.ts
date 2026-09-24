@@ -112,7 +112,25 @@ import { DIETARY_REQUIREMENTS_LABEL } from "@/lib/member-dietary-field";
 
 const VALUE = "Severe peanut allergy";
 
+/** The access role whose bundle gives exactly this membership level. */
+const ROLE_FOR_MEMBERSHIP = {
+  none: "ADMIN_CONTENT",
+  view: "ADMIN_READONLY",
+  edit: "ADMIN_MEMBERSHIP",
+} as const;
+
+/** The acting admin's DATABASE role, which is all the membership grant reads. */
 function adminGuard(membership: "none" | "view" | "edit") {
+  (mocks.delegate("member").findUnique as Fn).mockImplementation(
+    async (args: { where?: { id?: string } }) =>
+      args?.where?.id === "admin1"
+        ? {
+            active: true,
+            canLogin: true,
+            accessRoles: [{ role: ROLE_FOR_MEMBERSHIP[membership], roleDefinition: null }],
+          }
+        : null,
+  );
   const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
   return {
     ok: true,

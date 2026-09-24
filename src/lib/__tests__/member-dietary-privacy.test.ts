@@ -69,12 +69,36 @@ import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
 
 const VALUE = "Coeliac; severe peanut allergy (carries an EpiPen)";
 
+/** The access role whose bundle gives exactly this membership level. */
+const ROLE_FOR_MEMBERSHIP = {
+  none: "ADMIN_CONTENT",
+  view: "ADMIN_READONLY",
+  edit: "ADMIN_MEMBERSHIP",
+} as const;
+
+/**
+ * A requireAdmin-shaped result for "admin-1", whose DATABASE row (the only
+ * thing the membership grant believes) holds the role for `membership`. The
+ * session also carries a full-access matrix, which the grant must ignore.
+ */
 function adminUser(membership: "none" | "view" | "edit") {
-  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
+  mocks.memberFindUnique.mockImplementation(
+    async (args: { where: { id: string } }) =>
+      args.where.id === "admin-1"
+        ? {
+            active: true,
+            canLogin: true,
+            accessRoles: [{ role: ROLE_FOR_MEMBERSHIP[membership], roleDefinition: null }],
+          }
+        : null,
+  );
   return {
     ok: true as const,
     session: {
-      user: { id: "admin-1", adminPermissionMatrix: { ...matrix, membership } },
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: getAdminPermissionMatrix({ accessRoles: ["ADMIN"] }),
+      },
     },
   };
 }
@@ -169,18 +193,76 @@ describe("grants (INV-PRIV-022)", () => {
     expect(mocks.memberFindUnique).not.toHaveBeenCalled();
   });
 
-  it("membership administration needs membership access at the level asked", () => {
-    expect(grantMembershipAdminDietaryAccess(adminUser("none"), "view")).toBeNull();
-    expect(grantMembershipAdminDietaryAccess(adminUser("view"), "edit")).toBeNull();
-    expect(grantMembershipAdminDietaryAccess(adminUser("view"), "view")).not.toBeNull();
-    expect(grantMembershipAdminDietaryAccess(adminUser("edit"), "edit")).not.toBeNull();
-    // A session carrying no matrix at all fails closed.
-    expect(
+  it("a copy of a grant carries no authority, even with its scope widened", async () => {
+    mocks.memberFindUnique.mockResolvedValue({ dietaryRequirements: VALUE });
+    mocks.memberFindMany.mockResolvedValue([{ id: "m2", dietaryRequirements: VALUE }]);
+    const self = grantSelfDietaryAccess(session("m1"));
+    const merge = await grantMemberMergeDietaryAccess(mergeDb(true) as never, {
+      actorMemberId: "a",
+      masterId: "m1",
+      loserId: "m2",
+    });
+    for (const copy of [
+      { ...self },
+      { ...self, memberIds: null },
+      { ...merge },
+      { ...merge, memberIds: null },
+      Object.assign(Object.create(Object.getPrototypeOf(self)), self),
+    ] as unknown as Parameters<typeof readMemberDietaryRequirements>[0][]) {
+      await expect(readMemberDietaryRequirements(copy, "m2")).rejects.toThrow(
+        /without an access grant/,
+      );
+      await expect(readMemberDietaryRequirementsByIds(copy, ["m2"])).rejects.toThrow(
+        /membership administration or merge grant/,
+      );
+    }
+    // The originals still work within their own scope.
+    await expect(readMemberDietaryRequirements(self, "m1")).resolves.toBe(VALUE);
+    expect(Object.keys(self)).toEqual([]);
+  });
+
+  it("membership administration needs membership access at the level asked, from the DATABASE", async () => {
+    await expect(
+      grantMembershipAdminDietaryAccess(adminUser("none"), "view"),
+    ).resolves.toBeNull();
+    await expect(
+      grantMembershipAdminDietaryAccess(adminUser("view"), "edit"),
+    ).resolves.toBeNull();
+    await expect(
+      grantMembershipAdminDietaryAccess(adminUser("view"), "view"),
+    ).resolves.not.toBeNull();
+    await expect(
+      grantMembershipAdminDietaryAccess(adminUser("edit"), "edit"),
+    ).resolves.not.toBeNull();
+    // Neither a JWT-carried nor a literal matrix makes a grant: the actor's
+    // row is what counts, and an actor with no row gets nothing.
+    mocks.memberFindUnique.mockResolvedValue(null);
+    await expect(
       grantMembershipAdminDietaryAccess(
-        { ok: true, session: { user: { id: "a" } } },
+        {
+          ok: true,
+          session: {
+            user: {
+              id: "forged",
+              adminPermissionMatrix: { membership: "edit" },
+            } as { id: string },
+          },
+        },
         "view",
       ),
-    ).toBeNull();
+    ).resolves.toBeNull();
+    // An inactive actor gets nothing even with the right role.
+    mocks.memberFindUnique.mockResolvedValue({
+      active: false,
+      canLogin: true,
+      accessRoles: [{ role: "ADMIN", roleDefinition: null }],
+    });
+    await expect(
+      grantMembershipAdminDietaryAccess(
+        { ok: true, session: { user: { id: "admin-1" } } },
+        "view",
+      ),
+    ).resolves.toBeNull();
   });
 
   it("bulk reads need membership administration, and select only the column", async () => {
@@ -193,7 +275,7 @@ describe("grants (INV-PRIV-022)", () => {
     ).rejects.toThrow(/membership administration or merge grant/);
 
     const values = await readMemberDietaryRequirementsByIds(
-      grantMembershipAdminDietaryAccess(adminUser("view"), "view")!,
+      (await grantMembershipAdminDietaryAccess(adminUser("view"), "view"))!,
       ["m1", "m2", "m1"],
     );
     expect(values.get("m1")).toBe(VALUE);

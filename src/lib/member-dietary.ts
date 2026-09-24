@@ -30,12 +30,11 @@ import "server-only";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { actorIsFullAdmin } from "@/lib/admin-account-guards";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { normalizeDietaryRequirements } from "@/lib/member-dietary-field";
 import { prisma } from "@/lib/prisma";
-
-const DIETARY_GRANT = Symbol("member-dietary-access-grant");
 
 export type DietaryAccessPurpose =
   | "self"
@@ -43,23 +42,33 @@ export type DietaryAccessPurpose =
   | "membership-admin"
   | "member-merge";
 
+declare const DIETARY_GRANT_BRAND: unique symbol;
+
 /**
  * Evidence that a caller has been authorised to read dietary/allergy data for a
- * named purpose. It cannot be written as an object literal anywhere else: the
- * brand is a module-private `unique symbol`, so the only way to hold one is to
- * be handed it by a `grant*` function below.
+ * named purpose. The object itself carries NOTHING: its purpose, actor and
+ * scope live in a module-private `WeakMap` keyed by the object's identity, and
+ * only an object this module minted is in that map. So a copy (`{ ...grant }`),
+ * a copy with a widened scope (`{ ...grant, memberIds: null }`) or a literal is
+ * not a grant at all, and every reader refuses it. The brand below exists only
+ * for the type checker.
  */
 export interface DietaryAccessGrant {
-  readonly [DIETARY_GRANT]: true;
+  readonly [DIETARY_GRANT_BRAND]: true;
+}
+
+type GrantRecord = {
   readonly purpose: DietaryAccessPurpose;
+  readonly actorMemberId: string;
   /**
    * The members this grant may read: the subject for a self grant, the two
    * merge participants for a merge grant, and null (any member) only for
    * membership administration.
    */
   readonly memberIds: readonly string[] | null;
-  readonly actorMemberId: string;
-}
+};
+
+const MINTED_GRANTS = new WeakMap<object, GrantRecord>();
 
 function mintGrant(
   purpose: DietaryAccessPurpose,
@@ -69,12 +78,16 @@ function mintGrant(
   if (!actorMemberId) {
     throw new Error("A dietary access grant needs an authenticated actor");
   }
-  return Object.freeze({
-    [DIETARY_GRANT]: true as const,
-    purpose,
-    actorMemberId,
-    memberIds: memberIds ? Object.freeze([...memberIds]) : null,
-  });
+  const grant = Object.freeze({}) as DietaryAccessGrant;
+  MINTED_GRANTS.set(
+    grant,
+    Object.freeze({
+      purpose,
+      actorMemberId,
+      memberIds: memberIds ? Object.freeze([...memberIds]) : null,
+    }),
+  );
+  return grant;
 }
 
 /**
@@ -96,32 +109,46 @@ export function grantSelfDataExportDietaryAccess(
   return mintGrant("self-data-export", session.user.id, [session.user.id]);
 }
 
+type GrantDb = Prisma.TransactionClient | PrismaClient;
+
 /**
- * An admin holding `membership` access at `level`, judged from the permission
- * matrix on the SUCCESSFUL `requireAdmin` result: the DB-verified matrix the
- * guard re-read for this request, never a JWT claim. The argument is the
- * guard's own result shape, so a caller has to have run the guard to have one.
- * Returns null, and so grants nothing, when the matrix does not reach it; a
- * missing or malformed matrix resolves to no access (fail closed).
+ * An admin holding `membership` access at `level`, judged from the DATABASE:
+ * the actor's own Member row and access-role assignments (definitions joined)
+ * are re-read here, the same way `requireAdmin` derives its matrix, and any
+ * matrix carried on the argument is ignored. So neither a JWT-carried matrix
+ * (`requireActiveSessionUser`'s result has the same shape) nor a literal one can
+ * produce a grant. The argument is the successful `requireAdmin` result, used
+ * only for WHO is asking. An inactive or non-login actor gets nothing, and a
+ * missing row fails closed.
  */
-export function grantMembershipAdminDietaryAccess(
-  guard: {
-    ok: true;
-    session: { user: { id: string; adminPermissionMatrix?: unknown } };
-  },
+export async function grantMembershipAdminDietaryAccess(
+  guard: { ok: true; session: { user: { id: string } } },
   level: "view" | "edit",
-): DietaryAccessGrant | null {
+  db: GrantDb = prisma,
+): Promise<DietaryAccessGrant | null> {
   if (guard.ok !== true) return null;
-  const user = guard.session.user;
+  const actorMemberId = guard.session.user.id;
+  if (!actorMemberId) return null;
+  const actor = await db.member.findUnique({
+    where: { id: actorMemberId },
+    select: {
+      active: true,
+      canLogin: true,
+      accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+    },
+  });
+  if (!actor?.active) return null;
+  // No `adminPermissionMatrix` key is passed, so the matrix is derived from the
+  // rows just read and never from an embedded (JWT) copy.
   if (
     !hasAdminAreaAccess(
-      { adminPermissionMatrix: user.adminPermissionMatrix },
+      { canLogin: actor.canLogin, accessRoles: actor.accessRoles },
       { area: "membership", level },
     )
   ) {
     return null;
   }
-  return mintGrant("membership-admin", user.id, null);
+  return mintGrant("membership-admin", actorMemberId, null);
 }
 
 /**
@@ -133,7 +160,7 @@ export function grantMembershipAdminDietaryAccess(
  * promises to keep.
  */
 export async function grantMemberMergeDietaryAccess(
-  db: Prisma.TransactionClient | PrismaClient,
+  db: GrantDb,
   scope: { actorMemberId: string; masterId: string; loserId: string },
 ): Promise<DietaryAccessGrant | null> {
   if (!scope.masterId || !scope.loserId || scope.masterId === scope.loserId) {
@@ -215,27 +242,30 @@ export function redactDietaryMergeRow<
   };
 }
 
-function isGrant(grant: unknown): grant is DietaryAccessGrant {
-  return (
-    typeof grant === "object" &&
-    grant !== null &&
-    (grant as Record<symbol, unknown>)[DIETARY_GRANT] === true
-  );
+function grantRecord(grant: unknown): GrantRecord | undefined {
+  return typeof grant === "object" && grant !== null
+    ? MINTED_GRANTS.get(grant)
+    : undefined;
 }
 
-function assertCovers(grant: DietaryAccessGrant, memberIds: readonly string[]): void {
-  if (!isGrant(grant)) {
+function assertCovers(
+  grant: DietaryAccessGrant,
+  memberIds: readonly string[],
+): GrantRecord {
+  const record = grantRecord(grant);
+  if (!record) {
     throw new Error("Dietary data requested without an access grant");
   }
-  if (grant.memberIds === null) return;
-  const allowed = grant.memberIds;
+  if (record.memberIds === null) return record;
+  const allowed = record.memberIds;
   if (!memberIds.every((id) => allowed.includes(id))) {
     throw new Error(
-      grant.purpose === "member-merge"
+      record.purpose === "member-merge"
         ? "A merge dietary access grant covers only its two participants"
         : "A self dietary access grant covers only its own member",
     );
   }
+  return record;
 }
 
 type DietaryReadDb = Pick<Prisma.TransactionClient, "member">;
@@ -272,9 +302,10 @@ export async function readMemberDietaryRequirementsByIds(
   memberIds: readonly string[],
   db: DietaryReadDb = prisma,
 ): Promise<Map<string, string | null>> {
+  const record = grantRecord(grant);
   if (
-    !isGrant(grant) ||
-    (grant.purpose !== "membership-admin" && grant.purpose !== "member-merge")
+    !record ||
+    (record.purpose !== "membership-admin" && record.purpose !== "member-merge")
   ) {
     throw new Error(
       "Bulk dietary reads need a membership administration or merge grant",

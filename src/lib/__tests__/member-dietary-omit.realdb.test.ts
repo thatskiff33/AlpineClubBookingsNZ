@@ -56,6 +56,7 @@ let prisma: PrismaClient;
 let dietary: typeof import("@/lib/member-dietary");
 
 async function clear(): Promise<void> {
+  await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [PARENT_ID, CHILD_ID] } } });
   await prisma.member.deleteMany({ where: { id: CHILD_ID } });
   await prisma.member.deleteMany({ where: { id: PARENT_ID } });
 }
@@ -163,26 +164,22 @@ function hasKey(row: unknown): boolean {
           PARENT_ID,
         ),
       ).resolves.toBe(VALUE);
-      const grant = dietary.grantMembershipAdminDietaryAccess(
-        {
-          ok: true,
-          session: {
-            user: {
-              id: CHILD_ID,
-              adminPermissionMatrix: {
-                overview: "none",
-                bookings: "none",
-                membership: "view",
-                finance: "none",
-                lodge: "none",
-                content: "none",
-                support: "none",
-              },
-            },
-          },
-        },
+      // The membership grant reads the ACTOR's own row and roles from the
+      // database; the parent is given a membership-view role for this.
+      await prisma.memberAccessRole.create({
+        data: { memberId: PARENT_ID, role: "ADMIN_READONLY" },
+      });
+      const grant = await dietary.grantMembershipAdminDietaryAccess(
+        { ok: true, session: { user: { id: PARENT_ID } } },
         "view",
       );
+      // The child holds no admin role, so its row grants nothing.
+      await expect(
+        dietary.grantMembershipAdminDietaryAccess(
+          { ok: true, session: { user: { id: CHILD_ID } } },
+          "view",
+        ),
+      ).resolves.toBeNull();
       expect(grant).not.toBeNull();
       const values = await dietary.readMemberDietaryRequirementsByIds(grant!, [
         PARENT_ID,

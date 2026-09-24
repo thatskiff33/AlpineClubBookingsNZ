@@ -339,7 +339,7 @@ export async function GET(req: NextRequest) {
     // and its values come from the one dietary door — never from the select
     // above, which cannot name the column.
     const dietaryGrant = flags.showDietaryRequirements
-      ? grantMembershipAdminDietaryAccess(guard, "view")
+      ? await grantMembershipAdminDietaryAccess(guard, "view")
       : null;
     const dietaryById = dietaryGrant
       ? await readMemberDietaryRequirementsByIds(

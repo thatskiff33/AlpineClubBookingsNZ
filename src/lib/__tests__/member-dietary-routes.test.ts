@@ -138,7 +138,18 @@ const profileBody = {
   postalCountry: "NZ",
 };
 
+/** The access role whose bundle gives exactly this membership level. */
+const ROLE_FOR_MEMBERSHIP = {
+  none: "ADMIN_CONTENT",
+  view: "ADMIN_READONLY",
+  edit: "ADMIN_MEMBERSHIP",
+} as const;
+
+/** The acting admin's DATABASE role, which is all the membership grant reads. */
+let actorMembership: "none" | "view" | "edit" = "none";
+
 function adminSession(membership: "none" | "view" | "edit") {
+  actorMembership = membership;
   const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
   return {
     ok: true,
@@ -158,6 +169,13 @@ function memberReads(stored: string | null) {
   vi.mocked(prisma.member.findUnique).mockImplementation((async (args: {
     select?: Record<string, unknown>;
   }) => {
+    if ((args as { where?: { id?: string } })?.where?.id === "admin1") {
+      return {
+        active: true,
+        canLogin: true,
+        accessRoles: [{ role: ROLE_FOR_MEMBERSHIP[actorMembership], roleDefinition: null }],
+      };
+    }
     if (args?.select && "dietaryRequirements" in args.select) {
       return { dietaryRequirements: stored };
     }
@@ -190,6 +208,7 @@ beforeEach(() => {
   vi.mocked(prisma.member.count).mockResolvedValue(1);
   vi.mocked(prisma.member.findMany).mockResolvedValue([]);
   vi.mocked(prisma.member.update).mockResolvedValue(baseMember as never);
+  memberReads(null);
   vi.mocked(prisma.$transaction).mockImplementation((async (operation: unknown) => {
     if (Array.isArray(operation)) return Promise.all(operation);
     return (operation as (tx: unknown) => Promise<unknown>)({

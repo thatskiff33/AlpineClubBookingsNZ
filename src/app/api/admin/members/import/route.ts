@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
   // otherwise any value in the file is ignored, exactly like occupation.
   const importsDietaryRequirements =
     flags.showDietaryRequirements &&
-    grantMembershipAdminDietaryAccess(guard, "edit") !== null;
+    (await grantMembershipAdminDietaryAccess(guard, "edit")) !== null;
   const dateFormats: MemberImportDateFormatMapping = {
     dateOfBirth:
       parsed.data.dateFormats?.dateOfBirth ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
