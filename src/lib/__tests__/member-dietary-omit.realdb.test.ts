@@ -97,6 +97,9 @@ function hasKey(row: unknown): boolean {
           firstName: "Dietary",
           lastName: "Parent",
           ageTier: "ADULT",
+          // An admin role grants nothing to a non-login member (the permission
+          // matrix requires canLogin), and the column defaults to false.
+          canLogin: true,
           dietaryRequirements: VALUE,
         },
       });
@@ -219,6 +222,9 @@ function hasKey(row: unknown): boolean {
           firstName: "Dietary",
           lastName: "Parent",
           ageTier: "ADULT",
+          // An admin role grants nothing to a non-login member (the permission
+          // matrix requires canLogin), and the column defaults to false.
+          canLogin: true,
           dietaryRequirements: VALUE,
         },
       });
