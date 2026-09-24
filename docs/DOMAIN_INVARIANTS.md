@@ -100,6 +100,8 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-031` | Stored booking totals carry a derived reconciliation state |
 | `INV-MONEY-032` | A booking's money ledger is append-only, written through one door |
 | `INV-MONEY-033` | Every ledger posting carries an idempotency key; a repeat posts nothing |
+| `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
+| `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |

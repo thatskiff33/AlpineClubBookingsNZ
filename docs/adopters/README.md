@@ -4,8 +4,8 @@ Audience: Adopter, Operator
 
 This is one of the repository's two documentation entry points. It is everything
 a club needs to **evaluate, configure, deploy and run** AlpineClubBookingsNZ.
-You can read this path end to end without opening `AGENTS.md`, `CLAUDE.md`, the
-invariant files, or any other contributor material. The other entry point,
+You can read this path end to end without opening `AGENTS.md`, the invariant
+files, or any other contributor material. The other entry point,
 [Change the code](../contributors/README.md), is for people and agents changing
 the product.
 

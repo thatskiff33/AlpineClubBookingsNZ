@@ -11,6 +11,15 @@ import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+// Moved to a leaf so the booking ledger's settlement sync can share them
+// without an import cycle (#3581); re-exported so existing importers stand.
+import {
+  EXCLUDED_LEDGER_REFUND_STATUSES,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
+
+export { isCapturedTransactionStatus };
 
 export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
@@ -24,15 +33,6 @@ type StripeRefundLedgerInput = {
   charge?: StripeReference;
   payment_intent?: StripeReference;
 };
-
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
-
-const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
-
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
   if (!created) {
@@ -48,17 +48,6 @@ function normalizeRefundCurrency(currency: string | null | undefined) {
 
 function normalizeRefundStatus(status: string | null | undefined) {
   return status ?? "unknown";
-}
-
-/**
- * #3170 exported this. "Has this transaction's money actually been taken?" had
- * three inline spellings in this file and a fourth was about to be written in
- * `edit-financial-review-charge.ts`, which has to know whether an edit's combined
- * charge request has already been PAID before it lets another share be added to
- * it. `INV-SSOT`: one definition, imported.
- */
-export function isCapturedTransactionStatus(status: PaymentStatus) {
-  return CAPTURED_TRANSACTION_STATUSES.has(status);
 }
 
 function mapAdditionalSummaryStatus(status: PaymentStatus | null): string | null {
@@ -421,6 +410,12 @@ export async function reconcilePaymentAggregates({
       ),
     },
   });
+
+  // #3581: the booking ledger's settlement lines converge from the SAME rows
+  // the mirror above was just derived from, at the same place — so every
+  // capture, receipt and refund writer that ends here is covered, including
+  // one nobody has written yet. Idempotent by key (`INV-MONEY-033`).
+  await syncBookingLedgerSettlements({ paymentId: payment.id, store });
 
   return store.payment.findUnique({
     where: { id: payment.id },

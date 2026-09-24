@@ -485,6 +485,62 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
 
+## INV-MONEY-034
+
+- **A booking's settlement lines converge from its payment rows, at the place
+  the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
+  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  that set the payment's columns themselves: the manual mark-paid settle, its
+  reversal, and the Xero payment-received receipt. It posts one line
+  per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
+  when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
+  refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
+  nothing for a $0 capture.
+
+  **A source that stops holding is reversed, never edited.** A mark-paid
+  reversal flips its row to `FAILED` (`INV-PAY-045`) and a refund can fail
+  after it was recorded; the sync then posts a reversal copied from the line,
+  once, keyed by the line's id. It never re-derives a method from the
+  payment's provenance, which a reversal clears.
+
+  **"Captured" and "recorded" are the mirror's own predicates**, in
+  `payment-transaction-status.ts`, so the ledger's captures equal
+  `Payment.amountCents` whenever anything is captured. Its refunds do NOT
+  always equal `refundedAmountCents`: that column only rises, is seeded
+  without rows on legacy payments, and is moved by credit and hand-back
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
+  (#3583) classifies those as known divergences. A line whose source amount
+  later changes is reported, not corrected.
+
+## INV-MONEY-035
+
+- **Every credit row a booking owns, and every hand-back, posts exactly one
+  settlement line, inside its writer's transaction** (#3599). Credit rows
+  have no chokepoint, so each writer calls `syncBookingLedgerCredits`; which
+  rows are the booking's is `member-credit-booking-rows.ts`'s, shared with
+  `deriveBookingAppliedCreditCents`. `booking-ledger-credit-writers.test.ts`
+  fails a credit write with no sync after it.
+
+  **Insert-only, because credit rows are.** No code changes a row's amount,
+  type or booking link — the census fails one that tries; only deleting a
+  booking nulls the link, and its lines go with it — so each row posts one
+  line keyed `credit:<id>`, never reversed, for the row's negation: applied
+  credit `CREDIT_APPLIED` (a give-back is negative), minted credit
+  `CREDIT_ISSUED`. While a booking's applied rows net to zero or less — every
+  current writer keeps them so — Σ `CREDIT_APPLIED` equals
+  `deriveBookingAppliedCreditCents`.
+
+  **A restore is not a reversal.** Restores are tiered by policy, so one can
+  be less than was applied; it posts `CREDIT_ISSUED` for exactly the restore,
+  anchored on the `CANCELLATION` because it returns credit already spent.
+
+  **A hand-back posts `BANK_REFUND`** when a task completes on the
+  `local-allocation` route, keyed `handback:<taskId>`, naming the officer, by
+  internet banking (#3529's wording decision, `INV-PAY-101`) — except on a
+  card payment, whose refund posts from its refund row.
+  `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
+  writers and the real resolver.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

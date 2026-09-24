@@ -27,17 +27,11 @@ or production environment values to profile TOML.
 
 ## Effort Selection
 
-Effort follows the shape in `AGENTS.md` → "Model selection" and the dated
-table in `docs/agents/SUBAGENT_GUIDE.md` → "Model routing table"; this list
-only maps the Codex profiles onto it and defines nothing of its own.
-
-- `xhigh`: anything security-shaped, and the reasoning-frontier items the shape
-  names.
-- `high`: gated areas — money, capacity, membership lifecycle, schema, live
-  providers — and broad reviews.
-- `medium`: routine Low/Medium implementation, docs, UI copy, small test
-  additions, routine issue grooming.
-- `low`: trivial formatting, simple file moves, or narrow non-code cleanup.
+The profiles exist for their sandbox, network and approval settings. The
+effort in each name is only a starting point: choose the effort for the task in
+front of you as `AGENTS.md` → "Model selection" describes, and override it at
+launch with `-c model_reasoning_effort=<level>` when the task calls for a
+different one.
 
 High and critical risk issues are not unattended coding candidates even if a
 profile permits workspace writes.

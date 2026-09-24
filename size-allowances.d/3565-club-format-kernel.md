@@ -492,7 +492,7 @@ reason: 6 lines: a `format: ClubFormat` parameter on the functions that render m
   the file's debt predates this change by hundreds of lines.
 
 file: src/lib/member-credit.ts
-lines: 1027
+lines: 1028
 reason: 20 lines: this module's entry points — a cron run, a webhook, a job or a request-
   facing service — each call `await clubFormatValues()` ONCE at the top, before any
   transaction or lock, and thread the result to every formatter, template and Xero
@@ -517,7 +517,7 @@ reason: 3 lines: a `format: ClubFormat` parameter on the functions that render m
   the file's debt predates this change by hundreds of lines.
 
 file: src/lib/payment-reconciliation.ts
-lines: 3046
+lines: 3062
 reason: 15 lines: a `format: ClubFormat` parameter on the functions that render money, threaded
   to each formatter, template and Xero call, so this module never reads the setting
   for itself — never inside a transaction and never per amount. The argument is
@@ -534,7 +534,7 @@ reason: 25 lines: this module's entry points — a cron run, a webhook, a job or
   cannot move without losing once-per-run; the debt here predates this change.
 
 file: src/lib/payment-transactions.ts
-lines: 1196
+lines: 1191
 reason: 8 lines: a `format: ClubFormat` parameter on the functions that render money, threaded
   to each formatter, template and Xero call, so this module never reads the setting
   for itself — never inside a transaction and never per amount. The argument is
@@ -600,7 +600,7 @@ reason: 5 lines: a `format: ClubFormat` parameter on the functions that render m
   the file's debt predates this change by hundreds of lines.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1701
+lines: 1714
 reason: 10 lines: a `format: ClubFormat` parameter on the functions that render money, threaded
   to each formatter, template and Xero call, so this module never reads the setting
   for itself — never inside a transaction and never per amount. The argument is

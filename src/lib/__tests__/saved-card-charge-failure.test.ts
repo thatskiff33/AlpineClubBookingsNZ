@@ -486,6 +486,12 @@ describe("retireUnusableSavedCard (#3268)", () => {
         }),
       },
       paymentTransaction: { create: vi.fn() },
+      // #3581: reconcile ends by converging the booking ledger's settlement
+      // lines; an empty ledger lets that run for real against this payment.
+      bookingLedgerLine: {
+        findMany: vi.fn(async () => []),
+        createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+      },
     };
 
     await retireUnusableSavedCard({ paymentMethodId: "pm_dead", bookingId: "b1" });
