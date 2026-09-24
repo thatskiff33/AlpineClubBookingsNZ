@@ -3,7 +3,7 @@
 import { useSession } from "next-auth/react";
 
 import { EnvironmentSafetyPanel } from "@/components/admin/environment-safety-panel";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 
 /**
  * Environment Safety — the Full-Admin surface for "is this installation the
@@ -37,10 +37,7 @@ import { isFullAdmin } from "@/lib/access-roles";
  */
 export default function EnvironmentSafetyPage() {
   const { data: session } = useSession();
-  const fullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-    canLogin: session?.user?.canLogin ?? false,
-  });
+  const fullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   if (session && !fullAdmin) {
     return (

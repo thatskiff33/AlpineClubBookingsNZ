@@ -32,7 +32,10 @@ import {
   sanitizeAdminPermissionMatrix,
   type AdminPermissionMatrix,
 } from "./admin-permissions";
-import { MEMBER_PRIVILEGE_CHECK_SELECT } from "./access-role-definitions";
+import {
+  isLoginRevokedSession,
+  loadSessionMemberSecurity,
+} from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
@@ -67,38 +70,6 @@ const DUMMY_PASSWORD_HASH =
   // compared against to equalise response timing (see comment above).
   "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
 
-const SESSION_MEMBER_SECURITY_SELECT = {
-  role: true,
-  forcePasswordChange: true,
-  emailVerified: true,
-  passwordChangedAt: true,
-  // #3603 (D1): when this member's login last went from on to off. A session
-  // issued before it is refused, the same way passwordChangedAt is.
-  sessionsRevokedAt: true,
-  // #2620/#3542: refresh both canonical deletion signals so a session
-  // minted before erasure dies on its next request. Neither enters the token.
-  email: true,
-  deletedAt: true,
-  passwordHash: true,
-  twoFactorEnabled: true,
-  twoFactorMethod: true,
-  // Post-login landing preference (#2090), refreshed per request alongside the
-  // security fields so a profile toggle change takes effect on the next request.
-  postLoginLanding: true,
-  // `canLogin` with the joined definitions (#1367, #3603): the per-request
-  // token refresh computes the merged admin-permission matrix over custom and
-  // club-edited definition-backed roles, and clears it once login is off. The
-  // shared select, so the refresh reads exactly what every privilege gate does.
-  ...MEMBER_PRIVILEGE_CHECK_SELECT,
-} as const;
-
-async function loadSessionMemberSecurity(userId: string) {
-  return prisma.member.findUnique({
-    where: { id: userId },
-    select: SESSION_MEMBER_SECURITY_SELECT,
-  });
-}
-
 declare module "next-auth" {
   interface Session {
     user: {
@@ -113,14 +84,7 @@ declare module "next-auth" {
        * custom and club-edited roles (#1367).
        */
       accessRoles: AppAccessRole[];
-      /**
-       * Whether the member may sign in, refreshed on every request (#3603).
-       * Carried so a privilege check over `session.user` (`isFullAdmin`,
-       * `hasAdminAccess`, `authorizationRoleFromAccessRoles`, which require it)
-       * applies the login-disabled rule. A session whose member has it false is
-       * invalidated by the token refresh, so `auth()` returns such a session
-       * as null; the role claim above is empty for it as well.
-       */
+      /** Whether the member may sign in (#3603); privilege checks read it. */
       canLogin: boolean;
       /**
        * Merged admin-permission matrix computed from the DB-joined member at
@@ -623,13 +587,10 @@ export const authConfig = {
           const modules = await loadEffectiveModuleFlags();
           const twoFactorRequired = modules.twoFactor === true;
 
-          // The legacy role column is a claim too (#3603): a member whose login
-          // is off carries no privileged one, whatever the column still says.
           token.role = member.canLogin === false ? "USER" : member.role;
           // role is null for definition-backed custom-role rows, so the
           // accessRoles claim stays enum-only. Custom roles reach the
-          // session through adminPermissionMatrix below (#1367). Empty once
-          // login is disabled (#3603), the same rule the matrix applies.
+          // session through adminPermissionMatrix below (#1367).
           token.accessRoles = sessionAccessRoleClaim(member);
           token.canLogin = member.canLogin;
           // #1367: merged admin-permission matrix over the JOINED assignment
@@ -649,11 +610,11 @@ export const authConfig = {
           // no session, full stop — whatever `active` currently says. This is the
           // defence-in-depth backstop behind the provider refusals above: it
           // covers a session minted BEFORE the deletion (which also switches
-          // login off, so the revocation time below refuses it too, #3603) and
-          // a session minted after someone flipped `active` back directly in the
-          // database. Same kill-switch as a
-          // revoking password change: auth() nulls any session carrying it, so
-          // every server touch reads as logged-out.
+          // login off, so the login rule below refuses it too) and a session
+          // minted after someone flipped `active` back directly in the
+          // database. Same kill-switch as a revoking password change: auth()
+          // nulls any session carrying it, so every server touch reads as
+          // logged-out.
           const deletedAccountSession = isDeletedAccountRecord(member);
           if (deletedAccountSession) {
             logger.warn(
@@ -661,40 +622,12 @@ export const authConfig = {
               "Invalidating session for a deleted account (#2620)",
             );
           }
-          // #3603: every sign-in provider requires `canLogin: true`, so a
-          // member whose login is switched off holds no session either. Two
-          // checks, both read from the database on every refresh:
-          //  - `sessionsRevokedAt` (owner decision D1): the database stamps it
-          //    whenever login goes from on to off, and a session issued before
-          //    it is refused for good, exactly like one issued before a newer
-          //    password. Re-enabling login therefore never revives a session
-          //    that started before the switch-off, however the client replays
-          //    its cookie; signing in again mints a new one.
-          //  - `canLogin === false`: refused while login is off, whatever the
-          //    revocation time says. Kept as belt and braces; it needs no
-          //    column and no clock.
-          //  - once a token has been invalidated it stays invalidated. This
-          //    covers the narrow window the stored time cannot: a sign-in that
-          //    races the switch-off statement, or app/database clock skew, can
-          //    mint a session whose issue time is not before the stamp. If that
-          //    session is refreshed while login is off, it carries the flag from
-          //    then on and does not come back when login is re-enabled. Signing
-          //    in mints a fresh token with the flag cleared.
-          const loginDisabledSession = member.canLogin === false;
-          const revokedSession =
-            member.sessionsRevokedAt instanceof Date &&
-            member.sessionsRevokedAt.getTime() > sessionIssuedAt;
-          if (loginDisabledSession || revokedSession) {
-            logger.warn(
-              { memberId: token.id },
-              "Invalidating a session that started before the member's login was switched off (#3603)",
-            );
-          }
+          // #3603: login off, or switched off after this session began; a
+          // token once invalidated stays so (see session-member-security.ts).
           token.sessionInvalidated =
             token.sessionInvalidated === true ||
             deletedAccountSession ||
-            loginDisabledSession ||
-            revokedSession ||
+            isLoginRevokedSession(member, sessionIssuedAt, token.id) ||
             (member.passwordChangedAt instanceof Date &&
               member.passwordChangedAt.getTime() > sessionIssuedAt);
           token.twoFactorRequired = twoFactorRequired;
@@ -746,8 +679,7 @@ export const authConfig = {
               typeof role === "string" && isAccessRole(role),
           )
         : [];
-      // #3603: fail closed. Only an explicit true from the per-request refresh
-      // counts; a token that could not be refreshed carries no login.
+      // #3603: fail closed; only an explicit true from the refresh counts.
       session.user.canLogin = token.canLogin === true;
       // #1367: the jwt callback above stamps the matrix from the DB-joined
       // member on every request BEFORE this projection runs, so this

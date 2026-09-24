@@ -800,11 +800,6 @@ export async function getAdminMemberDetail(params: {
 export async function updateAdminMember(params: {
   id: string;
   currentAdminMemberId: string;
-  /**
-   * The acting admin's DB-verified access (`requireAdmin`'s session user):
-   * roles and `canLogin` travel together so the Full Admin gates below apply
-   * the login-disabled rule (#3603).
-   */
   currentAdminAccess: PrivilegeCheckInput;
   request: NextRequest;
   data: UpdateMemberInput;

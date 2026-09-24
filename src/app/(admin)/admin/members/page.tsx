@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useSession } from "next-auth/react"
-import { isFullAdmin } from "@/lib/access-roles"
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles"
 import { Download, RefreshCw, Upload } from "lucide-react"
 import { Alert } from "@/components/ui/alert"
 import { FocusedActionError } from "@/components/focused-action-error"
@@ -61,10 +61,7 @@ interface MembersResponse {
 export default function MembersPage() {
   const { data: session } = useSession()
   const canEditMembership = useAdminAreaEditAccess("membership")
-  const actorIsFullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-    canLogin: session?.user?.canLogin ?? false,
-  })
+  const actorIsFullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user))
   const {
     search,
     setSearch,

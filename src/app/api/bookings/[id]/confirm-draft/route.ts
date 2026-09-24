@@ -322,8 +322,6 @@ export async function POST(
         // #3232: confirming a draft does not move its stay, so there is no
         // vacated window for the dependent fan-out to also look at.
         vacatedRange: null,
-        // The role derived from access roles and `canLogin`, never the legacy
-        // `Member.role` claim, which a privilege check must not read (#3603).
         actorRole: authorizationRoleFromAccessRoles(session.user),
         hasBookingsEditAccess: isAdmin,
         actorMemberId: session.user.id,

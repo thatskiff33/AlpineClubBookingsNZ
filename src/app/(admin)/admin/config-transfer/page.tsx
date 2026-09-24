@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { ArrowRightLeft, Download, Upload, AlertTriangle, ShieldAlert } from "lucide-react";
 
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import { useClubTime } from "@/components/club-time-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,10 +94,7 @@ export default function ConfigTransferPage() {
   // (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
   const { data: session } = useSession();
-  const fullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-    canLogin: session?.user?.canLogin ?? false,
-  });
+  const fullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   const [selected, setSelected] = useState<Set<ConfigTransferCategory>>(
     () => new Set(["site-content", "club-settings", "lodge-config"]),

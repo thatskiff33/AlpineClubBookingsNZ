@@ -595,9 +595,6 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
-  // canLogin-blind on purpose (#3603): a duplicate whose login is already
-  // switched off still stores the Full Admin row, and merging it away would
-  // bypass the demote-first rule.
   if (memberHoldsFullAdminRole(loser)) {
     blockers.push({
       code: "loser_is_admin",

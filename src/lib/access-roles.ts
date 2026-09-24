@@ -99,6 +99,19 @@ export type AccessRoleInput = {
  */
 export type PrivilegeCheckInput = AccessRoleInput & { canLogin: boolean };
 
+/**
+ * A possibly absent session user as a privilege-check input (#3603): no session
+ * means no roles and no login.
+ */
+export function sessionPrivilegeInput(
+  user:
+    | { accessRoles?: AccessRoleInput["accessRoles"]; canLogin?: boolean }
+    | null
+    | undefined,
+): PrivilegeCheckInput {
+  return { accessRoles: user?.accessRoles ?? [], canLogin: user?.canLogin ?? false };
+}
+
 export function isAccessRole(
   value: string | null | undefined,
 ): value is AppAccessRole {

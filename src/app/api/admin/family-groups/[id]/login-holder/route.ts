@@ -238,10 +238,7 @@ export async function POST(
       }
 
       if (currentHolder) {
-        // Re-saving the SAME holder (the editor pre-selects them) must not
-        // switch their login off and on again: the false write alone stamps
-        // their revocation time and would sign them out (#3603). Only an
-        // outgoing holder loses the login here.
+        // Same holder: never write false, it would sign them out (#3603).
         const holderStays = currentHolder.id === newHolderId;
         await tx.member.update({
           where: { id: currentHolder.id },
