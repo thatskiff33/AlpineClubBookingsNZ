@@ -4065,6 +4065,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -4085,6 +4086,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
   });
 

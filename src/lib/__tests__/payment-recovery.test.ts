@@ -276,6 +276,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
 } from "@/lib/payment-recovery-keys";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -530,7 +531,8 @@ describe("payment recovery worker", () => {
         amountCents: 6000,
         paymentIntentId: "pi_superseded",
         errorMessage: expect.stringContaining("failed after 5 attempts"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -661,6 +663,7 @@ describe("payment recovery worker", () => {
         paymentIntentId: "pi_superseded",
         errorMessage: expect.stringContaining("timed out on the final attempt"),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -789,6 +792,7 @@ describe("payment recovery worker", () => {
       await processPaymentRecoveryOperations({ limit: 1 });
 
       expect(mockReportSupersededPaymentRefund).toHaveBeenCalledWith({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentId: "payment-1",
         paymentIntentId: "pi_superseded",
@@ -846,6 +850,7 @@ describe("payment recovery worker", () => {
         errorMessage: expect.stringContaining("queue is stalled"),
         paymentIntentId: "pi_superseded",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -895,6 +900,7 @@ describe("payment recovery worker", () => {
       expect.objectContaining({
         errorMessage: expect.stringContaining("queue is stalled"),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -921,6 +927,7 @@ describe("payment recovery worker", () => {
       expect.objectContaining({
         errorMessage: expect.stringContaining("queue is stalled"),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -1663,6 +1670,7 @@ describe("payment recovery worker", () => {
     // succeeded with the original refund instead of idempotency_error, and
     // the ledger dedupes on refund id (never a double refund).
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment-1",
       amountCents: 10000,
       allocation: [{ paymentTransactionId: "txn-1", amountCents: 10000 }],
@@ -1706,6 +1714,7 @@ describe("payment recovery worker", () => {
     expect(result.succeeded).toBe(1);
     expect(mockExecuteGroupSettlementRefundPlan).toHaveBeenCalledWith(
       "settle-1",
+      CLUB_FORMAT_TEST,
     );
     // The anchor payment is never read and no refund is derived from it.
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
@@ -1886,6 +1895,7 @@ describe("payment recovery worker", () => {
           "REFUND_BOOKING_MODIFICATION failed after",
         ),
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3046,6 +3056,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     // cannot mint for the wrong figure. That is what makes ONE edit-scoped
     // recovery row safe where the first round needed one row per task.
     expect(mockSyncEditFinancialReviewChargeRequest).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
       // #3181: the settlement's own answer, read back off this row rather than
@@ -3192,6 +3203,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(mockRecordShortEditReviewChargeInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       outcome: "short-sent",
       bookingId: "booking-1",
       bookingModificationId: "mod-1",
@@ -3238,6 +3250,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(result.succeeded).toBe(1);
     expect(mockRecordShortEditReviewChargeInvoice).not.toHaveBeenCalled();
     expect(mockRecordUncollectedEditReviewChargeShare).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       leg: "xero-invoice",
       // Not `ask-closed`: no invoice exists to bill the earlier figure, so the
       // whole settled total is unbilled rather than under-billed.

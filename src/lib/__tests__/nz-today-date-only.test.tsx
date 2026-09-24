@@ -58,6 +58,7 @@ vi.mock("@/lib/finance-legacy-dashboard-export", () => ({
 
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
 import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
 
@@ -148,9 +149,11 @@ describe("#2682 the fixture really is inside the UTC/NZ divergence window", () =
 describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", () => {
   it("the public booking-request form's earliest selectable night is the NZ day", async () => {
     render(
-      <ClubTimeProvider zone={CLUB_ZONE}>
-        <BookingRequestForm club={STUB_CLUB} />
-      </ClubTimeProvider>,
+      <ClubFormatTestProvider>
+        <ClubTimeProvider zone={CLUB_ZONE}>
+          <BookingRequestForm club={STUB_CLUB} />
+        </ClubTimeProvider>
+      </ClubFormatTestProvider>,
     );
 
     const checkIn = (await screen.findByLabelText(/check-?in/i)) as HTMLInputElement;
@@ -165,9 +168,11 @@ describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", (
 
   it("the public school-booking form's earliest selectable night is the NZ day", async () => {
     render(
-      <ClubTimeProvider zone={CLUB_ZONE}>
-        <SchoolBookingForm club={STUB_CLUB} />
-      </ClubTimeProvider>,
+      <ClubFormatTestProvider>
+        <ClubTimeProvider zone={CLUB_ZONE}>
+          <SchoolBookingForm club={STUB_CLUB} />
+        </ClubTimeProvider>
+      </ClubFormatTestProvider>,
     );
 
     const checkIn = (await screen.findByLabelText(/check-?in/i)) as HTMLInputElement;

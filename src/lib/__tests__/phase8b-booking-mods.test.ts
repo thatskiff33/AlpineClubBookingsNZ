@@ -3013,6 +3013,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "STRIPE",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3051,6 +3052,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "STRIPE",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3117,6 +3119,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         additionalAmountCents: 2000,
         additionalPaymentMethod: "INTERNET_BANKING",
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 });

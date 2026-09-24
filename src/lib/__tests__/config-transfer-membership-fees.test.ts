@@ -8,6 +8,7 @@ import { buildConfigExport } from "@/lib/config-transfer/export";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import { membershipFeesImporter } from "@/lib/config-transfer/categories/membership-fees";
 import { xeroConfigImporter } from "@/lib/config-transfer/categories/xero-config";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 
 // Config-transfer membership-fees category (#1941): first-class transfer of the
@@ -135,6 +136,7 @@ function applyCtx(
     tx,
     files,
     manifest: {} as never,
+    format: CLUB_FORMAT_TEST,
     mode,
     resolutions: new Map<string, string>(),
     actorMemberId: "admin-1",
@@ -154,6 +156,7 @@ function planCtx(
     db,
     files,
     manifest: {} as never,
+    format: CLUB_FORMAT_TEST,
     mode,
     resolutions: new Map<string, string>(),
     selectedCategories,

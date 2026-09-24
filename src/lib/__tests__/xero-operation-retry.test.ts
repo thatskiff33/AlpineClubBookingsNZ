@@ -124,6 +124,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -516,7 +517,7 @@ describe("retryXeroSyncOperation", () => {
       retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
     ).resolves.toEqual({ message: "Retried Xero account-credit note creation." });
 
-    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, {
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
@@ -869,7 +870,7 @@ describe("retryXeroSyncOperation", () => {
       message: "Retried Xero account-credit note creation.",
     });
 
-    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_123", 2345, {
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_123", 2345, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
@@ -893,6 +894,7 @@ describe("retryXeroSyncOperation", () => {
     await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       priceDiffCents: 2500,
       changeFeeCents: 500,
@@ -957,6 +959,7 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       // THE SHARE, NEVER THE TOTAL, on the replay as on the original.
       priceDiffCents: 3000,
@@ -1213,6 +1216,7 @@ describe("retryXeroSyncOperation", () => {
     await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       priceDiffCents: -500,
       changeFeeCents: 1000,
@@ -1247,6 +1251,7 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       refundAmountCents: 2500,
       bookingModificationId: "mod_123",
@@ -1345,6 +1350,7 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       paymentId: "pay_123",
       refundAmountCents: 3750,
       bookingModificationId: "mod_account",
@@ -1407,6 +1413,7 @@ describe("retryXeroSyncOperation", () => {
     await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
 
     expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       bookingId: "book_123",
       refundAmountCents: 500,
       bookingModificationId: "mod_mixed_net",

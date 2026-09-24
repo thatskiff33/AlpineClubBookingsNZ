@@ -40,6 +40,7 @@ vi.mock("@/lib/manual-refund-task-resolution", () => ({
 }));
 
 import { POST } from "../[id]/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/payments/manual-refund-tasks/t1", {
@@ -82,6 +83,7 @@ describe("a $0 completion reaches the layer that can explain it (#3195)", () => 
     expect(response.status).toBe(200);
     expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
       expect.objectContaining({ confirmedAmountCents: 0 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -129,6 +131,7 @@ describe("per-night amounts on the way in (#3191)", () => {
 
     expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
       expect.objectContaining({ recordedNightPrices }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -148,6 +151,7 @@ describe("per-night amounts on the way in (#3191)", () => {
         resolution: "dismissed",
         recordedNightPrices,
       }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -165,6 +169,7 @@ describe("per-night amounts on the way in (#3191)", () => {
 
     expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
       expect.objectContaining({ recordedNightPrices: null }),
+      CLUB_FORMAT_TEST,
     );
   });
 

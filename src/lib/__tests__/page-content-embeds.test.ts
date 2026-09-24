@@ -50,12 +50,20 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
+vi.mock("@/lib/club-format-server", async () => {
+  const { bindClubFormat } = await import("@/lib/club-format-bound");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+  return {
+    clubFormatValues: vi.fn(async () => CLUB_FORMAT_TEST),
+    clubFormat: vi.fn(async () => bindClubFormat(CLUB_FORMAT_TEST)),
+  };
+});
 vi.mock("@/lib/public-page-content-tokens", () => ({
   loadPublicAnnualFees: vi.fn(async () => [{ heading: "Annual membership fees", rows: [{ label: "Public member", fee: { amountCents: 1000, label: "$10.00" } }] }]),
   loadPublicJoiningFees: vi.fn(async () => [{ heading: "Adult", rows: [] }]),
-  loadPublicHutFees: vi.fn(async (slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
+  loadPublicHutFees: vi.fn(async (_format: unknown, slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
   loadPublicBookingPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
-  loadPublicCancellationPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
+  loadPublicCancellationPolicy: vi.fn(async (_format: unknown, slug?: string) => ({ lodge: slug ?? null })),
 }));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
 
