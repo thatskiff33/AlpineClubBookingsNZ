@@ -42,6 +42,8 @@ function makeTx() {
     },
     familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
     member: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3029 C3: the rebuild locks the party's rows before reading them.
+    $executeRaw: vi.fn().mockResolvedValue(0),
   };
 }
 

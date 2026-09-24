@@ -261,6 +261,11 @@ const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/lib/group-booking.ts": { reason: "W2 group join, W5 non-member joiner", ...WRITE_SIDE },
   "src/lib/school-booking-request.ts": { reason: "W8 school, W9 whole-lodge", ...WRITE_SIDE },
   "src/lib/waitlist-cross-lodge.ts": { reason: "W18 cross-lodge offer carries", ...WRITE_SIDE },
+  "src/lib/member-guest-consent-service.ts": {
+    reason: "S5: a granted consent fills the member's empty row from their profile",
+    allow: [],
+    side: "write",
+  },
 };
 
 /** An import of the write half, in the same spellings as the door's. */
@@ -540,19 +545,56 @@ export function scanDietaryAccessSource(file: string, source: string): Finding[]
     });
   }
 
+  if (file !== BOOKING_WRITES_MODULE) {
+    const withoutImports = code.replace(IMPORT_DECLARATION, "");
+    for (const match of withoutImports.matchAll(FRAGMENT_BUILDER)) {
+      const before = withoutImports.slice(0, match.index);
+      const after = withoutImports.slice(match.index! + match[0].length);
+      if (!/\.\.\.\s*$/.test(before) || !/^\s*\(/.test(after)) {
+        findings.push({
+          rule: "fragment-outside-spread",
+          file,
+          detail: `uses ${match[0]} other than as the operand of a ... data spread, where its plain value could be read`,
+        });
+      }
+    }
+    if (SEEDING_CONSTRUCTION.test(code)) {
+      findings.push({
+        rule: "seeding-constructor",
+        file,
+        detail:
+          "constructs a dietary seeding value by hand; production seeding comes from resolveBookingGuestDietarySeeding() alone",
+      });
+    }
+  }
+
   return findings;
 }
+
+/**
+ * S3: the two fragment builders return the plain value Prisma writes, so they
+ * may appear only as the operand of a `...` spread (text-only: it cannot see
+ * what that spread goes into), and seeding may only come from the toggle.
+ */
+const FRAGMENT_BUILDER = /\bbookingGuestDietary(?:Create|Update)Data\b/g;
+const IMPORT_DECLARATION = /\bimport\s*(?:type\s*)?\{[^}]*\}\s*from\s*["'`][^"'`]+["'`]\s*;?/g;
+const SEEDING_CONSTRUCTION = /\bbookingGuestDietarySeeding\s*\(|\bseedFromProfile\b/;
 
 /** A BookingGuest write call in any spelling a writer uses (`INV-MOD-059`). */
 const BOOKING_GUEST_WRITE_CALL =
   /\bbookingGuest\s*\.\s*(?:create|createMany|update|updateMany|upsert)\s*\(/;
-/** A NESTED guest create inside a booking create (`guests: { create: … }`). */
-const NESTED_GUEST_CREATE = /\bguests\s*:\s*\{\s*create\s*:/;
+/** A NESTED guest create inside a booking create (`guests: { create(Many): ... }`). */
+const NESTED_GUEST_CREATE = /\bguests\s*:\s*\{\s*create(?:Many)?\s*:/g;
 /** A direct BookingGuest create (`tx.bookingGuest.create(`, createMany, upsert). */
-const DIRECT_GUEST_CREATE = /\bbookingGuest\s*\.\s*(?:create|createMany|upsert)\s*\(/;
-/** What a create site hands its builder: the dietary decision, in one of three spellings. */
+const DIRECT_GUEST_CREATE = /\bbookingGuest\s*\.\s*(?:create|createMany|upsert)\s*\(/g;
+/**
+ * What a create site hands its builder: the dietary decision, in one of three
+ * spellings (a direct create spreads the fragment; a nested one goes through a
+ * shared builder whose decision argument is required).
+ */
 const DIETARY_CREATE_DECISION =
-  /\b(?:bookingGuestDietaryCreateData|buildGuestCreateData|toPipelineGuestCreateData)\s*\(/;
+  /\.\.\.\s*bookingGuestDietaryCreateData\s*\(|\b(?:buildGuestCreateData|toPipelineGuestCreateData)\s*\(/g;
+const countOf = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].length;
 
 /** The text between a constructor's opening paren and its matching close. */
 function constructorArguments(code: string, start: number): string {
@@ -676,6 +718,8 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     "write-side-door",
     "writer-names-column",
     "writes-import",
+    "fragment-outside-spread",
+    "seeding-constructor",
   ] as const) {
     it(`finds no ${rule} violation`, () => {
       const violations = census().findings.filter((f) => f.rule === rule);
@@ -815,7 +859,6 @@ const NEVER_NAME_WRITERS: Readonly<Record<string, string>> = {
   "src/lib/booking-guest-removal-service.ts": "guest removal",
   "src/lib/waitlist.ts": "waitlist promotion",
   "src/lib/school-attendee-confirmation.ts": "school attendee rename",
-  "src/lib/member-guest-consent-service.ts": "consent",
   "src/lib/stored-night-price-repair-store.ts": "night-price repair",
   "src/app/api/lodge/guests/[date]/arrive/route.ts": "lodge arrive",
   "src/app/api/lodge/guests/[date]/depart/route.ts": "lodge depart",
@@ -830,7 +873,7 @@ describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () =
       .files.filter((file) => file.startsWith("src/") && !COLUMN_OWNERS.has(file))
       .filter((file) => {
         const text = code(file);
-        return NESTED_GUEST_CREATE.test(text) || DIRECT_GUEST_CREATE.test(text);
+        return countOf(text, NESTED_GUEST_CREATE) + countOf(text, DIRECT_GUEST_CREATE) > 0;
       })
       .sort();
     expect(
@@ -839,11 +882,14 @@ describe(`booking-guest dietary writer census (${LIFECYCLE_INVARIANT_ID})`, () =
     ).toEqual(Object.keys(BOOKING_GUEST_CREATE_SITES).sort());
   });
 
-  it("every create site hands its builder a dietary decision", () => {
-    const missing = Object.keys(BOOKING_GUEST_CREATE_SITES).filter(
-      (file) => !DIETARY_CREATE_DECISION.test(code(file)),
-    );
-    expect(missing, `${LIFECYCLE_INVARIANT_ID}: create site without a dietary decision`).toEqual([]);
+  it("every create site hands its builder a dietary decision, one per create, file by file (L2)", () => {
+    const mismatched = Object.keys(BOOKING_GUEST_CREATE_SITES).flatMap((file) => {
+      const text = code(file);
+      const creates = countOf(text, NESTED_GUEST_CREATE) + countOf(text, DIRECT_GUEST_CREATE);
+      const decisions = countOf(text, DIETARY_CREATE_DECISION);
+      return creates === decisions ? [] : [`${file}: ${creates} create(s), ${decisions} decision(s)`];
+    });
+    expect(mismatched, `${LIFECYCLE_INVARIANT_ID}: a guest create without its dietary decision`).toEqual([]);
   });
 
   it("both shared builders spread the module's create fragment", () => {
@@ -1048,6 +1094,32 @@ describe(`member dietary access census scanner (${INVARIANT_ID}) — mutation pr
         "src/lib/booking-create.ts",
       ),
     ).not.toContain("writes-import");
+  });
+
+  it("reports a fragment builder used other than as a spread operand (S3)", () => {
+    const writer = "src/lib/booking-create.ts";
+    expect(rulesOf(`const d = { ...bookingGuestDietaryCreateData(w) };`, writer)).not.toContain(
+      "fragment-outside-spread",
+    );
+    for (const source of [
+      `const leaked = bookingGuestDietaryCreateData(w);`,
+      `log(bookingGuestDietaryUpdateData(u).dietaryRequirements);`,
+      `const f = bookingGuestDietaryCreateData;`,
+    ]) {
+      expect(rulesOf(source, writer), source).toContain("fragment-outside-spread");
+    }
+    expect(
+      rulesOf(`import { bookingGuestDietaryCreateData } from "@/lib/member-dietary-booking-writes";`, writer),
+    ).not.toContain("fragment-outside-spread");
+  });
+
+  it("reports hand-made seeding outside the write half (S3)", () => {
+    for (const source of [
+      `const s = bookingGuestDietarySeeding(true);`,
+      `const s = { seedFromProfile: true } as never;`,
+    ]) {
+      expect(rulesOf(source, "src/lib/booking-create.ts"), source).toContain("seeding-constructor");
+    }
   });
 
   it("reports a file that writes BookingGuest rows naming the column (#3029)", () => {

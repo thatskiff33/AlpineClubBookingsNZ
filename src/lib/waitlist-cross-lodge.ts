@@ -693,6 +693,7 @@ export async function confirmCrossLodgeWaitlistOffer(
   // a genuinely new guest is seeded, and there is none here.
   const carriedDietary = await captureBookingGuestDietaryCarries(
     prisma,
+    entry.id,
     entry.guests.map((guest) => guest.id),
   );
   const guests: BookingGuestInput[] = entry.guests.map((guest) => ({

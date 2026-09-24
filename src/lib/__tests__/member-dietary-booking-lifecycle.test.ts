@@ -23,6 +23,8 @@ import {
   bookingGuestDietaryUpdateData,
   captureBookingGuestDietaryCarries,
   fillBookingGuestDietaryFromProfileIfEmpty,
+  isSameBookingGuestOccupant,
+  planGuestRenameDietary,
   planHeldPartyRebuildDietary,
   planHeldPartyRewriteDietary,
   resolveBookingGuestDietary,
@@ -48,9 +50,11 @@ function profileDb(values: Record<string, string | null>, guestRows: unknown[] =
       findMany: vi.fn(async () => guestRows),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
+    $executeRaw: vi.fn(async () => 0),
   };
   // The mocks stay reachable for assertions; the module sees a transaction client.
-  return db as typeof db & Pick<Prisma.TransactionClient, "member" | "bookingGuest">;
+  return db as typeof db &
+    Pick<Prisma.TransactionClient, "member" | "bookingGuest" | "$executeRaw">;
 }
 
 const person = (
@@ -58,6 +62,9 @@ const person = (
   memberId: string | null = null,
   ageTier: AgeTier = AgeTier.ADULT,
 ) => ({ firstName, lastName: "Tester", ageTier, memberId });
+
+const row = (id: string, identity: ReturnType<typeof person>) => ({ id, ...identity });
+const PENDING = { memberGuestConsent: { consentStatus: "PENDING" } };
 
 const createData = async (
   db: ReturnType<typeof profileDb>,
@@ -97,7 +104,12 @@ describe(`seeding a new guest row (${ID})`, () => {
       { id: "old-1", dietaryRequirements: "Trip-specific: no dairy" },
       { id: "old-2", dietaryRequirements: null },
     ]);
-    const carries = await captureBookingGuestDietaryCarries(source, ["old-1", "old-2"]);
+    const carries = await captureBookingGuestDietaryCarries(source, "bk-old", ["old-1", "old-2"]);
+    // S3: the capture is scoped to its source booking.
+    expect(source.bookingGuest.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["old-1", "old-2"] }, bookingId: "bk-old" },
+      select: { id: true, dietaryRequirements: true },
+    });
     const db = profileDb({ "m-1": PROFILE, "m-2": PROFILE });
     expect(
       await createData(db, OFF, [
@@ -196,12 +208,12 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
   it("the same person keeps theirs untouched; a substitute member is seeded; a non-member is cleared", async () => {
     const db = profileDb({ "m-b": "B's profile" });
     const updates = await planHeldPartyRewriteDietary(db, ON, [
-      { previous: person("Aroha", "m-a"), next: person("Aroha", "m-a") },
-      { previous: person("Kid"), next: person("Kid") },
-      { previous: person("Aroha", "m-a"), next: person("Bea", "m-b") },
-      { previous: person("Aroha", "m-a"), next: person("Stranger") },
-      { previous: person("Kid"), next: person("Other kid") },
-      { previous: person("Kid"), next: person("Kid", null, AgeTier.CHILD) },
+      { previous: row("r1", person("Aroha", "m-a")), next: person("Aroha", "m-a") },
+      { previous: row("r2", person("Kid")), next: person("Kid") },
+      { previous: row("r3", person("Aroha", "m-a")), next: person("Bea", "m-b") },
+      { previous: row("r4", person("Aroha", "m-a")), next: person("Stranger") },
+      { previous: row("r5", person("Kid")), next: person("Other kid") },
+      { previous: row("r6", person("Kid")), next: person("Kid", null, AgeTier.CHILD) },
     ]);
     expect(updates.map(bookingGuestDietaryUpdateData)).toEqual([
       {},
@@ -216,10 +228,43 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
   it("while OFF a substitute is cleared rather than left holding the previous person's note", async () => {
     const db = profileDb({ "m-b": "B's profile" });
     const [update] = await planHeldPartyRewriteDietary(db, OFF, [
-      { previous: person("Aroha", "m-a"), next: person("Bea", "m-b") },
+      { previous: row("r1", person("Aroha", "m-a")), next: person("Bea", "m-b") },
     ]);
     expect(bookingGuestDietaryUpdateData(update)).toEqual({ dietaryRequirements: null });
     expect(db.member.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a spelling correction or a placeholder being named is the same person; a different non-member is not (S2)", async () => {
+    const db = profileDb({});
+    const updates = await planHeldPartyRewriteDietary(db, ON, [
+      { previous: row("r1", { ...person("Jonh"), lastName: "Smith" }), next: { ...person("John"), lastName: "Smith" } },
+      { previous: row("r2", { ...person("Guest"), lastName: "3" }), next: { ...person("Hana"), lastName: "Rewi" } },
+      { previous: row("r3", { ...person("John"), lastName: "Smith" }), next: { ...person("Mere"), lastName: "Walker" } },
+    ]);
+    expect(updates.map(bookingGuestDietaryUpdateData)).toEqual([{}, {}, { dietaryRequirements: null }]);
+  });
+
+  it("a non-member row becoming a member keeps a value already there, and seeds an empty one (L1)", async () => {
+    const db = profileDb({ "m-b": "B's profile" }, [
+      { id: "kept", dietaryRequirements: "Entered by an officer" },
+      { id: "empty", dietaryRequirements: null },
+    ]);
+    const updates = await planHeldPartyRewriteDietary(db, ON, [
+      { previous: row("kept", person("Bea")), next: person("Bea", "m-b") },
+      { previous: row("empty", person("Bea")), next: person("Bea", "m-b") },
+    ]);
+    expect(updates.map(bookingGuestDietaryUpdateData)).toEqual([
+      {},
+      { dietaryRequirements: "B's profile" },
+    ]);
+  });
+
+  it("a substituted member whose consent is pending is cleared, not seeded (S5)", async () => {
+    const db = profileDb({ "m-b": "B's profile" });
+    const [update] = await planHeldPartyRewriteDietary(db, ON, [
+      { previous: row("r1", person("Aroha", "m-a")), next: { ...person("Bea", "m-b"), ...PENDING } },
+    ]);
+    expect(bookingGuestDietaryUpdateData(update)).toEqual({ dietaryRequirements: null });
   });
 
   it("reassignHeldBookingGuests leaves the same occupant's row alone and clears a substituted one", async () => {
@@ -266,6 +311,74 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
     );
     expect(data[0]).not.toHaveProperty("dietaryRequirements");
     expect(data[1]).toHaveProperty("dietaryRequirements", null);
+  });
+});
+
+describe(`a non-member renamed by a modification (S2, ${ID})`, () => {
+  it("clears the note only when the rename is somebody else", () => {
+    const decide = planGuestRenameDietary([
+      { guestId: "typo", previous: { ...person("Jonh"), lastName: "Smith" }, next: { firstName: "John", lastName: "Smith" } },
+      { guestId: "named", previous: { ...person("School Child"), lastName: "2" }, next: { firstName: "Tama", lastName: "Ngata" } },
+      { guestId: "swap", previous: { ...person("John"), lastName: "Smith" }, next: { firstName: "Mere", lastName: "Walker" } },
+    ]);
+    expect(bookingGuestDietaryUpdateData(decide("typo"))).toEqual({});
+    expect(bookingGuestDietaryUpdateData(decide("named"))).toEqual({});
+    expect(bookingGuestDietaryUpdateData(decide("swap"))).toEqual({ dietaryRequirements: null });
+    expect(bookingGuestDietaryUpdateData(decide("not-renamed"))).toEqual({});
+  });
+
+  it("is the same rule the held-party rewrite uses", () => {
+    const previous = { ...person("John"), lastName: "Smith" };
+    const next = { ...previous, firstName: "Mere", lastName: "Walker" };
+    expect(isSameBookingGuestOccupant(previous, next)).toBe(false);
+    expect(isSameBookingGuestOccupant(previous, { ...previous, firstName: "Jhon" })).toBe(true);
+  });
+});
+
+describe(`consent pending (S5, ${ID})`, () => {
+  it("a member guest whose consent is pending is not seeded", async () => {
+    const db = profileDb({ "m-1": PROFILE });
+    expect(await createData(db, ON, [{ memberId: "m-1", ...PENDING }])).toEqual([{}]);
+    expect(db.member.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a pending link is not filled; a granted one is", async () => {
+    const db = profileDb({ "m-1": PROFILE });
+    await fillBookingGuestDietaryFromProfileIfEmpty(db, ON, [{ guestId: "g1", memberId: "m-1", ...PENDING }]);
+    expect(db.bookingGuest.updateMany).not.toHaveBeenCalled();
+    await fillBookingGuestDietaryFromProfileIfEmpty(db, ON, [
+      { guestId: "g1", memberId: "m-1", memberGuestConsent: { consentStatus: "CONFIRMED" } },
+    ]);
+    expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
+      where: { id: "g1", dietaryRequirements: null },
+      data: { dietaryRequirements: PROFILE },
+    });
+  });
+
+  it("granting consent fills the row inside the consent transaction (source contract)", () => {
+    const text = readFileSync(
+      path.resolve(__dirname, "../../..", "src/lib/member-guest-consent-service.ts"),
+      "utf8",
+    );
+    const approve = text.slice(text.indexOf('"CONFIRMED",'), text.indexOf('return { outcome: "APPROVED" }'));
+    expect(approve).toMatch(/fillBookingGuestDietaryFromProfileIfEmpty\(tx, guestDietarySeeding, \[/);
+  });
+});
+
+describe(`the held-party rebuild locks the party first (C3, ${ID})`, () => {
+  it("takes the row lock before it reads the values", async () => {
+    const db = profileDb({}, []);
+    const order: string[] = [];
+    db.$executeRaw.mockImplementation(async () => {
+      order.push("lock");
+      return 0;
+    });
+    db.bookingGuest.findMany.mockImplementation(async () => {
+      order.push("read");
+      return [];
+    });
+    await planHeldPartyRebuildDietary(db, ON, "held-1", []);
+    expect(order).toEqual(["lock", "read"]);
   });
 });
 

@@ -33,6 +33,10 @@ import type {
 } from "@/lib/member-guest-email-notes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  fillBookingGuestDietaryFromProfileIfEmpty,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 
 /**
  * The member-guest consent state machine ("+ Add Member Guest", epic #2305,
@@ -480,6 +484,10 @@ export async function respondToMemberGuestConsent(params: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 S5 — the dietary seeding toggle, read here for the same reason. A
+  // member guest's profile note is NOT copied onto the row while their consent
+  // is pending; granting it below fills the row, if still empty (`INV-MOD-059`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     return await db.$transaction(async (tx) => {
@@ -512,6 +520,12 @@ export async function respondToMemberGuestConsent(params: {
           now,
         );
         if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
+        // The member has now agreed to be on this booking: fill their row from
+        // their CURRENT profile note, only if it is still empty and only while
+        // the field is on, through this transaction (#3029 S5).
+        await fillBookingGuestDietaryFromProfileIfEmpty(tx, guestDietarySeeding, [
+          { guestId, memberId: targetMemberId },
+        ]);
         await enqueueHostingCoverageReevaluationForMember(
           targetMemberId,
           tx,

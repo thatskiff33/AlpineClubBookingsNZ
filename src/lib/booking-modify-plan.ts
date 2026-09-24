@@ -145,7 +145,9 @@ import {
 } from "@/lib/booking-modify-validation";
 import {
   bookingGuestDietaryCreateData,
+  bookingGuestDietaryUpdateData,
   fillBookingGuestDietaryFromProfileIfEmpty,
+  planGuestRenameDietary,
   resolveBookingGuestDietary,
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
@@ -2631,6 +2633,21 @@ export async function applyGuestChanges(
     (guestNameUpdates ?? []).map((update) => [update.guestId, update]),
   );
   const linkByGuestId = guestMemberLinks ?? new Map();
+  // #3029 S2 (`INV-MOD-059`): a non-member rename to somebody else clears the
+  // predecessor's dietary note; a spelling fix or a placeholder being named
+  // keeps it — the same same-occupant rule the held-party rewrite uses.
+  const guestRowsById = new Map(
+    [...remainingGuests, ...(inProgressPlan?.proposedExistingGuests ?? []).map((entry) => entry.guest)]
+      .map((guest) => [guest.id, guest]),
+  );
+  const renameDietary = planGuestRenameDietary(
+    (guestNameUpdates ?? []).flatMap((update) => {
+      const row = guestRowsById.get(update.guestId);
+      return row
+        ? [{ guestId: update.guestId, previous: row, next: update }]
+        : [];
+    }),
+  );
 
   type BreakdownGuest = {
     nightDates: Date[];
@@ -2805,6 +2822,7 @@ export async function applyGuestChanges(
                 lastName: nameUpdate.lastName,
               }
             : {}),
+          ...bookingGuestDietaryUpdateData(renameDietary(entry.guest.id)),
           ...(link
             ? {
                 isMember: true,
@@ -2877,7 +2895,9 @@ export async function applyGuestChanges(
       guestDietarySeeding,
       inProgressPlan.proposedExistingGuests.flatMap((entry) => {
         const link = linkByGuestId.get(entry.guest.id);
-        return link ? [{ guestId: entry.guest.id, memberId: link.memberId }] : [];
+        return link
+          ? [{ guestId: entry.guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
+          : [];
       }),
     );
 
@@ -2979,6 +2999,7 @@ export async function applyGuestChanges(
               lastName: nameUpdate.lastName,
             }
           : {}),
+        ...bookingGuestDietaryUpdateData(renameDietary(remainingGuest.id)),
         ...(link
           ? {
               isMember: true,
@@ -3048,7 +3069,9 @@ export async function applyGuestChanges(
     guestDietarySeeding,
     remainingGuests.flatMap((guest) => {
       const link = linkByGuestId.get(guest.id);
-      return link ? [{ guestId: guest.id, memberId: link.memberId }] : [];
+      return link
+        ? [{ guestId: guest.id, memberId: link.memberId, memberGuestConsent: link.consentColumns }]
+        : [];
     }),
   );
 
