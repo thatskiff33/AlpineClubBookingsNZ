@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
-import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
+import {
+  checkLodgeAuth,
+  getLodgeAuthActorMemberId,
+  kioskLodgeAuthErrorResponse,
+  resolveKioskLodgeId,
+} from "@/lib/lodge-auth";
+import {
+  grantKioskDietaryAccess,
+  readKioskGuestDietaryRequirements,
+} from "@/lib/member-dietary";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { GROUP_TRIP_IDENTITY_SELECT } from "@/lib/group-trip-identity";
 import { attachKioskGroupTrip } from "@/lib/kiosk-group-trip";
@@ -233,12 +242,40 @@ async function handleGet(req: NextRequest, dateStr: string) {
     })
     .filter((booking) => booking.guests.length > 0);
 
+  // #3029 (`INV-PRIV-022`): the stay's dietary/allergy notes, for the kiosk's
+  // `admin` and `hut-leader` tiers ONLY, and only for the guests this list
+  // already shows (the present population computed above). Every other tier —
+  // the unattended `lodge` wall, `staying-guest`, an admin's preview of a kiosk
+  // account — gets no grant, and its guests carry NO `dietaryRequirements` key
+  // at all: absent from the payload, not merely unrendered.
+  const dietaryGrant = await grantKioskDietaryAccess({
+    tier,
+    preview: "preview" in authResult ? authResult.preview : undefined,
+    actorMemberId: getLodgeAuthActorMemberId(authResult),
+    presentGuestIds: result.flatMap((b) => b.guests.map((g) => g.id)),
+  });
+  const withDietary = dietaryGrant
+    ? await (async () => {
+        const values = await readKioskGuestDietaryRequirements(
+          dietaryGrant,
+          result.flatMap((b) => b.guests.map((g) => g.id)),
+        );
+        return result.map((b) => ({
+          ...b,
+          guests: b.guests.map((g) => ({
+            ...g,
+            dietaryRequirements: values.get(g.id) ?? null,
+          })),
+        }));
+      })()
+    : result;
+
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);
   // #3369: a group trip is a MEMBER's, so a school's booking is not offered to
   // the linkage pass. It still appears on the kiosk list itself, above.
   const linkable = bookings.filter((b): b is typeof b & { memberId: string } => Boolean(bookingOwner(b).memberId));
-  const withGroupTrip = await attachKioskGroupTrip(result, linkable, { db: prisma, lodgeId, capabilities });
+  const withGroupTrip = await attachKioskGroupTrip(withDietary, linkable, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

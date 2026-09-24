@@ -610,25 +610,34 @@ export async function readKioskGuestDietaryRequirements(
  * Issued even while the field is OFF, like the profile value beside it (owner
  * decision on #2941, 20 Sep 2026 — self disclosure).
  */
+export type OwnBookingGuestDietaryExportRow = {
+  stayStart: Date;
+  stayEnd: Date;
+  dietaryRequirements: string;
+};
+
 export async function readOwnBookingGuestDietaryForExport(
   grant: DietaryAccessGrant,
   db: BookingGuestDb = prisma,
-): Promise<Array<{ bookingGuestId: string; bookingId: string; dietaryRequirements: string }>> {
+): Promise<OwnBookingGuestDietaryExportRow[]> {
   const record = grantRecord(grant);
   if (!record || record.kind !== "member" || record.purpose !== "self-data-export") {
     throw new Error("Own booking dietary values need the subject's data-export grant");
   }
+  // The subject's own guest rows on ANY booking (their own, or somebody else's
+  // they were added to), identified by the stay dates only: another member's
+  // booking id is not the subject's data.
   const rows = await db.bookingGuest.findMany({
     where: { memberId: record.actorMemberId, dietaryRequirements: { not: null } },
-    select: { id: true, bookingId: true, dietaryRequirements: true },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { stayStart: true, stayEnd: true, dietaryRequirements: true },
+    orderBy: [{ stayStart: "asc" }, { id: "asc" }],
   });
   return rows.flatMap((row) =>
     row.dietaryRequirements
       ? [
           {
-            bookingGuestId: row.id,
-            bookingId: row.bookingId,
+            stayStart: row.stayStart,
+            stayEnd: row.stayEnd,
             dietaryRequirements: row.dietaryRequirements,
           },
         ]
