@@ -241,9 +241,20 @@ async function claimConsentTransition(
   next: "CONFIRMED" | "DECLINED" | "EXPIRED",
   respondedByMemberId: string | null,
   now: Date,
+  /**
+   * #3029 N3: the member the caller authorised against, read before the
+   * locks. Matching it here means a row whose occupant was rewritten in place
+   * in between (a held-party approval) cannot be claimed on the strength of the
+   * old member's answer. Omitted by the paths that read the row under the lock.
+   */
+  expectedMemberId?: string,
 ): Promise<boolean> {
   const claimed = await tx.bookingGuest.updateMany({
-    where: { id: guestId, consentStatus: "PENDING" },
+    where: {
+      id: guestId,
+      consentStatus: "PENDING",
+      ...(expectedMemberId ? { memberId: expectedMemberId } : {}),
+    },
     data:
       next === "EXPIRED"
         ? // An expiry is nobody's decision, so it records no responder: that is
@@ -413,10 +424,11 @@ export async function respondToMemberGuestConsent(params: {
     db = prisma,
   } = params;
 
-  // Authorization runs on an unlocked read. It is re-asserted implicitly under
-  // the lock by the status-guarded claim (a row that changed hands cannot be
-  // claimed), and the guest's memberId is immutable, so nothing an attacker can
-  // race changes the answer.
+  // Authorization runs on an unlocked read, and it is re-asserted under the
+  // lock by the status-guarded claim. The guest's memberId is NOT immutable: a
+  // held-party approval rewrites a row's occupant in place (#3029 N3). So the
+  // claim below matches the member authorised here as well as the pending
+  // status — a row that changed hands in between cannot be claimed at all.
   const guest = (await db.bookingGuest.findUnique({
     where: { id: guestId },
     select: {
@@ -518,6 +530,7 @@ export async function respondToMemberGuestConsent(params: {
           "CONFIRMED",
           actorMemberId,
           now,
+          targetMemberId,
         );
         if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
         // The member has now agreed to be on this booking: fill their row from
@@ -544,6 +557,7 @@ export async function respondToMemberGuestConsent(params: {
         "DECLINED",
         actorMemberId,
         now,
+        targetMemberId,
       );
       if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
 

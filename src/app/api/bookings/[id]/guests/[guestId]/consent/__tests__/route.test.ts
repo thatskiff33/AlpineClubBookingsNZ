@@ -430,7 +430,8 @@ describe("APPROVE", () => {
     // idempotency story (two delegates answering at once resolve to one winner).
     expect(h.guestUpdateMany).toHaveBeenCalledTimes(1);
     const claim = h.guestUpdateMany.mock.calls[0][0];
-    expect(claim.where).toEqual({ id: GUEST_ID, consentStatus: "PENDING" });
+    // #3029 N3: the claim also matches the member authorised before the locks.
+    expect(claim.where).toEqual({ id: GUEST_ID, consentStatus: "PENDING", memberId: TARGET_ID });
     expect(claim.data).toMatchObject({
       consentStatus: "CONFIRMED",
       consentRespondedByMemberId: TARGET_ID,
