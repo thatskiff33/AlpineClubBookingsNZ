@@ -1,7 +1,7 @@
 # File-size allowances for #3485
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2681
+lines: 2685
 reason: the teacher attention warning, disabled actions, and derived-total display
   belong beside the three existing blob warnings in this card; extracting just
   this state would split one decision across components. A broader card split

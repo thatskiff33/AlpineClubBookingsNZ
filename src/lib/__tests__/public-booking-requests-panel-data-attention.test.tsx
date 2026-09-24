@@ -123,9 +123,9 @@ function mockFetch(request: Record<string, unknown> | Record<string, unknown>[])
   }) as unknown as typeof fetch;
 }
 
-async function renderWith(request: Record<string, unknown> | Record<string, unknown>[]) {
+async function renderWith(request: Record<string, unknown> | Record<string, unknown>[], canEdit = true) {
   mockFetch(request);
-  render(<PublicBookingRequestsPanel />);
+  render(<PublicBookingRequestsPanel canEdit={canEdit} />);
   // Wait for the first fetch to land before asserting on the card. (The school
   // name renders as the card title and the contact line, hence findAll.)
   await screen.findAllByText(/Demo High School|Ada Lovelace/i);
@@ -279,6 +279,7 @@ describe("PublicBookingRequestsPanel saved-data marker (#2342)", () => {
 
     expect(screen.getByText(MARKER)).toBeTruthy();
     expect(screen.getByText(TEACHER_REASON)).toBeTruthy();
+    expect(screen.getByText(MARKER).parentElement?.textContent).toMatch(/School approval also refuses unreadable teacher details/i);
     expect(screen.queryByText(GUEST_REASON)).toBeNull();
     expect(screen.queryByText(LINK_REASON)).toBeNull();
     expect(screen.queryByText(QUOTE_REASON)).toBeNull();
@@ -343,6 +344,28 @@ describe("PublicBookingRequestsPanel saved-data marker (#2342)", () => {
     expect(marker.getAttribute("role")).toBe("status");
     expect(marker.className).toContain("border-warning-6");
     expect(marker.className).toContain("bg-warning-3");
+  });
+
+  it("keeps the school-only warning off a GENERAL request with unreadable saved data", async () => {
+    await renderWith({
+      ...baseRequest,
+      type: "GENERAL",
+      schoolName: null,
+      guestDataNeedsAttention: true,
+    });
+
+    const marker = screen.getByText(MARKER).closest("div")!;
+    expect(marker.textContent).not.toMatch(/School approval also refuses unreadable teacher details/i);
+    expect(marker.textContent).toMatch(/Decline/);
+  });
+
+  it("gives view-only officers a remedy without implying they can Decline", async () => {
+    await renderWith({ ...baseRequest, guestDataNeedsAttention: true }, false);
+
+    const marker = screen.getByText(MARKER).closest("div")!;
+    expect(marker.textContent).toMatch(/Ask an officer with edit access to decline/i);
+    expect(marker.textContent).not.toMatch(/Either Decline/i);
+    expect(screen.queryByRole("button", { name: /^Decline$/i })).toBeNull();
   });
 
   it("disables quoting, holding and approving on a flagged row but leaves Decline", async () => {

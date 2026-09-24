@@ -1723,12 +1723,16 @@ export function PublicBookingRequestsPanel({
                       {LINKING_EDITOR_STATUSES.has(request.status) ? (
                         <p className="mt-1">
                           Quoting, pricing, holding and approving are turned off
-                          in this panel. School approval also refuses unreadable
-                          teacher details. There is no screen for repairing the
-                          saved data. Check what the group actually wants with
-                          the requester, then
-                          either <strong>Decline</strong> it so they can submit
-                          again, or ask support to repair the stored row.
+                          in this panel. {request.type === "SCHOOL" &&
+                          request.teacherDataNeedsAttention ? (
+                            <>School approval also refuses unreadable teacher details. </>
+                          ) : null}
+                          There is no screen for repairing the saved data. Check
+                          what the group actually wants with the requester. {canEdit ? (
+                            <>Either <strong>Decline</strong> it so they can submit again, or ask support to repair the stored row.</>
+                          ) : (
+                            <>Ask an officer with edit access to decline it so they can submit again, or to arrange support repair.</>
+                          )}
                         </p>
                       ) : (
                         <p className="mt-1">
