@@ -33,6 +33,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn().mockResolvedValue([]),
     },
     booking: { findMany: vi.fn().mockResolvedValue([]), aggregate: vi.fn() },
+    // #3029: the export's own-guest-rows read.
+    bookingGuest: { findMany: vi.fn().mockResolvedValue([]) },
     choreAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     memberSubscription: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },

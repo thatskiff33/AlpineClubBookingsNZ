@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AgeTier } from "@prisma/client";
+import { AgeTier, type Prisma } from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({
@@ -38,7 +38,7 @@ const PROFILE = "Coeliac";
 
 /** A transaction double whose Member rows hold these profile values. */
 function profileDb(values: Record<string, string | null>, guestRows: unknown[] = []) {
-  return {
+  const db = {
     member: {
       findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
         args.where.id.in.map((id) => ({ id, dietaryRequirements: values[id] ?? null })),
@@ -49,6 +49,8 @@ function profileDb(values: Record<string, string | null>, guestRows: unknown[] =
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
   };
+  // The mocks stay reachable for assertions; the module sees a transaction client.
+  return db as typeof db & Pick<Prisma.TransactionClient, "member" | "bookingGuest">;
 }
 
 const person = (
@@ -224,8 +226,8 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
     const tx = {
       bookingGuest: {
         findMany: vi.fn(async () => [
-          { id: "g1", memberId: "m-a", consentStatus: null, ...person("Aroha", "m-a") },
-          { id: "g2", memberId: null, consentStatus: null, ...person("Kid") },
+          { id: "g1", consentStatus: null, ...person("Aroha", "m-a") },
+          { id: "g2", consentStatus: null, ...person("Kid") },
         ]),
         update: vi.fn(async () => ({})),
       },
