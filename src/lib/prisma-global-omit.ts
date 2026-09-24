@@ -1,5 +1,5 @@
 /**
- * The columns every application Prisma client OMITS by default (#2941,
+ * The columns every application Prisma client OMITS by default (#2941, #3029,
  * `INV-PRIV-022`).
  *
  * `Member.dietaryRequirements` is special-category personal data (dietary and
@@ -18,4 +18,8 @@
  */
 export const PRISMA_CLIENT_GLOBAL_OMIT = {
   member: { dietaryRequirements: true },
+  // #3029: the per-stay snapshot of the same data, omitted on the same terms —
+  // every `include: { guests: true }`, every unselected guest read and every
+  // guest row a create or update hands back arrives without it.
+  bookingGuest: { dietaryRequirements: true },
 } as const;
