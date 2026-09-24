@@ -30,7 +30,7 @@ vi.mock("@/lib/prisma", async () => {
   return {
     prisma: {
       member: {
-        findUnique: honourSelect(mockFindUnique),
+        findUnique: honourSelect(mockFindUnique, "Member"),
         findFirst: vi.fn(),
         update: vi.fn(),
       },
@@ -174,10 +174,27 @@ describe("a session from before a login switch-off stays ended (#3603, D1)", () 
   });
 
   it("keeps a session that began after login was switched back on", async () => {
+    // Login was switched off ten minutes ago and is back on now.
     const switchedOffAt = new Date(Date.now() - 10 * 60_000);
-    const fresh = await sessionCookie(switchedOffAt.getTime() + 60_000);
-
     mockFindUnique.mockResolvedValue(memberRow(true, switchedOffAt));
+
+    // Minted the way a real sign-in mints it: the jwt callback with `user`, which
+    // stamps the issue time itself, then encrypted as the session cookie.
+    const signedIn = await authConfig.callbacks.jwt?.({
+      token: { name: "Admin", email: "admin@example.org", sub: "admin-1" },
+      user: {
+        id: "admin-1",
+        role: "ADMIN",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      },
+      trigger: "signIn",
+    } as never);
+    expect(signedIn?.sessionInvalidated).toBe(false);
+    const fresh = await encode({ token: signedIn!, secret: SECRET, salt: COOKIE });
+
     const session = await readSession(fresh);
 
     expect(session.user?.sessionInvalidated).toBe(false);
