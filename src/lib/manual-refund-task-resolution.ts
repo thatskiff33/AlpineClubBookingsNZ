@@ -481,6 +481,7 @@ export async function resolveManualRefundTask(
           manualRefundTaskId: task.id,
           amountCents: settlement.amountCents,
           refundMethod: refundMethodForEditReviewRoute(settlementRoute),
+          paymentSource: task.payment?.source ?? null,
           officerMemberId: actingMemberId,
           store: tx,
         });

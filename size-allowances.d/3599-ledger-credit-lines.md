@@ -12,9 +12,10 @@ stack re-measured (one path, one allowance, while both are measured against
 `main` together).
 
 file: src/lib/member-credit.ts
-lines: 1013
+lines: 1008
 reason: one sync call after each of the five booking-linked credit writes,
-  plus its import. Moving the writes out of the module that owns the credit
+  plus two imports — net of the two applied-credit queries that now read the
+  shared filter in `member-credit-booking-rows.ts`. Moving the writes out of the module that owns the credit
   ledger's lock and its idempotency rules would split one invariant across
   two files.
 

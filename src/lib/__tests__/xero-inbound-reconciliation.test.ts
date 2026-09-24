@@ -88,8 +88,9 @@ const mocks = vi.hoisted(() => ({
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
+const syncCredits = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
-  syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
+  syncBookingLedgerCredits: syncCredits,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -1865,6 +1866,8 @@ describe("processStoredXeroInboundEvents", () => {
         sourceBookingId: "booking_ib_cap",
       }),
     });
+    // #3599: the minted credit reaches the ledger, for its booking, in the same transaction.
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_cap", store: txRef.current });
 
     // The account-credit note outbox operation was queued through the SAME
     // transaction client (store === the captured tx), proving it commits
@@ -2190,6 +2193,7 @@ describe("processStoredXeroInboundEvents", () => {
         sourceBookingId: "booking_ib_pl",
       },
     });
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_pl", store: expect.anything() });
     expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
       { bookingId: "booking_ib_pl", recipientMemberId: "mem_pl" },
       "member@example.com",

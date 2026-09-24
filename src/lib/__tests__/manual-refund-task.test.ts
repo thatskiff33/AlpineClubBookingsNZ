@@ -1542,6 +1542,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       manualRefundTaskId: "task-1",
       amountCents: 9000,
       refundMethod: "internet-banking",
+      paymentSource: null,
       officerMemberId: "admin-1",
       store: tx,
     });

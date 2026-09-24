@@ -14,9 +14,11 @@
  *  2. A TIERED restore posts `CREDIT_ISSUED` for exactly what was restored,
  *     anchored on the cancellation; restoring again posts nothing and the
  *     transaction still commits.
- *  3. A cancellation credit posts `CREDIT_ISSUED` against its own row.
+ *  3. A cancellation credit and a reduction credit each post `CREDIT_ISSUED`
+ *     against their own row.
  *  4. Completing a cancelled booking's hand-back through the real resolver
- *     posts one `BANK_REFUND`, by internet banking, naming the officer.
+ *     posts one `BANK_REFUND`, by internet banking, naming the officer — and a
+ *     second completion posts nothing; a task on a CARD payment posts none.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -93,6 +95,8 @@ async function clean(): Promise<void> {
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.memberCredit.deleteMany({ where: { sourceBookingId: BOOKING_ID } });
+  await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
@@ -197,6 +201,41 @@ async function clean(): Promise<void> {
       ]);
     });
 
+    it("posts a reduction credit against its own row", async () => {
+      await prisma.bookingModification.create({
+        data: { id: "race-3599-mod", bookingId: BOOKING_ID, memberId: OFFICER_ID, modificationType: "GUEST_REMOVE", previousData: {}, newData: {} },
+      });
+      await prisma.$transaction((tx) =>
+        credit.createBookingModificationCredit(MEMBER_ID, 1_250, BOOKING_ID, "race-3599-mod", undefined, tx),
+      );
+      const [row] = await prisma.memberCredit.findMany({ where: { sourceBookingModificationId: "race-3599-mod" }, select: { id: true } });
+      expect(await lines()).toEqual([
+        expect.objectContaining({ kind: "CREDIT_ISSUED", amountCents: -1_250, anchorKind: "MEMBER_CREDIT", anchorId: row?.id }),
+      ]);
+    });
+
+    it("posts NO hand-back for a task on a card payment — that money goes back on the card, as a card refund", async () => {
+      await prisma.payment.create({
+        data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 10_000, source: "STRIPE", status: "SUCCEEDED" },
+      });
+      await prisma.paymentTransaction.create({
+        data: { id: "race-3599-txn", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: 10_000, status: "SUCCEEDED" },
+      });
+      await prisma.manualRefundTask.create({
+        data: { id: TASK_ID, bookingId: BOOKING_ID, paymentId: PAYMENT_ID, amountCents: 2_000, raisedAmountCents: 2_000, kind: "DELETED_BOOKING_LATE_CAPTURE", reason: "race 3599 late capture" },
+      });
+      await resolveManualRefundTask({
+        taskId: TASK_ID,
+        resolution: "completed",
+        note: null,
+        actingMemberId: OFFICER_ID,
+        confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      });
+      expect((await lines()).filter((l) => l.kind === "BANK_REFUND")).toEqual([]);
+    });
+
     it("posts a completed hand-back through the REAL resolver as one BANK_REFUND by internet banking, naming the officer", async () => {
       await prisma.payment.create({
         data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 10_000, source: "INTERNET_BANKING", status: "SUCCEEDED" },
@@ -224,6 +263,19 @@ async function clean(): Promise<void> {
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
       });
+
+      // A second completion is refused (the task is closed) and posts nothing.
+      await expect(
+        resolveManualRefundTask({
+          taskId: TASK_ID,
+          resolution: "completed",
+          note: null,
+          actingMemberId: OFFICER_ID,
+          confirmedAmountCents: null,
+          direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
+        }),
+      ).rejects.toThrow();
 
       const handBack = (await lines()).filter((l) => l.kind === "BANK_REFUND");
       expect(handBack).toEqual([

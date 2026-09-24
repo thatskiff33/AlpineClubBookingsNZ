@@ -275,10 +275,12 @@ applied credit *tiered by policy* (#1164), so a restore can be less than
 what was applied, and it is one row for however many applied rows the booking
 holds: a reversal, which copies the reversed line in full, would over-state
 every tiered restore. The restore row posts `CREDIT_ISSUED` for exactly what
-was restored instead, anchored on the `CANCELLATION` so it stays
-distinguishable from a cancellation credit (which moved
-`refundedAmountCents`; a restore never did). `creditAppliedCents` is not
-touched by a cancellation, so Σ `CREDIT_APPLIED` still equals it.
+was restored instead, anchored on the `CANCELLATION` because it returns
+credit the member already spent, where every other `CREDIT_ISSUED` converts
+money the booking held. The anchor says nothing about `refundedAmountCents`:
+whether a credit row moved it depends on its writer, and C4 must not classify
+by anchor. (Deleting a booking nulls its credit rows' link — the one change
+the database makes — and its lines cascade with it.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
@@ -290,7 +292,7 @@ touched by a cancellation, so Σ `CREDIT_APPLIED` still equals it.
 | Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |
 | Cancellation credited to account (`CANCELLATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT`, linked to the credit row | `MEMBER_CREDIT` | every writer of the row (the cancel paths and the Xero inbound credit mints), through `syncBookingLedgerCredits` |
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
-| Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself | `BANK_REFUND` (−), the method `refundMethodForEditReviewRoute` gives (`INTERNET_BANKING`, `INV-PAY-101`), `postedByMemberId` = the officer | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
+| Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
 | Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | nothing — no money moved; the Xero note is a rendering of `owed(b)` going to zero by reversal of the charge lines | — | — |
 
@@ -319,7 +321,7 @@ Until §7's reads switch, `Payment.amountCents`, `creditAppliedCents`,
 ```
 finalPriceCents        == charged(b) + adjusted(b)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
-creditAppliedCents     == Σ CREDIT_APPLIED (a clamp give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone)
+creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the mirror is not the applied-row sum: the manual settle derives it as price − settlement, and the Xero allocation repair caps it at the payment amount; C4 classifies those
 refundedAmountCents    == -Σ CARD_REFUND
 changeFeeCents         == Σ CHANGE_FEE
 additionalAmountCents  == max(0, owed(b)) when an ADDITIONAL PENDING row exists, else 0
