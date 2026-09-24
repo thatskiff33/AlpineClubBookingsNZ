@@ -30,7 +30,7 @@ membership **edit** to save.
 1. Go to **Member Fields** (via **Membership & Members**). Each field is a card
    with an **On**/**Off** badge. The page opens **read-only**.
 
-   ![Member Fields page: toggle cards for Title, Gender, and Occupation with On/Off badges](../images/admin/admin-member-fields.png)
+   ![Member Fields page, read-only until Edit is clicked: toggle cards for Title, Gender, Occupation and Dietary/allergy information, each with an On/Off badge](../images/admin/admin-member-fields.png)
 
 2. Click **Edit**. The checkboxes unlock and **Save** and **Cancel** appear.
 3. Tick or untick the fields as needed, then click **Save**. **Save** stays
