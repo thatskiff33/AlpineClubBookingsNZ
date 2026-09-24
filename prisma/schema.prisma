@@ -534,6 +534,12 @@ model Member {
   // Free-text occupation. Optional, adult-only, and admin-toggleable via
   // MemberFieldsSettings.showOccupation.
   occupation              String?
+  // Free-text dietary/allergy information (#2941, epic #3021). Optional, any
+  // age tier, admin-toggleable via MemberFieldsSettings.showDietaryRequirements
+  // (default OFF; OFF hides but never clears). Privacy-sensitive: the primary
+  // Prisma client OMITS it globally and only src/lib/member-dietary.ts may
+  // select it (INV-PRIV-022). Blank normalises to null; at most 500 characters.
+  dietaryRequirements     String?          @db.VarChar(500)
 
   // Member profile photo (MP1, epic #171). Nullable FK to a MEMBER_PHOTO
   // MediaImage (bytes-in-DB, survives redeploys). Visible to the member (own),
@@ -2799,6 +2805,10 @@ model MemberFieldsSettings {
   showTitle         Boolean  @default(true)
   showGender        Boolean  @default(true)
   showOccupation    Boolean  @default(true)
+  // Dietary/allergy field (#2941). Defaults OFF, unlike the three above: it is
+  // special-category data, so a club opts in. OFF hides collection and display
+  // but never clears Member.dietaryRequirements (INV-PRIV-022).
+  showDietaryRequirements Boolean @default(false)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
