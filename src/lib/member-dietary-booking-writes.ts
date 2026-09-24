@@ -17,8 +17,10 @@
  * reader, allows the two builders only as the operand of a `...` spread, and
  * confines the seeding constructor to this file. It is a text scan: a listed
  * writer that spread a fragment into an object it then logged would stay green.
- * Carries are scoped to the booking they are read from, so a listed writer
- * cannot capture another booking's values through this file.
+ * Carries are scoped to the booking they are read from, which stops an
+ * ACCIDENTAL cross-booking capture; it does not stop a listed writer that
+ * deliberately passes another booking's id. The importer list plus review is
+ * the fence.
  *
  * No function here calls `auth()`: scheduled code (the waitlist cron) reaches
  * it. `import "server-only"` for the same reason as the door.
@@ -303,7 +305,18 @@ export function isSameBookingGuestOccupant(
 ): boolean {
   if (previous.memberId) return (next.memberId ?? null) === previous.memberId;
   if (next.memberId) return false;
-  if (isPlaceholderGuestName(previous)) return true;
+  return nonMemberNameIsSamePerson(previous, next);
+}
+
+/**
+ * The non-member half of {@link isSameBookingGuestOccupant}, with membership
+ * ignored: a generated placeholder being named, or the same name or an
+ * unambiguous spelling correction at the same age tier. The one place this
+ * judgement is written — the rename path, W14's same-occupant check and its
+ * non-member-to-member keep (N1) all reach it.
+ */
+function nonMemberNameIsSamePerson(previous: OccupantIdentity, next: OccupantIdentity): boolean {
+  if (isPlaceholderGuestName({ ...previous, memberId: null })) return true;
   if (previous.ageTier !== next.ageTier) return false;
   if (nonMemberIdentityKey(previous) === nonMemberIdentityKey(next)) return true;
   return isLikelyTypoCorrection(previous.firstName, previous.lastName, next.firstName, next.lastName);
@@ -315,24 +328,32 @@ export function isSameBookingGuestOccupant(
  * and nights; this refuses to let it carry one person's value onto another:
  *  - the same person still on the row ({@link isSameBookingGuestOccupant}): left
  *    exactly as it is;
- *  - a non-member row that has become a member (L1, like W15): a value already
- *    on the row is kept; an empty row is seeded from the member's profile;
+ *  - a non-member row that has become a member who is plausibly the SAME person
+ *    (a placeholder being linked, or the same name or a spelling correction of
+ *    it at the same age tier; L1/N1): a value already on the row is kept, an
+ *    empty row is seeded. A member who is somebody else is a new occupant;
  *  - a different member now on the row: seeded from THAT member's profile while
  *    seeding is ON (and their consent is not pending), otherwise cleared;
  *  - the row has become a different non-member: cleared.
  */
 export async function planHeldPartyRewriteDietary(
-  db: ProfileDb & BookingGuestDb,
+  db: ProfileDb & BookingGuestDb & BookingGuestRowLockDb,
   seeding: BookingGuestDietarySeeding,
+  bookingId: string,
   pairs: readonly {
     previous: OccupantIdentity & { id: string };
     next: BookingGuestDietaryIdentity;
   }[],
 ): Promise<BookingGuestDietaryUpdate[]> {
-  const becomesMember = ({ previous, next }: (typeof pairs)[number]) =>
-    !previous.memberId && Boolean(next.memberId);
+  // F1: the rows are locked before their stored values are read, so an admin
+  // edit committing between this read and the rewrite cannot be overwritten
+  // unseen. The approval already holds the global and lodge keys, and the
+  // rewrite's own UPDATEs take these row locks anyway.
+  await lockBookingGuestRowsForUpdate(db, bookingId);
+  const becomesSamePersonAsMember = ({ previous, next }: (typeof pairs)[number]) =>
+    !previous.memberId && Boolean(next.memberId) && nonMemberNameIsSamePerson(previous, next);
   const stored = new Map<string, string | null>();
-  const becoming = pairs.filter(becomesMember).map(({ previous }) => previous.id);
+  const becoming = pairs.filter(becomesSamePersonAsMember).map(({ previous }) => previous.id);
   if (becoming.length > 0) {
     const rows = await db.bookingGuest.findMany({
       where: { id: { in: becoming } },
@@ -348,7 +369,9 @@ export async function planHeldPartyRewriteDietary(
   const profiles = await readProfileValues(db, pairs.flatMap((pair) => seeds(pair) ?? []));
   return pairs.map((pair) => {
     if (isSameBookingGuestOccupant(pair.previous, pair.next)) return mintUpdate(UNTOUCHED);
-    if (becomesMember(pair) && stored.get(pair.previous.id)) return mintUpdate(UNTOUCHED);
+    if (becomesSamePersonAsMember(pair) && stored.get(pair.previous.id)) {
+      return mintUpdate(UNTOUCHED);
+    }
     const memberId = seeds(pair);
     return mintUpdate(memberId ? (profiles.get(memberId) ?? null) : null);
   });
@@ -416,8 +439,11 @@ export async function fillBookingGuestDietaryFromProfileIfEmpty(
   for (const link of eligible) {
     const value = profiles.get(link.memberId) ?? null;
     if (value === null) continue;
+    // N3: matched on the member too, so a row rewritten in place for somebody
+    // else between the caller's read and this write is never filled with this
+    // member's note.
     await db.bookingGuest.updateMany({
-      where: { id: link.guestId, dietaryRequirements: null },
+      where: { id: link.guestId, memberId: link.memberId, dietaryRequirements: null },
       data: { dietaryRequirements: value },
     });
   }

@@ -1903,6 +1903,7 @@ export async function reassignHeldBookingGuests(
   const rewriteDietary = await planHeldPartyRewriteDietary(
     tx,
     guestDietarySeeding,
+    bookingId,
     rewrites.map(({ guest, previous }) => ({ previous, next: guest })),
   );
 

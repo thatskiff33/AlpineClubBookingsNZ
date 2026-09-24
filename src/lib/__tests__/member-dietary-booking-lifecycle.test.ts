@@ -207,7 +207,7 @@ describe(`a held party deleted and recreated (W13, ${ID})`, () => {
 describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () => {
   it("the same person keeps theirs untouched; a substitute member is seeded; a non-member is cleared", async () => {
     const db = profileDb({ "m-b": "B's profile" });
-    const updates = await planHeldPartyRewriteDietary(db, ON, [
+    const updates = await planHeldPartyRewriteDietary(db, ON, "held-1", [
       { previous: row("r1", person("Aroha", "m-a")), next: person("Aroha", "m-a") },
       { previous: row("r2", person("Kid")), next: person("Kid") },
       { previous: row("r3", person("Aroha", "m-a")), next: person("Bea", "m-b") },
@@ -227,7 +227,7 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
 
   it("while OFF a substitute is cleared rather than left holding the previous person's note", async () => {
     const db = profileDb({ "m-b": "B's profile" });
-    const [update] = await planHeldPartyRewriteDietary(db, OFF, [
+    const [update] = await planHeldPartyRewriteDietary(db, OFF, "held-1", [
       { previous: row("r1", person("Aroha", "m-a")), next: person("Bea", "m-b") },
     ]);
     expect(bookingGuestDietaryUpdateData(update)).toEqual({ dietaryRequirements: null });
@@ -236,7 +236,7 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
 
   it("a spelling correction or a placeholder being named is the same person; a different non-member is not (S2)", async () => {
     const db = profileDb({});
-    const updates = await planHeldPartyRewriteDietary(db, ON, [
+    const updates = await planHeldPartyRewriteDietary(db, ON, "held-1", [
       { previous: row("r1", { ...person("Jonh"), lastName: "Smith" }), next: { ...person("John"), lastName: "Smith" } },
       { previous: row("r2", { ...person("Guest"), lastName: "3" }), next: { ...person("Hana"), lastName: "Rewi" } },
       { previous: row("r3", { ...person("John"), lastName: "Smith" }), next: { ...person("Mere"), lastName: "Walker" } },
@@ -249,7 +249,7 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
       { id: "kept", dietaryRequirements: "Entered by an officer" },
       { id: "empty", dietaryRequirements: null },
     ]);
-    const updates = await planHeldPartyRewriteDietary(db, ON, [
+    const updates = await planHeldPartyRewriteDietary(db, ON, "held-1", [
       { previous: row("kept", person("Bea")), next: person("Bea", "m-b") },
       { previous: row("empty", person("Bea")), next: person("Bea", "m-b") },
     ]);
@@ -259,9 +259,46 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
     ]);
   });
 
+  it("a non-member replaced by a DIFFERENT member does not keep the non-member's note (N1)", async () => {
+    // Held party [Alice Jones (non-member, "coeliac"), ...]; the officer puts
+    // member Bob Brown on row 0 at approval.
+    const db = profileDb({ "m-bob": "Bob's profile" }, [{ id: "r0", dietaryRequirements: "coeliac" }]);
+    const alice = row("r0", { ...person("Alice"), lastName: "Jones" });
+    const bob = { ...person("Bob", "m-bob"), lastName: "Brown" };
+    const [seeded] = await planHeldPartyRewriteDietary(db, ON, "held-1", [{ previous: alice, next: bob }]);
+    expect(bookingGuestDietaryUpdateData(seeded)).toEqual({ dietaryRequirements: "Bob's profile" });
+    const [cleared] = await planHeldPartyRewriteDietary(db, OFF, "held-1", [{ previous: alice, next: bob }]);
+    expect(bookingGuestDietaryUpdateData(cleared)).toEqual({ dietaryRequirements: null });
+  });
+
+  it("a placeholder linked to a member keeps a note already entered on it (N1)", async () => {
+    const db = profileDb({ "m-bob": "Bob's profile" }, [{ id: "r0", dietaryRequirements: "Entered on the placeholder" }]);
+    const [update] = await planHeldPartyRewriteDietary(db, ON, "held-1", [
+      { previous: row("r0", { ...person("Guest"), lastName: "1" }), next: { ...person("Bob", "m-bob"), lastName: "Brown" } },
+    ]);
+    expect(bookingGuestDietaryUpdateData(update)).toEqual({});
+  });
+
+  it("locks the rows before it reads their stored values (F1)", async () => {
+    const db = profileDb({}, []);
+    const order: string[] = [];
+    db.$executeRaw.mockImplementation(async () => {
+      order.push("lock");
+      return 0;
+    });
+    db.bookingGuest.findMany.mockImplementation(async () => {
+      order.push("read");
+      return [];
+    });
+    await planHeldPartyRewriteDietary(db, ON, "held-1", [
+      { previous: row("r0", person("Bea")), next: person("Bea", "m-b") },
+    ]);
+    expect(order).toEqual(["lock", "read"]);
+  });
+
   it("a substituted member whose consent is pending is cleared, not seeded (S5)", async () => {
     const db = profileDb({ "m-b": "B's profile" });
-    const [update] = await planHeldPartyRewriteDietary(db, ON, [
+    const [update] = await planHeldPartyRewriteDietary(db, ON, "held-1", [
       { previous: row("r1", person("Aroha", "m-a")), next: { ...person("Bea", "m-b"), ...PENDING } },
     ]);
     expect(bookingGuestDietaryUpdateData(update)).toEqual({ dietaryRequirements: null });
@@ -282,6 +319,7 @@ describe(`a held party rewritten in place, paired by position (W14, ${ID})`, () 
       },
       familyGroupMember: { findMany: vi.fn(async () => []) },
       member: { findMany: vi.fn(async () => []) },
+      $executeRaw: vi.fn(async () => 0),
     };
     const guest = (firstName: string, memberId?: string) => ({
       firstName,
@@ -350,7 +388,7 @@ describe(`consent pending (S5, ${ID})`, () => {
       { guestId: "g1", memberId: "m-1", memberGuestConsent: { consentStatus: "CONFIRMED" } },
     ]);
     expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { id: "g1", dietaryRequirements: null },
+      where: { id: "g1", memberId: "m-1", dietaryRequirements: null },
       data: { dietaryRequirements: PROFILE },
     });
   });
@@ -394,7 +432,7 @@ describe(`a placeholder newly linked to a member (W15, ${ID})`, () => {
     ]);
     expect(db.bookingGuest.updateMany).toHaveBeenCalledTimes(1);
     expect(db.bookingGuest.updateMany).toHaveBeenCalledWith({
-      where: { id: "g1", dietaryRequirements: null },
+      where: { id: "g1", memberId: "m-1", dietaryRequirements: null },
       data: { dietaryRequirements: PROFILE },
     });
   });
