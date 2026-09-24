@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
 
 /*
   #2978 review — the other-lodge flag WRITE, at the `applyGuestChanges` DB level.
@@ -83,6 +84,7 @@ async function writeWith(options: {
   await applyGuestChanges(
     tx as unknown as Parameters<typeof applyGuestChanges>[0],
     {
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
       bookingId: "bk-1",
       newCheckIn: CHECK_IN,
       newCheckOut: CHECK_OUT,
@@ -167,6 +169,7 @@ describe("#2978: the stored other-lodge flag follows the PRICED rate", () => {
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: CHECK_IN,
         newCheckOut: CHECK_OUT,

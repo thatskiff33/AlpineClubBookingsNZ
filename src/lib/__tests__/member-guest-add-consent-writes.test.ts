@@ -36,6 +36,17 @@ import {
   planMemberGuestConsentWrites,
   type MemberGuestAddPolicy,
 } from "@/lib/member-guest-add-policy";
+import {
+  bookingGuestDietarySeeding,
+  resolveBookingGuestDietary,
+} from "@/lib/member-dietary";
+
+// #3029: builder calls need a dietary decision per guest; nothing is seeded here.
+const NO_DIETARY = await resolveBookingGuestDietary(
+  {} as never,
+  bookingGuestDietarySeeding(false),
+  [{}, {}, {}],
+);
 
 const h = vi.hoisted(() => ({
   isEffectiveModuleEnabled: vi.fn(),
@@ -353,7 +364,7 @@ describe("buildGuestCreateData — the booking-create and booking-copy write", (
       plan.guests,
       price,
       CHECK_IN,
-      CHECK_OUT,
+      CHECK_OUT, NO_DIETARY,
     );
 
     // The family row carries no consent keys at all — the row Prisma writes is
@@ -394,7 +405,7 @@ describe("buildGuestCreateData — the booking-create and booking-copy write", (
       plan.guests,
       { guests: [price.guests[0]] },
       CHECK_IN,
-      CHECK_OUT,
+      CHECK_OUT, NO_DIETARY,
     ) as Array<MemberGuestConsentColumns & { memberId: string | null }>;
 
     expect(written.consentRespondedByMemberId).toBe(ADMIN);

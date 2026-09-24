@@ -67,6 +67,10 @@ import {
   type ModificationDeltaInput,
 } from "@/lib/booking-exception-request-service";
 import type { PolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
+import {
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary";
 
 /**
  * #2526 — the REAL {@link PolicyExceptionApprovalHooks} the admin approval route
@@ -488,6 +492,12 @@ export interface PolicyExceptionApprovalContext {
      * same member-guest authorisation the member's own create route runs.
      */
     memberGuestPolicy: MemberGuestAddPolicy;
+    /**
+     * #3029 (`INV-MOD-060`): whether the created booking's linked-member guest
+     * rows are seeded from their dietary/allergy profiles — the toggle, read on
+     * the module client before the transaction opened, for the same reason.
+     */
+    guestDietarySeeding: BookingGuestDietarySeeding;
   };
 }
 
@@ -1031,6 +1041,7 @@ async function executeApprovedNewBooking(args: {
     lodgeId: snapshot.lodgeId,
     // HARD capacity refusal: never `confirmOverCapacity`, never `waitlistIntent`.
     notifyMember: true,
+    guestDietarySeeding: execution.guestDietarySeeding,
     tx,
   });
 
@@ -1184,5 +1195,6 @@ export async function resolveNewBookingExecutionParams(
     // singleton must not be queried on a second pool connection beneath the
     // approval's locks (`member-guest-add-policy.ts`).
     memberGuestPolicy: await loadMemberGuestAddPolicy(),
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
   };
 }

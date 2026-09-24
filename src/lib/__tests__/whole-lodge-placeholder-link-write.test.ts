@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
 
 /*
   #2337 — the placeholder→member link WRITE, at the `applyGuestChanges` DB level.
@@ -75,6 +76,7 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: CHECK_IN,
         newCheckOut: CHECK_OUT,
@@ -147,6 +149,7 @@ describe("#2337: the recalculate write stamps the member's name onto the linked 
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: CHECK_IN,
         newCheckOut: CHECK_OUT,

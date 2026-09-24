@@ -66,6 +66,17 @@ import {
   requiredNightPriceCents,
 } from "@/lib/required-price-cents";
 import { dateOnlyFromParts } from "@/lib/date-only";
+import {
+  bookingGuestDietarySeeding,
+  resolveBookingGuestDietary,
+} from "@/lib/member-dietary";
+
+// #3029: builder calls need a dietary decision per guest; nothing is seeded here.
+const NO_DIETARY = await resolveBookingGuestDietary(
+  {} as never,
+  bookingGuestDietarySeeding(false),
+  [{}, {}, {}],
+);
 
 const CHECK_IN = dateOnlyFromParts(2026, 7, 1);
 const CHECK_OUT = dateOnlyFromParts(2026, 7, 4);
@@ -100,7 +111,7 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
       [guestInput()],
       { guests: [pricedGuest()] },
       CHECK_IN,
-      CHECK_OUT
+      CHECK_OUT, NO_DIETARY
     );
 
     expect(data).toHaveLength(1);
@@ -120,7 +131,7 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
       [guestInput()],
       { guests: [pricedGuest({ perNightCents: [8_000, 0, 8_000], priceCents: 16_000 })] },
       CHECK_IN,
-      CHECK_OUT
+      CHECK_OUT, NO_DIETARY
     );
 
     expect(data[0].nights.create.map((n) => n.priceCents)).toEqual([8_000, 0, 8_000]);
@@ -132,7 +143,7 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
         [guestInput()],
         { guests: [pricedGuest({ perNightCents: [8_000, 8_000] })] },
         CHECK_IN,
-        CHECK_OUT
+        CHECK_OUT, NO_DIETARY
       )
     ).toThrow(/No priced amount for the night of .* in the booking-create guest writer/);
   });
@@ -143,7 +154,7 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
         [guestInput()],
         { guests: [pricedGuest({ perNightCents: [8_000] })] },
         CHECK_IN,
-        CHECK_OUT
+        CHECK_OUT, NO_DIETARY
       )
     ).toThrow(NIGHTS[1].toISOString());
   });
@@ -156,7 +167,7 @@ describe("buildGuestCreateData refuses a short per-night vector (#3167)", () => 
       [guestInput()],
       { guests: [pricedGuest({ perNightCents: [], nightDates: [], priceCents: 0 })] },
       CHECK_IN,
-      CHECK_OUT
+      CHECK_OUT, NO_DIETARY
     );
 
     expect(data[0].nights.create).toHaveLength(0);
@@ -187,7 +198,7 @@ describe("buildGuestCreateData refuses a guest with no priced row (#3167, #2800)
         ],
       },
       CHECK_IN,
-      CHECK_OUT
+      CHECK_OUT, NO_DIETARY
     );
 
     expect(data.map((guest) => guest.priceCents)).toEqual([24_000, 12_000]);
@@ -200,7 +211,7 @@ describe("buildGuestCreateData refuses a guest with no priced row (#3167, #2800)
         [guestInput({ firstName: "Ada" }), guestInput({ firstName: "Grace" })],
         { guests: [pricedGuest()] },
         CHECK_IN,
-        CHECK_OUT
+        CHECK_OUT, NO_DIETARY
       )
     ).toThrow(
       "The booking-create guest writer has no priced guest at breakdown position 1 of 1 (#3167)."
@@ -209,7 +220,7 @@ describe("buildGuestCreateData refuses a guest with no priced row (#3167, #2800)
 
   it("REFUSAL: an empty breakdown refuses on the very first guest", () => {
     expect(() =>
-      buildGuestCreateData([guestInput()], { guests: [] }, CHECK_IN, CHECK_OUT)
+      buildGuestCreateData([guestInput()], { guests: [] }, CHECK_IN, CHECK_OUT, NO_DIETARY)
     ).toThrow(
       "The booking-create guest writer has no priced guest at breakdown position 0 of 0 (#3167)."
     );
@@ -222,7 +233,7 @@ describe("buildGuestCreateData refuses a guest with no priced row (#3167, #2800)
       [guestInput()],
       { guests: [pricedGuest()] },
       CHECK_IN,
-      CHECK_OUT
+      CHECK_OUT, NO_DIETARY
     );
 
     expect(data[0].stayStart).toEqual(NIGHTS[0]);

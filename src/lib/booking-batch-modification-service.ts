@@ -131,6 +131,10 @@ import {
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
+import {
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -453,6 +457,12 @@ interface BatchModificationPreparation {
   readonly memberGuestPolicy: Awaited<ReturnType<typeof loadMemberGuestAddPolicy>>;
   readonly subscriptionLockoutMode: SubscriptionLockoutMode;
   readonly xeroLockDates: XeroLockDateFacts;
+  /**
+   * #3029 (`INV-MOD-060`): whether a guest this edit ADDS, or a placeholder it
+   * links to a member, is seeded from the member's dietary/allergy profile —
+   * the field toggle, a settings read that belongs out here with the others.
+   */
+  readonly guestDietarySeeding: BookingGuestDietarySeeding;
 }
 
 /**
@@ -518,15 +528,16 @@ async function prepareBookingBatchModification(options: {
       options.adminOverride.requestedCheckIn,
     );
   }
-  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates] =
+  const [memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding] =
     await Promise.all([
       loadMemberGuestAddPolicy(),
       resolveSubscriptionLockoutMode(),
       resolveXeroLockDateFacts(options.candidateCheckIns, {
         audience: options.audience,
       }),
+      resolveBookingGuestDietarySeeding(),
     ]);
-  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates };
+  return { memberGuestPolicy, subscriptionLockoutMode, xeroLockDates, guestDietarySeeding };
 }
 
 /**
@@ -1595,6 +1606,10 @@ export async function modifyBookingBatch({
         pricingResult.kind === "priced"
           ? pricingResult.otherLodgeRatedGuestIds
           : new Set<string>(),
+      // #3029 (`INV-MOD-060`): resolved with the rest of the pre-transaction
+      // work, so an added linked member is seeded and a placeholder newly
+      // linked to a member is filled only if empty.
+      guestDietarySeeding: preparation.guestDietarySeeding,
     });
 
     // #3276: AFTER `applyGuestChanges`, which is the last night write — the

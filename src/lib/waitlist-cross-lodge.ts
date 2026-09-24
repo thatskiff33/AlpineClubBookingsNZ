@@ -51,6 +51,10 @@ import {
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
+import {
+  captureBookingGuestDietaryCarries,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary";
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
@@ -682,6 +686,15 @@ export async function confirmCrossLodgeWaitlistOffer(
   // Phase 2 — create the fresh booking at the offered lodge through the
   // standard creation path. It re-acquires that lodge's capacity lock and
   // re-checks capacity itself, so the tiny window since phase 1 is safe.
+  //
+  // #3029 (W18, `INV-MOD-060`): this is the SAME stay rebuilt at another lodge,
+  // so every guest row carries its source row's dietary/allergy value as it is
+  // — null included, and even while the field is OFF. Carrying preserves; only
+  // a genuinely new guest is seeded, and there is none here.
+  const carriedDietary = await captureBookingGuestDietaryCarries(
+    prisma,
+    entry.guests.map((guest) => guest.id),
+  );
   const guests: BookingGuestInput[] = entry.guests.map((guest) => ({
     firstName: guest.firstName,
     lastName: guest.lastName,
@@ -691,6 +704,7 @@ export async function confirmCrossLodgeWaitlistOffer(
     stayStart: guest.stayStart,
     stayEnd: guest.stayEnd,
     nights: guest.nights.length > 0 ? guest.nights : null,
+    carriedDietary: carriedDietary.get(guest.id),
   }));
   const hasNonMembers = guests.some((guest) => !guest.isMember);
   const holdDays = hasNonMembers ? await getNonMemberHoldDays(entry.checkIn, offeredLodgeId) : 7;
@@ -732,6 +746,9 @@ export async function confirmCrossLodgeWaitlistOffer(
       // A 48h offer accepted after NZ midnight can land past the entry's
       // check-in; the offered stay was validated when the offer was issued.
       allowPastCheckIn: true,
+      // #3029: every row carries (above), so this only matters for a source
+      // row that vanished between the two reads — then seeded like any new row.
+      guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });
   } catch (err) {
     if (isHostingCoverageParticipantRetry(err)) {

@@ -15,6 +15,10 @@ import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
+import type {
+  BookingGuestDietarySeeding,
+  CarriedBookingGuestDietary,
+} from "@/lib/member-dietary";
 
 export type BookingWithGuests = Booking & { guests: BookingGuest[] };
 
@@ -37,6 +41,13 @@ export interface BookingGuestInput extends MemberGuestConsentGuestFields {
   // exactly these nights (which may be non-contiguous) and stayStart/stayEnd
   // are the derived min/max envelope.
   nights?: ReadonlyArray<GuestNightInput> | null;
+  /**
+   * #3029 (`INV-MOD-060`): a value captured from the row this guest REPLACES,
+   * carried as it is instead of being seeded afresh. Set only where a booking
+   * rebuilds the same stay (the cross-lodge waitlist offer); absent everywhere
+   * else, which seeds a linked member from their current profile.
+   */
+  carriedDietary?: CarriedBookingGuestDietary;
   // The two member-guest fields come from MemberGuestConsentGuestFields
   // ("+ Add Member Guest", epic #2305, MG2 #2307): `memberGuestConsent` is the
   // five consent columns this row must be created with, and
@@ -81,6 +92,15 @@ interface BaseInput {
    * those things.
    */
   subscriptionLockoutMode?: SubscriptionLockoutMode;
+  /**
+   * Whether new linked-member guest rows are seeded from the member's dietary/
+   * allergy profile (#3029, `INV-MOD-060`): the field toggle, read by the caller
+   * BEFORE any transaction opens (`INV-LOCK-004`). REQUIRED, unlike the lockout
+   * mode above, because there is no safe fallback read: `createConfirmedBooking`
+   * may already be inside the caller's transaction, and a create path that
+   * silently skipped seeding would be invisible.
+   */
+  guestDietarySeeding: BookingGuestDietarySeeding;
   memberReviewJustification?: string;
   /**
    * The explicit reason an ADMIN gave for booking a party the adult-member

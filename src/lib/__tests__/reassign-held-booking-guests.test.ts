@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgeTier } from "@prisma/client";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary";
 
 // booking-request.ts creates a PrismaClient at import time; stub it so importing
 // the module under test never touches a real database.
@@ -119,6 +120,8 @@ describe("reassignHeldBookingGuests (issue #1254 bed preservation)", () => {
         guest({ firstName: "Sam", isMember: true, memberId: "m-1", priceCents: 7000 }),
       ],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(result.preservedInPlace).toBe(true);
@@ -145,7 +148,9 @@ describe("reassignHeldBookingGuests (issue #1254 bed preservation)", () => {
   });
 
   it("falls back to delete+recreate when the row count diverges", async () => {
-    tx.bookingGuest.findMany.mockResolvedValueOnce([
+    // Read twice: once for the rows, once (#3029) for the dietary carry plan
+    // taken before the delete.
+    tx.bookingGuest.findMany.mockResolvedValue([
       { id: "g1", memberId: null, consentStatus: null },
     ]);
 
@@ -154,6 +159,8 @@ describe("reassignHeldBookingGuests (issue #1254 bed preservation)", () => {
       "held-1",
       [guest(), guest({ firstName: "Sam" })],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(result.preservedInPlace).toBe(false);
@@ -197,6 +204,8 @@ describe("reassignHeldBookingGuests (issue #1254 bed preservation)", () => {
       "held-1",
       [guest({ priceCents: 9000 })],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(tx.bookingGuestNight.deleteMany).toHaveBeenCalledWith({
@@ -233,6 +242,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sam", isMember: true, memberId: "m-sam" })],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(tx.bookingGuest.update).toHaveBeenCalledWith(
@@ -267,6 +278,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sione", isMember: true, memberId: "m-sione" })],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(result.preservedInPlace).toBe(true);
@@ -288,6 +301,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sam", isMember: true, memberId: "m-sam" })],
       memberGuest(),
+
+      bookingGuestDietarySeeding(false),
     );
 
     // The columns are still re-stamped — the approval-time list is
@@ -309,6 +324,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sione", isMember: true, memberId: "m-sione" })],
       memberGuest(MODULE_OFF),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(tx.bookingGuest.update).toHaveBeenCalledWith(
@@ -351,6 +368,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sam", isMember: true, memberId: "m-sam" })],
       memberGuest(MODULE_OFF),
+
+      bookingGuestDietarySeeding(false),
     );
 
     const data = tx.bookingGuest.update.mock.calls[0][0].data as Record<
@@ -379,6 +398,8 @@ describe("reassignHeldBookingGuests — MG4-D-b consent stamping (#2309)", () =>
       "held-1",
       [guest({ firstName: "Sam", isMember: true, memberId: "m-sam" })],
       memberGuest(MODULE_OFF),
+
+      bookingGuestDietarySeeding(false),
     );
 
     expect(result.memberGuestNotificationRows).toEqual([]);

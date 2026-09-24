@@ -209,6 +209,7 @@ describe("the pre-transaction work belongs to whoever owns the transaction (#323
           memberGuestPolicy: { enabled: false, requiresConsent: false },
           subscriptionLockoutMode: "off",
           xeroLockDates: { kind: "not-applicable" },
+          guestDietarySeeding: { seedFromProfile: false },
         } as never,
       }),
     ).rejects.toThrow(/INV-LOCK-004: an admin date override cannot run inside/);
