@@ -7,6 +7,7 @@ import { createAuditLog } from "@/lib/audit";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import type { ClubFormat } from "@/lib/club-format";
 import {
   type RecordedNightPrice,
   type UnpricedNightsSummary,
@@ -121,6 +122,7 @@ export async function recordReviewClosurePricing({
   settlementRoute,
   settlementAmountCents,
   store,
+  format,
 }: {
   /**
    * What the officer recorded, one entry per repairable strand, EMPTY where the
@@ -156,6 +158,8 @@ export async function recordReviewClosurePricing({
   /** This task's own settled share, or null where nothing was settled. */
   settlementAmountCents: number | null;
   store: Prisma.TransactionClient;
+  /** The club's format (#3565), resolved by the caller before any transaction. */
+  format: ClubFormat;
 }): Promise<void> {
   // Sequentially, on the caller's transaction: each write is its own
   // compare-and-set, and a refusal from any of them rolls the whole closure back
@@ -180,6 +184,7 @@ export async function recordReviewClosurePricing({
   // of a parked removal that offer no price boxes used to escape it entirely.
   const outcome = await rebaseBookingPriceFromStrands({
     bookingId: task.bookingId,
+    format,
     repairedStrands: repaired.map((entry) => ({
       bookingGuestId: entry.plan.bookingGuestId,
       totalCents: entry.newGuestTotalCents,

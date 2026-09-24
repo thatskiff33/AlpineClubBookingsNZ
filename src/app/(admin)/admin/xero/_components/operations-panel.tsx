@@ -32,6 +32,7 @@ import {
 } from "./shared"
 import { xeroSectionId } from "./types"
 import type { XeroOperation } from "./types"
+import { useClubFormat } from "@/components/club-format-provider"
 
 export function OperationsPanel({
   connected,
@@ -485,6 +486,7 @@ export function OperationItem({
   onMarkNonReplayable: () => void
   onResolve: () => void
 }) {
+  const format = useClubFormat()
   // `createdAt` is a real INSTANT: shown in the club's persisted zone, so the
   // same operation reads identically wherever the admin is (CT-4, #2870).
   const clubTime = useClubTime()
@@ -496,7 +498,7 @@ export function OperationItem({
     operationType: operation.operationType,
     requestPayload: operation.requestPayload,
     responsePayload: operation.responsePayload,
-  })
+  }, format)
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">

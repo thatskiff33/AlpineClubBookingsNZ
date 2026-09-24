@@ -26,6 +26,7 @@ import {
   folderLodgeSlug,
   lodgeFolderSegments,
 } from "./categories/lodge-config";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Apply orchestrator. Order (ADR-002): parse once → pre-apply database backup →
 // ONE transaction { advisory lock → re-plan against in-lock state → refuse on
@@ -123,6 +124,8 @@ export type BootstrapBackupSkip = {
 };
 
 export type ApplyConfigImportParams = {
+  /** The club's format (#3565), resolved once by the caller, before this transaction. */
+  format: ClubFormat;
   prisma: PrismaClient;
   bundleBytes: Uint8Array;
   actorMemberId: string;
@@ -173,7 +176,7 @@ export type ApplyConfigImportResult = {
 export async function applyConfigImport(
   params: ApplyConfigImportParams,
 ): Promise<ApplyConfigImportResult> {
-  const { prisma, bundleBytes, actorMemberId, expectedFingerprint, mode } =
+  const { prisma, bundleBytes, actorMemberId, expectedFingerprint, mode, format } =
     params;
   const resolutions = params.resolutions ?? [];
 
@@ -283,6 +286,7 @@ export async function applyConfigImport(
 
       const replan = await buildImportPlanFromParsed(tx, parsed, bundleSha256, {
         mode,
+        format,
         selectedCategories: params.selectedCategories,
         resolutions,
       });
@@ -335,6 +339,7 @@ export async function applyConfigImport(
         files: parsed.files,
         manifest: parsed.manifest,
         mode,
+        format,
         resolutions: resolutionMap(resolutions),
         actorMemberId,
         imageRemap,

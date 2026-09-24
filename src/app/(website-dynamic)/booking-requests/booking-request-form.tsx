@@ -12,6 +12,7 @@ import type { ClubIdentity } from "@/config/club-identity-types";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface RequestGuest {
   firstName: string;
@@ -37,6 +38,7 @@ function emptyGuest(): RequestGuest {
  * fallback (#1982 R1).
  */
 export function BookingRequestForm({ club }: { club: ClubIdentity }) {
+  const format = useClubFormat();
   const ageTierOptions = useAgeTierOptions();
   /*
     THE EARLIEST SELECTABLE LODGE NIGHT IS THE CLUB'S TODAY (CT-4, #2870; epic
@@ -453,7 +455,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
                 "Calculating indicative price..."
               ) : indicativePriceCents != null ? (
                 <p>
-                  Indicative price: <span className="font-semibold">{formatCents(indicativePriceCents)}</span>
+                  Indicative price: <span className="font-semibold">{formatCents(indicativePriceCents, format)}</span>
                   {" "}— the final price will be confirmed by the club.
                 </p>
               ) : (

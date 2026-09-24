@@ -28,6 +28,7 @@ import {
   requireStoredCalendarDay,
 } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
+import type { ClubFormat } from "@/lib/club-format";
 
 // test seam
 export const UNMAPPED_FINANCE_CATEGORY_ID = "unmapped";
@@ -157,6 +158,8 @@ export interface BuildFinanceMappedPnlSummaryInput {
   to: string;
   compareFrom: string;
   compareTo: string;
+  /** The club's format (#3565), resolved once by the caller and threaded in. */
+  format: ClubFormat;
   expenseCategoryId?: string | null;
   expenseLine?: string | null;
 }
@@ -701,7 +704,8 @@ function lineKey(line: CategorizedPnlLine) {
 
 function aggregateCategoryLines(
   selectedLines: CategorizedPnlLine[],
-  comparisonLines: CategorizedPnlLine[]
+  comparisonLines: CategorizedPnlLine[],
+  format: ClubFormat,
 ) {
   const lineMap = new Map<
     string,
@@ -746,10 +750,11 @@ function aggregateCategoryLines(
       accountCode: entry.line.accountCode,
       amountCents: entry.amountCents,
       comparisonAmountCents: entry.comparisonAmountCents,
-      formattedAmount: formatCents(entry.amountCents),
-      formattedComparisonAmount: formatCents(entry.comparisonAmountCents),
+      formattedAmount: formatCents(entry.amountCents, format),
+      formattedComparisonAmount: formatCents(entry.comparisonAmountCents, format),
       formattedDelta: formatSignedCents(
-        entry.amountCents - entry.comparisonAmountCents
+        entry.amountCents - entry.comparisonAmountCents,
+        format
       ),
       periodsPresent: entry.periods.size,
     }))
@@ -768,7 +773,9 @@ function buildCategorySummary(input: {
   >;
   selectedLines: CategorizedPnlLine[];
   comparisonLines: CategorizedPnlLine[];
+  format: ClubFormat;
 }): FinanceMappedPnlCategorySummary {
+  const { format } = input;
   const amountCents = input.selectedLines.reduce(
     (total, line) => total + line.amountCents,
     0
@@ -778,7 +785,11 @@ function buildCategorySummary(input: {
     0
   );
   const deltaCents = amountCents - comparisonAmountCents;
-  const lines = aggregateCategoryLines(input.selectedLines, input.comparisonLines);
+  const lines = aggregateCategoryLines(
+    input.selectedLines,
+    input.comparisonLines,
+    format,
+  );
 
   return {
     id: input.category.id,
@@ -789,9 +800,9 @@ function buildCategorySummary(input: {
     amountCents,
     comparisonAmountCents,
     deltaCents,
-    formattedAmount: formatCents(amountCents),
-    formattedComparisonAmount: formatCents(comparisonAmountCents),
-    formattedDelta: formatSignedCents(deltaCents),
+    formattedAmount: formatCents(amountCents, format),
+    formattedComparisonAmount: formatCents(comparisonAmountCents, format),
+    formattedDelta: formatSignedCents(deltaCents, format),
     lineCount: lines.length,
     lines,
   };
@@ -800,6 +811,7 @@ function buildCategorySummary(input: {
 export async function buildFinanceMappedPnlSummary(
   input: BuildFinanceMappedPnlSummaryInput
 ): Promise<FinanceMappedPnlSummary> {
+  const { format } = input;
   const [allCategories, chart, snapshots] = await Promise.all([
     listFinanceReportCategories(),
     loadChartOfAccountsContext(),
@@ -886,6 +898,7 @@ export async function buildFinanceMappedPnlSummary(
       comparisonLines: filteredComparisonLines.filter(
         (line) => line.categoryId === category.id
       ),
+      format,
     })
   );
   const unmappedSummary = buildCategorySummary({
@@ -898,6 +911,7 @@ export async function buildFinanceMappedPnlSummary(
     },
     selectedLines: filteredSelectedLines.filter((line) => !line.categoryId),
     comparisonLines: filteredComparisonLines.filter((line) => !line.categoryId),
+    format,
   });
   const groups = [...categorySummaries, unmappedSummary]
     .filter(
@@ -943,9 +957,9 @@ export async function buildFinanceMappedPnlSummary(
     amountCents,
     comparisonAmountCents,
     deltaCents,
-    formattedAmount: formatCents(amountCents),
-    formattedComparisonAmount: formatCents(comparisonAmountCents),
-    formattedDelta: formatSignedCents(deltaCents),
+    formattedAmount: formatCents(amountCents, format),
+    formattedComparisonAmount: formatCents(comparisonAmountCents, format),
+    formattedDelta: formatSignedCents(deltaCents, format),
     groups,
     mix: groups.map((group) => ({
       name: group.name,
@@ -975,7 +989,7 @@ export async function buildFinanceMappedPnlSummary(
   };
 }
 
-export async function getFinanceReportMappingsState(): Promise<FinanceReportMappingsState> {
+export async function getFinanceReportMappingsState(format: ClubFormat): Promise<FinanceReportMappingsState> {
   const [categories, chart, snapshots] = await Promise.all([
     listFinanceReportCategories(),
     loadChartOfAccountsContext(),
@@ -1031,7 +1045,7 @@ export async function getFinanceReportMappingsState(): Promise<FinanceReportMapp
         lineLabel: entry.line.lineLabel,
         accountCode: entry.line.accountCode,
         amountCents: entry.amountCents,
-        formattedAmount: formatCents(entry.amountCents),
+        formattedAmount: formatCents(entry.amountCents, format),
         periodsPresent: entry.periodsPresent,
       }))
       .sort((left, right) => {

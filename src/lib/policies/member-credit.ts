@@ -1,5 +1,7 @@
 // test seam
 import { formatCents, formatSignedCents } from "@/lib/utils";
+
+import type { ClubFormat } from "@/lib/club-format";
 export const ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT =
   "This idempotency key was already used for a different adjustment request";
 
@@ -21,8 +23,11 @@ export interface CreditAmountEntry {
   amountCents: number;
 }
 
-export function formatAdjustmentAmount(amountCents: number): string {
-  return formatSignedCents(amountCents);
+export function formatAdjustmentAmount(
+  amountCents: number,
+  format: ClubFormat,
+): string {
+  return formatSignedCents(amountCents, format);
 }
 
 export function validateAdjustmentAmount(amountCents: number): void {
@@ -33,11 +38,12 @@ export function validateAdjustmentAmount(amountCents: number): void {
 
 export function validateNegativeAdjustmentAgainstBalance(
   amountCents: number,
-  balanceCents: number
+  balanceCents: number,
+  format: ClubFormat,
 ): void {
   if (amountCents < 0 && balanceCents + amountCents < 0) {
     throw new MemberCreditValidationError(
-      `Cannot deduct ${formatCents(Math.abs(amountCents))}: only ${formatCents(balanceCents)} available`
+      `Cannot deduct ${formatCents(Math.abs(amountCents), format)}: only ${formatCents(balanceCents, format)} available`
     );
   }
 }
@@ -50,13 +56,14 @@ export function validateCreditApplicationAmount(amountCents: number): void {
 
 export function validateCreditApplicationAgainstBalance(
   amountCents: number,
-  balanceCents: number
+  balanceCents: number,
+  format: ClubFormat,
 ): void {
   validateCreditApplicationAmount(amountCents);
 
   if (balanceCents < amountCents) {
     throw new MemberCreditValidationError(
-      `Insufficient credit balance: ${formatCents(balanceCents)} available, ${formatCents(amountCents)} requested`
+      `Insufficient credit balance: ${formatCents(balanceCents, format)} available, ${formatCents(amountCents, format)} requested`
     );
   }
 }

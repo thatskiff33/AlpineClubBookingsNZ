@@ -211,6 +211,7 @@ import {
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
  * Each case is an instant whose UTC calendar day is the day BEFORE the club's,
@@ -504,7 +505,7 @@ describe.each(CLUB_DAY_CASES)(
       mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error(SENTINEL));
 
       await expect(
-        createUnappliedXeroCreditNote("pay_local", 5000),
+        createUnappliedXeroCreditNote("pay_local", 5000, CLUB_FORMAT_TEST),
       ).rejects.toThrow(SENTINEL);
 
       const creditNote = enqueuedOperation().requestPayload.creditNotes[0];
@@ -544,6 +545,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         refundAmountCents: 5000,
         bookingModificationId: "mod_1",
@@ -581,6 +583,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         priceDiffCents: 5000,
         changeFeeCents: 0,
@@ -614,6 +617,7 @@ describe.each(CLUB_DAY_CASES)(
       });
 
       await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking_1234abcd",
         priceDiffCents: 5000,
         changeFeeCents: 0,

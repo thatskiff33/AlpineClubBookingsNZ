@@ -4,7 +4,7 @@ import type { FeatureFlags } from "@/config/schema";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import type { EffectiveBookingMessageMap } from "@/lib/booking-message-settings";
 import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
-import { formatCents } from "@/lib/utils";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   calendarDateOfDateOnlyInstant,
   formatClubLongDate,
@@ -25,6 +25,7 @@ import type { BookingDetailPayment } from "./booking-detail-payment";
 export function renderBookingDetailMessages({
   booking,
   club,
+  money,
   modules,
   bookingMessages,
   bookingLodgeEmailSettings,
@@ -32,6 +33,7 @@ export function renderBookingDetailMessages({
 }: {
   booking: BookingDetailRecord;
   club: BoundClubTime;
+  money: BoundClubFormat;
   modules: FeatureFlags;
   bookingMessages: EffectiveBookingMessageMap;
   bookingLodgeEmailSettings: EmailMessageSettings;
@@ -58,21 +60,21 @@ export function renderBookingDetailMessages({
     checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn)),
     checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut)),
     guestCount: booking.guests.length,
-    amountDue: formatCents(amountDueAfterCreditCents),
-    amountPaid: booking.payment ? formatCents(booking.payment.amountCents) : "",
+    amountDue: money.cents(amountDueAfterCreditCents),
+    amountPaid: booking.payment ? money.cents(booking.payment.amountCents) : "",
     refundAmount: cancellationSettlement
-      ? formatCents(cancellationSettlement.refundToOriginalMethodCents)
+      ? money.cents(cancellationSettlement.refundToOriginalMethodCents)
       : "",
     creditAmount: cancellationSettlement
-      ? formatCents(cancellationSettlement.accountCreditCents)
+      ? money.cents(cancellationSettlement.accountCreditCents)
       : "",
     creditRestored: cancellationSettlement
-      ? formatCents(cancellationSettlement.restoredAppliedCreditCents)
+      ? money.cents(cancellationSettlement.restoredAppliedCreditCents)
       : "",
     retainedAmount: cancellationSettlement
-      ? formatCents(retainedAfterCancellationCents)
+      ? money.cents(retainedAfterCancellationCents)
       : "",
-    changeFee: booking.payment ? formatCents(booking.payment.changeFeeCents) : "",
+    changeFee: booking.payment ? money.cents(booking.payment.changeFeeCents) : "",
     paymentReference: internetBankingPayment?.reference ?? "",
     xeroInvoiceNumber: internetBankingPayment?.xeroInvoiceNumber ?? "",
     holdUntil: internetBankingPayment?.internetBankingHoldUntil

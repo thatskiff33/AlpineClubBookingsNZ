@@ -32,6 +32,7 @@ import {
   type FinanceMappedPnlLineSummary,
   type FinanceReportCategoryDto,
 } from "@/lib/finance-report-mappings";
+import type { ClubFormat } from "@/lib/club-format";
 
 type FinanceReportKind = "REVENUE" | "EXPENSE";
 
@@ -77,6 +78,8 @@ export interface BuildFinanceMonthlyPnlSummaryInput {
   > | null;
   /** Month key of the in-progress month; matching rows are month-to-date. */
   currentMonth: string;
+  /** The club's format (#3565), resolved once by the caller and threaded in. */
+  format: ClubFormat;
   expenseCategoryId?: string | null;
   expenseLine?: string | null;
 }
@@ -135,6 +138,7 @@ function normalizeText(value: string | null | undefined): string | null {
 export async function buildFinanceMonthlyPnlSummary(
   input: BuildFinanceMonthlyPnlSummaryInput
 ): Promise<FinanceMonthlyPnlSummary> {
+  const { format } = input;
   const [categories, facts, comparisonFacts] = await Promise.all([
     listFinanceReportCategories(),
     listMonthlyFacts({
@@ -263,10 +267,11 @@ export async function buildFinanceMonthlyPnlSummary(
     accountCode: line.accountCode,
     amountCents: line.amountCents,
     comparisonAmountCents: line.comparisonAmountCents,
-    formattedAmount: formatDollarsDisplay(line.amountCents),
-    formattedComparisonAmount: formatDollarsDisplay(line.comparisonAmountCents),
+    formattedAmount: formatDollarsDisplay(line.amountCents, format),
+    formattedComparisonAmount: formatDollarsDisplay(line.comparisonAmountCents, format),
     formattedDelta: formatSignedDollarsDisplay(
-      line.amountCents - line.comparisonAmountCents
+      line.amountCents - line.comparisonAmountCents,
+      format
     ),
     periodsPresent: line.monthsPresent.size,
   });
@@ -300,10 +305,11 @@ export async function buildFinanceMonthlyPnlSummary(
       amountCents,
       comparisonAmountCents,
       deltaCents: amountCents - comparisonAmountCents,
-      formattedAmount: formatDollarsDisplay(amountCents),
-      formattedComparisonAmount: formatDollarsDisplay(comparisonAmountCents),
+      formattedAmount: formatDollarsDisplay(amountCents, format),
+      formattedComparisonAmount: formatDollarsDisplay(comparisonAmountCents, format),
       formattedDelta: formatSignedDollarsDisplay(
-        amountCents - comparisonAmountCents
+        amountCents - comparisonAmountCents,
+        format
       ),
       lineCount: memberLines.length,
       lines: memberLines.map(toLineSummary),
@@ -331,10 +337,11 @@ export async function buildFinanceMonthlyPnlSummary(
       amountCents,
       comparisonAmountCents,
       deltaCents: amountCents - comparisonAmountCents,
-      formattedAmount: formatDollarsDisplay(amountCents),
-      formattedComparisonAmount: formatDollarsDisplay(comparisonAmountCents),
+      formattedAmount: formatDollarsDisplay(amountCents, format),
+      formattedComparisonAmount: formatDollarsDisplay(comparisonAmountCents, format),
       formattedDelta: formatSignedDollarsDisplay(
-        amountCents - comparisonAmountCents
+        amountCents - comparisonAmountCents,
+        format
       ),
       lineCount: unmappedLines.length,
       lines: unmappedLines.map(toLineSummary),
@@ -418,15 +425,15 @@ export async function buildFinanceMonthlyPnlSummary(
     comparisonAmountCents,
     deltaCents:
       comparisonAmountCents === null ? null : amountCents - comparisonAmountCents,
-    formattedAmount: formatDollarsDisplay(amountCents),
+    formattedAmount: formatDollarsDisplay(amountCents, format),
     formattedComparisonAmount:
       comparisonAmountCents === null
         ? null
-        : formatDollarsDisplay(comparisonAmountCents),
+        : formatDollarsDisplay(comparisonAmountCents, format),
     formattedDelta:
       comparisonAmountCents === null
         ? null
-        : formatSignedDollarsDisplay(amountCents - comparisonAmountCents),
+        : formatSignedDollarsDisplay(amountCents - comparisonAmountCents, format),
     groups,
     mix: groups
       .filter((group) => group.amountCents > 0)

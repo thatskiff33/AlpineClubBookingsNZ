@@ -22,6 +22,7 @@ import {
   invalidatePublicLayoutConfig,
   PUBLIC_LAYOUT_CACHE_TAGS,
 } from "@/lib/public-layout-cache";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // POST /api/admin/config-transfer/apply — full-admin only.
 // Applies a previewed bundle: backup → one transaction { advisory lock →
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
     });
   };
 
+  // The club's format (#3565), resolved once per request, before the apply
+  // transaction.
+  const format = await clubFormatValues();
+
   try {
     const result = await applyConfigImport({
       prisma,
@@ -65,6 +70,7 @@ export async function POST(request: Request) {
       mode,
       selectedCategories,
       resolutions,
+      format,
     });
     revalidatePublicPageContent();
     invalidatePublicLayoutConfig(

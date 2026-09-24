@@ -163,7 +163,8 @@ export function PromoCodesPageClient({
     `undefined` in the published image, so a club charging in anything but
     New Zealand dollars was shown NZD here whatever it had configured.
   */
-  const { currencyCode } = useClubFormat();
+  const format = useClubFormat();
+  const { currencyCode } = format;
   // The Xero reference data (chart-of-accounts + items) is finance area, fetched
   // only when the create/edit form opens. Gate it at finance `view` so a viewer
   // with promo (bookings) access but not finance never fetches into a 403; the
@@ -751,7 +752,7 @@ export function PromoCodesPageClient({
       case "PERCENTAGE":
         return `${promo.percentOff}% off per individual`;
       case "FIXED_AMOUNT":
-        return `${formatCents(promo.valueCents || 0)} off per individual`;
+        return `${formatCents(promo.valueCents || 0, format)} off per individual`;
       case "FREE_NIGHTS": {
         const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual !== 1 ? "s" : ""} per booking`;
         if (promo.lifetimeFreeNightsCap != null) {
@@ -761,7 +762,7 @@ export function PromoCodesPageClient({
       }
       case "FIXED_NIGHTLY_PRICE": {
         const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only";
-        return `${formatCents(promo.fixedNightlyPriceCents || 0)} per eligible night · ${mode}`;
+        return `${formatCents(promo.fixedNightlyPriceCents || 0, format)} per eligible night · ${mode}`;
       }
       default:
         return "";
@@ -956,7 +957,7 @@ export function PromoCodesPageClient({
             )}
             {promo.maxNightlyValueCents != null && (
               <Badge variant="outline">
-                Up to {formatCents(promo.maxNightlyValueCents)}/night
+                Up to {formatCents(promo.maxNightlyValueCents, format)}/night
               </Badge>
             )}
             {promo.membersOnly && (

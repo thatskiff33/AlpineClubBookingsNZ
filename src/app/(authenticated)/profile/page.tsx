@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
+import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { seasonSelectLabel } from "@/lib/season-label";
 import {
@@ -64,7 +65,7 @@ function formatPromoBenefit(promo: {
   percentOff: number | null;
   type: string;
   valueCents: number | null;
-}) {
+}, money: BoundClubFormat) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
       ? `${promo.percentOff}% off per individual`
@@ -73,7 +74,7 @@ function formatPromoBenefit(promo: {
 
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off per individual`
+      ? `${money.cents(promo.valueCents)} off per individual`
       : "Fixed discount";
   }
 
@@ -92,7 +93,7 @@ function formatPromoBenefit(promo: {
     if (promo.fixedNightlyPriceCents === null) {
       return "Fixed nightly price";
     }
-    const price = `${formatCents(promo.fixedNightlyPriceCents)} per eligible night`;
+    const price = `${money.cents(promo.fixedNightlyPriceCents)} per eligible night`;
     return promo.fixedNightlyMode === "SET_PRICE"
       ? `${price} · set price`
       : `${price} · cap only`;
@@ -144,6 +145,7 @@ export default async function ProfilePage({
   // reads as comes from the club's PERSISTED timezone rather than the
   // container's (CT-4, #2870; INV-CONFIG-002).
   const club = await clubTime();
+  const money = await clubFormat();
 
   // The season the CLUB is in, from that same persisted zone. This line used to
   // carry a comment saying it deliberately stayed on the host's clock because no
@@ -531,7 +533,7 @@ export default async function ProfilePage({
                     <Badge className="font-mono" variant="secondary">
                       {promo.code}
                     </Badge>
-                    <Badge variant="success">{formatPromoBenefit(promo)}</Badge>
+                    <Badge variant="success">{formatPromoBenefit(promo, money)}</Badge>
                   </div>
                   {promo.description ? (
                     <p className="text-sm text-muted-foreground">

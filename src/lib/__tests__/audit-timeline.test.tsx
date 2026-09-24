@@ -2,6 +2,7 @@
 
 import {
   CLUB_TIME_TEST_ZONE,
+  ClubFormatTestProvider,
   fireEvent,
   render,
   screen,
@@ -208,7 +209,11 @@ describe("AuditTimeline spells a stamp in the club's zone (CT-4, #2870)", () => 
 
   function providerFor(zone: string) {
     return function PinnedClubTime({ children }: { children: ReactNode }) {
-      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+      return (
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
+      );
     };
   }
 

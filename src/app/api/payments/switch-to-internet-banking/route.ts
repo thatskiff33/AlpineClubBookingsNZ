@@ -45,6 +45,7 @@ import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { consumeStoredCreditElection } from "@/lib/booking-credit-election";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The member's account credit leaves nothing for the invoice to ask for, so
@@ -99,6 +100,9 @@ export async function POST(request: NextRequest) {
   }
 
   const { bookingId } = parsed.data;
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -275,6 +279,7 @@ export async function POST(request: NextRequest) {
     // booking has left it). Deliberately after the capacity decision above —
     // a refused switch must leave the election intact.
     const creditElection = await consumeStoredCreditElection(tx, {
+      format,
       bookingId: locked.id,
     });
 

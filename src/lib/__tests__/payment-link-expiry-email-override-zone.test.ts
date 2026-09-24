@@ -143,6 +143,7 @@ import {
 } from "@/lib/email/booking-requests";
 
 import { divergentClubZone } from "./helpers/club-time-zone";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** A check-in comfortably after the repository's frozen `2026-07-01T00:00Z`. */
 const CHECK_IN_DAY = "2026-08-01";
@@ -236,7 +237,7 @@ const SENDERS: ReadonlyArray<{
         priceCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: EXPIRES_AT,
-      }),
+      }, CLUB_FORMAT_TEST),
   },
   {
     templateName: SPLIT_GUEST,
@@ -253,7 +254,7 @@ const SENDERS: ReadonlyArray<{
         priceCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: EXPIRES_AT,
-      }),
+      }, CLUB_FORMAT_TEST),
   },
 ];
 

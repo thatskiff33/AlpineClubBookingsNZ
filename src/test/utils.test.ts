@@ -5,27 +5,28 @@ import { formatCents, formatCentsPlain } from "@/lib/utils";
 // date-only string, so the successor is `seasonYearOfStoredDate`, which takes no
 // zone at all.
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 describe("formatCents", () => {
   it("formats whole dollar amounts", () => {
-    expect(formatCents(4500)).toBe("$45.00");
+    expect(formatCents(4500, CLUB_FORMAT_TEST)).toBe("$45.00");
   });
 
   it("formats cents correctly", () => {
-    expect(formatCents(4550)).toBe("$45.50");
+    expect(formatCents(4550, CLUB_FORMAT_TEST)).toBe("$45.50");
   });
 
   it("formats zero", () => {
-    expect(formatCents(0)).toBe("$0.00");
+    expect(formatCents(0, CLUB_FORMAT_TEST)).toBe("$0.00");
   });
 
   it("formats large amounts with thousands separators", () => {
-    expect(formatCents(100000)).toBe("$1,000.00");
-    expect(formatCents(44667484)).toBe("$446,674.84");
+    expect(formatCents(100000, CLUB_FORMAT_TEST)).toBe("$1,000.00");
+    expect(formatCents(44667484, CLUB_FORMAT_TEST)).toBe("$446,674.84");
   });
 
   it("formats single cent", () => {
-    expect(formatCents(1)).toBe("$0.01");
+    expect(formatCents(1, CLUB_FORMAT_TEST)).toBe("$0.01");
   });
 
   // #3302 review (equivalence lens): the sign sits BEFORE the symbol, matching
@@ -35,8 +36,8 @@ describe("formatCents", () => {
   // (symbol first, from their own hand-rolled `"$" + (cents/100).toFixed(2)`);
   // every one of them now reads `-$25.00`.
   it("places the sign before the symbol for a negative amount", () => {
-    expect(formatCents(-2500)).toBe("-$25.00");
-    expect(formatCents(-100000)).toBe("-$1,000.00");
+    expect(formatCents(-2500, CLUB_FORMAT_TEST)).toBe("-$25.00");
+    expect(formatCents(-100000, CLUB_FORMAT_TEST)).toBe("-$1,000.00");
   });
 
   // #3302 review (equivalence lens F5): a caller that rounds a small negative
@@ -45,8 +46,8 @@ describe("formatCents", () => {
   // this guards the same class of bug #3264's `formatSignedCents` already
   // guards for its own zero case.
   it("never renders negative zero", () => {
-    expect(formatCents(-0)).toBe("$0.00");
-    expect(formatCents(Math.round(-0.4))).toBe("$0.00");
+    expect(formatCents(-0, CLUB_FORMAT_TEST)).toBe("$0.00");
+    expect(formatCents(Math.round(-0.4), CLUB_FORMAT_TEST)).toBe("$0.00");
   });
 });
 

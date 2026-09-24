@@ -20,12 +20,14 @@ import { formatCents } from "@/lib/utils"
 // member actually arrived. `INV-DATE-019`.
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import type { MemberDetail } from "../_types"
+import { useClubFormat } from "@/components/club-format-provider"
 
 function BookingHistoryTable({
   bookings,
 }: {
   bookings: MemberDetail["bookings"]
 }) {
+  const format = useClubFormat()
   if (bookings.length === 0) {
     return <p className="text-sm text-muted-foreground">No bookings yet</p>
   }
@@ -54,7 +56,7 @@ function BookingHistoryTable({
               </Badge>
             </TableCell>
             <TableCell>{booking._count.guests}</TableCell>
-            <TableCell>{formatCents(booking.finalPriceCents)}</TableCell>
+            <TableCell>{formatCents(booking.finalPriceCents, format)}</TableCell>
           </TableRow>
         ))}
       </TableBody>

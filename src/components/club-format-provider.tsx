@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useMemo } from "react";
 
+
 import {
   CLUB_CURRENCY_FALLBACK,
   CLUB_LOCALE_FALLBACK,
@@ -65,15 +66,19 @@ import {
  * `error.tsx` is held at zero data dependencies, and no mount on that route
  * could cover it).
  *
- * ## What this stage does NOT move
+ * ## What a client component does with it
  *
- * The shared formatters — `formatCents` in `src/lib/utils.ts`,
- * `finance-format.ts` and `club-time/intl.ts` — still build their `Intl`
- * objects at module load from `APP_LOCALE` / `APP_CURRENCY`. They are #3565,
- * and they are the reason an amount rendered through `formatCents` still shows
- * the deployment's currency after this stage while the label beside it shows
- * the club's. Do not reach for a second source here to paper over that: the fix
- * is #3565 moving those formatters onto this context.
+ * Renders money. Since #3565 every money and number rendering in
+ * `src/lib/utils.ts` and `src/lib/finance-format.ts` takes the club's format as a
+ * REQUIRED argument, so a component that renders an amount has to get one from
+ * somewhere, and in the browser this is the only place it can. A component that
+ * renders many amounts binds once with `bindClubFormat(useClubFormat())`, which
+ * hands back the same `BoundClubFormat` that `clubFormat()` hands a server
+ * module, so a component that moves between server and client changes the line
+ * that obtains it and nothing else. (A `useBoundClubFormat` hook shipped briefly
+ * in #3565 and was removed once every call site had chosen the explicit form.)
+ *
+ * `club-time/intl.ts`'s locale is still the environment's; it is #3566.
  */
 
 /**

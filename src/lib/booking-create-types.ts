@@ -11,6 +11,7 @@ import type { GroupDiscountConfig } from "@/lib/pricing";
 import type { BookingPaymentMethod } from "@/lib/booking-payment-methods";
 import type { InternetBankingPaymentSettingsValues } from "@/lib/internet-banking-settings";
 import type { CalendarDate } from "@/lib/club-time";
+import type { ClubFormat } from "@/lib/club-format";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
@@ -122,6 +123,15 @@ interface BaseInput {
   // boundary (INV-CAP-034); runtime validation also refuses unchecked JS/`any`
   // callers before the permissive read resolver can choose a default lodge.
   lodgeId: string;
+  /**
+   * The club's currency and locale (#3565), resolved by the caller before it
+   * opened ANY transaction — the same contract, for the same reason, as
+   * `ConfirmedBookingInput.todayAtClub` below. The create renders money into an
+   * insufficient-credit message under the member's ledger lock and into the
+   * confirmation and admin-alert emails after commit; neither may read a
+   * setting on its own.
+   */
+  format: ClubFormat;
   /**
    * Account credit, in integer cents, that the member asked to put towards this
    * booking.

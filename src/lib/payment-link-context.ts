@@ -21,6 +21,7 @@ import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { isPaidLikeStatus, loadPaymentLinkRecord } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /** The data the public page needs to actually take a payment. */
 interface PaymentLinkPayable {
@@ -110,6 +111,9 @@ export async function getPaymentLinkContext(
   token: string,
   { readOpenFinancialReview }: PaymentLinkContextReaders,
 ): Promise<PaymentLinkContext> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const link = await loadPaymentLinkRecord(token);
   const booking = link.booking;
   const now = new Date();
@@ -203,9 +207,9 @@ export async function getPaymentLinkContext(
   const narrative = resolveBookingNarrative({
     ...narrativeInput,
     financialReviewPending,
-  });
+  }, format);
   const paymentState = financialReviewPending
-    ? resolveBookingNarrative(narrativeInput).state
+    ? resolveBookingNarrative(narrativeInput, format).state
     : narrative.state;
 
   // A paid/completed booking burns the link so it cannot be replayed.

@@ -45,6 +45,7 @@ import {
   type PromoApplicationSubject,
 } from "../promo";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 — the transaction-bound promo and refund helpers take the CLUB's
 // calendar day as a REQUIRED value now: the club timezone is one of the two
@@ -1296,7 +1297,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
       newFinalPriceCents,
       changeFeeCents: 0,
       promoCoverageNote: promo.promoCoverage?.message ?? null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(rows).toContainEqual({ label: "New Total", value: "$260.00" });
     // The same words as the panel and the history, not a second rendering.
     expect(rows).toContainEqual({
@@ -1333,7 +1334,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
       ] as never,
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
     const modificationItem = items.find((item) => item.id === "modification-mod-1");
     expect(modificationItem?.detail).toContain(promo.promoCoverage!.message);
   });
@@ -1356,7 +1357,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
       ] as never,
       refundRequests: [],
       auditLogs: [],
-    });
+    }, CLUB_FORMAT_TEST);
     expect(items.find((item) => item.id === "modification-mod-2")?.detail).toBe(
       "2 to 3 guests."
     );
@@ -1373,7 +1374,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
       oldFinalPriceCents: 26000,
       newFinalPriceCents: 26000,
       changeFeeCents: 0,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(rows.some((row) => row.label === "Promo coverage")).toBe(false);
   });
 });

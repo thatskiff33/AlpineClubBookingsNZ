@@ -230,7 +230,8 @@ export function PromoRedemptionsPanel({
   onBack: () => void;
 }) {
   const clubTime = useClubTime();
-  const { locale } = useClubFormat();
+  const format = useClubFormat();
+  const { locale } = format;
   const { lodges } = useLodgeOptions("admin");
   const multiLodge = lodges.length > 1;
 
@@ -504,10 +505,10 @@ export function PromoRedemptionsPanel({
         />
         <StatTile
           title="Total discounted"
-          value={formatCents(totals?.filtered.discountCents ?? 0)}
+          value={formatCents(totals?.filtered.discountCents ?? 0, format)}
           subtitle={
             filterActive
-              ? `${formatCents(totals?.all.discountCents ?? 0)} all-time`
+              ? `${formatCents(totals?.all.discountCents ?? 0, format)} all-time`
               : "Sum of discounts applied"
           }
         />
@@ -727,13 +728,13 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>{row.eligibleGuestCount ?? "-"}</TableCell>
                       <TableCell>
-                        {formatCents(row.discountCents)}
+                        {formatCents(row.discountCents, format)}
                         {/* A fixed nightly price ABOVE the guest's normal rate
                             raises the price: a real use with no discount, so
                             it must not be mistaken for a benefit-free row. */}
                         {row.priceAdjustmentCents > 0 ? (
                           <div className="text-xs text-muted-foreground">
-                            +{formatCents(row.priceAdjustmentCents)} price
+                            +{formatCents(row.priceAdjustmentCents, format)} price
                           </div>
                         ) : null}
                       </TableCell>
@@ -757,7 +758,7 @@ export function PromoRedemptionsPanel({
                                     {allocation.name}
                                   </span>
                                   <span className="text-muted-foreground">
-                                    {formatCents(allocation.discountCents)}
+                                    {formatCents(allocation.discountCents, format)}
                                     {allocation.freeNightsUsed > 0
                                       ? ` · ${allocation.freeNightsUsed} free night${
                                           allocation.freeNightsUsed === 1 ? "" : "s"

@@ -163,6 +163,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BOOKING = "bk-1";
 const OWNER = "m-owner";
@@ -486,6 +487,7 @@ async function remove(
   },
 ) {
   return removeBookingGuestInTransaction({
+    format: CLUB_FORMAT_TEST,
     today: CLUB_TODAY_DATE_ONLY,
     tx: tx as never,
     bookingId: BOOKING,
@@ -1373,6 +1375,7 @@ describe("the self-removal window is judged on the day the caller supplies (#312
     const booking = futureStayBooking();
     const tx = makeTx(booking as ReturnType<typeof makeBooking>);
     return removeBookingGuestInTransaction({
+      format: CLUB_FORMAT_TEST,
       today,
       tx: tx as never,
       bookingId: BOOKING,

@@ -57,6 +57,7 @@ import {
 } from "@/lib/member-guest-consent-service";
 import { DELETED_BOOKING_MESSAGE } from "@/lib/deleted-booking-refusal";
 import type { prisma as PrismaClientType } from "@/lib/prisma";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BOOKING_ID = "booking-1";
 const GUEST_ID = "guest-1";
@@ -114,6 +115,7 @@ function respond(
   action: "APPROVE" | "DECLINE",
 ) {
   return respondToMemberGuestConsent({
+    format: CLUB_FORMAT_TEST,
     bookingId: BOOKING_ID,
     guestId: GUEST_ID,
     actorMemberId,

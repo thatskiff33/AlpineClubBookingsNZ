@@ -7,6 +7,7 @@ import {
   requireFullAdminForConfigTransfer,
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // POST /api/admin/config-transfer/plan — full-admin only.
 // Dry-run: accepts an uploaded bundle (multipart 'bundle' file, plus mode /
@@ -21,11 +22,15 @@ export async function POST(request: Request) {
   if (!uploaded.ok) return uploaded.response;
   const { bytes, mode, selectedCategories, resolutions } = uploaded.upload;
 
+  // The club's format (#3565), resolved once per request.
+  const format = await clubFormatValues();
+
   try {
     const plan = await buildImportPlan(prisma, bytes, {
       mode,
       selectedCategories,
       resolutions,
+      format,
     });
     return NextResponse.json({ plan });
   } catch (error) {

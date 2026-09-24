@@ -94,6 +94,7 @@ import { MEMBER_WHOLE_LODGE_GUEST_NAME_PREFIX } from "@/lib/placeholder-guest-na
 import { prisma } from "@/lib/prisma";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -1249,6 +1250,9 @@ export async function declineBookingRequest(input: {
   notifyMember?: boolean;
   ipAddress?: string;
 }) {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -1431,6 +1435,7 @@ export async function declineBookingRequest(input: {
         input.adminMemberId,
         "ADMIN",
         input.ipAddress ?? "",
+        format,
         "card",
         {
           // Admin declining, not the requester cancelling: suppress the
@@ -2019,6 +2024,9 @@ export async function approveBookingRequest(input: {
    */
   ownerContactMemberId?: string | null;
 }): Promise<ApproveBookingRequestOutcome> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const foundRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2615,7 +2623,7 @@ export async function approveBookingRequest(input: {
         priceCents,
         bookingReference: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
-      });
+      }, format);
     } catch (err) {
       logger.error(
         { err, bookingRequestId: request.id, bookingId: conversion.bookingId },

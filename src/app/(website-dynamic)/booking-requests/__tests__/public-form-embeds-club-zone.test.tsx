@@ -79,6 +79,7 @@ import { BookingRequestFormEmbed } from "@/app/(website-dynamic)/booking-request
 import { SchoolBookingFormEmbed } from "@/app/(website-dynamic)/school-bookings/school-booking-form-embed";
 import { bindClubTime, fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ClubIdentity } from "@/config/club-identity-types";
 
 const PERSISTED_ZONE = "America/Denver";
@@ -123,7 +124,10 @@ afterEach(() => {
 });
 
 async function earliestNightFrom(element: React.ReactElement) {
-  render(element);
+  // The embed mounts the club's zone itself (that is what is under test); the
+  // club's format is the website chrome's job in production, so the test
+  // supplies it here (#3564).
+  render(<ClubFormatTestProvider>{element}</ClubFormatTestProvider>);
   const checkIn = (await screen.findByLabelText(
     /check-?in/i,
   )) as HTMLInputElement;

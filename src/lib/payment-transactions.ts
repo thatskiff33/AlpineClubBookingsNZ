@@ -10,6 +10,7 @@ import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 // Moved to a leaf so the booking ledger's settlement sync can share them
 // without an import cycle (#3581); re-exported so existing importers stand.
@@ -913,13 +914,16 @@ export class PartialRefundError extends Error {
     completedRefundCents,
     refunds,
     cause,
+    format,
   }: {
     completedRefundCents: number;
     refunds: PartialRefundError["refunds"];
     cause: unknown;
+    /** The club's format (#3565): the message names the amount already refunded. */
+    format: ClubFormat;
   }) {
     super(
-      `Refund failed after ${formatCents(completedRefundCents)} was refunded and recorded: ${
+      `Refund failed after ${formatCents(completedRefundCents, format)} was refunded and recorded: ${
         cause instanceof Error ? cause.message : String(cause)
       }`
     );
@@ -938,6 +942,7 @@ export async function refundPaymentTransactions({
   idempotencyKeyPrefix,
   allocation,
   store = prisma,
+  format,
 }: {
   paymentId: string;
   amountCents: number;
@@ -955,6 +960,8 @@ export async function refundPaymentTransactions({
    */
   allocation?: ReadonlyArray<RefundAllocationSlice>;
   store?: PaymentStore;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const payment = await ensurePaymentTransactionsBackfilled(store, paymentId);
   if (!payment) {
@@ -1021,6 +1028,7 @@ export async function refundPaymentTransactions({
         completedRefundCents,
         refunds,
         cause: err,
+        format,
       });
     }
 

@@ -19,6 +19,8 @@ import { prisma } from "@/lib/prisma";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubFormatValues } from "@/lib/club-format-server";
+import type { ClubFormat } from "@/lib/club-format";
 
 // A joining-fee row keys on membership type x optional age tier; the flat
 // (NULL) tier is the whole-type fee (used by the Family type).
@@ -108,11 +110,12 @@ async function reconcileMembershipFeeComponents(args: {
   suppliedComponents?: FeeComponentInput[];
   newAmountCents: number;
   billingBasis: MembershipFeeBillingBasis;
+  format: ClubFormat;
 }) {
-  const { tx, fee, existing, membershipTypeId, ageTier, suppliedComponents, newAmountCents, billingBasis } = args;
+  const { tx, fee, existing, membershipTypeId, ageTier, suppliedComponents, newAmountCents, billingBasis, format } = args;
 
   const replaceWith = async (components: FeeComponentInput[]) => {
-    validateFeeComponents({ components, amountCents: newAmountCents, billingBasis });
+    validateFeeComponents({ components, amountCents: newAmountCents, billingBasis }, format);
     if (components.length === 0) return;
     await tx.membershipAnnualFeeComponent.createMany({
       data: components.map((component, index) => ({
@@ -287,6 +290,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   try {
     await prisma.$transaction(async (tx) => {
       const input = parsed.data;
@@ -370,6 +376,7 @@ export async function POST(request: Request) {
           suppliedComponents: input.components,
           newAmountCents: dates.amountCents,
           billingBasis: input.billingBasis,
+          format,
         });
       } else if (input.action === "CREATE_JOINING_FEE" || input.action === "UPDATE_JOINING_FEE") {
         const dates = validateFeeScheduleInput(input);

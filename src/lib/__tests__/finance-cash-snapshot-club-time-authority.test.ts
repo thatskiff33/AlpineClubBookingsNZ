@@ -40,6 +40,7 @@ import {
   parseCashSnapshot,
   type FinanceCashSnapshotRecord,
 } from "@/lib/finance-cash-snapshot";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";
 const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
@@ -112,7 +113,7 @@ describe("the cash snapshot's dates (#3123)", () => {
     // BEFORE the migration these read "29 Jun 2026" / "31 May 2026 to 29 Jun
     // 2026" — the day before, on a bank balance — because APP_TIME_ZONE is
     // behind Greenwich.
-    const parsed = parseCashSnapshot(AUCKLAND, snapshot());
+    const parsed = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     expect(parsed?.snapshotLabel).toBe("30 Jun 2026");
     expect(parsed?.sourceWindow).toBe("1 Jun 2026 to 30 Jun 2026");
   });
@@ -124,9 +125,9 @@ describe("the cash snapshot's dates (#3123)", () => {
       would be a new defect rather than a fix — the mistake #3113 was filed to
       correct. A money figure's as-of day must not move when the club moves.
     */
-    const base = parseCashSnapshot(AUCKLAND, snapshot());
+    const base = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     for (const club of [KIRITIMATI, PAGO]) {
-      const other = parseCashSnapshot(club, snapshot());
+      const other = parseCashSnapshot(club, snapshot(), CLUB_FORMAT_TEST);
       expect(other?.snapshotLabel).toBe(base?.snapshotLabel);
       expect(other?.sourceWindow).toBe(base?.sourceWindow);
     }
@@ -135,15 +136,15 @@ describe("the cash snapshot's dates (#3123)", () => {
 
   it("dates the sourceUpdatedAt INSTANT in the club's zone", () => {
     // BEFORE the migration this read "30 Jun 2026, 8:00 pm" (APP_TIME_ZONE).
-    const parsed = parseCashSnapshot(AUCKLAND, snapshot());
+    const parsed = parseCashSnapshot(AUCKLAND, snapshot(), CLUB_FORMAT_TEST);
     expect(parsed?.sourceUpdatedAtLabel).toContain("1 Jul 2026");
     expect(parsed?.sourceUpdatedAtLabel).not.toContain("30 Jun 2026");
   });
 
   it("moves that instant with the club's zone — kills a hard-coded one", () => {
     // The leg a literal `Pacific/Auckland` cannot pass.
-    const ahead = parseCashSnapshot(KIRITIMATI, snapshot());
-    const behind = parseCashSnapshot(PAGO, snapshot());
+    const ahead = parseCashSnapshot(KIRITIMATI, snapshot(), CLUB_FORMAT_TEST);
+    const behind = parseCashSnapshot(PAGO, snapshot(), CLUB_FORMAT_TEST);
     expect(ahead?.sourceUpdatedAtLabel).toContain("1 Jul 2026");
     expect(behind?.sourceUpdatedAtLabel).toContain("30 Jun 2026");
   });
@@ -156,7 +157,7 @@ describe("the cash snapshot's dates (#3123)", () => {
       notice, which is why this throws rather than answering.
     */
     expect(() =>
-      parseCashSnapshot(AUCKLAND, snapshot({ asOfDate: SOURCE_UPDATED_AT })),
+      parseCashSnapshot(AUCKLAND, snapshot({ asOfDate: SOURCE_UPDATED_AT }), CLUB_FORMAT_TEST),
     ).toThrow(/stored calendar day/);
   });
 
@@ -164,21 +165,23 @@ describe("the cash snapshot's dates (#3123)", () => {
     const parsed = parseCashSnapshot(
       AUCKLAND,
       snapshot({ sourceUpdatedAt: null }),
+      CLUB_FORMAT_TEST,
     );
     expect(parsed?.sourceUpdatedAtLabel).toBe("Snapshot update time unavailable");
   });
 
   it("reports the partial windows the same way, with no zone", () => {
     expect(
-      parseCashSnapshot(PAGO, snapshot({ periodStart: null }))?.sourceWindow,
+      parseCashSnapshot(PAGO, snapshot({ periodStart: null }), CLUB_FORMAT_TEST)?.sourceWindow,
     ).toBe("Through 30 Jun 2026");
     expect(
-      parseCashSnapshot(PAGO, snapshot({ periodEnd: null }))?.sourceWindow,
+      parseCashSnapshot(PAGO, snapshot({ periodEnd: null }), CLUB_FORMAT_TEST)?.sourceWindow,
     ).toBe("From 1 Jun 2026");
     expect(
       parseCashSnapshot(
         PAGO,
         snapshot({ periodStart: null, periodEnd: null }),
+        CLUB_FORMAT_TEST,
       )?.sourceWindow,
     ).toBe("Snapshot period not recorded");
   });

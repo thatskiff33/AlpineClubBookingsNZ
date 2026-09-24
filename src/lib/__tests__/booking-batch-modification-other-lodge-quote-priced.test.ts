@@ -89,6 +89,7 @@ import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } from "@/lib/booking-modify";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -177,6 +178,7 @@ const election = {
 
 async function save(input: Record<string, unknown>, role: "ADMIN" | "MEMBER" = "ADMIN") {
   return modifyBookingBatch({
+    format: CLUB_FORMAT_TEST,
     todayAtClub: FIXTURE_CLUB_DAY,
     bookingId: "booking-1",
     // A MEMBER actor is the booking's own owner, so the ownership guard upstream

@@ -32,6 +32,7 @@ import {
   sendAdminSplitSettlementUnpaidAlert,
   sendAdminSplitSettlementCancelledAlert,
 } from "@/lib/email/admin-alerts-booking";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const ORIGINAL_URL = process.env.NEXTAUTH_URL;
 
@@ -56,7 +57,7 @@ describe("sendAdminSplitSettlementUnpaidAlert (#1967/#1994)", () => {
   it.each([false, true])(
     "routes the alert through the adminPaymentFailure preference for parentUnpaid=%s",
     async (parentUnpaid) => {
-      await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid });
+      await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid }, CLUB_FORMAT_TEST);
 
       // #1422 precedent: gated by the existing payment-failure notification
       // category, not a bespoke new preference column.
@@ -70,18 +71,20 @@ describe("sendAdminSplitSettlementUnpaidAlert (#1967/#1994)", () => {
   );
 
   it("selects the wording variant from parentUnpaid without changing the audit template name", async () => {
-    await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid: false });
-    await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid: true });
+    await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid: false }, CLUB_FORMAT_TEST);
+    await sendAdminSplitSettlementUnpaidAlert({ ...baseData, parentUnpaid: true }, CLUB_FORMAT_TEST);
 
     // A single registry entry backs both wording variants: the boolean only
     // switches the rendered paragraph, so both sends share one templateName.
     expect(h.unpaidTemplate).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ parentUnpaid: false }),
+      CLUB_FORMAT_TEST,
     );
     expect(h.unpaidTemplate).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ parentUnpaid: true }),
+      CLUB_FORMAT_TEST,
     );
     for (const call of h.sendToAdmins.mock.calls) {
       expect(call[0].templateName).toBe("admin-split-settlement-unpaid");
@@ -94,7 +97,7 @@ describe("sendAdminSplitSettlementCancelledAlert (#1993 Part A, C1)", () => {
   it.each([false, true])(
     "sends the DEDICATED cancelled template through adminPaymentFailure for parentUnpaid=%s",
     async (parentUnpaid) => {
-      await sendAdminSplitSettlementCancelledAlert({ ...baseData, parentUnpaid });
+      await sendAdminSplitSettlementCancelledAlert({ ...baseData, parentUnpaid }, CLUB_FORMAT_TEST);
 
       // A distinct registered template (not the recurring alert's name), so an
       // admin override of the noisy recurring alert cannot rewrite the terminal
@@ -108,6 +111,7 @@ describe("sendAdminSplitSettlementCancelledAlert (#1993 Part A, C1)", () => {
       // Renders the cancelled template, never the recurring unpaid one.
       expect(h.cancelledTemplate).toHaveBeenCalledWith(
         expect.objectContaining({ parentUnpaid }),
+        CLUB_FORMAT_TEST,
       );
       expect(h.unpaidTemplate).not.toHaveBeenCalled();
     },
@@ -117,7 +121,7 @@ describe("sendAdminSplitSettlementCancelledAlert (#1993 Part A, C1)", () => {
     await sendAdminSplitSettlementCancelledAlert({
       ...baseData,
       parentUnpaid: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(h.cancelledTemplate.mock.calls[0][0]).not.toHaveProperty("holdUntil");
   });

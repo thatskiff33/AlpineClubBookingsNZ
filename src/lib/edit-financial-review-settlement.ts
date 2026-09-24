@@ -36,6 +36,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -488,6 +489,7 @@ export async function executeEditReviewSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
+  format,
 }: {
   bookingId: string;
   taskId: string;
@@ -498,6 +500,8 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
   cancellationHandBackInvoiceId: string | null;
+  /** The club's format (#3565), resolved once by the caller, before its transaction. */
+  format: ClubFormat;
 }): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
@@ -508,6 +512,7 @@ export async function executeEditReviewSettlement({
     const refundAmountCents = amountCents ?? 0;
     try {
       const refundResult = await refundPaymentTransactions({
+        format,
         paymentId: route.paymentId,
         amountCents: refundAmountCents,
         // #1507: the body is rebuilt byte-identically by a recovery replay from
@@ -587,6 +592,7 @@ export async function executeEditReviewSettlement({
   let chargeTotalCents: number | null = null;
   if (route?.kind === "additional-charge") {
     const charged = await executeEditReviewCharge({
+      format,
       bookingId,
       taskId,
       route,
@@ -620,6 +626,7 @@ export async function executeEditReviewSettlement({
    * is fire-and-forget, exactly as it was inline.
    */
   await dispatchEditReviewXeroSettlement({
+    format,
     bookingId,
     taskId,
     actingMemberId,

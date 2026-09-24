@@ -127,6 +127,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { DELETE } from "@/app/api/bookings/[id]/guests/[guestId]/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { raisedEditFinancialReviewStrands as raisedStrands } from "@/lib/__tests__/helpers/raised-edit-financial-review-strands";
 
 const CHECK_IN = new Date("2027-07-15");
@@ -733,6 +734,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: true }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -747,6 +749,7 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
     expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ financialReviewPending: false }),
+      CLUB_FORMAT_TEST,
     );
   });
 

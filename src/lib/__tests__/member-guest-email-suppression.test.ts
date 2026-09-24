@@ -119,6 +119,7 @@ import {
   sendMemberGuestConsentRequestEmail,
   sendMemberGuestRequestWithdrawnEmail,
 } from "@/lib/email/member-guest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CHECK_IN = parseDateOnly("2026-08-08");
 const CHECK_OUT = parseDateOnly("2026-08-10");
@@ -190,7 +191,7 @@ const SENDERS: Array<{ templateName: string; send: () => Promise<unknown> }> = [
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         outcome: { kind: "DECLINED", creditCents: 4800 },
-      }),
+      }, CLUB_FORMAT_TEST),
   },
   {
     templateName: "member-guest-consent-expired",

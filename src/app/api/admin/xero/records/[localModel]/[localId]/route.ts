@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { isXeroLocalModel } from "@/lib/xero-record-links";
 import { getXeroRecordActivity } from "@/lib/xero-record-activity";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function GET(
   _request: NextRequest,
@@ -15,8 +16,11 @@ export async function GET(
     return NextResponse.json({ error: "Invalid Xero activity scope" }, { status: 400 });
   }
 
+  // The club's format (#3565), resolved once per request.
+  const format = await clubFormatValues();
+
   try {
-    const data = await getXeroRecordActivity(localModel, localId, 25);
+    const data = await getXeroRecordActivity(localModel, localId, format, 25);
     if (!data) {
       return NextResponse.json({ error: "Record not found" }, { status: 404 });
     }

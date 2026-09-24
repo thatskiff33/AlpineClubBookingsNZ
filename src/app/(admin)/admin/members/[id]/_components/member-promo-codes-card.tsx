@@ -8,8 +8,10 @@ import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import type { MemberPromoCode } from "../_types"
+import { useClubFormat } from "@/components/club-format-provider"
 
 export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: MemberPromoCode[]; className?: string }) {
+  const format = useClubFormat()
   // Both kinds appear in this one cell. `assignedAt` is a real INSTANT — when
   // the assignment row was written — and reads in the club's persisted zone.
   // The promo window (`validFrom`/`validUntil`) and the stay gate
@@ -50,7 +52,7 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm font-medium">{formatPromoBenefit(promo)}</TableCell>
+                  <TableCell className="text-sm font-medium">{formatPromoBenefit(promo, format)}</TableCell>
                   <TableCell>
                     <div className="space-y-1">
                       <Badge

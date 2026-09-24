@@ -43,6 +43,7 @@ import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-retur
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { useClubFormat } from "@/components/club-format-provider";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -246,6 +247,7 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
 }
 
 export default function AdminWaitlistPage() {
+  const format = useClubFormat();
   const clubTime = useClubTime();
   const router = useRouter();
   // Force Confirm writes /api/admin/bookings/[id]/force-confirm (bookings
@@ -878,7 +880,7 @@ export default function AdminWaitlistPage() {
                   </TableCell>
                   <TableCell>{entry.guestCount}</TableCell>
                   <TableCell>
-                    {formatCents(entry.finalPriceCents)}
+                    {formatCents(entry.finalPriceCents, format)}
                   </TableCell>
                   <TableCell>
                     <div className="space-y-1">

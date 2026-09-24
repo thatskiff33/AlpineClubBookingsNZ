@@ -23,6 +23,7 @@ import {
   dateOnlyInstantOf,
   requireCalendarDate,
 } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * Property-based tests (fast-check) for the refund, change-fee, and
@@ -201,6 +202,7 @@ describe("calculateBookingCreditApplication properties", () => {
         (requested, balance, price, status) => {
           const call = () =>
             calculateBookingCreditApplication({
+              format: CLUB_FORMAT_TEST,
               requestedCreditCents: requested,
               creditBalanceCents: balance,
               finalPriceCents: price,
@@ -340,7 +342,7 @@ describe("member credit policy properties", () => {
         fc.integer({ min: 0, max: 100_000 }),
         (amount, balance) => {
           const call = () =>
-            validateCreditApplicationAgainstBalance(amount, balance);
+            validateCreditApplicationAgainstBalance(amount, balance, CLUB_FORMAT_TEST);
           if (amount <= 0 || balance < amount) {
             expect(call).toThrow();
           } else {
@@ -358,7 +360,7 @@ describe("member credit policy properties", () => {
         fc.integer({ min: 0, max: 100_000 }),
         (amount, balance) => {
           const call = () =>
-            validateNegativeAdjustmentAgainstBalance(amount, balance);
+            validateNegativeAdjustmentAgainstBalance(amount, balance, CLUB_FORMAT_TEST);
           if (amount < 0 && balance + amount < 0) {
             expect(call).toThrow();
           } else {

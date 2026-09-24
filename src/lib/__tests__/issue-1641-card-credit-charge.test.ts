@@ -99,6 +99,7 @@ import {
 // price. It proves the effective figure the fixed card path must charge.
 import { calculateBookingCreditApplication } from "@/lib/policies/booking-route-decisions";
 import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-payment-intent/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
@@ -164,6 +165,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
   it("mints the Stripe intent at the effective price and mirrors the credit split", async () => {
     // The credit decision booking-create made: 3000 consumed, effective 7000.
     const creditDecision = calculateBookingCreditApplication({
+      format: CLUB_FORMAT_TEST,
       requestedCreditCents: APPLIED_CREDIT_CENTS,
       creditBalanceCents: 5_000,
       finalPriceCents: FINAL_PRICE_CENTS,
@@ -231,6 +233,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     // to guard defensively if one ever reaches it. Prove the create-time signal:
     expect(
       calculateBookingCreditApplication({
+        format: CLUB_FORMAT_TEST,
         requestedCreditCents: FINAL_PRICE_CENTS,
         creditBalanceCents: FINAL_PRICE_CENTS,
         finalPriceCents: FINAL_PRICE_CENTS,

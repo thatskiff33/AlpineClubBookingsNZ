@@ -114,6 +114,7 @@ import {
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BOOKING_ID = "cmbooking0001xyz";
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -336,7 +337,7 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
   it("is Account Credit by construction, on a cancellation", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 
-    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000);
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST);
 
     const note = builtCreditNote();
     expect(note.lineItems?.[0]?.description).toBe(
@@ -349,7 +350,7 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
   it("and on a booking change", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 
-    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, {
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST, {
       bookingModificationId: "cmmodification01",
     });
 
@@ -362,6 +363,7 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
 describe("the modification credit note (createXeroCreditNoteForModification)", () => {
   it("carries the method it was handed", async () => {
     await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       refundAmountCents: 2500,
       bookingModificationId: "cmmodification01",
@@ -383,6 +385,7 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
 
   it("reads as a card refund when handed none, which every pre-#3529 row was", async () => {
     await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       refundAmountCents: 2500,
       bookingModificationId: "cmmodification01",
@@ -430,6 +433,7 @@ describe("itemised modification notes (#3530)", () => {
 
   it("the modification credit note lists the removed nights as its credit and keeps the method on the reference", async () => {
     await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       refundAmountCents: 16000,
       bookingModificationId: "cmmodification01",
@@ -458,6 +462,7 @@ describe("itemised modification notes (#3530)", () => {
 
   it("a note that returns less than the reduction keeps the single method line and says why", async () => {
     await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       refundAmountCents: 8000,
       bookingModificationId: "cmmodification01",
@@ -480,7 +485,7 @@ describe("itemised modification notes (#3530)", () => {
   it("the account-credit note for a booking change is itemised the same way", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 
-    await createUnappliedXeroCreditNote(PAYMENT_ID, 16000, { bookingModificationId: "cmmodification01" });
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 16000, CLUB_FORMAT_TEST, { bookingModificationId: "cmmodification01" });
 
     const note = builtCreditNote();
     expect(note.lineItems?.map((line) => [line.description, line.quantity, line.unitAmount])).toEqual([
@@ -496,6 +501,7 @@ describe("itemised modification notes (#3530)", () => {
 
   it("a legacy booking-anchored modification note has no edit behind it and records nothing about lines", async () => {
     await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,
       refundAmountCents: 2500,
     });
@@ -511,7 +517,7 @@ describe("itemised modification notes (#3530)", () => {
   it("a cancellation's account-credit note has no edit behind it and records nothing about lines", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 
-    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000);
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 5000, CLUB_FORMAT_TEST);
 
     expect(mocks.bookingModificationFindUnique).not.toHaveBeenCalled();
     const enqueued = mocks.startXeroSyncOperation.mock.calls[0][0];

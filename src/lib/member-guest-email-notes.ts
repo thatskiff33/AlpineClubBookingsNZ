@@ -6,6 +6,7 @@ import { addDaysDateOnly } from "@/lib/date-only";
 import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 import { escapeHtml } from "@/lib/email-templates/escape";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The composed sentences and blocks the four member-guest emails are built from
@@ -693,11 +694,11 @@ const STILL_ON_BOOKING_REASON_BY_BLOCKER: Record<
  * yet simply reprices, and saying "credit has been added" there would be a
  * false promise, so zero cents gets its own sentence rather than "$0.00".
  */
-function composeRepricedConsequence(creditCents: number): string {
+function composeRepricedConsequence(creditCents: number, format: ClubFormat): string {
   if (creditCents > 0) {
     return (
       "Your booking has been repriced. " +
-      `${formatCents(creditCents)} has been added to your account credit and will come ` +
+      `${formatCents(creditCents, format)} has been added to your account credit and will come ` +
       "off your next booking."
     );
   }
@@ -713,7 +714,9 @@ export function composeMemberGuestConsentOutcome(params: {
   checkIn: Date;
   checkOut: Date;
   outcome: MemberGuestConsentOutcome;
-}): MemberGuestConsentOutcomeCopy {
+},
+  format: ClubFormat,
+): MemberGuestConsentOutcomeCopy {
   const { guest, lodgeName, checkIn, checkOut, outcome } = params;
   const guestName = `${guest.firstName} ${guest.lastName}`.trim();
   const guestFirstName = guest.firstName;
@@ -730,7 +733,7 @@ export function composeMemberGuestConsentOutcome(params: {
       return {
         heading: `${guestName} has declined`,
         sentence: `${guestName} has declined and has been taken off your booking at ${stay}.`,
-        consequenceNote: composeRepricedConsequence(outcome.creditCents),
+        consequenceNote: composeRepricedConsequence(outcome.creditCents, format),
       };
     case "DECLINED_STILL_ON_BOOKING":
       return {
@@ -747,7 +750,7 @@ export function composeMemberGuestConsentOutcome(params: {
         sentence:
           `your request to add ${guestName} lapsed on ${emailClubDate(outcome.expiredAt)} ` +
           `with no answer, and ${guestFirstName} has been taken off your booking at ${stay}.`,
-        consequenceNote: composeRepricedConsequence(outcome.creditCents),
+        consequenceNote: composeRepricedConsequence(outcome.creditCents, format),
       };
     case "EXPIRED_STILL_ON_BOOKING":
       return {

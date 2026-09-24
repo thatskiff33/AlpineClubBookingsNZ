@@ -159,6 +159,7 @@ import {
   previewSchoolRecordForName,
 } from "@/lib/school-organisation-preview";
 import { generateSchoolGuests } from "@/lib/school-booking-request";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * The states a request may be corrected in: every state where it is live, in
@@ -190,6 +191,9 @@ export const CORRECTABLE_BOOKING_REQUEST_STATUSES = [
 export async function correctBookingRequest(
   input: BookingRequestCorrectionInput,
 ): Promise<BookingRequestCorrectionResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const reason = cleanCorrectionLine(input.reason);
   if (!reason) {
     throw new BookingRequestError(
@@ -555,6 +559,7 @@ export async function correctBookingRequest(
     hold = {
       released: true,
       outcome: await reconcileCorrectedRequestHold({
+        format,
         requestId: request.id,
         heldBookingId: request.heldBookingId,
         holdAffecting,

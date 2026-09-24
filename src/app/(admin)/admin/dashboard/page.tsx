@@ -35,8 +35,7 @@ import {
   emptyAdminPermissionMatrix,
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { formatDollarsDisplay } from "@/lib/finance-format";
-import { formatCents } from "@/lib/utils";
+import { clubFormat } from "@/lib/club-format-server";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
@@ -335,9 +334,10 @@ async function getPermissionMatrix() {
 export default async function AdminDashboardPage() {
   // Resolve the stats batch and the actor's permission matrix concurrently —
   // the auth() + member lookup no longer waits on the stats round-trip (#2091).
-  const [stats, permissionMatrix] = await Promise.all([
+  const [stats, permissionMatrix, money] = await Promise.all([
     getStats(),
     getPermissionMatrix(),
+    clubFormat(),
   ]);
 
   const canViewBookings = canViewAdminHrefWithMatrix(
@@ -702,7 +702,7 @@ export default async function AdminDashboardPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-xl font-semibold text-foreground">
-                      {formatDollarsDisplay(stats.revenueThisMonth)}
+                      {money.dollars(stats.revenueThisMonth)}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       from succeeded payments
@@ -763,7 +763,7 @@ export default async function AdminDashboardPage() {
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
                       <span className="text-sm font-medium">
-                        {formatCents(booking.finalPriceCents)}
+                        {money.cents(booking.finalPriceCents)}
                       </span>
                       <Badge
                         variant="secondary"

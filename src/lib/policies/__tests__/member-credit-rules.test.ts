@@ -9,6 +9,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 describe("member credit policy rules", () => {
   it("rejects zero admin adjustments", () => {
@@ -20,22 +21,22 @@ describe("member credit policy rules", () => {
   });
 
   it("bounds negative admin adjustments by current balance", () => {
-    expect(() => validateNegativeAdjustmentAgainstBalance(-1000, 1500)).not.toThrow();
-    expect(() => validateNegativeAdjustmentAgainstBalance(-1500, 1500)).not.toThrow();
-    expect(() => validateNegativeAdjustmentAgainstBalance(-1501, 1500)).toThrow(
+    expect(() => validateNegativeAdjustmentAgainstBalance(-1000, 1500, CLUB_FORMAT_TEST)).not.toThrow();
+    expect(() => validateNegativeAdjustmentAgainstBalance(-1500, 1500, CLUB_FORMAT_TEST)).not.toThrow();
+    expect(() => validateNegativeAdjustmentAgainstBalance(-1501, 1500, CLUB_FORMAT_TEST)).toThrow(
       "Cannot deduct $15.01: only $15.00 available"
     );
-    expect(() => validateNegativeAdjustmentAgainstBalance(2500, 0)).not.toThrow();
+    expect(() => validateNegativeAdjustmentAgainstBalance(2500, 0, CLUB_FORMAT_TEST)).not.toThrow();
   });
 
   it("rejects insufficient booking-credit application", () => {
-    expect(() => validateCreditApplicationAgainstBalance(0, 5000)).toThrow(
+    expect(() => validateCreditApplicationAgainstBalance(0, 5000, CLUB_FORMAT_TEST)).toThrow(
       "Credit amount must be positive"
     );
-    expect(() => validateCreditApplicationAgainstBalance(6000, 5000)).toThrow(
+    expect(() => validateCreditApplicationAgainstBalance(6000, 5000, CLUB_FORMAT_TEST)).toThrow(
       "Insufficient credit balance: $50.00 available, $60.00 requested"
     );
-    expect(() => validateCreditApplicationAgainstBalance(5000, 5000)).not.toThrow();
+    expect(() => validateCreditApplicationAgainstBalance(5000, 5000, CLUB_FORMAT_TEST)).not.toThrow();
   });
 
   it("calculates applied and restored credit amounts in integer cents", () => {
@@ -92,7 +93,7 @@ describe("member credit policy rules", () => {
 
   it("formats signed adjustment amounts consistently", () => {
     // #3533: the adjustment reads as an amount, with its sign.
-    expect(formatAdjustmentAmount(2500)).toBe("+$25.00");
-    expect(formatAdjustmentAmount(-2500)).toBe("-$25.00");
+    expect(formatAdjustmentAmount(2500, CLUB_FORMAT_TEST)).toBe("+$25.00");
+    expect(formatAdjustmentAmount(-2500, CLUB_FORMAT_TEST)).toBe("-$25.00");
   });
 });

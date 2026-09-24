@@ -11,6 +11,7 @@ import {
   parseInstant,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * One night of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870).
@@ -86,6 +87,7 @@ export function GroupJoinVerifyPageClient({
    */
   lodgeName?: string | null;
 }) {
+  const format = useClubFormat();
   const [outcome, setOutcome] = useState<Outcome>("idle");
   const [details, setDetails] = useState<CreatedDetails>({});
   const [message, setMessage] = useState<string>("");
@@ -211,7 +213,7 @@ export function GroupJoinVerifyPageClient({
                   ) : null}
                   {typeof details.priceCents === "number" ? (
                     <p className="mt-1 font-semibold text-foreground">
-                      Amount due: {formatCents(details.priceCents)}
+                      Amount due: {formatCents(details.priceCents, format)}
                     </p>
                   ) : null}
                 </div>

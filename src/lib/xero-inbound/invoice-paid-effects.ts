@@ -35,6 +35,7 @@ import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-rep
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 
@@ -259,6 +260,7 @@ async function recordManualSettlementConflict({
   bookingStatus,
   invoiceId,
   invoiceNumber,
+  format,
 }: {
   payment: Prisma.PaymentGetPayload<{
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
@@ -267,6 +269,8 @@ async function recordManualSettlementConflict({
   bookingStatus: BookingStatus;
   invoiceId: string;
   invoiceNumber: string | null;
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }) {
   const snapshot: ManualSettlementConflictEventSnapshot = {
     kind: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
@@ -333,7 +337,7 @@ async function recordManualSettlementConflict({
     xeroInvoiceNumber: invoiceNumber,
     // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
     xeroInvoiceUrl: buildXeroInvoiceUrl(invoiceId),
-  }).catch((err) =>
+  }, format).catch((err) =>
     logger.error(
       { err, bookingId: payment.bookingId, paymentId: payment.id, invoiceId },
       "Failed to alert admins about a manual-settlement vs Xero payment conflict"
@@ -343,7 +347,8 @@ async function recordManualSettlementConflict({
 
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
-  linkedPaymentIds: string[]
+  linkedPaymentIds: string[],
+  format: ClubFormat,
 ) {
   const invoiceId = invoice.invoiceID ?? null;
   const invoiceNumber = invoice.invoiceNumber ?? null;
@@ -482,7 +487,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         errorMessage:
           "This booking's Xero invoice reports PAID via credit-note allocation, not a cash payment, so the app did not settle it and the booking still awaits payment. If the invoice was written off in Xero, cancel the booking in the app; if the member actually paid, record the cash payment against the invoice in Xero.",
         paymentIntentId: invoiceId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, paymentId: payment.id, invoiceId },
           "Failed to alert admins about an allocation-cleared invoice on a live booking"
@@ -1258,6 +1263,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         bookingStatus: outcome.bookingStatus,
         invoiceId,
         invoiceNumber,
+        format,
       });
       continue;
     }
@@ -1302,6 +1308,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           outcome.payment.booking.checkIn,
           outcome.payment.booking.checkOut,
           outcome.creditedCents,
+          format,
           "credit",
           0,
           outcome.payment.booking.lodgeId,
@@ -1320,14 +1327,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.creditedCents,
           errorMessage: outcome.aggregateCapped
-            ? `Internet Banking cash of ${formatCents(outcome.creditedCents)} was credited for an already-cancelled booking, but this invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice. This payment's face amount is ${formatCents(outcome.payment.amountCents)}; only the invoice's remaining cash is held as the member's account credit, because the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero. If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
+            ? `Internet Banking cash of ${formatCents(outcome.creditedCents, format)} was credited for an already-cancelled booking, but this invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice. This payment's face amount is ${formatCents(outcome.payment.amountCents, format)}; only the invoice's remaining cash is held as the member's account credit, because the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero. If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
             : outcome.creditedPartial
-            ? `Internet Banking cash of ${formatCents(outcome.creditedCents)} was received for an already-cancelled booking whose ${formatCents(outcome.payment.amountCents)} payment was otherwise settled by credit allocation in Xero (mixed invoice). Only the cash portion is held as the member's account credit — verify the allocation source on the invoice (the app's own invoice-clearing credit note is routine; a manual write-off or an operator-allocated member credit note needs its own follow-up). If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
+            ? `Internet Banking cash of ${formatCents(outcome.creditedCents, format)} was received for an already-cancelled booking whose ${formatCents(outcome.payment.amountCents, format)} payment was otherwise settled by credit allocation in Xero (mixed invoice). Only the cash portion is held as the member's account credit — verify the allocation source on the invoice (the app's own invoice-clearing credit note is routine; a manual write-off or an operator-allocated member credit note needs its own follow-up). If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
             : outcome.clearingNoteAlreadyIssued
               ? `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit — and an invoice-clearing credit note was ALREADY issued for this invoice, so Xero needs manual reconciliation (void the clearing note's refund payment or the duplicate artifact).${unverifiedSuffix}`
               : `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit; follow up with the member if a bank refund is more appropriate.${unverifiedSuffix}`,
           paymentIntentId: invoiceId,
-        }).catch((err) =>
+        }, format).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about Internet Banking payment on cancelled booking"
@@ -1339,9 +1346,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.laterCashCents,
-          errorMessage: `Additional Internet Banking cash of ${formatCents(outcome.laterCashCents)} appears on the invoice of a cancelled booking that was already credited (verified cash now ${formatCents(outcome.creditedCents)}, credited so far ${formatCents(outcome.creditedCents - outcome.laterCashCents)}). Later cash never credits automatically — verify the invoice in Xero and top up the member's account credit manually.`,
+          errorMessage: `Additional Internet Banking cash of ${formatCents(outcome.laterCashCents, format)} appears on the invoice of a cancelled booking that was already credited (verified cash now ${formatCents(outcome.creditedCents, format)}, credited so far ${formatCents(outcome.creditedCents - outcome.laterCashCents, format)}). Later cash never credits automatically — verify the invoice in Xero and top up the member's account credit manually.`,
           paymentIntentId: invoiceId,
-        }).catch((err) =>
+        }, format).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about later cash on an already-credited cancelled booking"
@@ -1359,9 +1366,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.organisationHandBackCents,
-          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for the full amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents, format)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for the full amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
           paymentIntentId: invoiceId,
-        }).catch((err) =>
+        }, format).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about an Internet Banking payment on a cancelled organisation-owned booking"
@@ -1377,7 +1384,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             ? "This cancelled booking's Xero invoice reports PAID, but the invoice's cash was already fully credited to other Internet Banking payment(s) matched to the same invoice, so this payment was marked settled with NO member credit (the aggregate credit across all payments on one invoice can never exceed the invoice's cash). Reconcile the invoice manually in Xero and credit the member if additional cash actually arrived for this payment."
             : "This cancelled booking's Xero invoice reports PAID with cash-classified evidence that quantifies to zero, so the payment was marked settled but NO member credit was minted. Reconcile the invoice manually in Xero and credit the member if cash actually arrived.",
           paymentIntentId: invoiceId,
-        }).catch((err) =>
+        }, format).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about zero-quantified cash on a cancelled booking"
@@ -1418,9 +1425,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
-        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents)} of the ${formatCents(outcome.payment.amountCents)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents)}, from a ${formatCents(outcome.payment.amountCents)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
         paymentIntentId: invoiceId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
           "Failed to alert admins about late Internet Banking capacity failure"
@@ -1436,6 +1443,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         outcome.payment.booking.checkIn,
         outcome.payment.booking.checkOut,
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
+        format,
         "credit",
         0,
         outcome.payment.booking.lodgeId,
@@ -1449,7 +1457,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         lodgeId: outcome.payment.booking.lodgeId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId },
           "Failed to process waitlist after late Internet Banking cancellation"
@@ -1506,6 +1514,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // identically however the clear was reached.
     if (outcome.staleCreditElectionCents != null) {
       await reportUnappliedCreditElection({
+        format,
         bookingId: outcome.payment.bookingId,
         memberId: bookingOwner(outcome.payment.booking).memberId,
         memberFirstName: bookingOwner(outcome.payment.booking).member.firstName,
@@ -1546,6 +1555,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,
       outcome.payment.booking.finalPriceCents,
+      format,
       {
         // Always thread the booking's lodge so the confirmation email carries
         // that lodge's name/travel note/door code, promo or not (multi-lodge).
@@ -1576,7 +1586,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
  * to `syncInternetBankingPaymentsForPaidInvoice`: a single combined invoice
  * settles the whole ORGANISER_PAYS group at once.
  */
-export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
+export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format: ClubFormat) {
   const invoiceId = invoice.invoiceID ?? null;
   const result = {
     matchedGroupSettlements: 0,
@@ -1634,7 +1644,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
   }
 
   try {
-    const applied = await applyGroupSettlementSucceededFromInvoice(invoiceId);
+    const applied = await applyGroupSettlementSucceededFromInvoice(invoiceId, format);
     if (applied.outcome === "settled") {
       result.settledGroupSettlements = 1;
       result.settledChildBookings = applied.settledBookingIds.length;
@@ -1676,7 +1686,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
             ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
             : `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`,
         paymentIntentId: invoiceId,
-      }).catch((alertErr) =>
+      }, format).catch((alertErr) =>
         logger.error(
           { err: alertErr, invoiceId, settlementId: settlement.id },
           "Failed to send admin alert for mismatched group settlement invoice"

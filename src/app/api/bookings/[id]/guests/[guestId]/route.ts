@@ -51,6 +51,7 @@ import {
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function DELETE(
   request: NextRequest,
@@ -134,10 +135,14 @@ export async function DELETE(
   // for a club behind Greenwich the container's timezone would refuse a
   // self-removal a whole day early.
   const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
+        format,
         tx,
         bookingId,
         guestId,
@@ -227,6 +232,7 @@ export async function DELETE(
     // helper scopes the idempotency key to this modification and enqueues
     // durable recovery on failure (issue #818).
     const stripeRefundId = await executeBookingModificationRefund({
+      format,
       bookingId,
       result,
       metadataReason: "guest_removed_price_decrease",
@@ -247,6 +253,7 @@ export async function DELETE(
     // invoice below, unchanged).
     const { additionalPaymentClientSecret, additionalPaymentIntentId } =
       await createModificationAdditionalPaymentIntent({
+        format,
         bookingId,
         result,
         reason: "guest_removal_price_increase",
@@ -256,7 +263,7 @@ export async function DELETE(
       });
 
     // Audit log. #3530: what the figure is made of, line by line and in dollars.
-    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
     logAudit({
       action: "booking.modify.guests.remove",
       memberId: session.user.id,
@@ -389,7 +396,7 @@ export async function DELETE(
             : result.hasIssuedXeroInvoice && result.additionalAmountCents > 0
               ? "INTERNET_BANKING"
               : undefined,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
     }

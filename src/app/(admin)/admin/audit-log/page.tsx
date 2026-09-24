@@ -1078,7 +1078,7 @@ export default function AuditLogPage() {
                                       Metadata
                                     </p>
                                     <pre className="max-h-72 overflow-auto rounded-md bg-card p-3 leading-relaxed text-muted-foreground">
-                                      {formatAuditMetadataJson(entry.metadata)}
+                                      {formatAuditMetadataJson(entry.metadata, clubFormat)}
                                     </pre>
                                   </div>
                                 ) : null}

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Mock Stripe
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
@@ -750,6 +751,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.failedBookingIds).toHaveLength(0);
 
     expect(mockChargePaymentMethod).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       amountCents: 10000,
       // #3563 (INV-SSOT-003, D5): the currency default is gone and every
       // caller states it. Same value the default supplied.
@@ -813,6 +815,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       booking.checkOut,
       2,
       10000,
+      CLUB_FORMAT_TEST,
       // Multi-lodge phase 8: the options now carry the booking's lodge so
       // the email renders that lodge's identity (undefined here because the
       // fixture booking has no lodgeId).
@@ -947,7 +950,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         token: "tok_split_1",
         priceCents: 12000,
         guestCount: 2,
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockBookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -956,7 +960,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ parentUnpaid: false, totalCents: 12000 })
+      expect.objectContaining({ parentUnpaid: false, totalCents: 12000 }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -1687,13 +1692,15 @@ describe("Cron: Confirm Pending Bookings", () => {
           requesterName: "Test User",
           totalCents: 14000,
           guestCount: 2,
-        })
+        }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockProcessWaitlistForDates).toHaveBeenCalledWith(
         expect.objectContaining({
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-        })
+        }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -1923,7 +1930,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         // derivation here is what let the page, the email and the stored value
         // mean three different moments.
         expiresAt: MINTED_LINK_EXPIRES_AT,
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1932,7 +1940,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         guestCount: 2,
         holdUntil: expect.any(Date),
         parentUnpaid: false,
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // Nothing failed, so the just-minted link is never revoked.
     expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
@@ -1967,7 +1976,8 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ parentUnpaid: false })
+      expect.objectContaining({ parentUnpaid: false }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(result.failedBookingIds).toEqual([]);
@@ -2017,7 +2027,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ parentUnpaid: true, totalCents: 12000 })
+      expect.objectContaining({ parentUnpaid: true, totalCents: 12000 }),
+      CLUB_FORMAT_TEST,
     );
     expect(result.failedBookingIds).toEqual(["child_1"]);
   });
@@ -2081,7 +2092,8 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockRevokePaymentLinkById).toHaveBeenCalledWith("pl_split_1");
     // The admin alert is independent of the member email outcome.
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ parentUnpaid: false })
+      expect.objectContaining({ parentUnpaid: false }),
+      CLUB_FORMAT_TEST,
     );
     expect(result.failedBookingIds).toEqual([]);
   });
@@ -2298,7 +2310,8 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledTimes(1);
     expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ token: "tok_1" })
+      expect.objectContaining({ token: "tok_1" }),
+      CLUB_FORMAT_TEST,
     );
     // The admin alert repeats per extension run (FIX-4).
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledTimes(2);
@@ -2389,7 +2402,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect.objectContaining({
           parentUnpaid: false,
           totalCents: 12000,
-        })
+        }),
+        CLUB_FORMAT_TEST,
       );
       // The dedicated terminal notice has no finalNotice flag (it is its own
       // registered template, not a variant of the recurring alert).
@@ -2468,7 +2482,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect.objectContaining({ parentConfirmed: false })
       );
       expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ parentUnpaid: true })
+        expect.objectContaining({ parentUnpaid: true }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -3315,7 +3330,8 @@ describe("Cron: Confirm Pending Bookings", () => {
         expect.objectContaining({
           paymentIntentId: "pi_paid",
           errorMessage: expect.stringContaining("already recorded"),
-        })
+        }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -3416,7 +3432,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       ).toBeUndefined();
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ errorMessage: expect.stringContaining("more than 23 hours ago") })
+        expect.objectContaining({ errorMessage: expect.stringContaining("more than 23 hours ago") }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -3951,6 +3968,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ errorMessage: "Your card has insufficient funds." }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -4019,6 +4037,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ errorMessage: "Stripe is having a moment" }),
+        CLUB_FORMAT_TEST,
       );
     });
 

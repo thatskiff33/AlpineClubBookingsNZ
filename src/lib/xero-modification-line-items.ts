@@ -62,6 +62,7 @@ import {
   editReviewSettledSharesByAnchor,
   type EditReviewSettledShare,
 } from "@/lib/edit-financial-review-charge-shape";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
@@ -141,7 +142,9 @@ export function buildModificationDocumentLineItems(args: {
   changeFeeCents: number;
   document: ModificationDocumentKind;
   context: ModificationDocumentCodingContext;
-}): LineItem[] {
+},
+  format: ClubFormat,
+): LineItem[] {
   const { lines, shares = [], changeFeeCents, document, context } = args;
   // +1 renders the stored sign as it is (an invoice bills what was added);
   // -1 inverts it (a credit note returns what was removed).
@@ -151,7 +154,7 @@ export function buildModificationDocumentLineItems(args: {
 
   const items: LineItem[] = lines.map((line): LineItem => {
     const base: LineItem = {
-      description: renderModificationLineDescription(line, context.itemCodeResolver),
+      description: renderModificationLineDescription(line, format, context.itemCodeResolver),
       quantity: line.kind === "PROMO_DELTA" ? 1 : line.quantity,
       // Xero uses dollars; the sign lives on the unit price so the quantity
       // stays the honest count of guest-nights.
@@ -306,7 +309,9 @@ export async function resolveModificationDocumentLineItems(args: {
   billedCents: number;
   billedFigures?: { priceDiffCents: number; changeFeeCents: number };
   secondAsk?: boolean;
-}): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
+},
+  format: ClubFormat,
+): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
   try {
     const row =
       args.row !== undefined
@@ -356,7 +361,7 @@ export async function resolveModificationDocumentLineItems(args: {
       changeFeeCents: figures.changeFeeCents,
       document: args.document,
       context,
-    });
+    }, format);
     return {
       lineItems,
       record: {

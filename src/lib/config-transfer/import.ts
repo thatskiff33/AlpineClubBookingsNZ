@@ -25,6 +25,7 @@ import { inductionImporter } from "./categories/induction";
 import { membershipFeesImporter } from "./categories/membership-fees";
 import { ageTierImporter } from "./categories/age-tier";
 import { xeroConfigImporter, connectedXeroTenantId, readXeroSourceTenantId } from "./categories/xero-config";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Import plan orchestrator (dry-run). Reads + validates the bundle, runs each
 // selected category's planner, and produces a stateless ImportPlan whose
@@ -60,6 +61,8 @@ export interface ImportPlanOptions {
    */
   selectedCategories?: ConfigTransferCategory[];
   resolutions?: MatchResolution[];
+  /** The club's format (#3565), resolved once by the caller and passed down. */
+  format: ClubFormat;
 }
 
 /** Convenience wrapper: parse the bundle, then plan from the parsed form. */
@@ -102,6 +105,7 @@ export async function buildImportPlanFromParsed(
     files,
     manifest,
     mode,
+    format: options.format,
     resolutions: resolutionMap(resolutions),
     selectedCategories,
   };

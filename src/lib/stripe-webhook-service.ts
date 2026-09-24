@@ -52,6 +52,8 @@ import {
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 type JsonRouteResult = {
   body: unknown;
@@ -185,6 +187,9 @@ async function claimStripeWebhookEvent(
 export async function processStripeWebhookEvent(
   event: Stripe.Event
 ): Promise<JsonRouteResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const webhookStart = Date.now();
   let claimedEvent = false;
   // F16 fence (#1887): the processingStartedAt we claimed. Both the COMPLETED
@@ -237,14 +242,16 @@ export async function processStripeWebhookEvent(
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
       case "payment_intent.payment_failed":
         await handlePaymentIntentFailed(
           event.data.object as Stripe.PaymentIntent,
-          event
+          event,
+          format
         );
         break;
 
@@ -416,7 +423,8 @@ async function adoptUnknownIntentsAttemptRow(
  */
 async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
-  event: Stripe.Event
+  event: Stripe.Event,
+  format: ClubFormat,
 ) {
   // Group ORGANISER_PAYS settlement: one combined intent settles many child
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
@@ -425,13 +433,13 @@ async function handlePaymentIntentSucceeded(
     const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
-    });
+    }, format);
     if (
       applied.outcome === "not_found" ||
       applied.outcome === "amount_mismatch" ||
       applied.outcome === "cancelled"
     ) {
-      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome);
+      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome, format);
     }
     return;
   }
@@ -458,7 +466,7 @@ async function handlePaymentIntentSucceeded(
 
   // Check if this is an additional modification payment
   if (paymentIntent.metadata?.type === "modification_additional") {
-    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId);
+    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId, format);
     return;
   }
 
@@ -488,7 +496,8 @@ async function handlePaymentIntentSucceeded(
   if (bookingRecord?.status === "CANCELLED") {
     await handleCancelledBookingPaymentSucceeded(
       bookingRecord,
-      paymentIntent
+      paymentIntent,
+      format
     );
     return;
   }
@@ -509,7 +518,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Primary booking payment"
+      "Primary booking payment",
+      format
     );
     throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
@@ -545,7 +555,8 @@ async function handlePaymentIntentSucceeded(
       paymentIntent.id,
       bookingRecord.finalPriceCents,
       paymentIntent.amount,
-      "Primary booking payment (stale intent: booking was modified after the intent was created)"
+      "Primary booking payment (stale intent: booking was modified after the intent was created)",
+      format
     );
     throw new Error(
       `Stripe capture amount does not match current booking total for ${bookingId}`
@@ -553,6 +564,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   const reconciliation = await markBookingPaymentSucceeded({
+    format,
     bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -605,6 +617,7 @@ async function handlePaymentIntentSucceeded(
           booking.checkOut,
           booking.guests.length,
           booking.finalPriceCents,
+          format,
           {
             lodgeId: booking.lodgeId,
             ...(provisionalGuests ? { provisionalGuests } : {}),
@@ -631,7 +644,8 @@ async function handlePaymentIntentSucceeded(
  */
 async function handlePaymentIntentFailed(
   paymentIntent: Stripe.PaymentIntent,
-  event: Stripe.Event
+  event: Stripe.Event,
+  format: ClubFormat,
 ) {
   // Group settlement intents have no per-booking payment transaction; the
   // children stay CONFIRMED (beds held) so the organiser can retry.
@@ -703,7 +717,7 @@ async function handlePaymentIntentFailed(
         amountCents: paymentIntent.amount,
         errorMessage: failureMessage,
         paymentIntentId: paymentIntent.id,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send admin payment failure alert")
       );
     }
@@ -829,7 +843,8 @@ async function handlePaymentIntentProcessing(
  */
 async function handleAdditionalModificationPaymentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
-  bookingId: string
+  bookingId: string,
+  format: ClubFormat,
 ) {
   const paymentTransaction = await findPaymentTransactionByIntentId({
     paymentIntentId: paymentIntent.id,
@@ -869,7 +884,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,
-      paymentTransaction
+      paymentTransaction,
+      format
     );
     return;
   }
@@ -900,7 +916,8 @@ async function handleAdditionalModificationPaymentSucceeded(
       paymentIntent.id,
       paymentTransaction.amountCents,
       paymentIntent.amount,
-      "Booking modification payment"
+      "Booking modification payment",
+      format
     );
     throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
   }
@@ -1157,7 +1174,8 @@ async function alertPaymentAmountMismatch(
   paymentIntentId: string,
   expectedCents: number,
   receivedCents: number,
-  paymentType: string
+  paymentType: string,
+  format: ClubFormat,
 ) {
   try {
     const booking = await prisma.booking.findUnique({
@@ -1175,9 +1193,9 @@ async function alertPaymentAmountMismatch(
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       amountCents: receivedCents,
-      errorMessage: `${paymentType} amount mismatch. Expected ${formatCents(expectedCents)} but Stripe reported ${formatCents(receivedCents)}. The booking was not auto-updated and needs manual review.`,
+      errorMessage: `${paymentType} amount mismatch. Expected ${formatCents(expectedCents, format)} but Stripe reported ${formatCents(receivedCents, format)}. The booking was not auto-updated and needs manual review.`,
       paymentIntentId,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, bookingId, paymentIntentId },
@@ -1203,7 +1221,8 @@ async function alertPaymentAmountMismatch(
  */
 async function refundSupersededGroupSettlementIntent(
   paymentIntent: Stripe.PaymentIntent,
-  outcome: "not_found" | "amount_mismatch" | "cancelled"
+  outcome: "not_found" | "amount_mismatch" | "cancelled",
+  format: ClubFormat,
 ) {
   const groupBookingId = paymentIntent.metadata?.groupBookingId ?? null;
   const failureDescription =
@@ -1234,7 +1253,8 @@ async function refundSupersededGroupSettlementIntent(
     await alertSupersededGroupSettlementIntent(
       paymentIntent,
       groupBookingId,
-      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`
+      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`,
+      format
     );
     throw refundErr;
   }
@@ -1269,7 +1289,8 @@ async function refundSupersededGroupSettlementIntent(
   await alertSupersededGroupSettlementIntent(
     paymentIntent,
     groupBookingId,
-    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`
+    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`,
+    format
   );
 }
 
@@ -1277,7 +1298,8 @@ async function refundSupersededGroupSettlementIntent(
 async function alertSupersededGroupSettlementIntent(
   paymentIntent: Stripe.PaymentIntent,
   groupBookingId: string | null,
-  errorMessage: string
+  errorMessage: string,
+  format: ClubFormat,
 ) {
   try {
     const group = groupBookingId
@@ -1299,7 +1321,7 @@ async function alertSupersededGroupSettlementIntent(
       amountCents: paymentIntent.amount,
       errorMessage,
       paymentIntentId: paymentIntent.id,
-    });
+    }, format);
   } catch (err) {
     logger.error(
       { err, paymentIntentId: paymentIntent.id, groupBookingId },
@@ -1370,7 +1392,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     } | null;
   },
   paymentIntent: Stripe.PaymentIntent,
-  paymentTransaction: { id: string; status: PaymentStatus }
+  paymentTransaction: { id: string; status: PaymentStatus },
+  format: ClubFormat,
 ) {
   if (!booking.payment) {
     logger.error(
@@ -1435,6 +1458,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     // to mirror a refund this handler made, and it made none. The hand-back's own
     // accounting belongs to `resolveManualRefundTask`.
     await reportWithheldLateCaptureRefund({
+      format,
       capture: lateCapture,
       handBack: blockingHandBack,
     });
@@ -1442,6 +1466,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   }
 
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     // Pin the refund to THIS transaction so replays mint identical Stripe
@@ -1534,7 +1559,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // conflict alert — never both and never neither. Fire-and-forget with a `.catch`
   // that logs, unchanged: webhooks stay non-blocking, and the durable records are
   // the row and the audit entries.
-  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome, format).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
       "Failed to send late additional-capture cancellation alert"
@@ -1640,7 +1665,8 @@ async function handleCancelledBookingPaymentSucceeded(
       xeroInvoiceId: string | null;
     } | null;
   },
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  format: ClubFormat,
 ) {
   if (!booking.payment) {
     logger.error(
@@ -1692,6 +1718,7 @@ async function handleCancelledBookingPaymentSucceeded(
   });
   if (blockingHandBack) {
     await reportWithheldLateCaptureRefund({
+      format,
       capture: lateCapture,
       handBack: blockingHandBack,
     });
@@ -1699,6 +1726,7 @@ async function handleCancelledBookingPaymentSucceeded(
   }
 
   const refundResult = await refundPaymentTransactions({
+    format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     metadata: {
@@ -1737,7 +1765,7 @@ async function handleCancelledBookingPaymentSucceeded(
   // per admin in Notification Recipients or club-wide in Delivery Rules, for an
   // automatic money movement. Still exactly ONE notification for the event
   // (`INV-ADDPAY-037`): this replaces the previous mail rather than joining it.
-  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome, format).catch((err) =>
     logger.error({ err, bookingId: booking.id }, "Failed to send late-capture cancellation alert")
   );
 

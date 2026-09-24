@@ -85,6 +85,7 @@ import {
   getTodayDateOnly,
 } from "@/lib/date-only";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -192,6 +193,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
     });
 
     const operation = modifyBookingBatch({
+      format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "booking-1",
       actor: { id: "member-1", role: "USER" },
@@ -232,6 +234,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
   it("lets a member's compliant date edit continue past the guard", async () => {
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -258,6 +261,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
     // docs/CONCURRENCY_AND_LOCKING.md.
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -281,6 +285,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         // A different actor id: the admin-on-behalf shape.
@@ -304,6 +309,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
@@ -334,6 +340,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -355,6 +362,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -379,6 +387,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -425,6 +434,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
@@ -469,6 +479,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        format: CLUB_FORMAT_TEST,
         todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },

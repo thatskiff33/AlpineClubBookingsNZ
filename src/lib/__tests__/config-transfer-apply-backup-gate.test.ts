@@ -16,6 +16,7 @@ import {
 import { buildBundle } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // ADR-002 pre-apply backup durability gate. With backups enabled but no S3
 // destination configured (in-app, #2095), runDatabaseBackup "succeeds" onto the
@@ -93,8 +94,9 @@ async function applyWith(
   mode: "merge" | "overwrite",
 ): Promise<ReturnType<typeof applyConfigImport>> {
   const zip = committeeBundle();
-  const plan = await buildImportPlan(planDb(), zip, { mode });
+  const plan = await buildImportPlan(planDb(), zip, { format: CLUB_FORMAT_TEST, mode });
   return applyConfigImport({
+    format: CLUB_FORMAT_TEST,
     prisma,
     bundleBytes: zip,
     actorMemberId: "admin-1",

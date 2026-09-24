@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
@@ -334,7 +334,9 @@ describe("subscription billing panel", () => {
     const fetchMock = vi.mocked(fetch);
     render(<SubscriptionBillingPanel seasonYear={2026} />, {
       wrapper: ({ children }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     });
     await screen.findByRole("button", { name: "Confirm and queue annual batch" });

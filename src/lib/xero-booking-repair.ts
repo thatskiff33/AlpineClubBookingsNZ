@@ -38,6 +38,7 @@ import {
   buildPassReport,
 } from "./xero-booking-repair-passes";
 import { createCountMap } from "./xero-booking-repair-utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 const MAX_APPLY_PASSES = 3;
 
@@ -51,7 +52,9 @@ async function runSinglePass(
   return buildPassReport(pass, bookings);
 }
 
-export async function runBookingXeroRepair(options?: {
+export async function runBookingXeroRepair(
+  format: ClubFormat,
+  options?: {
   scope?: BookingXeroRepairScope;
   apply?: boolean;
   /**
@@ -96,6 +99,7 @@ export async function runBookingXeroRepair(options?: {
       passReport.bookings,
       deps,
       xeroConnectionAvailable,
+      format,
       forcedActionKeys
     );
     if (!hasStateChanges) {
