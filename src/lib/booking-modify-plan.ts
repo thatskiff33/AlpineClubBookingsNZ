@@ -2555,7 +2555,7 @@ function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
  * the row as it was before the link, and the name the link writes onto it.
  */
 function guestMemberLinkDietary(
-  guest: BookingGuest,
+  guest: { id: string; firstName: string; lastName: string; ageTier: AgeTier; memberId?: string | null },
   link: {
     memberId: string;
     firstName?: string | null;
