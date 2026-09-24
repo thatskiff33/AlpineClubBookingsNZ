@@ -439,6 +439,16 @@ describe(`member dietary access census (${INVARIANT_ID})`, () => {
     expect(census().importers).toEqual(Object.keys(DIETARY_MODULE_IMPORTERS).sort());
   });
 
+  it("the real-database omission proof stays wired into the CI harness", () => {
+    // It self-skips without RUN_CONCURRENCY_RACE_TESTS, so an unwired file
+    // would pass everywhere while proving nothing.
+    const harness = readFileSync(
+      path.join(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./member-dietary-omit.realdb.test";');
+  });
+
   it("no reach or importer entry is an egress surface", () => {
     const egress = [
       ...Object.keys(DIETARY_REACH),
