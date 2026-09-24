@@ -169,6 +169,7 @@ import {
 } from "@/lib/payment-reconciliation";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -306,6 +307,7 @@ beforeEach(() => {
 
 function settle(overrides: Record<string, unknown> = {}) {
   return markBookingPaymentManuallySettled({
+    format: CLUB_FORMAT_TEST,
     bookingId: "booking-1",
     actingAdminMemberId: ADMIN_ID,
     note: "cash at the lodge",
@@ -1172,7 +1174,7 @@ describe("#2262 door 3 — a stored credit election (#2265) is never silently st
         amountCents: 4500,
         paymentIntentId: "booking-1",
         errorMessage: expect.stringContaining("never debited"),
-      })
+      }), CLUB_FORMAT_TEST
     );
 
     expect(result.staleCreditElectionCents).toBe(4500);

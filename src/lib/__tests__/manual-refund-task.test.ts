@@ -156,6 +156,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 // about, so it is asserted against the real builder rather than a stub that
 // could agree with a wrong caller.
 import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   manualRefundTask: {
@@ -391,7 +392,7 @@ describe("resolveManualRefundTask", () => {
       confirmedAmountCents: null,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment-1",
@@ -422,7 +423,7 @@ describe("resolveManualRefundTask", () => {
       note: "member asked us to keep it",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
@@ -442,7 +443,7 @@ describe("resolveManualRefundTask", () => {
         note: "   ",
         actingMemberId: "admin-1",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -459,7 +460,7 @@ describe("resolveManualRefundTask", () => {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
@@ -490,7 +491,7 @@ describe("resolveManualRefundTask", () => {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -506,7 +507,7 @@ describe("resolveManualRefundTask", () => {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 404 });
   });
 });
@@ -578,7 +579,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       confirmedAmountCents: 9000,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The amount and the terminal status are ONE write. That is what makes a
     // duplicate confirmation impossible: there is no window in which the task is
@@ -612,7 +613,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -627,7 +628,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       note: "Reviewed against the 2024 ledger: nothing is owed.",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const data = mocks.manualRefundTaskUpdateMany.mock.calls[0][0].data;
     expect(data.status).toBe(ManualRefundTaskStatus.DISMISSED);
@@ -648,7 +649,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: 4200,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -666,7 +667,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
           confirmedAmountCents: bad,
           direction: "REFUND_TO_MEMBER",
           recordedNightPrices: null,
-        })
+        }, CLUB_FORMAT_TEST)
       ).rejects.toMatchObject({ status: 400 });
     }
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -685,7 +686,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // There is nothing to allocate a refund against, and inventing a payment
     // link to satisfy the model is exactly what owner decision D2 removed.
@@ -744,7 +745,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: 0,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
 
     // COMPLETED at 0 would write `amountCents = 0` and a $0.00 REFUNDED booking
@@ -770,7 +771,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: null,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -796,7 +797,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: 90000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
   });
@@ -816,7 +817,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: 9000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ message: "connection reset" });
   });
 
@@ -841,7 +842,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
         confirmedAmountCents: 9000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({
       // The officer's own 400, carrying the sentence that says what to do
       // instead — not the bare class, which this route renders as a 500.
@@ -866,7 +867,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
       confirmedAmountCents: 4200,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.amountAmended).toBe(true);
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
@@ -897,7 +898,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
         confirmedAmountCents: 8000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -912,7 +913,7 @@ describe("#3030 - amending at completion, audited (owner decision D2)", () => {
       confirmedAmountCents: 9000,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.amountAmended).toBe(false);
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
@@ -938,7 +939,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         confirmedAmountCents: 9000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
 
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -964,7 +965,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         confirmedAmountCents: 7000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -984,7 +985,7 @@ describe("#3030 - a confirmation cannot apply twice", () => {
         confirmedAmountCents: 3000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -1057,7 +1058,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // NOT a second ledger write. `refundPaymentTransactions` increments
     // `refundedAmountCents` itself, so an `applyLocalRefundAllocation` here as
@@ -1112,7 +1113,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith({
       bookingId: "booking-1",
@@ -1150,7 +1151,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The task IS closed - the claim committed - but the member is not told
     // their money came back while it is still in the club's account. The
@@ -1187,7 +1188,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 7300,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
 
     // Nothing was claimed, so the task is still OPEN and still holds the money
@@ -1219,7 +1220,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 7300,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -1247,7 +1248,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1293,7 +1294,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
@@ -1322,7 +1323,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The dispatch still runs - `classifyXeroBookingEditSettlement` owns the
     // "no invoice, nothing to do" decision and is the one place it is made - but
@@ -1355,7 +1356,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
   });
@@ -1394,7 +1395,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // #1031: an account credit consumes refundable value exactly like a card
     // refund, so the allocation has to be written or a later cancel refunds the
@@ -1425,7 +1426,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
 
     // The whole point of refusing BEFORE the claim: the task is still OPEN and
@@ -1457,7 +1458,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -1483,7 +1484,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
   });
@@ -1498,7 +1499,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: null,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment-1",
@@ -1553,7 +1554,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: null,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-1",
@@ -1586,7 +1587,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "member asked us to keep it",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
@@ -1602,7 +1603,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       note: "Reviewed against the June invoice: nothing is owed.",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // DISMISSED means reviewed and nothing is due. It must not look like a
     // settlement in ANY of the three places one is recorded.
@@ -1642,7 +1643,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         confirmedAmountCents: 4500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
 
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
@@ -1698,7 +1699,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       recordedNightPrices: [
         { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.bookingGuestNightUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -1746,7 +1747,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       note: "Nothing owed either way; the nights were already paid for.",
       actingMemberId: "admin-1",
       recordedNightPrices: nightPrices,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
       where: { id: "guest-1", priceCents: 10_000 },
@@ -1775,7 +1776,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         recordedNightPrices: [
           { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 5_999 }] },
         ],
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({ status: 400 });
 
     // The task is untouched and still OPEN, so its money question survives.
@@ -1801,7 +1802,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         confirmedAmountCents: 9_000,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: nightPrices,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -1823,7 +1824,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       confirmedAmountCents: 4_500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // #3276: the re-base that follows records the promotion build-up as
     // adjustment rows, not as a night write. No call here may write priceCents.
@@ -1897,7 +1898,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
         recordedNightPrices: null,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining("this review cannot be closed"),
@@ -1912,7 +1913,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         confirmedAmountCents: 4_500,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({ status: 400 });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -1944,7 +1945,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
       confirmedAmountCents: 9_000,
       direction: null,
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
     expect(mocks.bookingGuestFindUnique).not.toHaveBeenCalled();
@@ -1963,7 +1964,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         confirmedAmountCents: 0,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toThrow(/close the review with no adjustment instead/);
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -1997,7 +1998,7 @@ describe("recording per-night amounts while settling (#3191)", () => {
         confirmedAmountCents: 0,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toThrow(/dismiss the task with a note instead/);
   });
 });
@@ -2045,7 +2046,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       recordedNightPrices: [
         { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Nothing was settled: the claim writes no amount and no direction.
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
@@ -2123,7 +2124,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       recordedNightPrices: [
         { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 1_500 }] },
       ],
-    });
+    }, CLUB_FORMAT_TEST);
 
     // The strand absorbed the refund: $100.00 less the $45.00 going back.
     expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
@@ -2187,7 +2188,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         recordedNightPrices: [
           { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toMatchObject({ status: 409 });
 
     expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
@@ -2225,7 +2226,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         recordedNightPrices: [
           { strandIndex: 0, nightPrices: [{ date: requireCalendarDate("2026-08-02"), priceCents: 6_000 }] },
         ],
-      }),
+      }, CLUB_FORMAT_TEST),
     ).rejects.toThrow(/not on this booking/);
 
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
@@ -2285,7 +2286,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Nothing owed; the member never paid for the guest who left.",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Nothing was priced - there was no strand left to price.
     // #3276: the re-base that follows records the promotion build-up as
@@ -2371,7 +2372,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Nobody can say what those nights sold for.",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // NOTHING was written to the booking, and no history row claims a price was
     // recalculated. The task still closes - declining is an answer.
@@ -2417,7 +2418,7 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
       note: "Reviewed; nothing to adjust.",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.bookingModificationCreate).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
@@ -2498,7 +2499,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     // THE POINT OF THE ISSUE: the money goes back the way it came, rather than
     // becoming club credit the member never asked for and cannot spend anywhere
@@ -2548,7 +2549,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2589,7 +2590,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment-9",
@@ -2613,7 +2614,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.createBookingModificationCredit).toHaveBeenCalledWith(
       "member-1",
@@ -2658,7 +2659,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -2687,7 +2688,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 4500,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).toHaveBeenCalled();
@@ -2719,7 +2720,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
         confirmedAmountCents: 7300,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 400 });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
@@ -2748,7 +2749,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
         confirmedAmountCents: 7300,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -2781,7 +2782,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       confirmedAmountCents: 7300,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment-1" })
@@ -2816,7 +2817,7 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       // required so nothing on this path can leave the direction implicit.
       direction: null,
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -2867,7 +2868,7 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
         confirmedAmountCents: 4500,
         direction: "CHARGE_TO_MEMBER",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toThrow(/cannot be closed as an amount settled here/i);
 
     // The refusal is BEFORE the claim, so the row is untouched and no money
@@ -2893,7 +2894,7 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
         confirmedAmountCents: null,
         direction: null,
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toThrow(/cannot be closed as an amount settled here/i);
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
@@ -2908,7 +2909,7 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
       note: "Xero already showed $45.00 on invoice INV-0142 - nothing to bill",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0] as {
@@ -2932,7 +2933,7 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
         note: "   ",
         actingMemberId: "admin-1",
         recordedNightPrices: null,
-      })
+      }, CLUB_FORMAT_TEST)
     ).rejects.toThrow(/note is required/i);
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
@@ -2948,7 +2949,7 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
       confirmedAmountCents: null,
       direction: "REFUND_TO_MEMBER",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
   });
 });

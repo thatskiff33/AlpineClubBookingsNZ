@@ -24,6 +24,7 @@ import {
 import { SITE_CONTENT_KEYS } from "@/lib/page-content";
 import { SiteContentKey } from "@prisma/client";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Hardening behaviours: plan-time validation errors that BLOCK apply, the
 // fingerprint binding (bundle bytes / mode / selection / resolutions), the
@@ -264,6 +265,7 @@ function pagesApplyHarness(bundle: Uint8Array) {
       manifest,
       mode: "overwrite" as const,
       resolutions: new Map<string, string>(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
       notes: { doorCodesWritten: [] as string[] },
@@ -735,6 +737,7 @@ function siteContentApplyHarness(bundle: Uint8Array) {
       manifest,
       mode: "overwrite" as const,
       resolutions: new Map<string, string>(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
       notes: { doorCodesWritten: [] as string[] },

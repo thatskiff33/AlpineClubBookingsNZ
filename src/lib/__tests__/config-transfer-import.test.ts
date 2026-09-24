@@ -11,6 +11,7 @@ import {
   PAGE_CONTENT_FIELDS,
 } from "@/lib/config-transfer/categories/site-content";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const BASE_PAGE = {
   slug: "about",

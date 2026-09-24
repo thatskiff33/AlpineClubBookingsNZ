@@ -23,6 +23,7 @@ import type {
   ReadDb,
   TxDb,
 } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const lodge = { id: "lodge-tlr", slug: "tukino" };
 
@@ -75,6 +76,7 @@ function planContext(hostingCsv: string, target = db()): PlanContext {
     manifest: {} as never,
     mode: "merge",
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     selectedCategories: ["booking-policies"],
   };
 }
@@ -92,6 +94,7 @@ function applyContext(
     manifest: {} as never,
     mode: "merge",
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     actorMemberId: "admin-1",
     imageRemap: new Map(),
     notes: { doorCodesWritten: [] },

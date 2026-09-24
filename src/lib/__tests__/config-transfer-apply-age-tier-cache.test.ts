@@ -12,6 +12,7 @@ import { applyConfigImport } from "@/lib/config-transfer/apply";
 import { buildBundle } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #2200 — the apply route drops the in-process age-tier cache only when the
 // age-tier entity actually changed. applyConfigImport surfaces that signal in

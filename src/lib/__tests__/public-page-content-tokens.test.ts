@@ -51,6 +51,7 @@ import {
   loadPublicBookingPolicy,
   describePublicCancellationRules,
 } from "@/lib/public-page-content-tokens";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("public PageContent token view models", () => {
   beforeEach(() => {
@@ -67,11 +68,11 @@ describe("public PageContent token view models", () => {
 
   it("keeps every block hidden when its persisted opt-in row is absent", async () => {
     mocks.settings.mockResolvedValue(null);
-    await expect(loadPublicAnnualFees()).resolves.toEqual([]);
-    await expect(loadPublicJoiningFees()).resolves.toEqual([]);
-    await expect(loadPublicHutFees()).resolves.toEqual([]);
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
+    await expect(loadPublicJoiningFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
+    await expect(loadPublicHutFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
     await expect(loadPublicBookingPolicy()).resolves.toBeNull();
-    await expect(loadPublicCancellationPolicy()).resolves.toBeNull();
+    await expect(loadPublicCancellationPolicy(CLUB_FORMAT_TEST)).resolves.toBeNull();
     expect(mocks.membershipTypes).not.toHaveBeenCalled();
     expect(mocks.lodges).not.toHaveBeenCalled();
     expect(mocks.cancellation).not.toHaveBeenCalled();
@@ -88,7 +89,7 @@ describe("public PageContent token view models", () => {
       { tier: "YOUTH", label: "Youth", sortOrder: 1 },
       { tier: "ADULT", label: "Adult", sortOrder: 2 },
     ]);
-    await expect(loadPublicJoiningFees()).resolves.toEqual([
+    await expect(loadPublicJoiningFees(CLUB_FORMAT_TEST)).resolves.toEqual([
       { heading: "Full", rows: [
         { label: "Youth", fee: { amountCents: 5000, label: "$50.00" } },
         { label: "Adult", fee: { amountCents: 12500, label: "$125.00" } },
@@ -100,35 +101,17 @@ describe("public PageContent token view models", () => {
   // The module used to build its own `Intl.NumberFormat("en-NZ", ...)` while the
   // mock above set `APP_LOCALE` that nothing read, so every label pin passed
   // for a configuration the code ignored. `money()` now renders through
-  // `formatCents` (#3325); a second locale/currency pair is what makes the
-  // mock discriminate. A fresh import is required because the formatter is
-  // built at module load. Literal expected string, not a recomputation.
+  // `formatCents` (#3325) with the club's format passed in (#3565); a second
+  // locale/currency pair is what proves the argument reaches the label.
+  // Literal expected string, not a recomputation.
   it("renders public money in the configured locale and currency, not a hard-coded en-NZ (#3325)", async () => {
-    vi.resetModules();
-    vi.doMock("@/config/operational", () => ({
-      APP_CURRENCY: "EUR",
-      APP_STRIPE_CURRENCY: "eur",
-      APP_TIME_ZONE: "Europe/Berlin",
-      APP_LOCALE: "de-DE",
-    }));
-    try {
-      const fresh = await import("@/lib/public-page-content-tokens");
-      mocks.membershipTypes.mockResolvedValue([
-        { key: "FULL", name: "Full", ageGroupsApply: false, joiningFees: [{ ageTier: null, amountCents: 123456 }] },
-      ]);
-      mocks.ageTiers.mockResolvedValue([]);
-      await expect(fresh.loadPublicJoiningFees()).resolves.toEqual([
-        { heading: "Full", rows: [{ label: "All ages", fee: { amountCents: 123456, label: "1.234,56\u00a0€" } }] },
-      ]);
-    } finally {
-      vi.doMock("@/config/operational", () => ({
-        APP_CURRENCY: "NZD",
-        APP_STRIPE_CURRENCY: "nzd",
-        APP_TIME_ZONE: "Pacific/Auckland",
-        APP_LOCALE: "en-NZ",
-      }));
-      vi.resetModules();
-    }
+    mocks.membershipTypes.mockResolvedValue([
+      { key: "FULL", name: "Full", ageGroupsApply: false, joiningFees: [{ ageTier: null, amountCents: 123456 }] },
+    ]);
+    mocks.ageTiers.mockResolvedValue([]);
+    await expect(loadPublicJoiningFees({ currencyCode: "EUR", locale: "de-DE" })).resolves.toEqual([
+      { heading: "Full", rows: [{ label: "All ages", fee: { amountCents: 123456, label: "1.234,56\u00a0€" } }] },
+    ]);
   });
 
   it("regroups public joining fees by age tier when byAge is set (#1933)", async () => {
@@ -167,7 +150,7 @@ describe("public PageContent token view models", () => {
       { key: "FULL", name: "Full", annualFees: [{ amountCents: 15000, billingBasis: "PER_MEMBER", components: [] }] },
       { key: "LIFE", name: "Life", annualFees: [{ amountCents: 0, billingBasis: "NO_INVOICE", components: [] }] },
     ]);
-    await expect(loadPublicAnnualFees()).resolves.toEqual([
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([
       { heading: "Annual membership fees", rows: [{ label: "Full", fee: { amountCents: 15000, label: "$150.00" } }] },
     ]);
     expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true, publiclyListed: true } }));
@@ -199,7 +182,7 @@ describe("public PageContent token view models", () => {
         { ageTier: "YOUTH", amountCents: 8000, billingBasis: "PER_MEMBER", components: [] },
       ] },
     ]);
-    await expect(loadPublicAnnualFees()).resolves.toEqual([
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([
       { heading: "Annual membership fees", rows: [
         { label: "Full — Youth", fee: { amountCents: 8000, label: "$80.00" } },
         { label: "Full — Adult", fee: { amountCents: 15000, label: "$150.00" } },
@@ -214,7 +197,7 @@ describe("public PageContent token view models", () => {
         { ageTier: "ADULT", amountCents: 20000, billingBasis: "PER_MEMBER", components: [] },
       ] },
     ]);
-    await expect(loadPublicAnnualFees()).resolves.toEqual([
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([
       { heading: "Annual membership fees", rows: [{ label: "Org", fee: { amountCents: 20000, label: "$200.00" } }] },
     ]);
   });
@@ -233,7 +216,7 @@ describe("public PageContent token view models", () => {
         { ageTier: "YOUTH", amountCents: 7000, billingBasis: "PER_MEMBER", components: [] }, // older YOUTH deduped away
       ] },
     ]);
-    await expect(loadPublicAnnualFees()).resolves.toEqual([
+    await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([
       { heading: "Annual membership fees", rows: [
         { label: "Full — Youth", fee: { amountCents: 8000, label: "$80.00" } },
       ] },
@@ -280,7 +263,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "CHILD", pricePerNightCents: 3000, membershipType: nonMember },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables).toHaveLength(1);
     expect(tables[0]?.heading).toContain("River Lodge — Winter");
     expect(tables[0]?.heading).toContain("nightly rates");
@@ -336,7 +319,7 @@ describe("public PageContent token view models", () => {
       ]);
     });
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
 
     expect(tables[0]?.columns).toEqual(["Full Member"]);
     const serialised = JSON.stringify(tables);
@@ -365,7 +348,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.rows).toEqual([
       { label: "Child (5–12)", cells: [{ amountCents: 0, label: "$0.00" }, null] },
       { label: "Adult (18+)", cells: [
@@ -388,7 +371,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.columns).toEqual(["Full Member, Life, Family", "Non-member"]);
     expect(tables[0]?.rows).toEqual([
       { label: "Adult (18+)", cells: [
@@ -410,7 +393,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: family },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.columns).toEqual(["Full Member, Family", "Life"]);
     expect(tables[0]?.rows[0]?.cells).toEqual([
       { amountCents: 4000, label: "$40.00" },
@@ -428,7 +411,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "ADULT", pricePerNightCents: 5000, membershipType: hutType("t-full", "Full Member", 1) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.columns).toEqual(["Full Member, Associate", "Non-member"]);
   });
 
@@ -439,7 +422,7 @@ describe("public PageContent token view models", () => {
       { ageTier: null, pricePerNightCents: 9000, membershipType: hutType("t-school", "School Group", 4, false) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.columns).toEqual(["Full Member", "School Group"]);
     expect(tables[0]?.rows).toEqual([
       { label: "Adult (18+)", cells: [{ amountCents: 4000, label: "$40.00" }, null] },
@@ -454,7 +437,7 @@ describe("public PageContent token view models", () => {
       { ageTier: "CHILD", pricePerNightCents: 1000, membershipType: hutType("t-school", "School Group", 4, false) },
     ])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    const tables = await loadPublicHutFees();
+    const tables = await loadPublicHutFees(CLUB_FORMAT_TEST);
     expect(tables[0]?.rows).toEqual([
       { label: "All ages", cells: [{ amountCents: 9000, label: "$90.00" }] },
     ]);
@@ -525,7 +508,7 @@ describe("public PageContent token view models", () => {
     mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
     mocks.seasons.mockResolvedValue([hutSeason([])]);
     mocks.ageTiers.mockResolvedValue(twoAgeTiers);
-    await expect(loadPublicHutFees()).resolves.toEqual([]);
+    await expect(loadPublicHutFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
   });
 
   it("summarizes only customer-facing booking policy fields", async () => {
@@ -794,7 +777,7 @@ describe("public PageContent token view models", () => {
       creditFixedFeeCents: 0,
       lodgeId: null,
     }]);
-    const policy = await loadPublicCancellationPolicy();
+    const policy = await loadPublicCancellationPolicy(CLUB_FORMAT_TEST);
     expect(policy?.tiers[0]?.description).toBe(
       "14 or more days before check-in: 80% card refund less a $25.00 fee; 100% credit refund",
     );
@@ -846,7 +829,7 @@ describe("public PageContent token view models", () => {
     mocks.periods.mockResolvedValue([{ name: "Holiday", startDate: new Date("2026-12-01"), endDate: new Date("2026-12-31"), lodgeId: null, cancellationRules: [
       { daysBeforeStay: 5, refundPercentage: 40, creditRefundPercentage: 60, fixedFeeCents: 500 },
     ] }]);
-    const policy = await loadPublicCancellationPolicy();
+    const policy = await loadPublicCancellationPolicy(CLUB_FORMAT_TEST);
     expect(policy?.tiers).toEqual([]);
     expect(policy?.periods[0]?.tiers).toEqual([
       { description: "5 or more days before check-in: 40% card refund less a $5.00 fee; 60% credit refund less a $5.00 fee" },

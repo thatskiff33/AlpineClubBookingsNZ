@@ -6,6 +6,7 @@ import {
   PaymentStatus,
   PaymentTransactionKind,
 } from "@prisma/client";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3268 — the saved-card charge-failure classifier and the retirement of a
 // card it calls terminal. The cron integration (release first, then retire,
@@ -534,6 +535,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
 
   it("retires the card, then emails the member once and the admins once", async () => {
     await retireAndEscalateUnusableSavedCard({
+      format: CLUB_FORMAT_TEST,
       booking,
       paymentMethodId: "pm_dead",
       paymentIntentId: "N/A",
@@ -564,7 +566,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockSendSavedCardChargeFailedEmail.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
 
     expect(mockPaymentUpdateMany).toHaveBeenCalledTimes(1);
@@ -573,6 +575,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
 
   it("threads a failed claim release into the admin alert's wording", async () => {
     await retireAndEscalateUnusableSavedCard({
+      format: CLUB_FORMAT_TEST,
       booking,
       paymentMethodId: "pm_dead",
       paymentIntentId: "N/A",
@@ -590,7 +593,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockDetachPaymentMethod.mockRejectedValue(outage);
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).rejects.toBe(outage);
 
     expect(mockPaymentUpdateMany).not.toHaveBeenCalled();
@@ -602,7 +605,7 @@ describe("retireAndEscalateUnusableSavedCard (#3268)", () => {
     mockSendAdminPaymentFailureAlert.mockRejectedValue(new Error("SES down"));
 
     await expect(
-      retireAndEscalateUnusableSavedCard({ booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
+      retireAndEscalateUnusableSavedCard({ format: CLUB_FORMAT_TEST, booking, paymentMethodId: "pm_dead", paymentIntentId: "N/A", failure, claimReleased: true }),
     ).resolves.toBeUndefined();
     expect(mockSendSavedCardChargeFailedEmail).toHaveBeenCalledTimes(1);
   });

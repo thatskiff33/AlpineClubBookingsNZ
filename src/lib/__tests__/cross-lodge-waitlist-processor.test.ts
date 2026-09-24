@@ -65,6 +65,7 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
 
 import { confirmWaitlistOffer, processWaitlistForDates } from "@/lib/waitlist";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CHECK_IN = new Date("2026-08-10");
 const CHECK_OUT = new Date("2026-08-12");
@@ -152,7 +153,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("entry-b");
     const update = currentTx.booking.update.mock.calls[0][0];
@@ -180,7 +181,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     const where = currentTx.booking.findMany.mock.calls[0][0].where;
     expect(where.noEmails).toBe(false);
@@ -208,7 +209,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("entry-a");
     const update = currentTx.booking.update.mock.calls[0][0];
@@ -216,12 +217,13 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     expect(update.data.waitlistOfferedLodgeId).toBe("lodge-b");
     expect(update.data.waitlistOfferedPriceCents).toBe(34000);
     // The offer email states the price (arg 8 after the merged #1035
-    // reprice param), speaks with the offered lodge's identity, and names
-    // the cross-lodge offer.
+    // reprice param; arg 9 is the club's format, #3565), speaks with the
+    // offered lodge's identity, and names the cross-lodge offer.
     const emailArgs = mocks.sendWaitlistOfferEmail.mock.calls[0];
     expect(emailArgs[8]).toBe(34000);
-    expect(emailArgs[9]).toBe("lodge-b");
-    expect(emailArgs[10]).toEqual({ lodgeName: "River Lodge" });
+    expect(emailArgs[9]).toEqual(CLUB_FORMAT_TEST);
+    expect(emailArgs[10]).toBe("lodge-b");
+    expect(emailArgs[11]).toEqual({ lodgeName: "River Lodge" });
   });
 
   it("skips a cross-lodge candidate who is no longer eligible for the freed lodge", async () => {
@@ -242,7 +244,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
     expect(currentTx.booking.update).not.toHaveBeenCalled();
@@ -269,7 +271,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
     expect(currentTx.booking.update).not.toHaveBeenCalled();
@@ -296,7 +298,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBe("entry-b");
     // The position count is scoped to the candidate's own lodge.
@@ -328,7 +330,7 @@ describe("processWaitlistForDates cross-lodge pass", () => {
       checkIn: CHECK_IN,
       checkOut: CHECK_OUT,
       lodgeId: "lodge-b",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(result.offeredBookingId).toBeNull();
     // No cross opportunities exist, so the queue-order setting is not read.

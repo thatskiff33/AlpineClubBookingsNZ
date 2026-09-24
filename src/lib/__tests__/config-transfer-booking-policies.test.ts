@@ -25,6 +25,7 @@ import type {
   ReadDb,
   TxDb,
 } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const lodge = { id: "lodge-tlr", slug: "tukino" };
 const policy = {
@@ -88,6 +89,7 @@ function planContext(
     manifest: {} as never,
     mode: "merge",
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     selectedCategories: ["lodge-config", "booking-policies"],
   };
 }
@@ -260,6 +262,7 @@ describe("config-transfer booking policies (#2363)", () => {
         manifest: {} as never,
         mode: "overwrite",
         resolutions: new Map(),
+        format: CLUB_FORMAT_TEST,
         actorMemberId: "admin-1",
         imageRemap: new Map(),
         notes: { doorCodesWritten: [] },
@@ -292,6 +295,7 @@ describe("config-transfer booking policies (#2363)", () => {
       manifest: {} as never,
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },
@@ -446,6 +450,7 @@ describe("config-transfer booking policies (#2363)", () => {
       manifest: {} as never,
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "admin-1",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },

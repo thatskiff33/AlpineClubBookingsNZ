@@ -120,6 +120,7 @@ import {
   issueSplitGuestPaymentLink,
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -730,12 +731,12 @@ describe("getPaymentLinkContext under an open financial review", () => {
     };
 
     expect(context.narrative).toEqual(
-      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }),
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }, CLUB_FORMAT_TEST),
     );
     // The flag really reached it: the same facts without the review resolve to
     // different wording, so this cannot pass on a dropped flag.
     expect(context.narrative).not.toEqual(
-      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }),
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }, CLUB_FORMAT_TEST),
     );
   });
 });
@@ -764,7 +765,7 @@ describe("reissuePaymentLinkForToken", () => {
       })
     );
     expect(sendBookingRequestApprovedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tara@example.com" })
+      expect.objectContaining({ email: "tara@example.com" }), CLUB_FORMAT_TEST
     );
   });
 
@@ -818,7 +819,7 @@ describe("reissuePaymentLinkForToken", () => {
 
     expect(result.emailed).toBe(true);
     expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" })
+      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" }), CLUB_FORMAT_TEST
     );
     expect(sendBookingRequestApprovedEmail).not.toHaveBeenCalled();
   });
@@ -1181,7 +1182,7 @@ describe("createPaymentIntentForPaymentLink", () => {
         amountCents: 4500,
         paymentIntentId: "booking-1",
         errorMessage: expect.stringContaining("$45.00"),
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 
@@ -1586,7 +1587,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
         priceCents: 12000,
         guestCount: 2,
         bookingReference: "child-1",
-      })
+      }), CLUB_FORMAT_TEST
     );
   });
 

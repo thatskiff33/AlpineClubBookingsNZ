@@ -25,6 +25,7 @@ import type {
   ReadDb,
   TxDb,
 } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const SEGMENT = "transport-folder";
 const SLUG = "authoritative-lodge";
@@ -50,6 +51,7 @@ function planContext(
     manifest: {} as PlanContext["manifest"],
     mode,
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     selectedCategories: ["lodge-config"],
   };
 }
@@ -65,6 +67,7 @@ function applyContext(
     manifest: {} as ApplyContext["manifest"],
     mode,
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     actorMemberId: "actor-1",
     imageRemap: new Map(),
     notes: { doorCodesWritten: [] },

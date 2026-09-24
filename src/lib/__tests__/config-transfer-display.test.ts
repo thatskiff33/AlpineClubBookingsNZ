@@ -8,6 +8,7 @@ import { buildImportPlan } from "@/lib/config-transfer/import";
 import { displayImporter } from "@/lib/config-transfer/categories/display";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // LTV-037: config-transfer for the v2 club-wide Layout/Template library. These
 // entities ride in the lodge-config category (files display/layouts.json +

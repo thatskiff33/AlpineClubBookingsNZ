@@ -365,7 +365,7 @@ function charge(overrides: Record<string, unknown> = {}) {
     direction: "CHARGE_TO_MEMBER",
     ...overrides,
     recordedNightPrices: null,
-  } as Parameters<typeof resolveManualRefundTask>[0]);
+  } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
 }
 
 beforeEach(() => {
@@ -843,7 +843,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
       confirmedAmountCents: null,
       direction: null,
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
       paymentId: "payment-1",
@@ -861,7 +861,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
       note: "the club collected this at the lodge",
       actingMemberId: "admin-1",
       recordedNightPrices: null,
-    });
+    }, CLUB_FORMAT_TEST);
 
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
     expect(claim.data.settlementDirection).toBeUndefined();
@@ -906,7 +906,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
       direction: "CHARGE_TO_MEMBER",
       ...overrides,
       recordedNightPrices: null,
-    } as Parameters<typeof resolveManualRefundTask>[0]);
+    } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
   }
 
   beforeEach(() => {
@@ -1376,7 +1376,7 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
       direction: "CHARGE_TO_MEMBER",
       ...overrides,
       recordedNightPrices: null,
-    } as Parameters<typeof resolveManualRefundTask>[0]);
+    } as Parameters<typeof resolveManualRefundTask>[0], CLUB_FORMAT_TEST);
   }
 
   beforeEach(() => {

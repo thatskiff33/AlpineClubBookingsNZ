@@ -34,6 +34,7 @@ import { DEFAULT_FAMILY_BILLING_MODE } from "@/lib/authoritative-fees";
 import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -377,6 +378,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
       manifest: {} as unknown as ApplyContext["manifest"],
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "test-actor",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },
@@ -416,6 +418,7 @@ describe("club-module-settings singleton reads use the explicit column select", 
       manifest: {} as unknown as ApplyContext["manifest"],
       mode: "merge",
       resolutions: new Map(),
+      format: CLUB_FORMAT_TEST,
       actorMemberId: "test-actor",
       imageRemap: new Map(),
       notes: { doorCodesWritten: [] },
@@ -587,6 +590,7 @@ function applyCtx(
     manifest: {} as unknown as ApplyContext["manifest"],
     mode,
     resolutions: new Map(),
+    format: CLUB_FORMAT_TEST,
     actorMemberId: "test-actor",
     imageRemap: new Map(),
     notes: { doorCodesWritten: [] },

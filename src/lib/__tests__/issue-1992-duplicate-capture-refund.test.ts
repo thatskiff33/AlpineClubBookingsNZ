@@ -156,6 +156,7 @@ import {
   buildDuplicateCaptureRefundStripeKeyPrefix,
   bookingModificationRefundReasonForKeyPrefix,
 } from "@/lib/payment-recovery-keys";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
@@ -426,6 +427,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     primeDuplicateCaptureLedger();
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -470,6 +472,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       allocation: [
         { paymentTransactionId: "txn-duplicate", amountCents: 10000 },
       ],
+      format: CLUB_FORMAT_TEST,
       metadata: { bookingId: "booking-1", reason: "duplicate_capture" },
       idempotencyKeyPrefix: `duplicate_capture_refund_booking-1_${DUPLICATE_PI}`,
     });
@@ -492,7 +495,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
         settledPaymentIntentId: SETTLED_PI,
         refundFailed: false,
         operationReference: `duplicate_capture_booking-1_${DUPLICATE_PI}`,
-      })
+      }), CLUB_FORMAT_TEST
     );
     expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
 
@@ -525,6 +528,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -541,6 +545,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     primeDuplicateCaptureLedger({ duplicateAmountCents: 8000 });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 8000,
@@ -568,6 +573,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     );
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -600,7 +606,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
         refundFailed: true,
         operationReference: `duplicate_capture_booking-1_${DUPLICATE_PI}`,
         errorMessage: expect.stringContaining("503"),
-      })
+      }), CLUB_FORMAT_TEST
     );
     expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
@@ -609,6 +615,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     primeDuplicateCaptureLedger();
 
     await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -676,6 +683,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -711,6 +719,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       ]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLED_PI,
         amountCents: 10000,
@@ -757,6 +766,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     });
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: SETTLED_PI,
       amountCents: 10000,
@@ -824,6 +834,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       ]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLEMENT_PI,
         amountCents: 10000,
@@ -875,6 +886,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       ]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLEMENT_PI,
         amountCents: 10000,
@@ -903,6 +915,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       ]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLEMENT_PI,
         amountCents: 10000,
@@ -925,6 +938,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       });
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLEMENT_PI,
         amountCents: 10000,
@@ -975,6 +989,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       ]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: DUPLICATE_PI,
         amountCents: 10000,
@@ -999,6 +1014,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
       primeRecoveryOperations([]);
 
       const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
         bookingId: "booking-1",
         paymentIntentId: SETTLEMENT_PI,
         amountCents: 10000,
@@ -1027,6 +1043,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,
@@ -1064,6 +1081,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     ]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_repay",
       amountCents: 10000,
@@ -1083,6 +1101,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     primeLedger([]);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: "pi_fresh",
       amountCents: 10000,
@@ -1108,6 +1127,7 @@ describe("#1992 duplicate-capture auto-refund", () => {
     mocks.findPaymentTransactionByIntentId.mockResolvedValue(null);
 
     const result = await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
       bookingId: "booking-1",
       paymentIntentId: DUPLICATE_PI,
       amountCents: 10000,

@@ -9,6 +9,7 @@ import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import { lodgeFolderFiles } from "@/lib/config-transfer/categories/lodge-config";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const LODGE_JSON = "lodge-config/lodges/main/lodge.json";
 const ROOMS = "lodge-config/lodges/main/rooms.csv";

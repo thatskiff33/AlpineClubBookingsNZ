@@ -8,6 +8,7 @@ import { buildImportPlan } from "@/lib/config-transfer/import";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function sourceDb(): ReadDb {
   return {

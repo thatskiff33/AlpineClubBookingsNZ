@@ -16,6 +16,7 @@ import {
 import { buildBundle } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // ADR-002 pre-apply backup durability gate. With backups enabled but no S3
 // destination configured (in-app, #2095), runDatabaseBackup "succeeds" onto the
