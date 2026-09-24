@@ -1,5 +1,6 @@
 import { type AuditLog, Prisma, PrismaClient } from "@prisma/client";
 import { createPrismaPgAdapter } from "@/lib/prisma-adapter";
+import { PRISMA_CLIENT_GLOBAL_OMIT } from "@/lib/prisma-global-omit";
 import {
   type AuditRetentionClass,
   type AuditSeverity,
@@ -323,9 +324,13 @@ function resolveArchiveDatabaseUrl(
   );
 }
 
-function createArchiveClient(databaseUrl: string): PrismaClient {
+function createArchiveClient(databaseUrl: string): AuditArchiveDbClient {
   return new PrismaClient({
     adapter: createPrismaPgAdapter(databaseUrl),
+    // The archive client only runs raw AuditLog statements, but every
+    // application client carries the same omission so the census holds with
+    // no exemption (`INV-PRIV-022`).
+    omit: PRISMA_CLIENT_GLOBAL_OMIT,
   });
 }
 

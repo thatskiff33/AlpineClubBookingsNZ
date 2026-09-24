@@ -232,6 +232,14 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
   "dateofbirth",
   "gender",
   "occupation",
+  // Dietary/allergy information (#2941, `INV-PRIV-022`): special-category
+  // data, including children's. Fragments, so `dietaryRequirements`,
+  // `guestDietary`, `allergies` and `allergyNotes` are all caught; nothing
+  // identifies such a value by its shape, so the key is the only defence. The
+  // accepted collateral is the `showDietaryRequirements` toggle boolean, the
+  // same trade as `showOccupation` above.
+  "dietary",
+  "allerg",
   "street",
   "postal",
   "addressline",

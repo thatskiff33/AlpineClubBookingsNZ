@@ -328,9 +328,17 @@ function sanitizeAuditDetails(value?: string | null): string | undefined {
  * row is different in kind — a permission-gated, retention-classed evidence
  * record whose job is to say who did what to whom, which stops being evidence
  * if "who" is unreadable. The owner confirmed it on 10 Aug 2026 against the
- * blanket-redaction recommendation. This schema holds no special-category data,
- * which is what bounds the exposure, and the ARCHIVE MODE note above records
- * what over-redaction had already cost once.
+ * blanket-redaction recommendation. The ARCHIVE MODE note above records what
+ * over-redaction had already cost once.
+ *
+ * ONE SPECIAL-CATEGORY FIELD NOW EXISTS, AND IT IS THE EXCEPTION (#2941,
+ * `INV-PRIV-022`). `Member.dietaryRequirements` holds dietary and allergy
+ * information, and an audit row records only THAT it changed, never what it
+ * holds. Writers already record field names and booleans; `isDietaryMetadataKey`
+ * below is the backstop that turns any string or structure left under a
+ * dietary/allergy key into `[REDACTED]` while keeping the booleans that say which
+ * field moved. It is a backstop, not the rule: a value under an unrelated key
+ * (the merge diff's `master`/`result`) is redacted at its writer.
  *
  * The boundary is this module, not anyone's intent: a value keeps a person field
  * only by being written as an audit row through this file. There is no flag or
@@ -377,6 +385,18 @@ function isSensitiveMetadataKey(key: string): boolean {
     normalized === "cvc" ||
     normalized === "cvv"
   );
+}
+
+/**
+ * A dietary/allergy key (#2941, `INV-PRIV-022`). Unlike the credential list
+ * above, the key alone does not redact: a boolean, number or null under it is
+ * EVIDENCE of which field changed (`fieldGroups.dietaryRequirements: true`) and
+ * is kept, while a string or a nested structure — the only shapes a value can
+ * take — becomes `[REDACTED]`.
+ */
+function isDietaryMetadataKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return normalized.includes("dietary") || normalized.includes("allerg");
 }
 
 function isLongHtml(value: string): boolean {
@@ -515,6 +535,16 @@ function sanitizeMetadataValue(
 
   for (const [key, childValue] of entries) {
     if (isSensitiveMetadataKey(key)) {
+      sanitizedObject[key] = REDACTED;
+      continue;
+    }
+    if (
+      isDietaryMetadataKey(key) &&
+      childValue !== null &&
+      childValue !== undefined &&
+      typeof childValue !== "boolean" &&
+      typeof childValue !== "number"
+    ) {
       sanitizedObject[key] = REDACTED;
       continue;
     }
