@@ -3211,8 +3211,9 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
     member deleted (#2620), canLogin=false, or sessionsRevokedAt later than the session's
       issue time (#3603) -> sessionInvalidated=true (INV-LIFE-014, INV-LIFE-092). The database
       stamps sessionsRevokedAt when login goes on -> off, so a session from before a switch-off
-      is refused after login is switched back on too, whichever cookie is presented; the
-      member signs in again for a new one
+      is refused after login is switched back on too, whichever cookie is presented; a token
+      once invalidated also stays invalidated (sign-in racing the switch-off, clock skew);
+      the member signs in again for a new one
     -> auth() reads null everywhere -> single redirect to /login rendering the form
        (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```

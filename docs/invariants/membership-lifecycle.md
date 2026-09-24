@@ -359,8 +359,10 @@ layouts re-read it; `requireActiveSessionUser` refuses the member outright.
 it, and the token refresh in `src/lib/auth.ts` refuses any session issued
 before that time, as it does one issued before `passwordChangedAt`. The time
 lives on the row, so re-enabling login never revives such a session, whatever
-cookie is replayed. The refresh also refuses while `canLogin` is false, and
-empties the role claims.
+cookie is replayed; members already off at upgrade are backfilled. The refresh
+also refuses while `canLogin` is false, empties the role claims, and keeps a
+token it invalidated invalidated, for a sign-in racing the switch-off or clock
+skew; signing in clears that.
 
 A hut leader's PIN is a separate assignment credential, governed by `active`
 rather than by this rule: hut leaders can be members who never had a login.

@@ -16,9 +16,9 @@
   and keeps working while the member is active, because hut leaders can be
   members who have never had a login.
 
-  This release includes a small database migration. It adds the switch-off
-  time and records it for every member whose login is already off, so their
-  earlier sessions are covered too. Nothing else changes about who holds which
+  This release includes two small database migrations. The first adds the
+  switch-off time; the second records it for every member whose login is
+  already off, so their earlier sessions are covered too. Nothing else changes about who holds which
   role: a member whose login is off keeps their stored roles, so the existing
   protections still apply, and such an account still cannot be merged away or
   deleted while it holds Full Admin.
