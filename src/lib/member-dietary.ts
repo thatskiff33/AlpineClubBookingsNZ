@@ -57,16 +57,8 @@ import {
   normalizeDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { prisma } from "@/lib/prisma";
+import { addDaysDateOnly } from "@/lib/date-only";
 import type { KioskTier } from "@/lib/kiosk-access";
-
-export type DietaryAccessPurpose =
-  | "self"
-  | "self-data-export"
-  | "membership-admin"
-  | "member-merge"
-  | "booking-admin-view"
-  | "booking-admin-edit"
-  | "kiosk";
 
 declare const DIETARY_GRANT_BRAND: unique symbol;
 
@@ -508,23 +500,42 @@ export const KIOSK_DIETARY_TIERS: readonly KioskTier[] = Object.freeze(["admin",
  * there is no second permission rule here, only a narrower set of tiers. An
  * admin's read-only preview of a kiosk account is always denied, whatever tier
  * the previewed account resolves to. Not issued while the field is OFF.
+ * A hut leader on their own account (no PIN session) must also hold an
+ * assignment at THIS lodge covering THIS day, re-read here: defence in depth
+ * behind the route's lodge resolution (#3029 S1).
  */
 export async function grantKioskDietaryAccess(
-  access: {
-    tier: KioskTier;
-    preview?: unknown;
-    actorMemberId: string | null;
-    presentGuestIds: readonly string[];
-  },
-  options: { enabled?: boolean } = {},
+  access: KioskDietaryAccess & { presentGuestIds: readonly string[] },
+  options: { enabled?: boolean; db?: Pick<PrismaClient, "hutLeaderAssignment"> } = {},
 ): Promise<DietaryAccessGrant | null> {
   if (!KIOSK_DIETARY_TIERS.includes(access.tier)) return null;
   if (access.preview) return null;
   if (!access.actorMemberId) return null;
   const enabled = options.enabled ?? (await isDietaryFieldEnabled());
   if (!enabled) return null;
+  if (access.tier === "hut-leader" && !access.pinSession) {
+    const leads = await (options.db ?? prisma).hutLeaderAssignment.count({
+      where: {
+        memberId: access.actorMemberId,
+        lodgeId: access.lodgeId,
+        startDate: { lte: addDaysDateOnly(access.date, 1) },
+        endDate: { gte: access.date },
+      },
+    });
+    if (leads === 0) return null;
+  }
   return mintBookingGuestGrant("kiosk", access.actorMemberId, access.presentGuestIds);
 }
+
+/** Who is at the kiosk, as `checkLodgeAuth` / `resolveKioskLodgeId` decided it. */
+type KioskDietaryAccess = {
+  tier: KioskTier;
+  preview?: unknown;
+  pinSession?: unknown;
+  actorMemberId: string | null;
+  lodgeId: string;
+  date: Date;
+};
 
 function bookingGuestGrantRecord(
   grant: DietaryAccessGrant,
@@ -590,7 +601,7 @@ export async function readKioskGuestDietaryRequirements(
 export async function attachKioskGuestDietary<
   C extends { guests: ReadonlyArray<{ id: string }> },
 >(
-  access: { tier: KioskTier; preview?: unknown; actorMemberId: string | null },
+  access: KioskDietaryAccess,
   cards: readonly C[],
 ): Promise<Array<C & { guests: Array<C["guests"][number] & { dietaryRequirements?: string | null }> }>> {
   const presentGuestIds = cards.flatMap((card) => card.guests.map((guest) => guest.id));

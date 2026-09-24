@@ -10,7 +10,11 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
 import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { getDefaultLodgeId } from "./lodges";
-import { AmbiguousKioskLodgeError, getStaffLodgeBinding } from "./lodge-access";
+import {
+  AmbiguousKioskLodgeError,
+  getStaffLodgeBinding,
+  KioskLodgeUnresolvedError,
+} from "./lodge-access";
 import { requireActiveSessionUser } from "./session-guards";
 import { hasAdminAccess, hasLodgeAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
@@ -168,6 +172,7 @@ export async function checkLodgeAuth(
       tier: previewTier,
       error: null,
       status: null,
+      date,
       member: target,
       preview: {
         actorMemberId: member.id,
@@ -190,6 +195,7 @@ export async function checkLodgeAuth(
         tier: "hut-leader" as KioskTier,
         error: null,
         status: null,
+        date,
         member,
         pinSession,
       };
@@ -199,7 +205,11 @@ export async function checkLodgeAuth(
   const tier = await getKioskAccessTier(member, date);
 
   if (tier !== "none") {
-    return { session, tier, error: null, status: null, member };
+    // `date` is the day the tier was judged for. The own-account hut-leader arm
+    // of `resolveKioskLodgeId` resolves the lodge from the assignment covering
+    // THIS day, so the tier and the lodge can never come from two different
+    // assignments (#3029 S1).
+    return { session, tier, error: null, status: null, date, member };
   }
 
   return {
@@ -219,6 +229,8 @@ interface ResolveKioskLodgeIdAuthResult {
   tier: KioskTier;
   member?: { id: string } | null;
   pinSession?: { assignmentId: string; memberId: string } | null;
+  /** The day `checkLodgeAuth` judged the tier for; absent means the club's today. */
+  date?: Date;
 }
 
 /**
@@ -227,7 +239,9 @@ interface ResolveKioskLodgeIdAuthResult {
  * docs/multi-lodge/implementation-plan.md).
  *
  * - hut-leader: the PIN session's HutLeaderAssignment carries its own
- *   (nullable) lodgeId; null falls back to the club's default lodge.
+ *   lodgeId. Signed in on their own account, the leader's lodge is the one
+ *   whose assignment covers the day the tier was judged for (`date`); no such
+ *   assignment, or assignments at two lodges, is denied (#3029 S1).
  * - lodge / admin: a STAFF MemberLodgeAccess grant binds the kiosk account
  *   to a lodge; no grant falls back to the default lodge. Admin kiosk
  *   devices may also be bound, so the same lookup applies. A grant at more
@@ -252,26 +266,39 @@ export async function resolveKioskLodgeId(
         });
         return assignment?.lodgeId ?? (await getDefaultLodgeId(db));
       }
-      // A hut leader signed in with their own account (no PIN session) still
-      // reaches this tier via getKioskAccessTier; resolve their lodge from
-      // the assignment covering today instead of throwing.
+      // A hut leader signed in with their own account (no PIN session) reaches
+      // this tier through getKioskAccessTier, which asks whether ANY assignment
+      // covers the REQUESTED day. The lodge therefore comes from the assignment
+      // covering that same day — never from "today" and never from the default
+      // lodge — or a leader of lodge B could open a date and be served lodge A's
+      // guest list, including its dietary/allergy notes (#3029 S1). No covering
+      // assignment, or covering assignments at two lodges, is refused.
       const memberId = authResult.member?.id;
       if (!memberId) {
         throw new Error(
           "resolveKioskLodgeId: hut-leader tier requires a member or pinSession"
         );
       }
-      const today = await clubTodayDateOnlyInstant();
-      const ownAssignment = await db.hutLeaderAssignment.findFirst({
+      const day = authResult.date ?? (await clubTodayDateOnlyInstant());
+      const covering = await db.hutLeaderAssignment.findMany({
         where: {
           memberId,
-          startDate: { lte: addDaysDateOnly(today, 1) },
-          endDate: { gte: today },
+          startDate: { lte: addDaysDateOnly(day, 1) },
+          endDate: { gte: day },
         },
-        orderBy: [{ startDate: "asc" }, { id: "asc" }],
+        distinct: ["lodgeId"],
+        orderBy: [{ lodgeId: "asc" }],
         select: { lodgeId: true },
+        take: 2,
       });
-      return ownAssignment?.lodgeId ?? (await getDefaultLodgeId(db));
+      if (covering.length > 1) {
+        throw new AmbiguousKioskLodgeError(
+          "You are hut leader at more than one lodge on this date — an admin must fix the assignments.",
+        );
+      }
+      const own = covering[0];
+      if (!own) throw new KioskLodgeUnresolvedError();
+      return own.lodgeId;
     }
     case "lodge":
     case "admin": {
@@ -344,7 +371,10 @@ export async function resolveKioskLodgeId(
 export function kioskLodgeAuthErrorResponse(
   error: unknown
 ): NextResponse | null {
-  if (error instanceof AmbiguousKioskLodgeError) {
+  if (
+    error instanceof AmbiguousKioskLodgeError ||
+    error instanceof KioskLodgeUnresolvedError
+  ) {
     return NextResponse.json(
       { error: error.message },
       { status: error.status }

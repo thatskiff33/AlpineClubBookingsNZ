@@ -230,7 +230,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
     .filter((booking) => booking.guests.length > 0);
 
   // #3029 (`INV-PRIV-022`): admin + hut-leader tiers only; every other tier's guests carry no key.
-  const withDietary = await attachKioskGuestDietary({ ...authResult, actorMemberId: getLodgeAuthActorMemberId(authResult) }, result);
+  const withDietary = await attachKioskGuestDietary({ ...authResult, actorMemberId: getLodgeAuthActorMemberId(authResult), lodgeId, date }, result);
 
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);

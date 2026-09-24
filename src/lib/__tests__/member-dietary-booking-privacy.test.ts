@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   bookingGuestFindFirst: vi.fn(),
   bookingGuestUpdateMany: vi.fn(),
   settingsFindUnique: vi.fn(),
+  assignmentCount: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -31,6 +32,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.bookingGuestUpdateMany,
     },
     memberFieldsSettings: { findUnique: mocks.settingsFindUnique },
+    hutLeaderAssignment: { count: mocks.assignmentCount },
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -84,6 +86,7 @@ beforeEach(() => {
     { id: "g1", dietaryRequirements: VALUE },
     { id: "g2", dietaryRequirements: null },
   ]);
+  mocks.assignmentCount.mockResolvedValue(1);
 });
 
 describe("booking-admin grants are judged from the database (INV-PRIV-022)", () => {
@@ -151,6 +154,8 @@ describe("kiosk grants: admin and hut-leader only, present guests only (INV-PRIV
   const access = (tier: KioskTier, extra: Record<string, unknown> = {}) => ({
     tier,
     actorMemberId: "leader-1",
+    lodgeId: "lodge-1",
+    date: new Date("2026-08-10T00:00:00.000Z"),
     presentGuestIds: ["g1", "g2"],
     ...extra,
   });

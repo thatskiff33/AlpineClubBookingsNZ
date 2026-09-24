@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   bookingGuestFindMany: vi.fn(),
   settingsFindUnique: vi.fn(),
   checkLodgeAuth: vi.fn(),
+  assignmentCount: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findMany: mocks.bookingFindMany },
     bookingGuest: { findMany: mocks.bookingGuestFindMany },
     memberFieldsSettings: { findUnique: mocks.settingsFindUnique },
+    hutLeaderAssignment: { count: mocks.assignmentCount },
   },
 }));
 vi.mock("@/lib/lodge-auth", () => ({
@@ -97,6 +99,7 @@ beforeEach(() => {
     { id: "guest-1", dietaryRequirements: VALUE },
   ]);
   mocks.settingsFindUnique.mockResolvedValue({ showDietaryRequirements: true });
+  mocks.assignmentCount.mockResolvedValue(1);
 });
 
 describe("kiosk day list dietary payload (INV-PRIV-022)", () => {
@@ -132,6 +135,16 @@ describe("kiosk day list dietary payload (INV-PRIV-022)", () => {
         false,
       );
     }
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+  });
+
+  it("an own-account hut leader with no assignment at THIS lodge on THIS day gets no key (#3029 S1)", async () => {
+    mocks.assignmentCount.mockResolvedValue(0);
+    const [guest] = await guestsFor({ tier: "hut-leader", session: { user: { id: "leader-1" } } });
+    expect(Object.prototype.hasOwnProperty.call(guest, "dietaryRequirements")).toBe(false);
+    expect(mocks.assignmentCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({ memberId: "actor-1", lodgeId: "lodge-1" }),
+    });
     expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
   });
 
