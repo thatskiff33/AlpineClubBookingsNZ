@@ -6,13 +6,18 @@ const { mockAuth, mockFindUnique, mockRedirect } = vi.hoisted(() => ({
   mockRedirect: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
+// Fixtures are projected through the loader's own `select` (#3603), so a field
+// it stops selecting stops reaching the checks, as with the real client.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique),
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
@@ -46,6 +51,7 @@ describe("finance auth helpers", () => {
       lastName: "User",
       role: "ADMIN",
       accessRoles: [{ role: "FINANCE_ADMIN" }],
+      canLogin: true,
       active: true,
       forcePasswordChange: false,
       twoFactorEnabled: false,
@@ -61,6 +67,8 @@ describe("finance auth helpers", () => {
         firstName: true,
         lastName: true,
         role: true,
+        // #3603: the finance checks clear on it.
+        canLogin: true,
         accessRoles: {
           select: {
             role: true,
@@ -75,6 +83,33 @@ describe("finance auth helpers", () => {
     });
     expect(member?.email).toBe("finance@example.com");
     expect(member?.accessRoles).toEqual([{ role: "FINANCE_ADMIN" }]);
+    expect(member?.canLogin).toBe(true);
+  });
+
+  // #3603: the finance layout and pages resolve access from this loader, so a
+  // login-disabled treasurer is sent away like any member without finance
+  // access. The control is the same fixture with login enabled.
+  it("sends a login-disabled treasurer away from finance, and admits it with login enabled", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "treasurer-1", role: "USER", accessRoles: ["USER"] } });
+    const treasurer = {
+      id: "treasurer-1",
+      email: "treasurer@example.com",
+      firstName: "Tre",
+      lastName: "Asurer",
+      role: "USER",
+      accessRoles: [{ role: "FINANCE_ADMIN" }],
+      active: true,
+      forcePasswordChange: false,
+      twoFactorEnabled: false,
+    };
+
+    mockFindUnique.mockResolvedValue({ ...treasurer, canLogin: false });
+    await expect(requireFinanceViewer("/finance")).rejects.toThrow("redirect:/dashboard");
+    await expect(requireFinanceManager("/finance")).rejects.toThrow("redirect:/dashboard");
+
+    mockFindUnique.mockResolvedValue({ ...treasurer, canLogin: true });
+    await expect(requireFinanceViewer("/finance")).resolves.toMatchObject({ id: "treasurer-1" });
+    await expect(requireFinanceManager("/finance")).resolves.toMatchObject({ id: "treasurer-1" });
   });
 
   it("returns the active finance viewer member", async () => {

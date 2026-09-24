@@ -24,15 +24,20 @@ const {
   })),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
-      findFirst: mockFindFirst,
-      update: mockUpdate,
+// The refresh's member read is projected through its real `select` (#3603), so
+// a field the refresh stops selecting stops reaching the callback.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique),
+        findFirst: mockFindFirst,
+        update: mockUpdate,
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret"),
@@ -450,6 +455,8 @@ describe("auth session refresh", () => {
       name: "Admin User",
       role: "MEMBER",
       accessRoles: ["USER"],
+      // The token carried no canLogin, so the projection fails closed (#3603).
+      canLogin: false,
       // The token carried no matrix, so the projection fails closed (#1367).
       adminPermissionMatrix: ALL_NONE_MATRIX,
       forcePasswordChange: true,
@@ -631,6 +638,127 @@ describe("auth session refresh", () => {
       expect(
         hasAdminAreaAccess(session!.user, { area: "bookings", level: "view" }),
       ).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #3603: every sign-in provider requires `canLogin: true`, so a session whose
+  // member has since had login switched off is ended on its next refresh, the
+  // same kill switch as a deleted account (#2620). Until it is, the role claim
+  // and the matrix are empty too. Each case is paired with the same member at
+  // `canLogin: true`.
+  // ---------------------------------------------------------------------------
+  describe("a member whose login is switched off (#3603)", () => {
+    function memberRow(canLogin: boolean) {
+      return {
+        role: "ADMIN",
+        canLogin,
+        accessRoles: [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null }],
+        forcePasswordChange: false,
+        emailVerified: true,
+        passwordChangedAt: null,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      };
+    }
+
+    async function refresh(token: Record<string, unknown> = {}) {
+      return authConfig.callbacks.jwt?.({
+        token: {
+          id: "admin-1",
+          role: "ADMIN",
+          accessRoles: ["ADMIN"],
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+          ...token,
+        },
+      } as never);
+    }
+
+    it("invalidates the session and empties the role claim and matrix", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(false));
+
+      const token = await refresh();
+
+      expect(token?.sessionInvalidated).toBe(true);
+      expect(token?.accessRoles).toEqual([]);
+      expect(token?.canLogin).toBe(false);
+      expect(token?.adminPermissionMatrix).toEqual(ALL_NONE_MATRIX);
+    });
+
+    it("keeps the session, roles and matrix of the same member with login enabled", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(true));
+
+      const token = await refresh();
+
+      expect(token?.sessionInvalidated).toBe(false);
+      expect(token?.accessRoles).toEqual(["ADMIN"]);
+      expect(token?.canLogin).toBe(true);
+      expect(token?.adminPermissionMatrix).toEqual(
+        Object.fromEntries(Object.keys(ALL_NONE_MATRIX).map((area) => [area, "edit"])),
+      );
+    });
+
+    it("keeps an ended session ended when login is switched back on", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(false));
+      const ended = await refresh();
+      expect(ended?.sessionInvalidated).toBe(true);
+
+      mockFindUnique.mockResolvedValue(memberRow(true));
+      const later = await authConfig.callbacks.jwt?.({ token: ended } as never);
+
+      expect(later?.sessionInvalidated).toBe(true);
+    });
+
+    it("gives a fresh sign-in a live session once login is enabled again", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(true));
+
+      const token = await authConfig.callbacks.jwt?.({
+        token: { sessionInvalidated: true },
+        user: {
+          id: "admin-1",
+          role: "ADMIN",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          twoFactorEnabled: false,
+          twoFactorMethod: null,
+        },
+      } as never);
+
+      expect(token?.sessionInvalidated).toBe(false);
+    });
+
+    it("projects canLogin onto session.user, so privilege checks over it apply the rule", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(true));
+      const token = await refresh();
+
+      const session = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token,
+      } as never);
+
+      expect(session?.user.canLogin).toBe(true);
+      expect(hasAdminAccess(session!.user)).toBe(true);
+
+      const disabled = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token: { ...token, canLogin: false },
+      } as never);
+      expect(disabled?.user.canLogin).toBe(false);
+      expect(hasAdminAccess(disabled!.user)).toBe(false);
+    });
+
+    it("makes auth() return no session for the login-disabled member", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(false));
+      const token = await refresh();
+      const session = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token,
+      } as never);
+      mockRawAuth.mockResolvedValue(session);
+
+      await expect(auth()).resolves.toBeNull();
     });
   });
 

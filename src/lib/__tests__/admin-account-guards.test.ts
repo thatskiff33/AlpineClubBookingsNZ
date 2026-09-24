@@ -90,7 +90,22 @@ describe("actorIsFullAdmin", () => {
     const { db, count } = stubDb([1]);
     await expect(actorIsFullAdmin(db, "actor")).resolves.toBe(true);
     expect(count).toHaveBeenCalledWith({
-      where: { id: "actor", accessRoles: { some: { role: "ADMIN" } } },
+      where: { id: "actor", ...ACTIVE_FULL_ADMIN_WHERE },
+    });
+  });
+
+  it("counts only an active, login-enabled actor, like the Full Admin definition (#3603)", async () => {
+    const { db, count } = stubDb([0]);
+    await actorIsFullAdmin(db, "actor");
+    // Spelled out, not spread, so dropping either flag from the query fails
+    // here even if ACTIVE_FULL_ADMIN_WHERE itself were edited to match.
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        id: "actor",
+        active: true,
+        canLogin: true,
+        accessRoles: { some: { role: "ADMIN" } },
+      },
     });
   });
 

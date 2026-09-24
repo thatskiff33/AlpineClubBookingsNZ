@@ -82,6 +82,25 @@ common method sets. Each method is a `vi.fn()` typed as `Mock`, so
 same client to the callback, useful when a service is implemented as
 `prisma.$transaction((tx) => ...)`.
 
+### Honouring the query's `select` in a guard test
+
+```ts
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return { prisma: { member: { findUnique: honourSelect(mockFindUnique) } } };
+});
+
+mockFindUnique.mockResolvedValue({ active: true, canLogin: false, accessRoles: [...] });
+```
+
+`honourSelect(mock)` projects every resolved fixture through the caller's
+`select` (nested relation selects included), so the code under test sees only
+the fields its query asked for — as it would with the real client. Use it in any
+test of a gate that re-reads a member. A fixture that carries a field the query
+never selected otherwise proves nothing: `requireAdmin` passed its suites for
+years without selecting `canLogin`, because every fixture carried it (#3603).
+`projectSelect(row, select)` is the same projection for a one-off.
+
 ## Recovery-alert focus (jsdom only)
 
 ```ts

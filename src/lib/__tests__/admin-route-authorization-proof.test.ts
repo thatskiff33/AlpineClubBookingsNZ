@@ -113,9 +113,16 @@ vi.mock("next/headers", () => ({
   headers: async () => mocks.requestHeaders,
 }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: mocks.memberFindUnique } },
-}));
+// Each grid's member row is projected through the reading guard's own `select`
+// (#3603). Both guards read the same fixture, and a fixture carrying a field the
+// guard never selected proved nothing: `requireAdmin` passed these sweeps for
+// years without selecting `canLogin`, because every row here carried it.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique) } },
+  };
+});
 vi.mock("@/lib/auth-diagnostics", () => ({
   recordAuthBounce: mocks.recordAuthBounce,
 }));
@@ -264,6 +271,27 @@ const SWEEP_GRIDS: Grid[] = [
   ...AREA_GRIDS.map((entry) => entry.grid),
 ];
 
+/**
+ * The same admins with login switched off (#3603): the enum Full Admin row, and
+ * a club-defined role holding every area at `edit`. Their rows are untouched —
+ * a login-holder handover leaves them — so only `canLogin` refuses them.
+ */
+const LOGIN_DISABLED_GRIDS: Grid[] = [
+  {
+    label: "login-disabled Full Admin",
+    member: { ...FULL_ADMIN.member, canLogin: false },
+  },
+  (() => {
+    const everyArea = customGrid(
+      "login-disabled all-areas custom role",
+      Object.fromEntries(AREAS.map((area) => [`${area}Level`, "EDIT"])) as Partial<
+        Record<`${AdminPermissionArea}Level`, AccessRoleGridLevel>
+      >,
+    );
+    return { ...everyArea, member: { ...everyArea.member, canLogin: false } };
+  })(),
+];
+
 /** The single-area VIEW grid for an area, used by the anchor table. */
 function viewGridFor(area: AdminPermissionArea): Grid {
   const found = AREA_GRIDS.find(
@@ -365,6 +393,10 @@ function signIn(grid: Grid) {
       name: grid.label,
       email: "admin@example.com",
       role: grid.member.role,
+      // The session as it was minted: roles and login as they stood at sign-in.
+      // The guards must decide from the member row they re-read, which is what
+      // the login-disabled sweeps below exercise (#3603).
+      canLogin: true,
       accessRoles: grid.member.accessRoles
         .map((row) => row.role)
         .filter((role): role is string => role !== null),
@@ -783,6 +815,32 @@ describe("the real requireAdmin enforces each route's real gate on every /api/ad
     expect(wrong).toEqual([]);
   }, 120_000);
 
+  // #3603: a member whose login is switched off holds no admin access, whatever
+  // rows it still stores. Two grids, so both the enum Full Admin row and a
+  // club-defined role that reaches every area are covered. The control is
+  // "Full Admin behaviour is unchanged" below: the same Full Admin row with
+  // login enabled is admitted to every route.
+  it.each(LOGIN_DISABLED_GRIDS)(
+    "refuses a $label every single admin API route, read and write",
+    async (grid) => {
+      const wrong: string[] = [];
+      for (const pathname of adminApiPaths) {
+        for (const method of ["GET", "POST"]) {
+          const result = await apiAdmits(grid, pathname, method);
+          if (result.ok) wrong.push(`admitted: ${method} ${pathname}`);
+          else if (result.status !== 403) {
+            wrong.push(
+              `${method} ${pathname} refused with ${result.status}, expected 403`,
+            );
+          }
+        }
+      }
+      expect(wrong).toEqual([]);
+      expect(adminApiPaths.length).toBeGreaterThan(200);
+    },
+    120_000,
+  );
+
   it("never lets a view-level grid through a write on its own area", async () => {
     const violations: string[] = [];
     let writes = 0;
@@ -824,6 +882,22 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
     }
     expect(violations).toEqual([]);
   }, 120_000);
+
+  // #3603, the page half: the layout guard already selects `canLogin` through
+  // the onboarding gate select, and this keeps it that way.
+  it.each(LOGIN_DISABLED_GRIDS)(
+    "redirects a $label away from every single admin page",
+    async (grid) => {
+      const admitted: string[] = [];
+      for (const pathname of adminPagePaths) {
+        const result = await pageAdmits(grid, pathname);
+        if (result.ok) admitted.push(pathname);
+      }
+      expect(admitted).toEqual([]);
+      expect(adminPagePaths.length).toBeGreaterThan(80);
+    },
+    120_000,
+  );
 
   it("sends a refused administrator somewhere they may actually go", async () => {
     // A refusal that redirects to a page the same grid is also refused is a
