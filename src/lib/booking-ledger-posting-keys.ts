@@ -71,3 +71,23 @@ export function refundKey(paymentRefundId: string): string {
 export function afterReversalKey(baseKey: string, reversalLineId: string): string {
   return `${baseKey}:after:${reversalLineId}`;
 }
+
+/**
+ * The booking-side line for one `MemberCredit` row — credit applied to the
+ * booking, credit minted from it, or applied credit restored on its
+ * cancellation (#3599). A credit row's amount, type and booking link never
+ * change after it is written, so its id is the whole identity and it posts
+ * exactly one line, ever.
+ */
+export function creditKey(memberCreditId: string): string {
+  return `credit:${memberCreditId}`;
+}
+
+/**
+ * Money an officer handed back outside the card rails, recorded by completing
+ * one `ManualRefundTask` (#3599). A task completes at most once — its claim is
+ * status-guarded — so its id is the whole identity.
+ */
+export function handBackKey(manualRefundTaskId: string): string {
+  return `handback:${manualRefundTaskId}`;
+}
