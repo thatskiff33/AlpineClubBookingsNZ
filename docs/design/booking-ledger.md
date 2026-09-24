@@ -214,8 +214,11 @@ not rely on keys alone, because it runs over lines that predate them.
 ## 5. Posting rules: every money event the system handles today
 
 Each row answers the acceptance criterion *which lines are posted, and by
-whom*. "Writer" is the module that owns the transaction today and will post
-the lines inside that same transaction in its posting child (§7, C1–C3).
+whom*. "Writer" is the module that owns the transaction today. Where a child
+found a single point every one of those writers already passes through, the
+lines are posted there instead, from the same rows, inside the same
+transaction — so the column names the ORIGIN of the fact, and each child's
+prose says where it is actually posted. §5.2's preface is the case in point.
 
 ### 5.1 Pricing the stay (CHARGE)
 
@@ -230,6 +233,39 @@ the lines inside that same transaction in its posting child (§7, C1–C3).
 
 ### 5.2 Moving money (SETTLEMENT)
 
+**How C2 (#3581) actually posts these, which refines the "Writer" column
+below.** The capture, receipt, cash and card-refund rows do not post from each
+writer. Every one of those writers already ends in `reconcilePaymentAggregates`
+— the one place the `Payment` mirror is derived from `PaymentTransaction` and
+`PaymentRefund` rows — so a single sync runs there and CONVERGES the ledger
+from the same rows: it posts a line for every captured transaction and
+recorded refund that lacks one, and a reversal for every line whose source no
+longer holds. Insert-only would not have been sound: a mark-paid reversal flips
+its row from `SUCCEEDED` to `FAILED`, and a refund can fail after it was
+recorded. "Captured" and "recorded" are the mirror's own predicates
+(`payment-transaction-status.ts`), so the ledger's capture lines equal
+`Payment.amountCents` whenever anything is captured (with nothing captured the
+column falls back to the latest primary's face amount, which is not money).
+The refund side is honest where the column is not: `refundedAmountCents` only
+ever rises, is seeded without refund rows on legacy payments, and is moved by
+credit and hand-back refunds that have no `PaymentRefund` row — so after a
+refund fails, the ledger reverses it while the column keeps counting it.
+`INV-PAY-050` already names that column as not cash evidence; §6's refund
+identity is therefore one C4 (#3583) must classify, not assert. Three writers
+bypass the chokepoint and call the same sync explicitly: the manual mark-paid
+settle, its reversal, and the Xero payment-received path, which writes its
+Internet Banking receipt row and sets the payment's columns itself — the one
+review of #3604 found missing.
+
+**Refund lines are posted after the provider answers, not before.** The table
+below says "before the provider call"; that is when the *debt* is made durable
+(`INV-ADDPAY-018` — the `PaymentRefund`/recovery row), and it still is. The
+ledger line records money actually returned, so it converges from the row once
+the row says so. Posting it before the provider answered would record a refund
+that might never happen. The credit rows and the hand-back
+are not payment transactions and never pass through it; they post from their
+own writers in #3599.
+
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |
@@ -237,7 +273,7 @@ the lines inside that same transaction in its posting child (§7, C1–C3).
 | Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row | `MEMBER_CREDIT` | the credit-election consumer (`INV-PAY-005`) |
 | Manual mark-paid (`INV-PAY-001`, `INV-PAY-038`) | `CASH_RECORDED` (+), `method = CASH`, `postedByMemberId` = the officer | `PAYMENT_TRANSACTION` | the mark-paid settle |
 | Mark-paid reversal (`INV-PAY-045`) | reversal of the `CASH_RECORDED` line | `PAYMENT_TRANSACTION` | the reversal |
-| Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | the refund writer, when the `PaymentRefund` row is written (before the provider call — `INV-ADDPAY-018`) |
+| Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |
 | Cancellation credited to account (`CANCELLATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT`, linked to the credit row | `MEMBER_CREDIT` | `booking-cancel.ts` |
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | the reduction path |
 | Hand-back completed for an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529) | `BANK_REFUND` (−), `method = INTERNET_BANKING`, `postedByMemberId` = the officer | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
@@ -310,8 +346,9 @@ Three deploys, not three months.
 
 **Release 1 — post and prove (children C1–C4).** The table is added (expand,
 `old_code_compatible = yes`, ledger row in `BLUE_GREEN_MIGRATION_SAFETY.tsv`);
-every writer in §5 posts its lines inside the transaction and claim it already
-holds; an operator script back-posts every existing booking; §6's census
+every money fact in §5 posts its lines inside the transaction and claim that
+records it — from its writer, or from a single point every writer of that kind
+already passes through (§5.2); an operator script back-posts every existing booking; §6's census
 compares the ledger against today's columns **for every booking ever made**.
 Nothing reads a line. The exit condition is the census: zero disagreements and
 zero coverage gaps, not a date. Anything it finds is a poster bug, fixed and
@@ -482,7 +519,8 @@ to bundle.
 | # | Title | Ships | Risk |
 | --- | --- | --- | --- |
 | [#3580](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3580) | `BookingLedgerLine`: expand migration, the write-only Prisma extension, confirmation-time charge posting | a table nothing reads | High (schema) |
-| [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Posting from the settlement writers: capture, receipt, credit-applied, mark-paid, refund, credit-issued | lines nothing reads | High (money writers touched, no behaviour change) |
+| [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
+| [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
 | [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `npm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |

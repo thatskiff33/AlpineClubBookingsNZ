@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   BookingStatus,
   PaymentRecoveryOperationStatus,
@@ -178,6 +178,8 @@ const tx = {
   // confirmation is already posted, then posts through the write door.
   bookingLedgerLine: {
     findFirst: vi.fn().mockResolvedValue(null),
+    // #3581: the settlement sync reads what is already posted before posting.
+    findMany: vi.fn().mockResolvedValue([]),
     createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
   },
   booking: {
@@ -310,6 +312,37 @@ beforeEach(() => {
   primeNoXeroEvidence();
 });
 
+/**
+ * #3581: answer the booking ledger's settlement sync honestly, so the manual
+ * paths are shown to post and reverse cash lines rather than slipping through
+ * on a double that returns the wrong shape (review of #3604). The sync reads
+ * the booking id alone, then the rows it posts from; every other read keeps
+ * the suite's ordinary payment row.
+ */
+function answerSettlementSync(rows: {
+  manuallyMarkedPaidAt: Date | null;
+  manuallyMarkedPaidByMemberId: string | null;
+  transactions: Array<{ id: string; source: string; status: string; amountCents: number }>;
+}) {
+  mocks.paymentFindUnique.mockImplementation(
+    async (args?: { select?: Record<string, unknown> }) => {
+      if (args?.select?.refunds && args?.select?.transactions) {
+        return { bookingId: "booking-1", booking: { lodgeId: "lodge-1" }, refunds: [], ...rows };
+      }
+      if (args?.select && Object.keys(args.select).length === 1 && args.select.bookingId) {
+        return { bookingId: "booking-1" };
+      }
+      return paymentRow();
+    },
+  );
+}
+
+function ledgerRowsPosted(): Array<Record<string, unknown>> {
+  return (tx.bookingLedgerLine.createMany as unknown as Mock).mock.calls.flatMap(
+    (call) => (call[0] as { data: Array<Record<string, unknown>> }).data,
+  );
+}
+
 function settle(overrides: Record<string, unknown> = {}) {
   return markBookingPaymentManuallySettled({
     bookingId: "booking-1",
@@ -383,6 +416,26 @@ describe("#2262 guard 1 — the manual settlement runs the ONE settlement body",
     });
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking-1", db: tx })
+    );
+  });
+
+  it("#3581 — posts the settled cash to the booking ledger as CASH_RECORDED, naming the acting admin", async () => {
+    (tx.bookingLedgerLine.createMany as unknown as Mock).mockClear();
+    answerSettlementSync({
+      manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00Z"),
+      manuallyMarkedPaidByMemberId: ADMIN_ID,
+      transactions: [{ id: "txn-manual", source: "INTERNET_BANKING", status: "SUCCEEDED", amountCents: 10000 }],
+    });
+    await settle();
+    expect(ledgerRowsPosted()).toContainEqual(
+      expect.objectContaining({
+        side: "SETTLEMENT",
+        kind: "CASH_RECORDED",
+        settlementMethod: "CASH",
+        postedByMemberId: ADMIN_ID,
+        amountCents: 10000,
+        postingKey: "capture:txn-manual",
+      }),
     );
   });
 
@@ -784,6 +837,43 @@ describe("#2262 — the reversal (direction unpaid)", () => {
       note: null,
     });
   }
+
+  it("#3581 — posts the booking ledger's reversal of the officer's cash line, copying it", async () => {
+    primeReversal();
+    (tx.bookingLedgerLine.createMany as unknown as Mock).mockClear();
+    (tx.bookingLedgerLine.findMany as unknown as Mock).mockResolvedValueOnce([
+      {
+        id: "L-cash",
+        postingKey: "capture:txn-manual",
+        reversesLineId: null,
+        kind: "CASH_RECORDED",
+        sign: 1,
+        quantity: 1,
+        unitCents: 10000,
+        anchorKind: "PAYMENT_TRANSACTION",
+        anchorId: "txn-manual",
+        settlementMethod: "CASH",
+        narration: "Payment recorded by an officer",
+      },
+    ]);
+    // After the flips: the row is FAILED and the provenance is cleared.
+    answerSettlementSync({
+      manuallyMarkedPaidAt: null,
+      manuallyMarkedPaidByMemberId: null,
+      transactions: [{ id: "txn-manual", source: "INTERNET_BANKING", status: "FAILED", amountCents: 10000 }],
+    });
+    await reverse();
+    expect(ledgerRowsPosted()).toContainEqual(
+      expect.objectContaining({
+        kind: "CASH_RECORDED",
+        settlementMethod: "CASH",
+        sign: -1,
+        amountCents: -10000,
+        reversesLineId: "L-cash",
+        postingKey: "reversal:L-cash",
+      }),
+    );
+  });
 
   it("HIGH #1 — DELETES every pending CANCEL_PAYMENT_INTENT / REFUND_SUPERSEDED_PAYMENT operation inside its own transaction, behind the status fence", async () => {
     primeReversal();

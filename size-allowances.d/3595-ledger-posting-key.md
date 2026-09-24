@@ -10,9 +10,17 @@ gains the call and the comment that says why the fence belongs here — it is
 the only place holding the global `lock(1)` that makes the check race-free.
 
 file: src/lib/payment-reconciliation.ts
-lines: 3031
+lines: 3047
 reason: the per-booking confirmation fence, asked under the settle's own
   lock(1), and the shortfall warning — plus the comment explaining why a key
-  per night was not enough (#3595's review). The file is a known split
+  per night was not enough (#3595's review); and #3581's two explicit ledger
+  calls for the manual settle and its reversal, which bypass the chokepoint. The file is a known split
   candidate; splitting the single settle door inside a ledger fix would make
   both unreviewable.
+
+Re-measured by #3581 (stacked on this pull request), per this directory's
+README: one path takes one allowance while both changes are measured against
+`main` together, so #3581's two explicit settle calls — the manual mark-paid
+settle and its reversal, each with the comment saying why it bypasses the
+chokepoint — are counted here rather than in a second entry. 3031 lines is
+this pull request's own figure; 3047 covers both.

@@ -39,7 +39,7 @@
  * so the pipeline under-flags a genuine refund note and can never mint one.
  * The third is NOT fail-safe in that direction and is the deliberate cost of
  * the 21 Aug 2026 owner decision recorded on
- * `EXCLUDED_CASH_REFUND_STATUSES` — read it before changing the filter:
+ * `isRecordedRefundStatus` (`payment-transaction-status.ts`) — read it before changing the filter:
  *
  * - A payment refunded partly before and partly after the ledger existed
  *   resolves from its (partial) ledger rows and can under-state cash.
@@ -65,25 +65,9 @@
  *   row lands on `failed`.
  */
 import { CreditType, Prisma } from "@prisma/client";
+import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 
-/**
- * PaymentRefund statuses that are NOT cash. Deliberately the same exclusion
- * list as the `refundedAmountCents` mirror this module replaces
- * (`EXCLUDED_LEDGER_REFUND_STATUSES`, payment-transactions.ts), so a refund
- * Stripe has accepted but not yet settled keeps counting as cash exactly as it
- * did before #2902.
- *
- * Owner decision, 21 Aug 2026: count a refund still in progress as cash. An
- * earlier draft of this module counted only `succeeded`, which would have
- * fixed the account-credit defect while introducing the opposite reporting
- * error — a still-settling refund resolving to zero cash, so the note
- * UNDER-states what went back until somebody re-runs the report. Understating
- * cash in an accounting document was judged the more damaging mistake, and a
- * refund Stripe has accepted almost always settles. The rare overstatement, if
- * one later fails, is corrected by the next run.
- */
-export const EXCLUDED_CASH_REFUND_STATUSES = ["failed", "canceled"] as const;
 
 export interface StripeCashRefundEvidence {
   /**
@@ -93,7 +77,7 @@ export interface StripeCashRefundEvidence {
   cashRefundCents: number;
   /**
    * Sum of PaymentRefund rows whose status is not in
-   * `EXCLUDED_CASH_REFUND_STATUSES` (0 when none exist) — i.e. settled cash
+   * `isRecordedRefundStatus` (0 when none exist) — i.e. settled cash
    * plus cash Stripe has accepted and not yet settled.
    */
   countedRefundCents: number;
@@ -137,9 +121,7 @@ export async function resolveStripeCashRefundEvidence(
   const countedRefundCents = grouped
     .filter(
       (row) =>
-        !(EXCLUDED_CASH_REFUND_STATUSES as readonly string[]).includes(
-          row.status
-        )
+        isRecordedRefundStatus(row.status)
     )
     .reduce((sum, row) => sum + Math.max(0, row._sum.amountCents ?? 0), 0);
 

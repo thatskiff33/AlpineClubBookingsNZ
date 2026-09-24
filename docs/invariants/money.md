@@ -485,6 +485,33 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
   transaction and the fence against PostgreSQL itself.
 
+## INV-MONEY-034
+
+- **A booking's settlement lines converge from its payment rows, at the place
+  the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
+  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  that set the payment's columns themselves: the manual mark-paid settle, its
+  reversal, and the Xero payment-received receipt. It posts one line
+  per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
+  when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
+  refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
+  nothing for a $0 capture.
+
+  **A source that stops holding is reversed, never edited.** A mark-paid
+  reversal flips its row to `FAILED` (`INV-PAY-045`) and a refund can fail
+  after it was recorded; the sync then posts a reversal copied from the line,
+  once, keyed by the line's id. It never re-derives a method from the
+  payment's provenance, which a reversal clears.
+
+  **"Captured" and "recorded" are the mirror's own predicates**, in
+  `payment-transaction-status.ts`, so the ledger's captures equal
+  `Payment.amountCents` whenever anything is captured. Its refunds do NOT
+  always equal `refundedAmountCents`: that column only rises, is seeded
+  without rows on legacy payments, and is moved by credit and hand-back
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
+  (#3583) classifies those as known divergences. A line whose source amount
+  later changes is reported, not corrected.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

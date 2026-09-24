@@ -45,3 +45,29 @@ export function confirmationPromotionKey(bookingId: string): string {
 export function reversalKey(reversedLineId: string): string {
   return `reversal:${reversedLineId}`;
 }
+
+/**
+ * A settlement line for one payment transaction — a card capture, a bank
+ * receipt, or cash recorded by an officer (#3581). One transaction is captured
+ * at most once, so its id is the whole identity.
+ */
+export function captureKey(paymentTransactionId: string): string {
+  return `capture:${paymentTransactionId}`;
+}
+
+/** A card refund, one `PaymentRefund` row (#3581). */
+export function refundKey(paymentRefundId: string): string {
+  return `refund:${paymentRefundId}`;
+}
+
+/**
+ * The line a source posts when it holds AGAIN after its previous line was
+ * reversed (review of #3604). A source can flip more than once — a mark-paid
+ * reversed, then the same row paid through Xero — and the base key is already
+ * taken by the first line, so the next one is keyed off the reversal that
+ * retired its predecessor. Deterministic from ledger state, so a replay of the
+ * re-posting finds its own key and posts nothing.
+ */
+export function afterReversalKey(baseKey: string, reversalLineId: string): string {
+  return `${baseKey}:after:${reversalLineId}`;
+}

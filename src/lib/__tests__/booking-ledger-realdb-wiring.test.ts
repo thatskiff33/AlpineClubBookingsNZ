@@ -20,6 +20,23 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     expect(harness).toContain('import "./booking-ledger-posting-key.realdb.test";');
   });
 
+  it("carries #3581's settlement-sync proof into the same harness", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./booking-ledger-settlement-sync.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-settlement-sync.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("matches the mirror's own arithmetic where both read the same rows: captures, and refunds with a refund row");
+    expect(suite).toContain("while the mirror keeps counting it");
+    expect(suite).toContain("posts through a REAL writer");
+    expect(suite).toContain("posts a row paid AGAIN after its mark-paid was reversed");
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = readFileSync(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),
