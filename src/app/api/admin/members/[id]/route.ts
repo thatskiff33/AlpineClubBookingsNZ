@@ -6,7 +6,10 @@ import {
   updateMemberSchema,
 } from "@/lib/admin-member-detail-service";
 import { requireAdmin } from "@/lib/session-guards";
-import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
+import {
+  grantMembershipAdminDietaryAccess,
+  isDietaryFieldEnabled,
+} from "@/lib/member-dietary";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -45,7 +48,11 @@ export async function GET(
   const result = await getAdminMemberDetail({
     id: parsed.data.id,
     currentAdminMemberId: guard.session.user.id,
-    dietaryGrant: await grantMembershipAdminDietaryAccess(guard, "view"),
+    // #2941: the grant re-reads the actor's roles from the database, so it is
+    // only asked for while the club collects the field at all.
+    dietaryGrant: (await isDietaryFieldEnabled())
+      ? await grantMembershipAdminDietaryAccess(guard, "view")
+      : null,
   });
   return NextResponse.json(result.body, result.init);
 }
@@ -93,7 +100,9 @@ export async function PUT(
     currentAdminAccessRoles: guard.session.user.accessRoles,
     request: req,
     data: parsedBody.data,
-    dietaryGrant: await grantMembershipAdminDietaryAccess(guard, "edit"),
+    dietaryGrant: (await isDietaryFieldEnabled())
+      ? await grantMembershipAdminDietaryAccess(guard, "edit")
+      : null,
   });
   return NextResponse.json(result.body, result.init);
 }
