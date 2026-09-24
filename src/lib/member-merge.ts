@@ -62,10 +62,9 @@ import {
   type FieldMergeRow,
 } from "@/lib/member-merge-field-rules";
 import {
-  grantMemberMergeDietaryAccess,
+  attachMergeDietaryRequirements,
   isDietaryFieldEnabled,
-  readMemberDietaryRequirementsByIds,
-  redactDietaryValueForRecord,
+  redactDietaryMergeRow,
 } from "@/lib/member-dietary";
 
 /**
@@ -457,64 +456,6 @@ export type MemberMergePreviewCore = {
   blockers: MergeBlocker[];
   warnings: string[];
 };
-
-// ---------------------------------------------------------------------------
-// Dietary/allergy information (#2941, INV-PRIV-022)
-// ---------------------------------------------------------------------------
-
-/**
- * The Member rows a merge reads come from a client that OMITS
- * `dietaryRequirements` (`src/lib/prisma-global-omit.ts`), so the field merge
- * would see it blank on both sides and the loser's value would die with the
- * loser row. This fetches both values through the one dietary door and attaches
- * them, so the ordinary fill-if-blank rule applies: master wins, and the
- * loser's value survives only when the master has none.
- *
- * `actorIsFullAdmin` is the engine's own DB-verified check; without it nothing
- * is read and both sides stay blank, which can only ever keep the master's
- * value (the merge itself is refused for that actor anyway).
- */
-async function attachMergeDietaryRequirements<T extends { id: string }>(
-  db: MergeDbClient,
-  actor: { actorMemberId: string; actorIsFullAdmin: boolean },
-  master: T,
-  loser: T,
-): Promise<[T & { dietaryRequirements: string | null }, T & { dietaryRequirements: string | null }]> {
-  if (!actor.actorIsFullAdmin) {
-    return [
-      { ...master, dietaryRequirements: null },
-      { ...loser, dietaryRequirements: null },
-    ];
-  }
-  const values = await readMemberDietaryRequirementsByIds(
-    grantMemberMergeDietaryAccess({
-      actorMemberId: actor.actorMemberId,
-      actorIsFullAdmin: true,
-    }),
-    [master.id, loser.id],
-    db,
-  );
-  return [
-    { ...master, dietaryRequirements: values.get(master.id) ?? null },
-    { ...loser, dietaryRequirements: values.get(loser.id) ?? null },
-  ];
-}
-
-/**
- * A field-merge row as a PERSISTED record may hold it: the dietary row keeps
- * its field name and source, and its three values become "recorded / not
- * recorded" (`INV-PRIV-022`). Every other row is returned untouched, because
- * `INV-PRIV-011` deliberately lets an audit row keep names and addresses.
- */
-function redactDietaryMergeRow(row: FieldMergeRow): FieldMergeRow {
-  if (row.field !== "dietaryRequirements") return row;
-  return {
-    ...row,
-    master: redactDietaryValueForRecord(row.master),
-    loser: redactDietaryValueForRecord(row.loser),
-    result: redactDietaryValueForRecord(row.result),
-  };
-}
 
 export type MemberMergePreview = MemberMergePreviewCore & {
   masterId: string;
@@ -1211,9 +1152,7 @@ export async function buildMemberMergePreview(params: {
     core,
   );
 
-  // The token above is built over the real values. What the SCREEN shows of
-  // the dietary row follows the club toggle: while the field is OFF it is
-  // hidden like everywhere else, and only whether a value is recorded shows.
+  // The token covers the real values; the screen hides them while OFF.
   const showDietaryValues = await isDietaryFieldEnabled();
   return {
     ...core,
@@ -1874,8 +1813,7 @@ export async function executeMemberMerge(params: {
     // This derivation is the PREVIEW's — it must stay keyed to the snapshot the
     // token was built from. The derivation that is actually WRITTEN is taken
     // fresh at step 5; see the comment there (#2243).
-    // Blockers are empty here, so the actor passed the DB-verified Full Admin
-    // check inside `evaluateMemberMergeGuards`.
+    // No blockers, so the actor passed the DB-verified Full Admin check.
     const [masterFullForMerge, loserFullForMerge] =
       await attachMergeDietaryRequirements(
         tx,
@@ -2382,8 +2320,7 @@ export async function executeMemberMerge(params: {
           masterId,
           loserId,
           loserSnapshot,
-          // The dietary row records THAT a value was carried, never the value
-          // (INV-PRIV-022); every other row is kept verbatim (INV-PRIV-011).
+          // INV-PRIV-022: the dietary row's values are redacted.
           fieldOutcome: fieldOutcome.diff.map(redactDietaryMergeRow),
           fieldsChanged,
           relationMoves,

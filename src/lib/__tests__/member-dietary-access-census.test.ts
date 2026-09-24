@@ -77,8 +77,6 @@ const DIETARY_REACH: Readonly<Record<string, string>> = {
   "src/lib/member-csv-import.ts": "member CSV import parser",
   "src/app/api/admin/members/import/route.ts":
     "member CSV import writer, ON and membership:edit only",
-  "src/lib/member-merge.ts":
-    "Full Admin merge: attaches both values, redacts the audit row",
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
 };

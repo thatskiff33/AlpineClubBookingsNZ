@@ -133,6 +133,56 @@ export function redactDietaryValueForRecord(value: unknown): string | null {
   return DIETARY_VALUE_REDACTION;
 }
 
+/**
+ * Member merge reads Member rows from a client that OMITS the column, so the
+ * field merge would see it blank on both sides and the loser's value would die
+ * with the loser row. This attaches both values through this door so the
+ * ordinary fill-if-blank rule applies: master wins, and the loser's value
+ * survives only when the master has none. Without the engine's DB-verified
+ * Full Admin check nothing is read, which can only ever keep the master's value.
+ */
+export async function attachMergeDietaryRequirements<T extends { id: string }>(
+  db: Pick<Prisma.TransactionClient, "member">,
+  actor: { actorMemberId: string; actorIsFullAdmin: boolean },
+  master: T,
+  loser: T,
+): Promise<
+  [T & { dietaryRequirements: string | null }, T & { dietaryRequirements: string | null }]
+> {
+  const values = actor.actorIsFullAdmin
+    ? await readMemberDietaryRequirementsByIds(
+        grantMemberMergeDietaryAccess({
+          actorMemberId: actor.actorMemberId,
+          actorIsFullAdmin: true,
+        }),
+        [master.id, loser.id],
+        db,
+      )
+    : new Map<string, string | null>();
+  return [
+    { ...master, dietaryRequirements: values.get(master.id) ?? null },
+    { ...loser, dietaryRequirements: values.get(loser.id) ?? null },
+  ];
+}
+
+/**
+ * A merge diff row as a PERSISTED record (or an OFF screen) may hold it: the
+ * dietary row keeps its field and source, and its three values become
+ * "recorded / not recorded". Every other row is returned untouched, because
+ * `INV-PRIV-011` lets an audit row keep names and addresses.
+ */
+export function redactDietaryMergeRow<
+  R extends { field: string; master: unknown; loser: unknown; result: unknown },
+>(row: R): R {
+  if (row.field !== "dietaryRequirements") return row;
+  return {
+    ...row,
+    master: redactDietaryValueForRecord(row.master),
+    loser: redactDietaryValueForRecord(row.loser),
+    result: redactDietaryValueForRecord(row.result),
+  };
+}
+
 function isGrant(grant: unknown): grant is DietaryAccessGrant {
   return (
     typeof grant === "object" &&
