@@ -120,6 +120,12 @@ const tx = {
   // #2286: the capacity engines read bed-holding hut-leader assignments
   // (custodian occupancy). None in these cases.
   hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+  // #3595: the settle asks the ledger once per booking whether its
+  // confirmation is already posted, then posts through the write door.
+  bookingLedgerLine: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),

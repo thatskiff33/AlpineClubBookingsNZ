@@ -82,7 +82,22 @@ function sourceFiles(): string[] {
 
 type Hit = { file: string; spelling: string };
 
+/**
+ * Walked ONCE per file. Each case used to re-read the whole of `src/` and
+ * `scripts/`, which put the suite past vitest's 5 s default under parallel
+ * load (measured: 4.1 s alone) — the load-sensitive class `docs/TESTING.md`
+ * names, and one this census had no reason to be in. The tree does not change
+ * between cases, so neither does the answer.
+ */
+let cachedSites: Hit[] | null = null;
+
 function writeSites(): Hit[] {
+  if (cachedSites) return cachedSites;
+  cachedSites = scanWriteSites();
+  return cachedSites;
+}
+
+function scanWriteSites(): Hit[] {
   const hits: Hit[] = [];
   for (const file of sourceFiles()) {
     const code = stripCommentsAndStrings(readFileSync(file, "utf8"));

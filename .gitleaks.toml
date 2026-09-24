@@ -96,6 +96,10 @@ description = "A fabricated idempotency key from ANOTHER subsystem (the late-can
 regexes = ['''^late_cancel_refund_bk_1_pi_x$''']
 
 [[allowlists]]
+description = "A readable fixture idempotency key from the booking ledger's real-PostgreSQL proof (#3595), in a commit this pull request cannot rewrite: `generic-api-key` matched it because the field is called `postingKey`. Not a credential — a test's own label for a line it posted and deleted. The file now uses plain words below the rule's length floor; this literal is forgiven only because history keeps it. Same class as `pending_charge_b1` above."
+regexes = ['''^k-3595-contrast$''']
+
+[[allowlists]]
 description = "Prose, not credentials. `generic-api-key` matches the entropy of a sentence listing what the diagnostics tool returns — an auth outcome, then row, byte and timing counts — written as a slash-separated list. Same sentence in `diagnostics/tools/types.ts`, in the ADR that introduced it, and in the knowledge-bundle doc."
 regexes = ['''^row/byte/timing$''', '''^row/count/byte/timing$''']
 

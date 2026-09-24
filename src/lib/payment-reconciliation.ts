@@ -73,6 +73,7 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
@@ -1569,7 +1570,18 @@ async function settleBookingPaymentInTransaction(
     //     read moves.
     //   * WRITING them is a statement. If Postgres refuses it, this settle is
     //     already lost and pretending otherwise would only hide why.
-    const ledgerRows = (() => {
+    //
+    // AND IT HAPPENS ONCE PER BOOKING (#3595). A booking can pass the PAID
+    // claim above twice — a mark-paid, its reversal, then a card payment — and
+    // its nights can change in between (a date shift recreates them; a guest
+    // removed and re-added gets a new id), so per-night keys alone would post
+    // the whole charge again under new keys. A booking is confirmed once; what
+    // changes afterwards is a modification (#3582). The question is asked
+    // under this transaction's global `lock(1)`, which serialises every settle,
+    // so it cannot race; and it counts un-keyed lines too, so lines #3580
+    // posted before keys existed fence this settle as well.
+    const alreadyConfirmedOnLedger = await bookingHasConfirmationLines(tx, booking.id);
+    const ledgerRows = alreadyConfirmedOnLedger ? [] : (() => {
       try {
         const plan = planConfirmationChargeLines({
           id: booking.id,
@@ -1597,7 +1609,17 @@ async function settleBookingPaymentInTransaction(
         return [];
       }
     })();
-    await writeBookingLedgerRows(tx, ledgerRows);
+    const ledgerInserted = await writeBookingLedgerRows(tx, ledgerRows);
+    // Under the fence every row is new, so a shortfall means a key was already
+    // there — not an error (the write skipped it rather than aborting), but not
+    // something that should happen either, so it is said out loud rather than
+    // discarded (review of #3597).
+    if (ledgerInserted !== ledgerRows.length) {
+      logger.warn(
+        { bookingId: booking.id, planned: ledgerRows.length, inserted: ledgerInserted },
+        "Booking ledger: some confirmation lines were already posted under their keys (#3595)"
+      );
+    }
 
     // #2576 §9. THE SINGLE SETTLE DOOR IS A CONFIRMING PATH, and §9 names "payment
     // completion" among the routes that must run the shared hosting evaluator

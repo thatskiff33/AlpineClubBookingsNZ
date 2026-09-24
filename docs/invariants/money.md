@@ -459,6 +459,32 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   reads move (#3584). A strand with an unpriced night posts nothing, because
   `INV-MOD-028` says a blank is not evidence of an amount.
 
+## INV-MONEY-033
+
+- **A booking-ledger posting is idempotent, and a booking's confirmation posts
+  once** (#3595). Two rules, because one was not enough.
+
+  **Each posting carries a key** derived from the event it records, built only
+  in `booking-ledger-posting-keys.ts`, and unique. The write door inserts with
+  `ON CONFLICT DO NOTHING`, so the same event posted twice is skipped: not a
+  duplicate line, and not a refused statement that would abort the caller's
+  transaction (`INV-MONEY-032`). A reversal is keyed by the reversed line's id,
+  so a second reversal of one line is a skipped replay, never a different
+  posting the unique `reversesLineId` could silently absorb. The same key, or
+  the same reversal target, twice in one batch is refused before anything is
+  sent.
+
+  **A key makes one event idempotent, not a booking's confirmation.** A
+  booking can pass the settle's PAID claim twice — mark-paid, its reversal
+  (`INV-PAY-045`), then a card payment — and its nights can change in between,
+  so their keys change too. The settle therefore fences per booking
+  (`bookingHasConfirmationLines`, under its own `lock(1)`), counting un-keyed
+  lines as well, and posts nothing if the booking is already confirmed on the
+  ledger. What changes after confirmation is a modification (#3582).
+
+  `booking-ledger-posting-key.realdb.test.ts` proves the skip, the surviving
+  transaction and the fence against PostgreSQL itself.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

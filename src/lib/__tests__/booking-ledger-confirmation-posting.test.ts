@@ -173,6 +173,36 @@ describe("planConfirmationChargeLines", () => {
     expect(plan.reconciles).toBe(true);
   });
 
+  it("keys every line deterministically, so a second settle of the same booking posts nothing new (#3595)", () => {
+    // The double-post path: mark-paid, reverse it (status back to payable),
+    // then a card payment — the PAID claim succeeds twice. Same booking, same
+    // keys, and the write door's ON CONFLICT DO NOTHING makes the second a no-op.
+    const first = planConfirmationChargeLines(booking({ promoAdjustmentCents: -2000 }));
+    const second = planConfirmationChargeLines(booking({ promoAdjustmentCents: -2000 }));
+    const keys = first.postings.map((posting) => posting.postingKey);
+    expect(second.postings.map((posting) => posting.postingKey)).toEqual(keys);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual([
+      "confirmation:booking-1:night:guest-1:2026-08-01",
+      "confirmation:booking-1:night:guest-1:2026-08-02",
+      "confirmation:booking-1:promotion",
+    ]);
+  });
+
+  it("gives two guests on the same night different keys", () => {
+    const plan = planConfirmationChargeLines(
+      booking({
+        totalPriceCents: 13_000,
+        guests: [
+          { id: "guest-1", firstName: "A", lastName: "One", ageTier: "ADULT", rateMembershipTypeId: null, nights: [{ stayDate: D("01"), priceCents: 6500 }] },
+          { id: "guest-2", firstName: "B", lastName: "Two", ageTier: "ADULT", rateMembershipTypeId: null, nights: [{ stayDate: D("01"), priceCents: 6500 }] },
+        ],
+      }),
+    );
+    const keys = plan.postings.map((posting) => posting.postingKey);
+    expect(new Set(keys).size).toBe(2);
+  });
+
   it("posts nights oldest first whatever order the rows arrive in", () => {
     const plan = planConfirmationChargeLines(
       booking({
