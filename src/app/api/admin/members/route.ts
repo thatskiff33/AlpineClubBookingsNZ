@@ -6,6 +6,7 @@ import {
   listAdminMembers,
 } from "@/lib/admin-members-service";
 import { requireAdmin } from "@/lib/session-guards";
+import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -93,6 +94,7 @@ export async function POST(req: NextRequest) {
 
   const result = await createAdminMember(parsed.data, {
     accessRoles: guard.session.user.accessRoles,
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "edit"),
   });
   return NextResponse.json(result.body, result.init);
 }

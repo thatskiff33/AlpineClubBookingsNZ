@@ -6,6 +6,7 @@ import {
   updateMemberSchema,
 } from "@/lib/admin-member-detail-service";
 import { requireAdmin } from "@/lib/session-guards";
+import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -44,6 +45,7 @@ export async function GET(
   const result = await getAdminMemberDetail({
     id: parsed.data.id,
     currentAdminMemberId: guard.session.user.id,
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "view"),
   });
   return NextResponse.json(result.body, result.init);
 }
@@ -91,6 +93,7 @@ export async function PUT(
     currentAdminAccessRoles: guard.session.user.accessRoles,
     request: req,
     data: parsedBody.data,
+    dietaryGrant: grantMembershipAdminDietaryAccess(guard.session.user, "edit"),
   });
   return NextResponse.json(result.body, result.init);
 }

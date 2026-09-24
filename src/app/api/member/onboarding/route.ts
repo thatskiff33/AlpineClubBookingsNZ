@@ -16,6 +16,10 @@ import { buildMemberFacingParentLinks } from "@/lib/member-parent-links";
 import { getMissingMemberProfileFieldDetails } from "@/lib/member-profile-completeness";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  grantSelfDietaryAccess,
+  loadDietaryRequirementsForDisplay,
+} from "@/lib/member-dietary";
 
 function serializeStatus(member: MemberOnboardingProfile) {
   const status = getMemberOnboardingStatus(member);
@@ -172,6 +176,14 @@ export async function GET() {
   const currentStatus = serializeStatus(currentMember);
   const shouldShow = shouldShowMemberOnboarding(currentMember);
   const memberFieldsFlags = await loadMemberFieldsFlags();
+  // #2941 (INV-PRIV-022): the viewer's OWN dietary value only, through the one
+  // dietary door, and only while the field is ON. Family members serialised
+  // below never carry it — a relationship is not a grant.
+  const dietary = await loadDietaryRequirementsForDisplay(
+    grantSelfDietaryAccess(session.user.id),
+    session.user.id,
+    { enabled: memberFieldsFlags.showDietaryRequirements },
+  );
 
   return NextResponse.json({
     shouldShow,
@@ -183,9 +195,11 @@ export async function GET() {
       role: currentMember.role,
       ageTier: currentMember.ageTier,
       showOccupation: memberFieldsFlags.showOccupation,
+      showDietaryRequirements: dietary.enabled,
       profile: {
         ...serializeMemberProfile(currentMember),
         occupation: currentMember.occupation ?? "",
+        ...(dietary.enabled ? { dietaryRequirements: dietary.value ?? "" } : {}),
       },
       status: currentStatus,
       needsOwnDetailsConfirmation:

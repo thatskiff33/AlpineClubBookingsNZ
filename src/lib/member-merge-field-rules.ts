@@ -25,6 +25,10 @@ const FILL_IF_BLANK_FIELDS = [
   "gender",
   "dateOfBirth",
   "occupation",
+  // #2941: dietary/allergy information. The engine attaches both values
+  // through the one dietary door before calling this (the Member rows it reads
+  // omit the column), and the MEMBER_MERGED audit redacts the row's values.
+  "dietaryRequirements",
   "lifeMemberDate",
   "comments",
   "familyGroupId",

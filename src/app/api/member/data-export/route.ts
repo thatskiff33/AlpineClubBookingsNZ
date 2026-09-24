@@ -15,6 +15,10 @@ import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
 import { seasonSelectLabel } from "@/lib/season-label";
 import { readDeclaredMemberText } from "@/lib/audit-member-disclosure";
+import {
+  grantSelfDataExportDietaryAccess,
+  readMemberDietaryRequirements,
+} from "@/lib/member-dietary";
 
 export async function GET() {
   const session = await auth();
@@ -77,6 +81,15 @@ export async function GET() {
     if (!member) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
+
+    // #2941 (INV-PRIV-022): the member's OWN stored dietary/allergy value, read
+    // through the one dietary door and included EVEN WHILE THE CLUB HAS THE
+    // FIELD OFF (owner decision, 20 Sep 2026): this route promises everything
+    // held about the subject, and telling them is self disclosure, not egress.
+    const dietaryRequirements = await readMemberDietaryRequirements(
+      grantSelfDataExportDietaryAccess(session.user.id),
+      session.user.id,
+    );
 
     // Bookings with guests, payment, and promo redemption
     const bookings = await prisma.booking.findMany({
@@ -234,6 +247,7 @@ export async function GET() {
           ? formatDateOnly(member.joinedDate)
           : null,
         memberSince: member.createdAt.toISOString(),
+        dietaryRequirements,
         streetAddress: {
           addressLine1: member.streetAddressLine1 ?? null,
           addressLine2: member.streetAddressLine2 ?? null,

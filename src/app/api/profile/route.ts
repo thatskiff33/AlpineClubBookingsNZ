@@ -38,6 +38,13 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
+import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
+import {
+  buildDietaryRequirementsPatch,
+  dietaryRequirementsChanged,
+  grantSelfDietaryAccess,
+  readMemberDietaryRequirements,
+} from "@/lib/member-dietary";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -68,6 +75,8 @@ const profileSchema = z.object({
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  // #2941: any age tier, only while the club has the field ON; blank clears.
+  dietaryRequirements: dietaryRequirementsInputSchema,
   // #126 / #37: member opt-in to show their phone on the PUBLIC lobby display
   // (the serialiser also requires lodge config on + adult). The kiosk staff
   // check-in view is exempt from this toggle.
@@ -320,6 +329,24 @@ export async function PUT(req: NextRequest) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
+  // Dietary/allergy information (#2941, INV-PRIV-022): any age tier, written
+  // only while the club has the field ON and only when the form sent it. OFF
+  // produces no patch, so the stored value survives untouched. The previous
+  // value is read through the one dietary door purely to decide whether the
+  // audit row names the field as changed; the value itself is never recorded.
+  const dietaryPatch = buildDietaryRequirementsPatch({
+    enabled: flags.showDietaryRequirements,
+    value: data.dietaryRequirements,
+  });
+  const dietaryBefore =
+    "dietaryRequirements" in dietaryPatch
+      ? await readMemberDietaryRequirements(
+          grantSelfDietaryAccess(session.user.id),
+          session.user.id,
+        )
+      : null;
+  Object.assign(updateData, dietaryPatch);
+
   // #126 / #37: the phone-display opt-in is a member's own privacy choice, so
   // accept it whenever supplied. It is only meaningful for adults (the
   // serialiser never releases a non-adult phone) but is harmless to store.
@@ -378,6 +405,9 @@ export async function PUT(req: NextRequest) {
       updateData,
       PROFILE_AUDIT_FIELDS,
     );
+    if (dietaryRequirementsChanged(dietaryBefore, dietaryPatch)) {
+      changedFields.push("dietaryRequirements");
+    }
     // #2821: an INTERACTIVE transaction rather than the batch array this used to
     // be. An age tier decides whether this member may be anybody's contact of
     // record (`isUsableEmailSource` requires ADULT), and a member correcting
@@ -426,6 +456,7 @@ export async function PUT(req: NextRequest) {
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               occupation: changedFields.includes("occupation"),
+              dietaryRequirements: changedFields.includes("dietaryRequirements"),
               lodgeScreenPhoneOptIn: changedFields.includes(
                 "lodgeScreenPhoneOptIn",
               ),
