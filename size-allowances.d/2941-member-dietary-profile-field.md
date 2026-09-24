@@ -16,7 +16,7 @@ lines: 545
 reason: the dietary column must be decided inside the same column list as the other optional fields so header and rows stay aligned; the value comes from the dietary module.
 
 file: src/app/api/admin/members/import/route.ts
-lines: 802
+lines: 813
 reason: the dietary value is validated, gated and written inside the existing all-or-nothing row pipeline; splitting one field out would fork that pipeline.
 
 file: src/app/api/member/data-export/route.ts
@@ -44,7 +44,7 @@ lines: 810
 reason: the archive client must carry the same omit as every application client so the census holds with no exemption; five lines at the constructor.
 
 file: src/lib/audit.ts
-lines: 958
+lines: 951
 reason: the audit sanitizer is the one place metadata is sanitised; the dietary-key backstop and its INV-PRIV-011 carve-out note must sit beside the credential rules.
 
 file: src/lib/config-transfer/categories/club-settings.ts
@@ -52,13 +52,21 @@ lines: 1168
 reason: the toggle joins the existing member-fields singleton spec, whose fields and constraints must stay in one declaration.
 
 file: src/lib/member-csv-import.ts
-lines: 1111
+lines: 1122
 reason: the dietary column joins the field definitions, mapping and per-row validation tables, which are single declarations the whole parser iterates.
 
 file: src/lib/member-merge.ts
-lines: 3122
+lines: 3120
 reason: the engine must attach both dietary values at each of its three derivation points and redact the audit row; the helpers were moved into src/lib/member-dietary.ts, leaving only the calls.
 
 file: src/lib/redact-sensitive-json.ts
-lines: 897
+lines: 898
 reason: the two dietary/allergy key fragments belong in the one redactor key list; a second list is what INV-PRIV-011 forbids.
+
+file: src/app/(admin)/admin/members/_components/member-import-dialog.tsx
+lines: 876
+reason: the preview must know whether the club takes the dietary column, so the dialog passes the member-fields flag it already fetches; five lines at the one preview call.
+
+file: src/app/api/admin/deletion-requests/[id]/route.ts
+lines: 1287
+reason: account erasure must null dietary/allergy information in the same anonymising update as the rest of the person; one import and one spread of the dietary module's erasure patch.

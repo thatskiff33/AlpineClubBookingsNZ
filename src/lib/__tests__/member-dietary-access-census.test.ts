@@ -50,7 +50,6 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const INVARIANT_ID = "INV-PRIV-022";
 const REPO_ROOT = path.resolve(__dirname, "../../..");
-const SRC_ROOT = path.join(REPO_ROOT, "src");
 
 const CANONICAL_MODULE = "src/lib/member-dietary.ts";
 const OMIT_CONSTANT_MODULE = "src/lib/prisma-global-omit.ts";
