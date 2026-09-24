@@ -36,6 +36,7 @@ import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { formatCents } from "@/lib/utils";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -908,6 +909,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               sourceBookingId: settlementPayment.bookingId,
             },
           });
+          await syncBookingLedgerCredits({ bookingId: settlementPayment.bookingId, store: tx });
           // Real cash arrived, so the hold-expiry release's still-pending
           // invoice-clearing refund credit note (which would post a fictional
           // cash refund) is obsolete — retire it in the same transaction. An
@@ -1134,6 +1136,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 sourceBookingId: fresh.bookingId,
               },
             });
+            await syncBookingLedgerCredits({ bookingId: fresh.bookingId, store: tx });
           }
 
           // Enqueue the offsetting Xero account-credit note inside this same

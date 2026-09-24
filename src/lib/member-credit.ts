@@ -7,6 +7,7 @@ import {
   PaymentSource,
   Prisma,
 } from "@prisma/client";
+import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
@@ -141,6 +142,7 @@ export async function createCancellationCredit(
       xeroCreditNoteId: xeroCreditNoteId ?? null,
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   // Durable CREDITED settlement fact for the cancellation narrative (issue
   // #740). Written on the base client so it is not tied to the caller's
@@ -269,6 +271,7 @@ export async function createBookingModificationCredit(
     // Replay: the allocation happened atomically with the original credit.
     return;
   }
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   if (paymentId) {
     await applyLocalRefundAllocation({
@@ -439,6 +442,7 @@ export async function clampAppliedCreditToBookingPrice(
       appliedToBookingId: bookingId,
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: tx });
 
   if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
     await repairLegacyAppliedCreditNoteAllocationsForBooking(
@@ -501,6 +505,7 @@ export async function applyCreditToBooking(
       appliedToBookingId: bookingId,
     },
   });
+  await syncBookingLedgerCredits({ bookingId, store: tx });
 }
 
 /**
@@ -592,6 +597,7 @@ export async function restoreCreditFromBooking(
     ],
     skipDuplicates: true,
   });
+  await syncBookingLedgerCredits({ bookingId, store: db });
 
   // count === 0 => a restore row for this booking already existed; nothing was
   // written and no credit was restored on THIS call.

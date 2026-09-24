@@ -12,6 +12,7 @@
  */
 import type { Prisma } from "@prisma/client";
 
+import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -72,4 +73,20 @@ export async function findPostedSettlementLines(
   // unrepresentable (`BookingLedgerLine_sign_is_a_direction`), so this narrows
   // the type to what the table already guarantees rather than casting past it.
   return rows.map((row) => ({ ...row, sign: row.sign === -1 ? -1 : 1 }));
+}
+
+/**
+ * The account-credit lines already posted for one booking (#3599): the key and
+ * the figure, which is all an insert-only planner needs to know what is there.
+ * Read by kind rather than anchor, because a restore is anchored on the
+ * CANCELLATION and every other credit line on its `MemberCredit` row.
+ */
+export async function findPostedCreditLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedCreditLine[]> {
+  return store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
+    select: { postingKey: true, amountCents: true },
+  });
 }
