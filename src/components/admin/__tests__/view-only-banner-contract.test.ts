@@ -332,8 +332,11 @@ const FIGURES = {
    * now that any admin may view it and only a Full Admin may change it. Cancel
    * is a plain Button, as on the Retention section, and is only reachable once
    * Change has opened the editor. MEASURED by re-running this census.
+   *
+   * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
+   * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
    */
-  callSites: 364,
+  callSites: 365,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -356,8 +359,10 @@ const FIGURES = {
    * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
    *
    * 308 -> 310 (#3596): so do the club currency and locale page's two.
+   *
+   * 310 -> 311 (#2941): so does Member Fields' new Edit.
    */
-  optOuts: 310,
+  optOuts: 311,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -408,8 +413,11 @@ const FIGURES = {
    * meetings pair above, both also pass `ADMIN_FULL_ADMIN_ONLY_ACTION_REASON`,
    * and for the same reason: the banner already names Full Admin, and a future
    * render outside this file would still state the narrower rule.
+   *
+   * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
+   * own banner, beside the Save that was already static.
    */
-  staticOptOuts: 276,
+  staticOptOuts: 277,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

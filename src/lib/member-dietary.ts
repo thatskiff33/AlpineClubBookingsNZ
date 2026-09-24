@@ -147,7 +147,7 @@ export async function attachMergeDietaryRequirements<T extends { id: string }>(
   master: T,
   loser: T,
 ): Promise<
-  [T & { dietaryRequirements: string | null }, T & { dietaryRequirements: string | null }]
+  [T & { dietaryRequirements?: string }, T & { dietaryRequirements?: string }]
 > {
   const values = actor.actorIsFullAdmin
     ? await readMemberDietaryRequirementsByIds(
@@ -159,10 +159,18 @@ export async function attachMergeDietaryRequirements<T extends { id: string }>(
         db,
       )
     : new Map<string, string | null>();
-  return [
-    { ...master, dietaryRequirements: values.get(master.id) ?? null },
-    { ...loser, dietaryRequirements: values.get(loser.id) ?? null },
-  ];
+  // Only a STORED value is attached. A member with none gains no key, which the
+  // field merge reads as blank exactly as it reads null, and which leaves the
+  // diff row identical to the one a pre-#2941 row produced. Both derivations of
+  // one merge go through here, so the preview token and the execute-time
+  // re-derivation still agree.
+  const attach = <R extends { id: string }>(row: R) => {
+    const value = values.get(row.id);
+    return (typeof value === "string"
+      ? { ...row, dietaryRequirements: value }
+      : { ...row }) as R & { dietaryRequirements?: string };
+  };
+  return [attach(master), attach(loser)];
 }
 
 /**

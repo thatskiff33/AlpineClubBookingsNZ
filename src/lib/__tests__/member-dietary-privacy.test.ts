@@ -38,6 +38,7 @@ import {
   normalizeDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import {
+  attachMergeDietaryRequirements,
   buildDietaryRequirementsPatch,
   dietaryRequirementsChanged,
   grantMembershipAdminDietaryAccess,
@@ -48,6 +49,7 @@ import {
   loadDietaryRequirementsForDisplay,
   readMemberDietaryRequirements,
   readMemberDietaryRequirementsByIds,
+  redactDietaryMergeRow,
   redactDietaryValueForRecord,
 } from "@/lib/member-dietary";
 import {
@@ -246,6 +248,58 @@ describe("member merge keeps the loser's value only when the master has none", (
     expect(diff.find((row) => row.field === "dietaryRequirements")?.result).toBe(
       "Vegetarian",
     );
+  });
+
+  it("the engine attaches the loser's stored value through the door, so it survives", async () => {
+    const db = {
+      member: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "master", dietaryRequirements: null },
+          { id: "loser", dietaryRequirements: VALUE },
+        ]),
+      },
+    } as never;
+    const [masterRow, loserRow] = await attachMergeDietaryRequirements(
+      db,
+      { actorMemberId: "a", actorIsFullAdmin: true },
+      { ...base, id: "master" },
+      { ...base, id: "loser" },
+    );
+    expect(
+      mergeMemberFields(masterRow, loserRow).patch.dietaryRequirements,
+    ).toBe(VALUE);
+  });
+
+  it("reads nothing for an actor who is not a Full Admin", async () => {
+    const findMany = vi.fn();
+    const [masterRow, loserRow] = await attachMergeDietaryRequirements(
+      { member: { findMany } } as never,
+      { actorMemberId: "a", actorIsFullAdmin: false },
+      { ...base, id: "master" },
+      { ...base, id: "loser" },
+    );
+    expect(findMany).not.toHaveBeenCalled();
+    expect("dietaryRequirements" in masterRow).toBe(false);
+    expect("dietaryRequirements" in loserRow).toBe(false);
+  });
+
+  it("the merge audit row keeps the field and source but not the values", () => {
+    const row = redactDietaryMergeRow({
+      field: "dietaryRequirements",
+      master: null,
+      loser: VALUE,
+      result: VALUE,
+      source: "loser",
+    });
+    expect(row).toEqual({
+      field: "dietaryRequirements",
+      master: null,
+      loser: "[REDACTED]",
+      result: "[REDACTED]",
+      source: "loser",
+    });
+    const other = { field: "occupation", master: "A", loser: "B", result: "A" };
+    expect(redactDietaryMergeRow(other)).toBe(other);
   });
 
   it("a persisted record says only whether a value is recorded", () => {
