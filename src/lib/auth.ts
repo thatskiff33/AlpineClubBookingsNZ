@@ -673,6 +673,13 @@ export const authConfig = {
           //  - `canLogin === false`: refused while login is off, whatever the
           //    revocation time says. Kept as belt and braces; it needs no
           //    column and no clock.
+          //  - once a token has been invalidated it stays invalidated. This
+          //    covers the narrow window the stored time cannot: a sign-in that
+          //    races the switch-off statement, or app/database clock skew, can
+          //    mint a session whose issue time is not before the stamp. If that
+          //    session is refreshed while login is off, it carries the flag from
+          //    then on and does not come back when login is re-enabled. Signing
+          //    in mints a fresh token with the flag cleared.
           const loginDisabledSession = member.canLogin === false;
           const revokedSession =
             member.sessionsRevokedAt instanceof Date &&
@@ -684,6 +691,7 @@ export const authConfig = {
             );
           }
           token.sessionInvalidated =
+            token.sessionInvalidated === true ||
             deletedAccountSession ||
             loginDisabledSession ||
             revokedSession ||

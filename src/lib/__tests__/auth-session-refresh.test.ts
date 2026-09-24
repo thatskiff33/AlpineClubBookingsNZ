@@ -31,7 +31,7 @@ vi.mock("@/lib/prisma", async () => {
   return {
     prisma: {
       member: {
-        findUnique: honourSelect(mockFindUnique),
+        findUnique: honourSelect(mockFindUnique, "Member"),
         findFirst: mockFindFirst,
         update: mockUpdate,
       },
@@ -734,6 +734,23 @@ describe("auth session refresh", () => {
       expect(token?.accessRoles).toEqual(["ADMIN"]);
     });
 
+    // The in-token term: a session whose issue time is NOT before the stored
+    // revocation time (a sign-in racing the switch-off, or clock skew) is still
+    // refused while login is off, and must stay refused once it is back on.
+    it("keeps a token invalidated while login was off ended after login is back on", async () => {
+      const switchedOffAt = new Date(Date.now() - 60_000);
+      // Issued AFTER the stamp: the stored time alone would not refuse it.
+      const issuedAt = switchedOffAt.getTime() + 1_000;
+
+      mockFindUnique.mockResolvedValue(memberRow(false, switchedOffAt));
+      const whileOff = await refresh({ sessionIssuedAt: issuedAt });
+      expect(whileOff?.sessionInvalidated).toBe(true);
+
+      mockFindUnique.mockResolvedValue(memberRow(true, switchedOffAt));
+      const later = await authConfig.callbacks.jwt?.({ token: whileOff } as never);
+      expect(later?.sessionInvalidated).toBe(true);
+    });
+
     it("gives a fresh sign-in a live session once login is enabled again", async () => {
       // The member was switched off a minute ago and back on since.
       mockFindUnique.mockResolvedValue(
@@ -741,7 +758,8 @@ describe("auth session refresh", () => {
       );
 
       const token = await authConfig.callbacks.jwt?.({
-        token: {},
+        // A stale flag on the incoming token is cleared by sign-in.
+        token: { sessionInvalidated: true },
         user: {
           id: "admin-1",
           role: "ADMIN",
