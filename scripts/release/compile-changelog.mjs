@@ -140,13 +140,17 @@ export function readFragments(dir) {
     )
     .map((entry) => entry.name)
     .sort(compareFragmentNames)
-    .map((name) => ({
-      name,
-      // Fragments are pinned to LF by .gitattributes, but a file created by a
-      // Windows editor before it is committed can still arrive as CRLF; the
-      // compiled CHANGELOG.md must stay LF-only.
-      body: fs.readFileSync(path.join(dir, name), "utf8").replace(/\r\n/g, "\n"),
-    }));
+    .map((name) => {
+      const bytes = fs.readFileSync(path.join(dir, name));
+      return {
+        name,
+        bytes,
+        // Fragments are pinned to LF by .gitattributes, but a file created by a
+        // Windows editor before it is committed can still arrive as CRLF; the
+        // compiled CHANGELOG.md must stay LF-only.
+        body: bytes.toString("utf8").replace(/\r\n/g, "\n"),
+      };
+    });
 }
 
 /**
@@ -386,6 +390,7 @@ export function compileChangelog({
   dryRun = false,
   log = console.log,
   removeFile = fs.rmSync,
+  beforeApplySnapshot = () => {},
 } = {}) {
   if (!VERSION_PATTERN.test(String(version ?? ""))) {
     throw new Error(`Version must look like 0.14.0, got: ${version ?? "(missing)"}`);
@@ -457,15 +462,34 @@ export function compileChangelog({
   // Snapshot every planned deletion before the first write. An ordinary I/O
   // failure must not leave a new version heading with half its source files
   // still present, which would make a safe retry impossible.
+  beforeApplySnapshot(); // deterministic race hook in fixture tests; no-op in the CLI
   const removalPaths = [
     ...names.map((name) => path.join(fragmentsDir, name)),
     ...retiredAllowances.map((relative) => path.join(repoRoot, relative)),
   ];
+  const fragmentBytes = new Map(fragments.map(({ name, bytes }) => [path.join(fragmentsDir, name), bytes]));
   const originals = removalPaths.map((file) => {
     const stat = fs.lstatSync(file);
     if (!stat.isFile()) throw new Error(`Release fragment must be a regular file: ${file}`);
-    return { file, bytes: fs.readFileSync(file), mode: stat.mode };
+    const bytes = fs.readFileSync(file);
+    const composedFrom = fragmentBytes.get(file);
+    if (composedFrom && !bytes.equals(composedFrom)) {
+      throw new Error(`Changelog fragment changed after it was read; preserve and rerun: ${file}`);
+    }
+    return { file, bytes, mode: stat.mode };
   });
+  if (retiredAllowances.length > 0) {
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", "HEAD", "--", ...retiredAllowances], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Merged allowance changed during release preflight; preserve it and rerun.`);
+    }
+  }
+  if (!fs.readFileSync(changelogPath).equals(originalChangelog)) {
+    throw new Error(`CHANGELOG.md changed after it was read; preserve and rerun: ${changelogPath}`);
+  }
 
   try {
     fs.writeFileSync(changelogPath, composed.changelog);

@@ -11,10 +11,10 @@ export function isReservedAllowanceName(name) {
 export function isSafeAllowanceName(name) {
   return (
     typeof name === "string" &&
-    /^[\p{L}\p{N}]/u.test(name) &&
     name.toLowerCase().endsWith(".md") &&
     !WINDOWS_DEVICE_NAME.test(name) &&
     !/[<>:"/\\|?*]/.test(name) &&
+    !/\p{Cf}/u.test(name) &&
     !/[. ]$/.test(name) &&
     [...name].every((character) => {
       const code = character.charCodeAt(0);

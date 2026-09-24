@@ -492,6 +492,57 @@ describe("compile-changelog", () => {
       .toBe("- **Release entry (#2452).**\n");
   });
 
+  it("refuses a changelog fragment edited after composition and before the apply snapshot", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- original release entry\n" },
+      allowances: { "2991-old.md": "original allowance\n" },
+    });
+    const before = read(root);
+    const fragment = path.join(root, "changelog.d", "2452-release.md");
+
+    expect(() => compileChangelog({
+      repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog(),
+      beforeApplySnapshot() { fs.writeFileSync(fragment, "- concurrent release entry\n"); },
+    })).toThrow(/Changelog fragment changed after it was read.*2452-release\.md/);
+    expect(read(root)).toBe(before);
+    expect(fs.readFileSync(fragment, "utf8")).toBe("- concurrent release entry\n");
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+  });
+
+  it("refuses an allowance edited after the first preflight and before the apply snapshot", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- original release entry\n" },
+      allowances: { "2991-old.md": "original allowance\n" },
+    });
+    const before = read(root);
+    const allowance = path.join(root, "size-allowances.d", "2991-old.md");
+
+    expect(() => compileChangelog({
+      repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog(),
+      beforeApplySnapshot() { fs.writeFileSync(allowance, "concurrent allowance edit\n"); },
+    })).toThrow(/Merged allowance changed during release preflight/);
+    expect(read(root)).toBe(before);
+    expect(fs.readFileSync(allowance, "utf8")).toBe("concurrent allowance edit\n");
+    expect(fragmentFiles(root)).toEqual(["2452-release.md"]);
+  });
+
+  it("refuses a CHANGELOG edit after composition and before the first write", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- original release entry\n" },
+      allowances: { "2991-old.md": "original allowance\n" },
+    });
+    const changelog = path.join(root, "CHANGELOG.md");
+    const original = read(root);
+
+    expect(() => compileChangelog({
+      repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog(),
+      beforeApplySnapshot() { fs.writeFileSync(changelog, `${original}\nconcurrent edit\n`); },
+    })).toThrow(/CHANGELOG\.md changed after it was read/);
+    expect(read(root)).toBe(`${original}\nconcurrent edit\n`);
+    expect(fragmentFiles(root)).toEqual(["2452-release.md"]);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
+  });
+
   it("keeps an allowance committed only on the release-prep branch", () => {
     const root = makeTrackedAllowanceRepo({
       fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
@@ -591,7 +642,7 @@ describe("compile-changelog", () => {
   it("refuses an unsafe direct-child allowance before release writes", () => {
     const root = makeTrackedAllowanceRepo({
       fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
-      allowances: { " 2991-old.md": "file: src/lib/waitlist.ts\n" },
+      allowances: { "bad\u200e.md": "file: src/lib/waitlist.ts\n" },
     });
     const before = read(root);
     expect(() => retiredAllowancePaths(root)).toThrow(/Unsafe allowance filename/);

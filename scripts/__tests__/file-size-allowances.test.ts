@@ -38,16 +38,18 @@ describe("readSizeAllowances", () => {
   it("shares the release compiler's portable filename rule", () => {
     expect(isSafeAllowanceName("2991 old allowance.md")).toBe(true);
     expect(isSafeAllowanceName("2991-āwhina.md")).toBe(true);
+    expect(isSafeAllowanceName("_fork-sync.md")).toBe(true);
+    expect(isSafeAllowanceName("-2991-fix.md")).toBe(true);
     expect(isSafeAllowanceName("2991:old.md")).toBe(false);
     expect(isSafeAllowanceName("CON.md")).toBe(false);
-    expect(isSafeAllowanceName(" 2991-old.md")).toBe(false);
+    expect(isSafeAllowanceName("bad\u200e.md")).toBe(false);
     expect(isSafeAllowanceName("../outside.md")).toBe(false);
     expect(isSafeAllowanceName("2991-old.txt")).toBe(false);
   });
 
   it("refuses an unsafe direct-child filename through the reader", () => {
     const root = newTree({
-      " 2991-old.md": "file: src/lib/a.ts\nlines: 1200\nreason: keep this policy beside its existing consumers.\n",
+      "bad\u200e.md": "file: src/lib/a.ts\nlines: 1200\nreason: keep this policy beside its existing consumers.\n",
     });
     const { allowances, problems } = readSizeAllowances(root);
     expect(allowances).toEqual([]);

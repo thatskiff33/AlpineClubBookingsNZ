@@ -38,8 +38,8 @@ knowingly, not to get past a red check.
 1. Create `size-allowances.d/<pr-number>-<short-slug>.md`, for example
    `size-allowances.d/2980-membership-type-policy.md`. The name must not be
    `README.md`, and the file must end in `.md`. Use a portable direct-child name
-   starting with a letter or number: interior spaces and Unicode are fine, but
-   path separators, control characters, and
+   (interior spaces and Unicode are fine, including existing leading `-` or
+   `_` names). Path separators, control and invisible format characters, and
    Windows-reserved filename characters (`< > : " / \\ | ? *`) and device names
    such as `CON.md` are not.
 2. Give it one entry per file, each three fields on their own lines. Anything
