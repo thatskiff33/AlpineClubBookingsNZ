@@ -98,19 +98,21 @@ function deriveChildCounts(
 /**
  * #2342: does this request carry stored data the server could not read back?
  *
- * True for ANY of the three per-blob flags. A row in this state cannot be
- * quoted, priced, held or approved — every one of those routes now strict-reads
- * the stored blobs and refuses — so the panel disables those affordances rather
- * than offering buttons that are guaranteed to fail. Decline is deliberately
- * NOT gated: it works end to end on a flagged row and is the intended way out.
+ * True for ANY per-blob flag. The panel disables quoting, pricing, holding and
+ * approval rather than inviting an officer to act on an unreadable party.
+ * School approval strict-reads teachers; the other stored blobs have their own
+ * server guards. Decline is deliberately NOT gated: it works end to end on a
+ * flagged row and is the intended way out.
  */
 function storedDataNeedsAttention(request: {
   guestDataNeedsAttention?: boolean;
+  teacherDataNeedsAttention?: boolean;
   linkedMemberDataNeedsAttention?: boolean;
   quoteDataNeedsAttention?: boolean;
 }): boolean {
   return Boolean(
     request.guestDataNeedsAttention ||
+      request.teacherDataNeedsAttention ||
       request.linkedMemberDataNeedsAttention ||
       request.quoteDataNeedsAttention,
   );
@@ -211,8 +213,8 @@ interface PublicBookingRequestData {
   checkIn: string;
   checkOut: string;
   guests: Array<{ firstName: string; lastName: string; ageTier: string }>;
-  // #2342: one flag per stored JSON blob, each present (and always true) only
-  // when THAT blob failed validation on the server; all three are absent on a
+  // #2342/#3485: one flag per stored JSON blob, each present (and always true)
+  // only when THAT blob failed validation on the server; all are absent on a
   // well-formed request. Kept separate rather than OR'd into one, because the
   // panel has to be able to say which thing is wrong — telling an officer their
   // member links are hidden when the links parsed fine, or to distrust names
@@ -221,6 +223,8 @@ interface PublicBookingRequestData {
   // `guests` above is then the salvaged list (names as saved, bar collapsed
   // line breaks and a 100-character cap) rather than validated data.
   guestDataNeedsAttention?: boolean;
+  // School-only: the entire stored teacher list failed its acting-path schema.
+  teacherDataNeedsAttention?: boolean;
   // `linkedGuestMembers` above is then empty — no half-trusted links.
   linkedMemberDataNeedsAttention?: boolean;
   // `latestQuote.options` below is then empty.
@@ -1691,6 +1695,13 @@ export function PublicBookingRequestsPanel({
                             confirmed details.
                           </li>
                         ) : null}
+                        {request.teacherDataNeedsAttention ? (
+                          <li>
+                            The saved teacher list could not be read back. The
+                            teacher and parent-helper section is hidden; names
+                            in the guest badges below are only a rough record.
+                          </li>
+                        ) : null}
                         {request.linkedMemberDataNeedsAttention ? (
                           <li>
                             The saved member links could not be read back, so no
@@ -1712,9 +1723,10 @@ export function PublicBookingRequestsPanel({
                       {LINKING_EDITOR_STATUSES.has(request.status) ? (
                         <p className="mt-1">
                           Quoting, pricing, holding and approving are turned off
-                          for this request and will be refused if attempted —
-                          there is no screen for repairing the saved data. Check
-                          what the group actually wants with the requester, then
+                          in this panel. School approval also refuses unreadable
+                          teacher details. There is no screen for repairing the
+                          saved data. Check what the group actually wants with
+                          the requester, then
                           either <strong>Decline</strong> it so they can submit
                           again, or ask support to repair the stored row.
                         </p>
@@ -1954,13 +1966,20 @@ export function PublicBookingRequestsPanel({
                               controls on one card with very different
                               consequences and nothing to tell them apart, so
                               each now says what it changes. */}
-                          <p className="text-xs text-muted-foreground">
-                            {request.teachers.length} teachers &amp; helpers + children ={" "}
-                            {plannedGuestTotal(request)} total. These boxes change only the
-                            booking you are about to quote or approve, not what the school
-                            asked for. To change the request itself — its dates, its teachers
-                            or its catering — use &ldquo;Correct this request&rdquo; above.
-                          </p>
+                          {request.teacherDataNeedsAttention ? (
+                            <p className="text-xs text-muted-foreground">
+                              The teacher and helper count is unavailable, so the
+                              group total cannot be confirmed from this record.
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {request.teachers.length} teachers &amp; helpers + children ={" "}
+                              {plannedGuestTotal(request)} total. These boxes change only the
+                              booking you are about to quote or approve, not what the school
+                              asked for. To change the request itself — its dates, its teachers
+                              or its catering — use &ldquo;Correct this request&rdquo; above.
+                            </p>
+                          )}
                           {/* #3412: saving the quote now rewrites the group,
                               and beds already held for the old numbers are not
                               re-sized under it. Say so before the click — the
@@ -2001,7 +2020,8 @@ export function PublicBookingRequestsPanel({
                               you send the quote or press <strong>Hold slots</strong>.
                             </p>
                           ) : null}
-                          {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
+                          {!request.teacherDataNeedsAttention &&
+                          plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
                             <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
                               Over {request.schoolGroupSoftCap}: confirm a club member is staying with the
                               group before approving.

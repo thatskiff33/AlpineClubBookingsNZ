@@ -6,9 +6,9 @@
  *
  * #2342 made admin reads tolerant so one row with an unreadable stored blob
  * stopped 500ing the whole Booking Requests page. That made such a row
- * REACHABLE by every button on the card — and each of those buttons now fails
- * server-side, because quoting, pricing, holding and approving all strict-read
- * the stored blobs. These tests pin the panel half of that: the marker states
+ * REACHABLE by every button on the card. Some server writers refuse unreadable
+ * blobs, while teacher-only corruption does not block direct pricing or holds.
+ * These tests pin the panel half of that: the marker states
  * only what actually failed, the acting affordances are off, and Decline — the
  * one action that works end to end on a flagged row — stays on.
  */
@@ -137,6 +137,7 @@ function button(name: RegExp) {
 
 const MARKER = /Saved details need attention/i;
 const GUEST_REASON = /saved guest list could not be read back/i;
+const TEACHER_REASON = /saved teacher list could not be read back/i;
 const LINK_REASON = /saved member links could not be read back/i;
 const QUOTE_REASON = /saved quote could not be read back/i;
 
@@ -264,7 +265,34 @@ describe("PublicBookingRequestsPanel saved-data marker (#2342)", () => {
     // The pre-fix copy asserted both failures on every flagged row: it told the
     // officer their member links were hidden when the links had parsed fine.
     expect(screen.queryByText(LINK_REASON)).toBeNull();
+    expect(screen.queryByText(TEACHER_REASON)).toBeNull();
     expect(screen.queryByText(QUOTE_REASON)).toBeNull();
+  });
+
+  it("names only the teacher failure and disables unsafe school actions", async () => {
+    await renderWith({
+      ...baseRequest,
+      teachers: [],
+      teacherDataNeedsAttention: true,
+      schoolGroupSoftCap: 1,
+    });
+
+    expect(screen.getByText(MARKER)).toBeTruthy();
+    expect(screen.getByText(TEACHER_REASON)).toBeTruthy();
+    expect(screen.queryByText(GUEST_REASON)).toBeNull();
+    expect(screen.queryByText(LINK_REASON)).toBeNull();
+    expect(screen.queryByText(QUOTE_REASON)).toBeNull();
+    expect(screen.getByText(/The teacher and helper count is unavailable/i)).toBeTruthy();
+    expect(screen.queryByText(/0 teachers & helpers \+ children =/i)).toBeNull();
+    expect(screen.queryByText(/Over 1: confirm a club member/i)).toBeNull();
+    expect(screen.getByText(/Mr Teacher — ADULT/i)).toBeTruthy();
+    expect(screen.getByText(TEACHER_REASON).textContent).toMatch(/guest badges below are only a rough record/i);
+    expect(screen.getByText(MARKER).parentElement?.textContent).not.toMatch(/will be refused if attempted/i);
+    expect(button(/Save quote/i).disabled).toBe(true);
+    expect(button(/Send quote/i).disabled).toBe(true);
+    expect(button(/Hold slots/i).disabled).toBe(true);
+    expect(button(/Approve & invoice school/i).disabled).toBe(true);
+    expect(button(/^Decline$/i).disabled).toBe(false);
   });
 
   it("states ONLY the link failure when only the links are unreadable", async () => {
@@ -289,11 +317,13 @@ describe("PublicBookingRequestsPanel saved-data marker (#2342)", () => {
     await renderWith({
       ...baseRequest,
       guestDataNeedsAttention: true,
+      teacherDataNeedsAttention: true,
       linkedMemberDataNeedsAttention: true,
       quoteDataNeedsAttention: true,
     });
 
     expect(screen.getByText(GUEST_REASON)).toBeTruthy();
+    expect(screen.getByText(TEACHER_REASON)).toBeTruthy();
     expect(screen.getByText(LINK_REASON)).toBeTruthy();
     expect(screen.getByText(QUOTE_REASON)).toBeTruthy();
   });
