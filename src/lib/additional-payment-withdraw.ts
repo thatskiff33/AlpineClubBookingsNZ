@@ -23,6 +23,8 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
  * WITHDRAW AN UNPAID ADDITIONAL-PAYMENT REQUEST (#3528, `INV-ADDPAY-040`,
@@ -114,8 +116,8 @@ export const ADDITIONAL_ASK_NOT_REVIEW_RAISED_MESSAGE =
  * would erase it (review of #3550) - the D-3528-2 refusal, read off the row's
  * own provenance rather than its reason alone.
  */
-export function additionalAskCarriesPriceMessage(carriedAskCents: number): string {
-  return `This request includes ${formatCents(carriedAskCents)} carried over from a change to the booking's price, so withdrawing it would leave that amount unpaid. If the price is wrong, edit the booking; the request is replaced by the edit.`;
+export function additionalAskCarriesPriceMessage(carriedAskCents: number, format: ClubFormat): string {
+  return `This request includes ${formatCents(carriedAskCents, format)} carried over from a change to the booking's price, so withdrawing it would leave that amount unpaid. If the price is wrong, edit the booking; the request is replaced by the edit.`;
 }
 
 export const ADDITIONAL_ASK_CHANGED_MESSAGE =
@@ -131,6 +133,9 @@ export async function withdrawAdditionalPaymentAsk(params: {
   };
   now?: Date;
 }): Promise<WithdrawAdditionalPaymentAskResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const now = params.now ?? new Date();
 
   const booking = await prisma.booking.findUnique({
@@ -226,7 +231,7 @@ export async function withdrawAdditionalPaymentAsk(params: {
     return {
       ok: false,
       status: 409,
-      error: additionalAskCarriesPriceMessage(request.carriedAskCents),
+      error: additionalAskCarriesPriceMessage(request.carriedAskCents, format),
     };
   }
 
@@ -407,7 +412,7 @@ export async function withdrawAdditionalPaymentAsk(params: {
     category: "payment",
     severity: "important",
     outcome: "success",
-    summary: `Additional payment request of ${formatCents(payment.additionalAmountCents)} withdrawn`,
+    summary: `Additional payment request of ${formatCents(payment.additionalAmountCents, format)} withdrawn`,
     details:
       "An officer withdrew a request for the member to pay an extra amount that a completed financial review had raised. The card request was cancelled with the card provider, the amount no longer shows as owing, and any Xero invoice waiting on that payment was retired without being sent. The review task that raised it stays completed; this record is the withdrawal.",
     metadata: {

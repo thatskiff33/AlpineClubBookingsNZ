@@ -426,7 +426,8 @@ export function PublicBookingRequestsPanel({
     `undefined` in the published image, so a club charging in anything but
     New Zealand dollars was shown NZD here whatever it had configured.
   */
-  const { currencyCode } = useClubFormat();
+  const format = useClubFormat();
+  const { currencyCode } = format;
   const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
@@ -1631,13 +1632,13 @@ export function PublicBookingRequestsPanel({
                     {request.indicativePriceCents != null ? (
                       <div>
                         <span className="text-muted-foreground">Indicative price:</span>{" "}
-                        {formatCents(request.indicativePriceCents)}
+                        {formatCents(request.indicativePriceCents, format)}
                       </div>
                     ) : null}
                     {request.priceCents != null ? (
                       <div>
                         <span className="text-muted-foreground">Quoted price:</span>{" "}
-                        {formatCents(request.priceCents)}
+                        {formatCents(request.priceCents, format)}
                       </div>
                     ) : null}
                   </div>
@@ -1781,7 +1782,7 @@ export function PublicBookingRequestsPanel({
                       <div className="mt-2 flex flex-wrap gap-2">
                         {request.latestQuote.options.map((option) => (
                           <Badge key={option.id} variant="secondary">
-                            {option.label}: {formatCents(option.totalCents)}
+                            {option.label}: {formatCents(option.totalCents, format)}
                           </Badge>
                         ))}
                       </div>

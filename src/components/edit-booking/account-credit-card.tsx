@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * Account credit (#2266). Owner-decided placement: its own card, above the
@@ -39,6 +40,7 @@ export function AccountCreditCard({
   storedElectionCents: number;
   onUseCreditChange: (checked: boolean) => void;
 }) {
+  const format = useClubFormat();
   return (
     <Card>
       <CardHeader>
@@ -52,13 +54,13 @@ export function AccountCreditCard({
       <CardContent className="space-y-2">
         {ledgerAppliedCreditCents > 0 && (
           <p className="text-sm text-muted-foreground">
-            {formatCents(ledgerAppliedCreditCents)} of account credit is
+            {formatCents(ledgerAppliedCreditCents, format)} of account credit is
             already applied to this booking.
           </p>
         )}
         <p className="text-sm text-success-11">
           {actingAsAdmin ? "The member has" : "You have"}{" "}
-          <strong>{formatCents(availableCreditCents)}</strong> in account
+          <strong>{formatCents(availableCreditCents, format)}</strong> in account
           credit
         </p>
         {(useCredit ||
@@ -81,8 +83,8 @@ export function AccountCreditCard({
           <p className="text-sm font-medium text-success-11">
             {(() => {
               const whose = actingAsAdmin
-                ? `The member's ${formatCents(desiredElectionCents)} credit choice`
-                : `Your ${formatCents(desiredElectionCents)} credit choice`;
+                ? `The member's ${formatCents(desiredElectionCents, format)} credit choice`
+                : `Your ${formatCents(desiredElectionCents, format)} credit choice`;
               const confirmer = actingAsAdmin ? "they confirm" : "you confirm";
               return creditChanged || storedElectionCents === 0
                 ? `${whose} will be saved with these changes and applied when ${confirmer}.`
@@ -115,8 +117,8 @@ export function AccountCreditCard({
           availableCreditCents < desiredElectionCents && (
             <p className="text-sm text-warning-11">
               {actingAsAdmin
-                ? `The member's credit balance is currently ${formatCents(availableCreditCents)} — below this saved choice. The choice stays saved in full; only the credit in their account when they pay will be applied.`
-                : `Your credit balance is currently ${formatCents(availableCreditCents)} — below this saved choice. The choice stays saved in full; only the credit in your account when you pay will be applied.`}
+                ? `The member's credit balance is currently ${formatCents(availableCreditCents, format)} — below this saved choice. The choice stays saved in full; only the credit in their account when they pay will be applied.`
+                : `Your credit balance is currently ${formatCents(availableCreditCents, format)} — below this saved choice. The choice stays saved in full; only the credit in your account when you pay will be applied.`}
             </p>
           )}
       </CardContent>

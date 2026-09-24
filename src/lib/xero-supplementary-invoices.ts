@@ -49,6 +49,7 @@ import {
   MODIFICATION_DOCUMENT_LINES_SELECT,
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
+import type { ClubFormat } from "@/lib/club-format";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -92,6 +93,12 @@ export async function createXeroSupplementaryInvoice(params: {
   recordPayment?: boolean;
   repairExistingLink?: boolean;
   syncOperationId?: string;
+  /**
+   * The club's format (#3565), for any amount a line description renders (a
+   * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
+   * by the job or request that raised this invoice, never here.
+   */
+  format: ClubFormat;
 }): Promise<string | null> {
   const {
     bookingId,
@@ -193,7 +200,7 @@ export async function createXeroSupplementaryInvoice(params: {
     billedCents: netAmountCents,
     billedFigures: { priceDiffCents, changeFeeCents },
     secondAsk: Boolean(shortfallReviewTaskId),
-  });
+  }, params.format);
 
   const lineItems: LineItem[] = itemised.lineItems ?? [];
 

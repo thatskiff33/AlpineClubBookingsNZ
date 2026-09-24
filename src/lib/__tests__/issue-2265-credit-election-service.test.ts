@@ -16,6 +16,12 @@ import { parseDateOnly } from "@/lib/date-only";
  * mock's idea of it.
  */
 
+// #3599: the credit rows' ledger lines are posted by one sync, proved in its own
+// suites and against Postgres; this suite tests what it always tested.
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 vi.mock("@/lib/booking-payment-cleanup", () => ({
@@ -47,6 +53,7 @@ import {
   CreditCoveredSettlementConflictError,
 } from "@/lib/booking-credit-election";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 type LedgerRow = {
   memberId: string;
@@ -203,7 +210,7 @@ function creditLot(amountCents: number): LedgerRow {
 function run(fixture: ReturnType<typeof makeTx>) {
   return consumeStoredCreditElection(
     fixture.tx as never,
-    { bookingId: BOOKING_ID },
+    { format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID },
   );
 }
 

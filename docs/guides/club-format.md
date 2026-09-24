@@ -21,13 +21,15 @@ Both are properties of the **club**, not of the server the software runs on and
 not of whoever is looking. A member reading the site from another country sees
 the club's currency, not their own.
 
-**Recorded here, and in force on the screens so far moved onto it.** This page
-is where the club's currency and format are *recorded*, and it is the setting
-the whole product is moving onto, screen by screen. The **amounts themselves**
-are the part still worked out from the `CURRENCY` and `LOCALE` values the
-server was started with. So while both exist, **keep the two in step**: if you
-change a value here, change the server setting to match. What is already true,
-and permanent: nothing on this page rewrites any amount already recorded.
+**Recorded here, and in force for every amount the site writes.** This page
+is where the club's currency and format are *recorded*, and every price,
+invoice figure, statement line, email total and Xero description now follows it
+as soon as you save. **Dates and times** are the part still worked out from the
+`LOCALE` value the server was started with: this change is money only, by the
+owner's decision, and the date locale moves in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566).
+Until then, **keep the server's `LOCALE` in step** with the format recorded here.
+What is already true, and permanent: nothing on this page rewrites any amount
+already recorded.
 
 **These used to be server settings, and this page is where they are changed
 now.** `CURRENCY` and `LOCALE` were copied here once, on the first start after
@@ -39,36 +41,46 @@ question, so nobody has to work out which of two is winning.
 **What already follows this page, and what does not yet.** These now come from
 the setting recorded here, as soon as you save it:
 
-- the currency code shown beside a fee, a nightly rate, a promo code amount, a
-  monthly AI spend cap or a booking-request total;
+- **every amount** the site writes — a price, a nightly rate, a promo code
+  amount, an invoice figure, a statement line, a finance dashboard figure, a
+  booking-request total, an email total, and the amount inside a description
+  sent to Xero. All of them go through one shared money formatter, and every
+  place that formatter is used now takes the setting from this page;
+- the currency code shown beside a fee or a monthly AI spend cap;
 - the date and time on an audit-log entry, and on every row of the health
   dashboard;
 - the grouped counts in a promo-code export notice;
 - the date on the lobby display.
 
-These do **not** yet, and still come from `CURRENCY` and `LOCALE`:
+These do **not** yet, and still come from the server's `LOCALE`:
 
-- **every amount** the site writes — a price, an invoice figure, a statement
-  line, an email total. All of them go through one shared money formatter,
-  which is moved in the next change;
-- every other date and time, which go through the shared date formatters moved
-  in the same change. **Two of them sit on screens listed above**, and are the
-  only places you will see the two answers side by side: the "Last refresh"
+- every other date and time, which go through the shared date formatters and
+  move in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566). **Two of them sit on screens listed above**, and are
+  the only places you will see the two answers side by side: the "Last refresh"
   line at the top of the health dashboard, and the live clock on the lobby
   display. Both are written by the shared machinery rather than by their own
   screen, so they stay on the server's `LOCALE` while the rows and the date
-  beneath them follow this page;
-- the fee figures written into public website pages, and a handful of other
-  server-side readers, which move in the change after that.
+  beneath them follow this page.
 
-**So keep the server values set, and keep them matching this page.** Removing
-them is the one mistake worth warning about, and a mismatch is the other: you
-would see the currency code you chose sitting beside amounts written the old
-way, on the same screen, with nothing flagging it.
+**So keep the server's `LOCALE` set, and keep it matching this page** until
+that change lands. Removing it is the one mistake worth warning about, and a
+mismatch is the other: you would see dates written one way beside amounts
+written another, with nothing flagging it. `CURRENCY` no longer affects
+anything an existing club sees; it is read only on the very first start of a
+fresh install, to seed this page.
 
-Changing either value is a **Full Administrator** job. It needs an explicit
-confirmation, and every such change is written to the audit log with who made it
-and what it was before.
+**Every administrator can see this page; only a Full Administrator can change
+it.** Any admin — a treasurer or a bookings officer checking why an amount or a
+date is written the way it is — can open the page and read both values, where
+each came from and who last changed them. Everyone who is not a Full
+Administrator sees them read-only, under a note saying so, with the Change
+button greyed out. Changing either value is a **Full Administrator** job. It
+needs an explicit confirmation, and every such change is written to the audit
+log with who made it and what it was before.
+
+This is where the page differs from its neighbours. **Club Time Zone** and
+**Environment Safety** are Full Administrator only to open as well as to change;
+this page is the same as them on changing and different on viewing.
 
 ## When you'd use it
 
@@ -137,6 +149,7 @@ is older than the currency.
 | Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |
 | Someone changed it and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_FORMAT_UPDATED`. The entry names the administrator, and the values before and after |
+| The page says "You have view-only access to this area" and **Change currency and format** is greyed out | Your admin account is not a Full Administrator. Every admin can see these values; only a Full Administrator can change them | Ask a Full Administrator to make the change |
 
 ## Related links
 

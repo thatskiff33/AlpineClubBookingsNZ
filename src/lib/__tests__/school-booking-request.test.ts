@@ -254,6 +254,7 @@ import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
 import { calculateBookingPrice } from "@/lib/policies/pricing";
 
 import { sendMemberGuestAddNotifications } from "@/lib/member-guest-consent-notifications";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   fenceMemberFindMany,
   recordingBookingDouble,
@@ -1868,7 +1869,8 @@ describe("approveSchoolBookingRequest", () => {
         schoolName: "New Plymouth Primary School",
         contactEmail: "office@school.test",
         totalCents: 20000,
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -1917,7 +1919,8 @@ describe("approveSchoolBookingRequest", () => {
       expect.objectContaining({
         schoolName: "New Plymouth Primary School",
         contactEmail: "accounts@mappedcollege.test",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -3068,6 +3071,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
         // the hand-written invoice cannot be reconciled against their payment.
         paymentReference: expect.any(String),
       }),
+      CLUB_FORMAT_TEST,
     );
     const alert = mockedSendWholeLodgeManualInvoice.mock.calls[0][0];
     const payment = vi.mocked(prisma.payment.create).mock.calls[0][0]
@@ -3124,7 +3128,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     });
 
     const args = vi.mocked(sendBookingConfirmedEmail).mock.calls[0];
-    const options = args[7] as {
+    const options = args[8] as {
       paymentDue?: { reference: string; invoiceEmailed: boolean };
     };
     // Nothing has been paid: the confirmation MUST carry the payment-due shape,
@@ -3151,7 +3155,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
       adminMemberId: "admin-1",
     });
 
-    const options = vi.mocked(sendBookingConfirmedEmail).mock.calls[0][7] as {
+    const options = vi.mocked(sendBookingConfirmedEmail).mock.calls[0][8] as {
       paymentDue?: { invoiceEmailed: boolean };
     };
     // With nothing raising invoices, promising one has been emailed is a lie the

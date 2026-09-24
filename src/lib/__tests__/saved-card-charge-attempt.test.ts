@@ -8,6 +8,7 @@ import {
 import type Stripe from "stripe";
 import { stripeSdkError } from "./support/stripe-sdk-error";
 import type { SavedCardChargeReason } from "../saved-card-charge-attempt";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3267 (INV-PAY-055) — one saved-card charge attempt is one durable ledger row
 // with its own Stripe idempotency key. This file pins the attempt contract on
@@ -270,7 +271,7 @@ function begin(
 }
 
 function charge(attempt: Awaited<ReturnType<typeof begin>>, card = CARD) {
-  return chargeSavedCardAttempt({ attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card });
+  return chargeSavedCardAttempt({ format: CLUB_FORMAT_TEST, attempt, bookingId: BOOKING, memberId: MEMBER, amountCents: 10000, card });
 }
 
 function settle(
@@ -753,6 +754,7 @@ describe("chargeSavedCardAttempt", () => {
       paymentMethodId: "pm_1",
       metadata: { bookingId: BOOKING, memberId: MEMBER },
       idempotencyKey: attempt.idempotencyKey,
+      format: CLUB_FORMAT_TEST,
     });
     expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();

@@ -5,6 +5,7 @@ import { getAuditTimelinePage } from "@/lib/audit-query";
 import { parseAdminAuditLogQuery } from "@/lib/audit-admin-query";
 import { clubTimeZone } from "@/lib/club-time/server";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await getAuditTimelinePage({
       db: prisma,
+      format: await clubFormatValues(),
       where: parsed.data.where,
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,

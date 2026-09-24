@@ -46,6 +46,7 @@ import {
   validateEmailTemplateContent,
   type EmailTemplateData,
 } from "@/lib/email-message-renderer";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 type CapturedAlert = {
   subject: string;
@@ -80,7 +81,7 @@ async function send(options: {
         ? 2500
         : options.handBackAmountCents,
     refundSent: options.refundSent,
-  });
+  }, CLUB_FORMAT_TEST);
   return captured();
 }
 

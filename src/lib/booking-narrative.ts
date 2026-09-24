@@ -60,6 +60,7 @@ import {
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type BookingNarrativeState =
   | "payable"
@@ -211,7 +212,7 @@ function asBumpSnapshot(value: unknown): BumpEventSnapshot | null {
 function buildPaidNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   const paidEvent =
     events.find(
@@ -224,7 +225,7 @@ function buildPaidNarrative(
     return {
       state: "paid",
       headline: "Payment received",
-      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents)} on ${club.instantDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
+      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents, format)} on ${club.instantDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
       nextStep:
         "Nothing more to do — we'll see you at the lodge. You can view the full booking details any time from your bookings page.",
     };
@@ -243,7 +244,7 @@ function buildCancelledPostPaymentNarrative(
   paidEvent: NarrativeEvent,
   cancelEvent: NarrativeEvent | undefined,
   settlementEvent: NarrativeEvent | undefined,
-  club: BoundClubTime
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   const snapshot = asCancellationSnapshot(cancelEvent?.snapshot);
   const paidAmountCents = paidEvent.amountCents ?? snapshot?.paidAmountCents ?? 0;
@@ -257,7 +258,7 @@ function buildCancelledPostPaymentNarrative(
   const cancelOn = cancelEvent
     ? club.instantDate(cancelEvent.occurredAt)
     : paidOn;
-  const opening = `You cancelled this booking on ${cancelOn} after paying ${formatCents(paidAmountCents)} on ${paidOn}.`;
+  const opening = `You cancelled this booking on ${cancelOn} after paying ${formatCents(paidAmountCents, format)} on ${paidOn}.`;
 
   let settlementClause: string;
   if (settledAmountCents > 0 && settlementEvent) {
@@ -268,8 +269,8 @@ function buildCancelledPostPaymentNarrative(
         : "refunded";
     settlementClause =
       retainedAmountCents > 0
-        ? `${formatCents(settledAmountCents)} was ${verb} on ${settledOn} and ${formatCents(retainedAmountCents)} was retained`
-        : `${formatCents(settledAmountCents)} was ${verb} on ${settledOn}`;
+        ? `${formatCents(settledAmountCents, format)} was ${verb} on ${settledOn} and ${formatCents(retainedAmountCents, format)} was retained`
+        : `${formatCents(settledAmountCents, format)} was ${verb} on ${settledOn}`;
   } else if (snapshot?.refundMethod === "manual" && settledAmountCents > 0) {
     // B5 (#2262): a cash / off-Xero settlement is handed back by a person, so
     // there is no settlement event YET — one is written when the club marks the
@@ -277,10 +278,10 @@ function buildCancelledPostPaymentNarrative(
     // the member's money.
     settlementClause =
       retainedAmountCents > 0
-        ? `${formatCents(settledAmountCents)} is being refunded to you by the club directly (you paid in cash or by bank transfer, so there is no card payment to reverse) and ${formatCents(retainedAmountCents)} was retained`
-        : `${formatCents(settledAmountCents)} is being refunded to you by the club directly — you paid in cash or by bank transfer, so there is no card payment to reverse`;
+        ? `${formatCents(settledAmountCents, format)} is being refunded to you by the club directly (you paid in cash or by bank transfer, so there is no card payment to reverse) and ${formatCents(retainedAmountCents, format)} was retained`
+        : `${formatCents(settledAmountCents, format)} is being refunded to you by the club directly — you paid in cash or by bank transfer, so there is no card payment to reverse`;
   } else {
-    settlementClause = `no refund was due and the full ${formatCents(retainedAmountCents)} was retained`;
+    settlementClause = `no refund was due and the full ${formatCents(retainedAmountCents, format)} was retained`;
   }
 
   return {
@@ -295,7 +296,7 @@ function buildCancelledPostPaymentNarrative(
 function buildCancelledNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime
+  club: BoundClubTime, format: ClubFormat
 ): BookingNarrative {
   // A booking held for admin review that was rejected is cancelled via the
   // shared cancel flow; surface it as "declined" with the admin's reason.
@@ -367,9 +368,7 @@ function buildCancelledNarrative(
     );
     return buildCancelledPostPaymentNarrative(
       paidEvent,
-      cancelEvent,
-      settlementEvent,
-      club
+      cancelEvent, settlementEvent, club, format
     );
   }
 
@@ -390,10 +389,10 @@ function buildCancelledNarrative(
 function buildPayableNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
-  now: Date
+  now: Date, format: ClubFormat
 ): BookingNarrative {
   const range = dateRange(booking);
-  const amountDue = formatCents(booking.finalPriceCents);
+  const amountDue = formatCents(booking.finalPriceCents, format);
 
   const linkUnusable =
     link != null &&
@@ -557,9 +556,9 @@ function buildFinancialReviewPendingNarrative(
 function buildPaidWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   events: NarrativeEvent[],
-  club: BoundClubTime,
+  club: BoundClubTime, format: ClubFormat,
 ): BookingNarrative {
-  const paid = buildPaidNarrative(booking, events, club);
+  const paid = buildPaidNarrative(booking, events, club, format);
 
   return {
     state: "financial_review_pending",
@@ -582,9 +581,9 @@ function buildPaidWithFinancialReviewNarrative(
 function buildPayableWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
-  now: Date,
+  now: Date, format: ClubFormat,
 ): BookingNarrative {
-  const payable = buildPayableNarrative(booking, link, now);
+  const payable = buildPayableNarrative(booking, link, now, format);
 
   return {
     state: "financial_review_pending",
@@ -615,7 +614,7 @@ export function resolveBookingNarrative({
   link,
   now = new Date(),
   financialReviewPending = false,
-}: ResolveBookingNarrativeInput): BookingNarrative {
+}: ResolveBookingNarrativeInput, format: ClubFormat): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;
 
@@ -641,12 +640,12 @@ export function resolveBookingNarrative({
     argument for its own shape.
   */
   if (status === "CANCELLED" || status === "BUMPED") {
-    return buildCancelledNarrative(booking, ordered, club);
+    return buildCancelledNarrative(booking, ordered, club, format);
   }
 
   if (status === "AWAITING_REVIEW") {
     if (booking.adminReviewStatus === "REJECTED") {
-      return buildCancelledNarrative(booking, ordered, club);
+      return buildCancelledNarrative(booking, ordered, club, format);
     }
     return {
       state: "under_review",
@@ -666,7 +665,7 @@ export function resolveBookingNarrative({
       to pay.
     */
     if (PAYABLE_STATUSES.has(status)) {
-      return buildPayableWithFinancialReviewNarrative(booking, link, now);
+      return buildPayableWithFinancialReviewNarrative(booking, link, now, format);
     }
     /*
       And a PAID booking keeps its payment facts and gains the review ones, for
@@ -675,17 +674,17 @@ export function resolveBookingNarrative({
       public payment link, the only thing that page had to say.
     */
     if (status === "PAID" || status === "COMPLETED") {
-      return buildPaidWithFinancialReviewNarrative(booking, ordered, club);
+      return buildPaidWithFinancialReviewNarrative(booking, ordered, club, format);
     }
     return buildFinancialReviewPendingNarrative(booking);
   }
 
   if (status === "PAID" || status === "COMPLETED") {
-    return buildPaidNarrative(booking, ordered, club);
+    return buildPaidNarrative(booking, ordered, club, format);
   }
 
   if (PAYABLE_STATUSES.has(status)) {
-    return buildPayableNarrative(booking, link, now);
+    return buildPayableNarrative(booking, link, now, format);
   }
 
   // DRAFT / WAITLISTED / WAITLIST_OFFERED and any unexpected state: a clear,

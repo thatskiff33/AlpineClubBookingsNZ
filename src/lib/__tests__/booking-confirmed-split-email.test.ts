@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #1942 — the split-booking parent's confirmation email must explain the
 // provisional non-member portion. These tests pin the wiring from
@@ -63,6 +64,7 @@ describe("sendBookingConfirmedEmail split provisional section (#1942)", () => {
       checkOut,
       1,
       12000,
+      CLUB_FORMAT_TEST,
       { provisionalGuests: { guestCount: 2, holdUntil } },
     );
 
@@ -92,6 +94,7 @@ describe("sendBookingConfirmedEmail split provisional section (#1942)", () => {
       checkOut,
       2,
       12000,
+      CLUB_FORMAT_TEST,
     );
 
     const call = sendEmailMock.mock.calls[0][0];

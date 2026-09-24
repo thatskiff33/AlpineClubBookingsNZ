@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface AdditionalPaymentCardProps {
   bookingId: string;
@@ -31,6 +32,7 @@ export function AdditionalPaymentCard({
   bookingId,
   additionalAmountCents,
 }: AdditionalPaymentCardProps) {
+  const format = useClubFormat();
   const router = useRouter();
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [askAmountCents, setAskAmountCents] = useState<number | null>(null);
@@ -132,7 +134,7 @@ export function AdditionalPaymentCard({
               // the disagreement this change exists to remove.
               <p className="text-sm text-warning-11 mb-4">
                 A recent booking modification means{" "}
-                <strong>{formatCents(askAmountCents)}</strong> is still owing on
+                <strong>{formatCents(askAmountCents, format)}</strong> is still owing on
                 this booking. Please complete payment to finalise the
                 modification.
               </p>
@@ -151,7 +153,7 @@ export function AdditionalPaymentCard({
                 */
                 <p className="text-sm text-warning-11 mb-4">
                   A recent booking modification means{" "}
-                  <strong>{formatCents(additionalAmountCents)}</strong> is still
+                  <strong>{formatCents(additionalAmountCents, format)}</strong> is still
                   owing on this booking according to our records. We could not
                   load the payment form just now — please try again shortly, or
                   contact the club if it keeps happening.

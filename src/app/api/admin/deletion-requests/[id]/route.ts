@@ -14,6 +14,7 @@ import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -81,6 +82,7 @@ import {
   XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
   XeroContactCreateBlocksDeletionError,
 } from "@/lib/xero-contact-create-recovery";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -291,6 +293,9 @@ export async function POST(
 
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   let completedBookingCancellations = 0;
   let memberAnonymised = false;
 
@@ -765,6 +770,7 @@ export async function POST(
           session.user.id,
           "ADMIN",
           ip,
+          format,
         );
       } catch (err) {
         const cancellationFact = await recheckCancellationFailure(booking.id);
@@ -843,7 +849,7 @@ export async function POST(
     const approvalReceipt = { email: member.email, firstName: member.firstName };
 
     // 4-7: Anonymise atomically in a single transaction
-    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
+    const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@${DELETED_CONTACT_EMAIL_DOMAIN}`;
     let sweptShares: SweptPartnerSharedAllocation[] = [];
     // #2255: who was still pointed at this member when we anonymised them.
     let detachedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;

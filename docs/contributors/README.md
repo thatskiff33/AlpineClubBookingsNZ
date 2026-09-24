@@ -14,9 +14,8 @@ is required reading to deploy the product.
 the only entry point you need. It carries the always-read core, the routing
 table that names what to read for the change you are about to make, the safety
 rules, the orchestration model, and the merge gate. Read it first and let its
-routing table bring you back here.
-[`../../CLAUDE.md`](../../CLAUDE.md) is the compact Claude Code adapter over the
-same contract.
+routing table bring you back here. It is the only agent file: Claude Code,
+Codex and other agents all load it directly.
 
 **Humans:** read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for local
 setup, the development rules and the pull-request contract, then
@@ -63,6 +62,10 @@ in. Cite rules by id, never by line number.
   times turn into each other: the calendar-date / instant / club-local-scheduled
   distinction, where the club's zone comes from, and why a wall time may not
   exist or may exist twice.
+- [`../CLUB_FORMAT_KERNEL.md`](../CLUB_FORMAT_KERNEL.md) — the one place an
+  amount, a proportion or a count becomes a string: where the club's currency
+  and locale come from, the bound API a server and a browser both call, and the
+  migration window while the call sites move.
 - [`../CAPACITY_MODEL.md`](../CAPACITY_MODEL.md) — how each lodge's bookable
   capacity is decided in every configuration.
 - [`../CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md) — the

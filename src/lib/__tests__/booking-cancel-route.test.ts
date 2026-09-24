@@ -26,6 +26,7 @@ vi.mock("@/lib/logger", () => ({
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { POST } from "@/app/api/bookings/[id]/cancel/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCancelBooking = vi.mocked(cancelBooking);
@@ -146,6 +147,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "member-1",
       "USER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "credit",
       { hasBookingsEditAccess: false, enforceStartedStayBlock: true, enforceMemberCancelDoor: true }
     );
@@ -174,6 +176,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "officer-1",
       "USER", // an officer keeps their honest legacy authorization role
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { hasBookingsEditAccess: true, enforceStartedStayBlock: true, enforceMemberCancelDoor: true }
     );
@@ -202,6 +205,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "readonly-1",
       "USER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { hasBookingsEditAccess: false, enforceStartedStayBlock: true, enforceMemberCancelDoor: true }
     );
@@ -242,6 +246,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "custom-officer-1",
       "USER",
       "127.0.0.1",
+      CLUB_FORMAT_TEST,
       "card",
       { hasBookingsEditAccess: true, enforceStartedStayBlock: true, enforceMemberCancelDoor: true }
     );

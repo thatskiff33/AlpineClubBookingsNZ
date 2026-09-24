@@ -14,6 +14,7 @@ import {
   type PromoApplicationSubject,
 } from "@/lib/promo";
 import type { PromoUsageClient } from "@/lib/promo-usage-counts";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // `promo.ts` constructs the module-level client at import time. Nothing here
 // touches it: every database read goes through the `db` option below.
@@ -164,6 +165,7 @@ async function apply(
   expect(application.error, application.error).toBeUndefined();
   const discount = application.discount!;
   const storedSelection = selectBookingMoneyBuildUp({
+    format: CLUB_FORMAT_TEST,
     operation: "CREDIT_ELECTION",
     baseEvidence: { kind: "EXACT", amountCents: price.totalPriceCents },
     rows: discount.adjustmentTargets.map((target) => ({

@@ -25,6 +25,7 @@ import {
 } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
@@ -960,6 +961,7 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 
 export async function retryXeroSyncOperation(
   operationId: string,
+  format: ClubFormat,
   options?: { createdByMemberId?: string }
 ): Promise<{ message: string }> {
   const operation = await prisma.xeroSyncOperation.findUnique({
@@ -1290,6 +1292,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         recordPayment,
         repairExistingLink: true,
+        format,
       });
       return { message: "Retried Xero supplementary invoice creation." };
     }
@@ -1320,6 +1323,7 @@ export async function retryXeroSyncOperation(
         bookingModificationId: secondAsk.bookingModificationId,
         shortfallReviewTaskId: secondAsk.shortfallReviewTaskId,
         createdByMemberId,
+        format,
         // NEVER a payment, and hard-coded rather than read off the payload
         // because it is a property of what a second ask IS: it is raised only
         // when the change's invoice had already gone out, so on the card route
@@ -1386,7 +1390,7 @@ export async function retryXeroSyncOperation(
         return { message: "Retried Xero refund credit note creation." };
       }
 
-      await xero.createUnappliedXeroCreditNote(operation.localId!, retryInput.amountCents, {
+      await xero.createUnappliedXeroCreditNote(operation.localId!, retryInput.amountCents, format, {
         createdByMemberId,
         repairExistingLink: true,
       });
@@ -1449,6 +1453,7 @@ export async function retryXeroSyncOperation(
           refundAmountCents,
           bookingModificationId: operation.localId!,
           createdByMemberId,
+          format,
         });
         return { message: "Retried Xero modification account-credit note creation." };
       }
@@ -1463,6 +1468,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
+        format,
       });
       return { message: "Retried Xero modification credit note creation." };
     }

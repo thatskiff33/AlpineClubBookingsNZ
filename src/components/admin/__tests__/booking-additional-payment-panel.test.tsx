@@ -28,6 +28,7 @@ vi.mock("@/lib/club-time/server", async () => {
 });
 
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 
 /**
  * The admin-side view of an uncollected additional payment (#2350).
@@ -56,6 +57,10 @@ function payment(overrides: Record<string, unknown> = {}) {
  * than rendered as an element: `renderToStaticMarkup` is synchronous and cannot
  * await. A `null` return still renders as the empty string, which is what the
  * "renders nothing" assertions below read.
+ *
+ * The element is wrapped in the shared `ClubFormatTestProvider` because the
+ * panel's client children (the withdraw button) read `useClubFormat()`
+ * (#3564), which the real page supplies through the admin chrome.
  */
 async function render(
   props: Partial<Parameters<typeof BookingAdditionalPaymentPanel>[0]> = {},
@@ -70,7 +75,11 @@ async function render(
     now: NOW,
     ...props,
   });
-  return element === null ? "" : renderToStaticMarkup(element);
+  return element === null
+    ? ""
+    : renderToStaticMarkup(
+        <ClubFormatTestProvider>{element}</ClubFormatTestProvider>,
+      );
 }
 
 describe("BookingAdditionalPaymentPanel", () => {

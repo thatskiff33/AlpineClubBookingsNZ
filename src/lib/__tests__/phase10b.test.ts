@@ -3,6 +3,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { checkRateLimitInMemory as checkRateLimit, _testStore, rateLimiters } from "@/lib/rate-limit";
 import {
   accountDeletionApprovedTemplate,
@@ -115,6 +117,7 @@ import { GET as dataExportGet } from "@/app/api/member/data-export/route";
 import { POST as requestDeletionPost } from "@/app/api/member/request-deletion/route";
 import { GET as adminDeletionRequestsGet } from "@/app/api/admin/deletion-requests/route";
 import { POST as adminDeletionActionPost } from "@/app/api/admin/deletion-requests/[id]/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
@@ -500,12 +503,13 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("approves a deletion request, anonymises member, and cancels future bookings", async () => {
+    const deletionMemberId = "member1234";
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",
       member: {
-        id: "m1",
+        id: deletionMemberId,
         firstName: "Jane",
         lastName: "Doe",
         email: "jane@test.com",
@@ -533,7 +537,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       }
       if (args?.select?.xeroContactId) {
         return {
-          id: "m1",
+          id: deletionMemberId,
           email: "jane@test.com",
           passwordHash: null,
           xeroContactId: null,
@@ -565,7 +569,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
 
     // Verify anonymisation
     expect(mockedPrisma.member.update).toHaveBeenCalledWith({
-      where: { id: "m1" },
+      where: { id: deletionMemberId },
       data: expect.objectContaining({
         firstName: "Deleted",
         lastName: "Member",
@@ -574,12 +578,14 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       }),
     });
 
-    // Confirm the anonymous email ends with @deleted.invalid
+    // The writer's address agrees with the one domain the erased-member reader uses.
     const updateCall = vi.mocked(mockedPrisma.member.update).mock.calls[0][0];
-    expect((updateCall.data as any).email).toMatch(/@deleted\.invalid$/);
+    const anonymisedEmail = (updateCall.data as { email: string }).email;
+    expect(anonymisedEmail).toBe(`deleted-member12@${DELETED_CONTACT_EMAIL_DOMAIN}`);
+    expect(isDeletedAccountRecord({ email: anonymisedEmail, deletedAt: null })).toBe(true);
 
     // Booking was cancelled
-    expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String));
+    expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String), CLUB_FORMAT_TEST);
     expect(mockedPrisma.booking.findMany).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

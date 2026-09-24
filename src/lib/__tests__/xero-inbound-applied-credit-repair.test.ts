@@ -55,6 +55,13 @@ const h = vi.hoisted(() => {
   };
 });
 
+// #3599: the credit rows' ledger lines are posted by one sync, proved in its own
+// suites and against Postgres; this suite tests what it always tested.
+const syncCredits = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/lib/booking-ledger-credit-sync", () => ({
+  syncBookingLedgerCredits: syncCredits,
+}));
+
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: h.lockLedger }));
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
@@ -130,6 +137,8 @@ describe("provider-aware inbound applied-credit repair", () => {
           xeroCreditNoteId: "cn-1",
         }),
       });
+      // #3599: the appended row reaches the ledger, for ITS booking, in this transaction.
+      expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking-1", store: h.tx });
       expect(h.paymentUpdate).toHaveBeenCalledWith({
         where: { id: "payment-1" },
         data: { creditAppliedCents: targetCents },
@@ -200,6 +209,7 @@ describe("provider-aware inbound applied-credit repair", () => {
         xeroCreditNoteId: "cn-1",
       }),
     });
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking-1", store: h.tx });
     expect(h.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "payment-1" },
       data: { creditAppliedCents: 0 },

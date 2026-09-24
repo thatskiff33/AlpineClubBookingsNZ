@@ -147,6 +147,7 @@ import {
   markGroupSettlementIntentRefunded,
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ORGANISER = "organiser-1";
 const ORG_BOOKING = "org-booking-1";
@@ -1066,7 +1067,7 @@ describe("markGroupSettlementIntentFailed", () => {
 describe("applyGroupSettlementSucceeded", () => {
   it("returns not_found when no settlement matches the intent", async () => {
     mocks.settlementFindUnique.mockResolvedValue(null);
-    const result = await applyGroupSettlementSucceeded({ id: "pi_x", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_x", amount: 9000 }, CLUB_FORMAT_TEST);
     expect(result.outcome).toBe("not_found");
   });
 
@@ -1078,7 +1079,7 @@ describe("applyGroupSettlementSucceeded", () => {
       groupBookingId: GROUP_ID,
       groupBooking: { organiserBookingId: ORG_BOOKING },
     });
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
     expect(result.outcome).toBe("already_settled");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1104,7 +1105,7 @@ describe("applyGroupSettlementSucceeded", () => {
       },
     });
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("refunded");
     expect(result.settledBookingIds).toEqual([]);
@@ -1134,7 +1135,7 @@ describe("applyGroupSettlementSucceeded", () => {
       },
     });
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("refunded");
     expect(mocks.paymentUpsert).not.toHaveBeenCalled();
@@ -1162,7 +1163,7 @@ describe("applyGroupSettlementSucceeded", () => {
       })
       .mockResolvedValueOnce({ status: PaymentStatus.REFUNDED });
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("refunded");
     expect(result.settledBookingIds).toEqual([]);
@@ -1318,7 +1319,7 @@ describe("applyGroupSettlementSucceeded", () => {
         groupBooking: { status: "CANCELLED" },
       });
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result).toEqual({ outcome: "cancelled", settledBookingIds: [] });
     expect(mocks.txExecuteRaw).toHaveBeenCalled();
@@ -1336,7 +1337,7 @@ describe("applyGroupSettlementSucceeded", () => {
       groupBookingId: GROUP_ID,
       groupBooking: { organiserBookingId: ORG_BOOKING },
     });
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 8000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 8000 }, CLUB_FORMAT_TEST);
     expect(result.outcome).toBe("amount_mismatch");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1368,7 +1369,7 @@ describe("applyGroupSettlementSucceeded", () => {
       { id: "child-2", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
     ]);
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("amount_mismatch");
     expect(result.settledBookingIds).toEqual([]);
@@ -1409,7 +1410,7 @@ describe("applyGroupSettlementSucceeded", () => {
         { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 2500, checkIn: new Date(), checkOut: new Date() },
       ]);
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("amount_mismatch");
     expect(mocks.paymentUpsert).not.toHaveBeenCalled();
@@ -1464,7 +1465,7 @@ describe("applyGroupSettlementSucceeded", () => {
         },
       ]);
 
-    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("settled");
     expect(result.settledBookingIds).toEqual(["child-1", "child-2"]);
@@ -1502,7 +1503,7 @@ describe("applyGroupSettlementSucceeded", () => {
 describe("applyGroupSettlementSucceededFromInvoice", () => {
   it("returns not_found when no settlement matches the invoice", async () => {
     mocks.settlementFindFirst.mockResolvedValue(null);
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_x");
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_x", CLUB_FORMAT_TEST);
     expect(result.outcome).toBe("not_found");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1515,7 +1516,7 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
       groupBookingId: GROUP_ID,
       groupBooking: { organiserBookingId: ORG_BOOKING },
     });
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
     expect(result.outcome).toBe("already_settled");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1551,7 +1552,7 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 9500, checkIn: new Date(), checkOut: new Date() },
       ]);
 
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("amount_mismatch");
     expect(result.settledBookingIds).toEqual([]);
@@ -1608,7 +1609,7 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         },
       ]);
 
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
 
     expect(result.outcome).toBe("settled");
     expect(result.settledBookingIds).toEqual(["child-1", "child-2"]);

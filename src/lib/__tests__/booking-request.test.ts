@@ -203,6 +203,7 @@ import {
   verifyBookingRequest,
 } from "@/lib/booking-request";
 import { sendMemberGuestWithdrawnNotifications } from "@/lib/member-guest-consent-notifications";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   fenceMemberFindMany,
   recordingBookingDouble,
@@ -1079,6 +1080,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.9",
+      CLUB_FORMAT_TEST,
       "card",
       { suppressCustomerNotification: true, requireRequestHold: true }
     );
@@ -1134,6 +1136,7 @@ describe("declineBookingRequest", () => {
         "admin-1",
         "ADMIN",
         "203.0.113.10",
+        CLUB_FORMAT_TEST,
         "card",
         { suppressCustomerNotification: true, requireRequestHold: true }
       );
@@ -1218,6 +1221,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.7",
+      CLUB_FORMAT_TEST,
       "card",
       // #1406: opt-in guard (defense-in-depth) so the shared cancel path refuses
       // (409, no side effect) if the hold ever leaves AWAITING_REVIEW.
@@ -1263,6 +1267,7 @@ describe("declineBookingRequest", () => {
       "admin-1",
       "ADMIN",
       "203.0.113.8",
+      CLUB_FORMAT_TEST,
       "card",
       // #1406: opt-in guard (defense-in-depth), see above.
       { suppressCustomerNotification: true, requireRequestHold: true }
@@ -1834,7 +1839,8 @@ describe("approveBookingRequest", () => {
     ).toBeLessThan(mockedAcquireLodgeCapacityLock.mock.invocationCallOrder[0]);
     expect(mockedCheckCapacity).not.toHaveBeenCalled();
     expect(mockedSendApproved).toHaveBeenCalledWith(
-      expect.objectContaining({ lodgeId: "held-lodge" })
+      expect.objectContaining({ lodgeId: "held-lodge" }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockedBookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "held-1" },

@@ -6,6 +6,7 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface SourceBooking {
   id: string;
@@ -63,6 +64,7 @@ function formatDateRange(checkIn: string, checkOut: string): string {
 }
 
 export function AccountCreditSection() {
+  const format = useClubFormat();
   const formatDate = useTransactionDateFormatter();
   const [data, setData] = useState<CreditData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,7 +107,7 @@ export function AccountCreditSection() {
       <div className="text-center py-3 bg-muted rounded-lg">
         <p className="text-sm text-muted-foreground">Current Balance</p>
         <p className="text-2xl font-bold text-foreground">
-          {formatCents(data.balanceCents)}
+          {formatCents(data.balanceCents, format)}
         </p>
       </div>
 
@@ -140,7 +142,7 @@ export function AccountCreditSection() {
                       }`}
                     >
                       {tx.amountCents >= 0 ? "+" : ""}
-                      {formatCents(tx.amountCents)}
+                      {formatCents(tx.amountCents, format)}
                     </td>
                     <td className="py-2 pr-2">{tx.description}</td>
                     <td className="py-2 whitespace-nowrap">

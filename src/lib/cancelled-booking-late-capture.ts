@@ -10,6 +10,7 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
 
 /**
  * The shared epilogue of BOTH late-capture handlers on a cancelled booking
@@ -144,7 +145,10 @@ export async function reportWithheldLateCaptureRefund(params: {
     completedAt: Date | null;
     completedByMemberId: string | null;
   };
+  /** The club's format (#3565), resolved before any transaction by the caller. */
+  format: ClubFormat;
 }): Promise<void> {
+  const { format } = params;
   const { capture, handBack } = params;
 
   logAudit({
@@ -198,7 +202,7 @@ export async function reportWithheldLateCaptureRefund(params: {
     captureKind: capture.captureKind,
     handBackAmountCents: handBack.amountCents,
     refundSent: false,
-  });
+  }, format);
 }
 
 /**
@@ -353,6 +357,7 @@ export async function recordAutomaticLateCaptureRefund(
 export async function announceAutomaticLateCaptureRefund(
   capture: CancelledBookingLateCapture,
   outcome: LateCaptureRecordOutcome,
+  format: ClubFormat,
 ): Promise<void> {
   if (outcome.handCompletedAfterRefund) {
     logAudit({
@@ -394,7 +399,7 @@ export async function announceAutomaticLateCaptureRefund(
       captureKind: capture.captureKind,
       handBackAmountCents: null,
       refundSent: true,
-    });
+    }, format);
     return;
   }
 
@@ -410,5 +415,5 @@ export async function announceAutomaticLateCaptureRefund(
     // capture belonged to.
     bookingDeleted: outcome.bookingDeleted,
     captureKind: capture.captureKind,
-  });
+  }, format);
 }

@@ -121,6 +121,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/confirm-pending-guests/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -372,6 +373,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       paymentMethodId: "pm_1",
       metadata: { bookingId: "b1", memberId: "m1" },
       idempotencyKey: ATTEMPT_KEY,
+      format: CLUB_FORMAT_TEST,
     });
     // Claim-first (#1418): capacity is claimed as CONFIRMED (hold cleared)
     // BEFORE Stripe is touched, mirroring the cron.
@@ -700,7 +702,8 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
         paymentIntentId: "pi_1",
         amountCents: 10000,
         errorMessage: expect.stringContaining("captured"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     // The claim is NOT released — CONFIRMED keeps holding the paid-for beds.
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
@@ -744,6 +747,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     );
     expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({ paymentIntentId: "pi_hosting_retry" }),
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.createStructuredAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -791,7 +795,8 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       expect.objectContaining({
         amountCents: 10000,
         errorMessage: "card_declined",
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     expect(mocks.markBookingPaymentSucceeded).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
@@ -816,7 +821,8 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(res.status).toBe(502);
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 19900 }));
     expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ amountCents: 19900, errorMessage: "card_declined" })
+      expect.objectContaining({ amountCents: 19900, errorMessage: "card_declined" }),
+      CLUB_FORMAT_TEST,
     );
   });
 

@@ -49,6 +49,7 @@ import {
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
+import { useClubFormat } from "@/components/club-format-provider";
 import type {
   AvailablePromoCode,
   BookingPaymentMethod,
@@ -233,6 +234,7 @@ export function ReviewStep({
     supersedeRequestId: string | null;
   }) => Promise<ExceptionRequestSubmitResult>;
 }) {
+  const format = useClubFormat();
   // The club's own age-tier labels, so the request card names a tier the way every
   // other member-facing screen does rather than echoing the raw enum.
   const ageTierOptions = useAgeTierOptions();
@@ -416,7 +418,7 @@ export function ReviewStep({
                     )}
                   </span>
                   <span className="shrink-0 font-medium tabular-nums">
-                    {formatCents(priceQuote.guests[i]?.priceCents || 0)}
+                    {formatCents(priceQuote.guests[i]?.priceCents || 0, format)}
                   </span>
                 </div>
               );
@@ -507,7 +509,7 @@ export function ReviewStep({
             <>
               <div className="border-t pt-4 flex justify-between text-sm">
                 <span>Subtotal</span>
-                <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
               </div>
               <div className={`flex justify-between gap-3 text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning" : "text-success"}`}>
                 <span>
@@ -515,17 +517,17 @@ export function ReviewStep({
                     ? `Working bee discount (${appliedPromo.workPartyEvent.name})`
                     : `Promo adjustment (${appliedPromo.code})`}
                 </span>
-                <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
+                <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
               </div>
               {appliedCreditCents > 0 && (
                 <div className="flex justify-between gap-3 text-sm text-success">
                   <span>Account credit</span>
-                  <span>-{formatCents(appliedCreditCents)}</span>
+                  <span>-{formatCents(appliedCreditCents, format)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-lg">
                 <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
-                <span>{formatCents(remainingToPay)}</span>
+                <span>{formatCents(remainingToPay, format)}</span>
               </div>
             </>
           ) : (
@@ -534,17 +536,17 @@ export function ReviewStep({
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
-                    <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                    <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
                   <div className="flex justify-between gap-3 text-sm text-success">
                     <span>Account credit</span>
-                    <span>-{formatCents(appliedCreditCents)}</span>
+                    <span>-{formatCents(appliedCreditCents, format)}</span>
                   </div>
                 </>
               )}
               <div className={`${appliedCreditCents === 0 ? "border-t pt-4 " : ""}flex justify-between font-bold text-lg`}>
                 <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
-                <span>{formatCents(remainingToPay)}</span>
+                <span>{formatCents(remainingToPay, format)}</span>
               </div>
             </>
           )}
@@ -562,7 +564,7 @@ export function ReviewStep({
           {availableCreditCents > 0 && (
             <div className="mt-2 rounded-md border border-success/20 bg-success-muted p-4">
               <p className="mb-2 text-sm text-success">
-                You have <strong>{formatCents(availableCreditCents)}</strong> in account credit
+                You have <strong>{formatCents(availableCreditCents, format)}</strong> in account credit
               </p>
               <label className="flex cursor-pointer items-center gap-2 text-sm text-success">
                 <input
@@ -903,7 +905,7 @@ export function ReviewStep({
                   Today you only pay for the member places on this booking.
                 </strong>{" "}
                 Your non-member guests&apos; places (about{" "}
-                <strong>{formatCents(provisionalGuestPortionCents)}</strong> at
+                <strong>{formatCents(provisionalGuestPortionCents, format)}</strong> at
                 non-member rates) are not charged today.
               </p>
               <p>

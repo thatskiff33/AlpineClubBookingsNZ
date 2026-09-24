@@ -9,6 +9,7 @@ import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import { lodgeFolderFiles } from "@/lib/config-transfer/categories/lodge-config";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const LODGE_JSON = "lodge-config/lodges/main/lodge.json";
 const ROOMS = "lodge-config/lodges/main/rooms.csv";
@@ -197,7 +198,7 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
 
   it("plans all-create against an empty target and flags the default-lodge change", async () => {
     const { zip } = await exportLodges(false);
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     const actions = Object.fromEntries(cat.items.map((i) => [i.entity, i.action]));
     expect(actions["lodge"]).toBe("create");
@@ -229,7 +230,7 @@ describe("config-transfer lobby display (issue #50)", () => {
 
   it("plans lodge display settings on the lodge entity against an empty target", async () => {
     const { zip } = await exportLodges(false);
-    const plan = await buildImportPlan(emptyTargetDb(), zip, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     expect(cat.errors).toEqual([]);
     // Display settings travel on the lodge descriptor, not a separate entity.
@@ -253,7 +254,7 @@ describe("config-transfer lobby display (issue #50)", () => {
       }),
     );
     const rezipped = zipSync(unzipped); // integrity is warn-only by design
-    const plan = await buildImportPlan(emptyTargetDb(), rezipped, { mode: "merge" });
+    const plan = await buildImportPlan(emptyTargetDb(), rezipped, { format: CLUB_FORMAT_TEST, mode: "merge" });
     const cat = plan.categories.find((c) => c.category === "lodge-config")!;
     const joined = cat.errors.join("\n");
     expect(joined).toMatch(/displayNameGranularity/);

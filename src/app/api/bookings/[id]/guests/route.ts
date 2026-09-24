@@ -155,6 +155,7 @@ import {
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -284,6 +285,9 @@ export async function POST(
   // add-guest edit be admitted under one day and priced under another.
   const todayAtClub = (await clubTime()).today();
   const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -924,6 +928,7 @@ export async function POST(
       // A PARKED add re-ran nothing, so its new nights stay UNKNOWN.
       if (!parked) {
         await recordBookingNightAdjustments(tx, {
+          format,
           bookingId,
           guestIds: guestNightRates.map((guest) => guest.bookingGuestId),
           targets: adjustmentTargets,
@@ -1352,6 +1357,7 @@ export async function POST(
     // to this modification instead of only logging.
     const { additionalPaymentClientSecret, additionalPaymentIntentId } =
       await createModificationAdditionalPaymentIntent({
+        format,
         bookingId,
         // Guest adds never decrease the price, so the shared settlement
         // context's refund side is always zero here.
@@ -1363,7 +1369,7 @@ export async function POST(
       });
 
     // Audit log. #3530: what the figure is made of, line by line and in dollars.
-    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger);
+    const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
     logAudit({
       action: "booking.modify.guests.add",
       memberId: session.user.id,
@@ -1474,7 +1480,7 @@ export async function POST(
         promoCoverageNote: result.promoCoverage?.message ?? null,
         financialReviewPending,
         lodgeId: result.booking.lodgeId,
-      }).catch((err) =>
+      }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
     }

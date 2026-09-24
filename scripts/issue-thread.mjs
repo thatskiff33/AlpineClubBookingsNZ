@@ -17,8 +17,8 @@
  * rejected. That happened again on #2777: four unticked options in the body, the
  * owner's decision sitting in a comment from the previous evening.
  *
- * `AGENTS.md` says to read the comments, and the Claude adapter imports that
- * same authority. There is a memory note about it. It kept happening anyway,
+ * `AGENTS.md` says to read the comments, and every agent loads that same
+ * authority. There is a memory note about it. It kept happening anyway,
  * because instructions lose to
  * ergonomics: the cheap command was the incomplete one. This script makes the
  * complete read the cheap one, which is the only version of this rule that has

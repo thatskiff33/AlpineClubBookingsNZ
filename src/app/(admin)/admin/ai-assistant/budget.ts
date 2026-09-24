@@ -1,5 +1,6 @@
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 // Money helpers for the AI assistant monthly spend cap. All money is integer
 // cents of the club's configured currency (#3354); the editor shows a plain
@@ -32,7 +33,7 @@ export type ParseBudgetResult =
  * bound and at most two decimal places. Rejects blanks, non-numbers, negatives,
  * and over-precise input so a fat-finger cannot silently truncate.
  */
-export function parseDollarsToCents(input: string): ParseBudgetResult {
+export function parseDollarsToCents(input: string, format: ClubFormat): ParseBudgetResult {
   const trimmed = input.trim();
   if (trimmed === "") {
     return { ok: false, error: "Enter a monthly spend cap." };
@@ -57,7 +58,7 @@ export function parseDollarsToCents(input: string): ParseBudgetResult {
   if (cents > MAX_BUDGET_CENTS) {
     return {
       ok: false,
-      error: `The monthly cap cannot exceed ${formatCents(MAX_BUDGET_CENTS)}.`,
+      error: `The monthly cap cannot exceed ${formatCents(MAX_BUDGET_CENTS, format)}.`,
     };
   }
   return { ok: true, cents };

@@ -97,6 +97,7 @@ import {
   deletedBookingPrimaryPaymentRefundReason,
   findCompletedHandBackForLateCapture,
 } from "@/lib/deleted-booking-modification-payment";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const INTENT_ID = "pi_late";
 
@@ -316,6 +317,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
     // refund happened here, so writing it would put a money movement that did not
     // occur into the club's permanent record.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture(),
       handBack: HAND_BACK,
     });
@@ -340,6 +342,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
 
   it("spells out in the row that the money did NOT go, and which row proves it", async () => {
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture({ captureKind: "primary", amountCents: 12000 }),
       handBack: { ...HAND_BACK, amountCents: 9000 },
     });
@@ -365,6 +368,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
     // cheerful mail here would be the #2761 defect at the opposite polarity: a
     // subject asserting a refund that was withheld.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture({ openingDeletedAt: new Date("2026-07-01") }),
       handBack: HAND_BACK,
     });
@@ -377,7 +381,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
         handBackAmountCents: 2500,
         bookingDeleted: true,
         captureKind: "modification",
-      }),
+      }), CLUB_FORMAT_TEST,
     );
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
   });
@@ -385,6 +389,7 @@ describe("reportWithheldLateCaptureRefund (#2774 — the fenced path)", () => {
   it("does not re-read deletedAt, because no Stripe round trip happened", async () => {
     // There is no window for the population to have changed under us on this path.
     await reportWithheldLateCaptureRefund({
+      format: CLUB_FORMAT_TEST,
       capture: capture(),
       handBack: HAND_BACK,
     });
@@ -503,7 +508,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     await announceAutomaticLateCaptureRefund(capture({ captureKind: "primary" }), {
       bookingDeleted: false,
       handCompletedAfterRefund: false,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -511,7 +516,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
         bookingDeleted: false,
         captureKind: "primary",
         amountCents: 2500,
-      }),
+      }), CLUB_FORMAT_TEST,
     );
     expect(
       mocks.sendAdminLateCaptureHandBackConflictAlert,
@@ -524,9 +529,9 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: true,
       handCompletedAfterRefund: false,
-    });
+    }, CLUB_FORMAT_TEST);
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingDeleted: true }),
+      expect.objectContaining({ bookingDeleted: true }), CLUB_FORMAT_TEST,
     );
   });
 
@@ -534,7 +539,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: false,
       handCompletedAfterRefund: true,
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -550,7 +555,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     expect(
       mocks.sendAdminLateCaptureHandBackConflictAlert,
     ).toHaveBeenCalledWith(
-      expect.objectContaining({ refundSent: true, handBackAmountCents: null }),
+      expect.objectContaining({ refundSent: true, handBackAmountCents: null }), CLUB_FORMAT_TEST,
     );
     // ONE notification for the event: never both, and never the cheerful one on
     // its own, which would be a lie by omission about money leaving twice.

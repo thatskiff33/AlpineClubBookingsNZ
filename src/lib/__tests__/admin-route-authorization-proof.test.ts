@@ -515,14 +515,14 @@ const REVIEWED_PERMISSION_DIVERGENCES: Divergence[] = [
   {
     pathname: "/api/admin/club-format",
     method: "GET",
-    gate: "Full Admin only",
-    why: "STRICTER than the map (#3563, INV-CONFIG-006). The installation's currency and locale decide how every amount of money in the product is denominated and written, so both verbs are Full Admin and not a support level - the same ground /api/admin/club-time-zone below is on.",
+    gate: "any admitted admin",
+    why: "WIDER than the map, owner decision on #3596 (23 Sep 2026): any admin may VIEW the club's currency and locale, so an officer investigating why an amount or a date is written the way it is can see the setting that decides it. The payload is safe whole for every admin - the two values every rendered amount already shows, their provenance, and the display name of whoever last changed them - so nothing narrows.",
   },
   {
     pathname: "/api/admin/club-format",
     method: "PUT",
     gate: "Full Admin only",
-    why: "STRICTER than the map, same reason as the GET above.",
+    why: "STRICTER than the map (#3563, INV-CONFIG-006). The installation's currency and locale decide how every amount of money in the product is denominated and written, so CHANGING them is Full Admin and not a support level - the same ground /api/admin/club-time-zone below is on. #3596 widened the read beside it and left this unchanged.",
   },
   {
     pathname: "/api/admin/club-time-zone",
@@ -852,6 +852,21 @@ describe("the real guardAdminLayout enforces the real route map on every admin p
 // ADR-002 §1 — admission, not an area.
 // ---------------------------------------------------------------------------
 
+describe("#3596 admission: the Currency & locale page admits any admitted admin", () => {
+  it("opens the page for every single-area grid, and for nobody else", async () => {
+    for (const area of AREAS) {
+      const grid = viewGridFor(area);
+      expect(
+        (await pageAdmits(grid, "/admin/club-format")).ok,
+        `${area}:view only must be able to open the Currency & locale page`,
+      ).toBe(true);
+    }
+    expect((await pageAdmits(PLAIN_MEMBER, "/admin/club-format")).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe("ADR-002 §1 admission: the Diagnostics surfaces admit any admitted admin", () => {
   it("opens the workspace shell for every single-area grid, and for nobody else", async () => {
     for (const area of AREAS) {
@@ -942,7 +957,7 @@ describe("the reviewed route-to-area anchors, enforced through the real guards",
  * because its own gate says so rather than because a check was missed.
  *
  * This list is what makes "refused everything else" a true statement instead of
- * an approximate one. Both entries are reviewed above in
+ * an approximate one. Every entry is reviewed above in
  * `REVIEWED_PERMISSION_DIVERGENCES`; they are named again here because the
  * assertion below has to allow exactly them and nothing more.
  */
@@ -953,6 +968,10 @@ const FINANCE_ONLY_NON_FINANCE_ADMISSIONS = [
   // ADR-002 §1 admission: any one area may ask a Diagnostics question, and the
   // answer returns no evidence the caller's own areas do not gate at invocation.
   "POST /api/admin/ai-diagnostics/ask",
+  // Owner decision #3596: any admin may VIEW the club's currency and locale.
+  // The READ only - the `PUT` beside it is Full Admin, and this grid is refused
+  // it, which is what keeps it off this list.
+  "GET /api/admin/club-format",
   // Gated `finance:view` in its own source, while its PATH sits under
   // `/api/admin/members` and so counts as `membership` in the partition above.
   // It computes a joining fee from fee configuration and persists nothing, so
@@ -1008,8 +1027,9 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
     const admitted: string[] = [];
     for (const pathname of others) {
       const result = await pageAdmits(FINANCE_ONLY, pathname);
-      // The Diagnostics shell is admission rather than an area (ADR-002 §1) and
-      // is proved above; everything else must refuse.
+      // The Diagnostics shell (ADR-002 §1) and the club-format page (#3596) are
+      // admission rather than an area, pinned in `ANY_ADMIN_ADMISSION_PATHS`;
+      // everything else must refuse.
       if (result.ok && !isAnyAdminAdmissionPath(pathname)) admitted.push(pathname);
     }
     expect(admitted).toEqual([]);
@@ -1028,7 +1048,7 @@ describe("#2984: finance-only standing grants Finance and nothing else", () => {
         if (result.ok) admitted.push(`${method} ${pathname}`);
       }
     }
-    // Exactly the two reviewed admissions, and no others. Asserting equality
+    // Exactly the reviewed admissions, and no others. Asserting equality
     // rather than a subset is the point: a route that starts admitting this grid
     // for a reason nobody wrote down fails here.
     expect(admitted.sort()).toEqual([...FINANCE_ONLY_NON_FINANCE_ADMISSIONS].sort());

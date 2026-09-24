@@ -22,6 +22,7 @@ import {
   type CancellationRule,
 } from "./cancellation";
 import { formatCents } from "@/lib/utils";
+import type { ClubFormat } from "@/lib/club-format";
 
 export type { CancellationRule };
 
@@ -397,11 +398,14 @@ export function calculateBookingCreditApplication(input: {
   creditBalanceCents: number;
   finalPriceCents: number;
   status: BookingStatus;
+  /** The club's format, for the insufficient-credit message (#3565). */
+  format: ClubFormat;
 }): {
   creditAppliedCents: number;
   effectivePriceCents: number;
 } {
-  const { requestedCreditCents, creditBalanceCents, finalPriceCents, status } = input;
+  const { requestedCreditCents, creditBalanceCents, finalPriceCents, status, format } =
+    input;
   if (requestedCreditCents <= 0 || status !== BookingStatus.PAYMENT_PENDING) {
     return {
       creditAppliedCents: 0,
@@ -411,7 +415,7 @@ export function calculateBookingCreditApplication(input: {
 
   if (requestedCreditCents > creditBalanceCents) {
     throw new Error(
-      `Insufficient credit: ${formatCents(creditBalanceCents)} available, ${formatCents(requestedCreditCents)} requested`
+      `Insufficient credit: ${formatCents(creditBalanceCents, format)} available, ${formatCents(requestedCreditCents, format)} requested`
     );
   }
   if (requestedCreditCents > finalPriceCents) {

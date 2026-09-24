@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it } from "vitest";
 import { CronResultSummary } from "@/app/(admin)/admin/health/_components/shared";
 

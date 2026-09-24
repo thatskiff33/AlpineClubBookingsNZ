@@ -16,6 +16,7 @@ import {
   type BoundClubTime,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
+import { useClubFormat } from "@/components/club-format-provider";
 
 interface QuoteOption {
   id: string;
@@ -113,6 +114,7 @@ function formatQuoteExpiry(value: string, club: BoundClubTime): string {
 }
 
 export function BookingRequestRespondClient({ token }: { token: string }) {
+  const format = useClubFormat();
   /*
     The quote's `expiresAt` is a real INSTANT, so it has no civil date and time
     until a zone is chosen — the club's PERSISTED one, delivered to this browser
@@ -329,13 +331,13 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="font-medium">{option.label}</p>
-                        <Badge variant="secondary">{formatCents(option.totalCents)}</Badge>
+                        <Badge variant="secondary">{formatCents(option.totalCents, format)}</Badge>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1">
                         {option.guestBreakdown.map((guest) => (
                           <Badge key={guest.guestIndex} variant="outline">
                             {guest.firstName} {guest.lastName}:{" "}
-                            {formatCents(guest.totalCents)}
+                            {formatCents(guest.totalCents, format)}
                           </Badge>
                         ))}
                       </div>

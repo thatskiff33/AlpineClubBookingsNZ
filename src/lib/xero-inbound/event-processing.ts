@@ -12,6 +12,8 @@ import { reconcileXeroContact } from "./contact";
 import { reconcileXeroPayment } from "./payment";
 import { reconcileXeroInvoice, runIncrementalInvoiceReconciliation } from "./invoice";
 import { reconcileXeroCreditNote } from "./credit-note";
+import type { ClubFormat } from "@/lib/club-format";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 function isPrismaUniqueConstraintError(error: unknown): boolean {
   return Boolean(
@@ -48,7 +50,10 @@ function buildInboundXeroObjectType(eventCategory: string | null): string | null
   return normalized || null;
 }
 
-async function processXeroInboundEvent(event: StoredXeroInboundEvent) {
+async function processXeroInboundEvent(
+  event: StoredXeroInboundEvent,
+  format: ClubFormat,
+) {
   if (!event.resourceId) {
     return {
       handled: false,
@@ -61,7 +66,7 @@ async function processXeroInboundEvent(event: StoredXeroInboundEvent) {
     case "CONTACT":
       return reconcileXeroContact(event.resourceId);
     case "INVOICE":
-      return reconcileXeroInvoice(event.resourceId);
+      return reconcileXeroInvoice(event.resourceId, format);
     case "PAYMENT":
       return reconcileXeroPayment(event.resourceId);
     case "CREDIT_NOTE":
@@ -154,6 +159,9 @@ export async function processStoredXeroInboundEvents(options?: {
   limit?: number;
   eventIds?: string[];
 }): Promise<ProcessStoredXeroInboundEventsResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const eventIds =
     options?.eventIds?.filter((value): value is string => typeof value === "string" && value.trim().length > 0) ?? [];
@@ -233,7 +241,7 @@ export async function processStoredXeroInboundEvents(options?: {
       });
       operationId = operation.id;
 
-      const reconcileResult = await processXeroInboundEvent(event);
+      const reconcileResult = await processXeroInboundEvent(event, format);
       await completeXeroSyncOperation(operationId, {
         responsePayload: reconcileResult,
         xeroObjectType: buildInboundXeroObjectType(event.eventCategory),

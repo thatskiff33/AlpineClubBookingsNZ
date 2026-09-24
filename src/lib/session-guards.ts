@@ -65,8 +65,12 @@ type RequireActiveSessionResult =
  * It exists for a read whose payload is safe for every admin, and the route
  * using it is expected to narrow what it returns by permission itself. Adding it
  * to a route that returns privileged detail hands that detail to every admin.
- * Its one current caller, `GET /api/admin/lodges`, returns only id, name, slug
- * and active to a caller without `lodge:view`.
+ * `GET /api/admin/lodges` narrows (id, name, slug and active to a caller without
+ * `lodge:view`); `GET /api/admin/club-format` returns a payload that is safe for
+ * every admin whole. The callers are not listed here, because a list in a
+ * comment goes stale: every one of them diverges from the route map, so every
+ * one is pinned, with its reason, in `REVIEWED_PERMISSION_DIVERGENCES`
+ * (`admin-route-authorization-proof.test.ts`), and a new one fails that file.
  */
 type RequireAdminOptions = {
   unauthenticatedResponse?: () => NextResponse;

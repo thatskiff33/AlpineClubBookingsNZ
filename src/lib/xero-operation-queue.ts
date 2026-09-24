@@ -14,6 +14,7 @@ import {
   retryXeroSyncOperation,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
+import type { ClubFormat } from "@/lib/club-format";
 
 // test seam
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
@@ -165,9 +166,11 @@ export interface ProcessQueuedXeroOperationRetriesResult {
   skipped: number;
 }
 
-export async function processQueuedXeroOperationRetries(options?: {
-  limit?: number;
-}): Promise<ProcessQueuedXeroOperationRetriesResult> {
+export async function processQueuedXeroOperationRetries(
+  options: { limit?: number } | undefined,
+  /** The club's format (#3565), resolved once by the caller — never per queued row. */
+  format: ClubFormat,
+): Promise<ProcessQueuedXeroOperationRetriesResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
     where: {
@@ -210,7 +213,7 @@ export async function processQueuedXeroOperationRetries(options?: {
     }
 
     try {
-      const replayResult = await retryXeroSyncOperation(originalOperationId, {
+      const replayResult = await retryXeroSyncOperation(originalOperationId, format, {
         createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
       });
 

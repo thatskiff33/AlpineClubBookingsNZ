@@ -212,6 +212,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { POST } from "@/app/api/payments/charge-saved-method/route";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -379,6 +380,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       paymentIntentId: "pi_success_1",
       amountCents: 12500,
       paymentMethodId: null,
+      format: CLUB_FORMAT_TEST,
     });
     // The capacity re-check consumes the post-lock snapshot on the tx client.
     expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
@@ -483,6 +485,7 @@ describe("POST /api/payments/charge-saved-method", () => {
         paymentMethodId: "pm_123",
         metadata: { bookingId: "booking-1", memberId: "member-1" },
         idempotencyKey: ATTEMPT_KEY,
+        format: CLUB_FORMAT_TEST,
       });
       expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
       // Forward only: a capture is written over anything but refund history.
@@ -625,6 +628,7 @@ describe("POST /api/payments/charge-saved-method", () => {
           amountCents: 12500,
           errorMessage: "Your card has insufficient funds.",
         }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockLogAudit).toHaveBeenCalledWith(
         expect.objectContaining({ action: "booking.payment.failed" }),
@@ -683,6 +687,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockReconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "payment-1", store: txClient });
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_3ds", errorMessage: expect.stringContaining("3D Secure") }),
+        CLUB_FORMAT_TEST,
       );
       expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
       expect(mockLogAudit).not.toHaveBeenCalledWith(
@@ -753,6 +758,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockChargePaymentMethod).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 19900 }));
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_3ds", amountCents: 19900 }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -772,6 +778,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(response.status).toBe(500);
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ amountCents: 19900, errorMessage: "Stripe is having a moment" }),
+        CLUB_FORMAT_TEST,
       );
     });
 
@@ -837,6 +844,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
       expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({ paymentIntentId: "pi_paid" }),
+        CLUB_FORMAT_TEST,
       );
       // The transaction threw, so nothing it wrote is committed; no release runs.
       expect(releaseCall()).toBeUndefined();
@@ -938,6 +946,7 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({ paymentIntentId: "pi_success_2" }),
+      CLUB_FORMAT_TEST,
     );
   });
 
@@ -971,6 +980,7 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(releaseCall()).toBeUndefined();
     expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({ paymentIntentId: "pi_hosting_retry" }),
+      CLUB_FORMAT_TEST,
     );
     expect(mockLogAudit).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking.payment.failed" }),

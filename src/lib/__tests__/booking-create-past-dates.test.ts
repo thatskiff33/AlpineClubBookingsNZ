@@ -121,6 +121,7 @@ import {
   XERO_INVOICE_EMAIL_SEND,
   XERO_INVOICE_EMAIL_WITHHELD_AT_CREATION,
 } from "@/lib/xero-invoice-email-instruction";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — `createConfirmedBooking` is transaction-aware, so its
 // caller resolves the CLUB's day and threads it in. Pinned to the frozen clock's
@@ -257,6 +258,7 @@ function baseInput(
     holdDays: 7,
     lodgeId: "lodge-1",
     todayAtClub: FIXTURE_CLUB_DAY,
+    format: CLUB_FORMAT_TEST,
     ...overrides,
   };
 }

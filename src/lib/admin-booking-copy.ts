@@ -29,6 +29,7 @@ import {
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -52,6 +53,9 @@ export async function copyBookingToDraft({
   targetCheckIn: string;
   adminMemberId: string;
 }) {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
   const newCheckIn = parseDateOnly(targetCheckIn);
   if (Number.isNaN(newCheckIn.getTime())) {
     throw new ApiError("Invalid target check-in date", 400);
@@ -240,6 +244,7 @@ export async function copyBookingToDraft({
   const guests = consentPlan.guests;
 
   const booking = await createDraftBooking({
+    format,
     effectiveMemberId: sourceOwnerMemberId,
     isOnBehalf: true,
     sessionUserId: adminMemberId,

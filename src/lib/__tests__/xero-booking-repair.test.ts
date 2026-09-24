@@ -5,6 +5,7 @@ import {
 } from "@/lib/xero-booking-repair";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -502,7 +503,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -536,7 +537,7 @@ describe("runBookingXeroRepair", () => {
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -590,7 +591,7 @@ describe("runBookingXeroRepair", () => {
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
-    await runBookingXeroRepair({
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -642,7 +643,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -682,7 +683,7 @@ describe("runBookingXeroRepair", () => {
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -734,7 +735,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -779,7 +780,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -812,7 +813,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -855,7 +856,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -922,7 +923,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -989,7 +990,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1045,7 +1046,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1121,7 +1122,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1178,7 +1179,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1267,7 +1268,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1373,7 +1374,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1427,7 +1428,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1487,7 +1488,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1542,7 +1543,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1630,7 +1631,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1702,7 +1703,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1809,7 +1810,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1859,7 +1860,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -1928,7 +1929,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2007,7 +2008,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2080,7 +2081,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2137,7 +2138,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2172,7 +2173,7 @@ describe("runBookingXeroRepair", () => {
     };
     const deps = createDependencies(state);
 
-    const firstRun = await runBookingXeroRepair({
+    const firstRun = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -2182,7 +2183,7 @@ describe("runBookingXeroRepair", () => {
     expect(firstRun.summary.bookingsWithFindings).toBe(0);
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
 
-    const secondRun = await runBookingXeroRepair({
+    const secondRun = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -2237,7 +2238,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2320,7 +2321,7 @@ describe("runBookingXeroRepair", () => {
     };
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2375,7 +2376,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2438,7 +2439,7 @@ describe("runBookingXeroRepair", () => {
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2496,7 +2497,7 @@ describe("runBookingXeroRepair", () => {
     };
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -2511,7 +2512,7 @@ describe("runBookingXeroRepair", () => {
     const booking = makeBooking();
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       applyActionKeys: ["late-capture-refund:booking_1:payment_1:99999"],
       dependencies: deps,
@@ -2570,7 +2571,7 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -2633,7 +2634,7 @@ describe("runBookingXeroRepair", () => {
 
     // #1491: the late-capture refund is never auto-applied — a plain --apply
     // run must leave the money untouched...
-    const untouchedReport = await runBookingXeroRepair({
+    const untouchedReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -2643,7 +2644,7 @@ describe("runBookingXeroRepair", () => {
 
     // ...and executes only when the operator confirms the EXACT action key
     // from the dry-run report (--apply-action).
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
       dependencies: deps,
@@ -2651,6 +2652,7 @@ describe("runBookingXeroRepair", () => {
     });
 
     expect(deps.refundPaymentTransactions).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 13000,
       reason: "requested_by_customer",
@@ -2785,6 +2787,7 @@ describe("runBookingXeroRepair", () => {
             // The already-refunded newer slice is carried on the error so the
             // repair can note exactly what moved (#1097 PartialRefundError).
             throw new PartialRefundError({
+              format: CLUB_FORMAT_TEST,
               completedRefundCents,
               refunds,
               cause: new Error("card_declined"),
@@ -2818,7 +2821,7 @@ describe("runBookingXeroRepair", () => {
     // First run: force the full 13000 late-capture refund. The older slice
     // fails, so the action fails — but the 6000 that refunded and recorded must
     // still get its Xero refund credit note.
-    const firstReport = await runBookingXeroRepair({
+    const firstReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
       dependencies: deps,
@@ -2844,7 +2847,7 @@ describe("runBookingXeroRepair", () => {
     // Re-run after the older slice recovers: the outstanding amount is now only
     // 7000, so the operator forces the remainder key.
     failOlderSlice = false;
-    const secondReport = await runBookingXeroRepair({
+    const secondReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       applyActionKeys: ["late-capture-refund:booking_1:payment_1:7000"],
       dependencies: deps,
@@ -2885,7 +2888,7 @@ describe("runBookingXeroRepair", () => {
     const deps = createDependencies({ bookings: [] });
 
     const report = await withTimeZoneAsync("Pacific/Auckland", () =>
-      runBookingXeroRepair({
+      runBookingXeroRepair(CLUB_FORMAT_TEST, {
         dependencies: deps,
         scope: { from: "2026-07-01", to: "2026-07-31" },
       })
@@ -3062,7 +3065,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3104,7 +3107,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    await runBookingXeroRepair({
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3129,7 +3132,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    await runBookingXeroRepair({
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3155,7 +3158,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    await runBookingXeroRepair({
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3183,7 +3186,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3227,7 +3230,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3264,7 +3267,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3281,7 +3284,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3315,7 +3318,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeIntentRecoveries: [intentMintRecovery()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3342,7 +3345,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeIntentRecoveries: [intentMintRecovery({ status: "FAILED" })],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3395,7 +3398,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3420,7 +3423,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3433,7 +3436,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     const booking = makeBooking({ modifications: [parkedModification()] });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3458,7 +3461,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3494,7 +3497,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       },
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3530,7 +3533,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       editReviewChargeShares: [settledShare()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3574,7 +3577,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
       },
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3601,7 +3604,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     };
     const deps = createDependencies(state);
 
-    const firstRun = await runBookingXeroRepair({
+    const firstRun = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3609,7 +3612,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     expect(firstRun.summary.bookingsWithFindings).toBe(0);
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
 
-    const secondRun = await runBookingXeroRepair({
+    const secondRun = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3679,7 +3682,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3707,7 +3710,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3739,7 +3742,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
     const booking = makeBooking({ modifications: [priceIncreaseModification()] });
     const deps = createDependencies({ bookings: [booking] });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -3764,7 +3767,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       operations: [makePrimaryInvoiceCreateOperation({ completedAt: null })],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3789,7 +3792,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3811,7 +3814,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3848,7 +3851,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3912,7 +3915,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -3999,7 +4002,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -4033,7 +4036,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       operations: [makePrimaryInvoiceCreateOperation()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });
@@ -4055,7 +4058,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       editReviewChargeShares: [parkedGuestAddShare()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -4109,7 +4112,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       ],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       dependencies: deps,
       scope: { all: true },
@@ -4134,7 +4137,7 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
       operations: [reAssertedCompletion()],
     });
 
-    const report = await runBookingXeroRepair({
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
       scope: { all: true },
     });

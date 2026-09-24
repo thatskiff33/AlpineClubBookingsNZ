@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
@@ -471,7 +471,9 @@ describe("the public payment page says when the link dies, in the CLUB's time", 
   function renderInClubZone(zone: string) {
     return render(<PayByLinkPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        <ClubFormatTestProvider>
+          <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        </ClubFormatTestProvider>
       ),
     });
   }
