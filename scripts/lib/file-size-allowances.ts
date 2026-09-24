@@ -45,7 +45,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { ALLOWANCE_DIR } from "./allowance-dir.mjs";
+import { ALLOWANCE_DIR, isSafeAllowanceName } from "./allowance-dir.mjs";
 
 /** Where a pull request writes its allowances. One file per pull request. */
 export { ALLOWANCE_DIR };
@@ -232,6 +232,10 @@ export function readSizeAllowances(root: string): AllowanceRead {
   const problems: AllowanceProblem[] = [];
   for (const name of names) {
     const source = `${ALLOWANCE_DIR}/${name}`;
+    if (!isSafeAllowanceName(name)) {
+      problems.push({ source, problem: `unsafe allowance filename: ${name}` });
+      continue;
+    }
     let text: string;
     try {
       text = readFileSync(path.join(dir, name), "utf8");

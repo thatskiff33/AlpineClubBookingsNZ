@@ -1796,7 +1796,11 @@ Before cutting a public reference release:
    compiling; untracked drafts and `size-allowances.d/README.md` are preserved.
    Refresh `origin/main` before this step: the compiler checks that it is an
    ancestor of the release-prep checkout and retires only allowance fragments
-   present on that ref, never a branch-only draft.
+   present on that ref, never a branch-only draft. It cannot detect an unfetched
+   remote update while offline; the printed reminder is not proof of freshness.
+   If a file removal fails during apply, the compiler restores the original
+   changelog and fragments so you can fix the I/O cause and retry. If that
+   restoration itself fails, stop and inspect the named files before retrying.
 3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
    guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
    validation, and public/private workflow drift.

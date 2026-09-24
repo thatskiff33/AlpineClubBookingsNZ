@@ -148,7 +148,10 @@ edited merged allowance stops the compile before any write. A refreshed
 `origin/main` must be an ancestor of the release-prep checkout. Nothing is
 retired if there is no changelog release to compile. The date defaults to today
 in New Zealand; pass one as the second argument to override it. Historical
-sections are never rewritten.
+sections are never rewritten. A failed removal restores the original changelog
+and fragments for a safe retry; if restoration itself fails, stop and inspect
+the files named by the error. The compiler cannot prove an unfetched remote
+update does not exist, so refresh `origin/main` before running it.
 
 Two things under `## Unreleased` are **not** entries, and the compiler tells
 them apart by marker rather than by position:

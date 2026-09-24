@@ -7,6 +7,7 @@ import {
   ALLOWANCE_DIR,
   readSizeAllowances,
 } from "../lib/file-size-allowances";
+import { isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 
 /**
  * The reader for the deliberate escape from the ratchet (owner decision,
@@ -34,6 +35,15 @@ function newTree(files: Record<string, string> = {}): string {
 }
 
 describe("readSizeAllowances", () => {
+  it("shares the release compiler's portable filename rule", () => {
+    expect(isSafeAllowanceName("2991 old allowance.md")).toBe(true);
+    expect(isSafeAllowanceName("2991-āwhina.md")).toBe(true);
+    expect(isSafeAllowanceName("2991:old.md")).toBe(false);
+    expect(isSafeAllowanceName("CON.md")).toBe(false);
+    expect(isSafeAllowanceName("../outside.md")).toBe(false);
+    expect(isSafeAllowanceName("2991-old.txt")).toBe(false);
+  });
+
   it("reads file, length and reason, and ignores the prose around them", () => {
     const root = newTree({
       "2980-policy.md": [

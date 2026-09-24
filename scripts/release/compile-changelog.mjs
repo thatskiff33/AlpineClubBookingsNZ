@@ -39,7 +39,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
+import { ALLOWANCE_DIR, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -51,7 +51,6 @@ export const FRAGMENTS_DIRNAME = "changelog.d";
  * Compared case-insensitively so `readme.md` is never compiled into a release.
  */
 const RESERVED_FRAGMENT_NAMES = new Set(["readme.md", ".gitkeep"]);
-const SAFE_ALLOWANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.md$/;
 const MERGED_ALLOWANCE_REF = "origin/main";
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
@@ -192,7 +191,7 @@ export function retiredAllowancePaths(repoRoot) {
     }
     const name = parts[1];
     if (RESERVED_FRAGMENT_NAMES.has(name.toLowerCase())) continue;
-    if (!SAFE_ALLOWANCE_NAME.test(name)) {
+    if (!isSafeAllowanceName(name)) {
       throw new Error(`Unsafe allowance filename in ${MERGED_ALLOWANCE_REF}: ${relative}`);
     }
     if (type !== "blob" || !["100644", "100755"].includes(mode)) {
@@ -386,6 +385,7 @@ export function compileChangelog({
   date = todayInNewZealand(),
   dryRun = false,
   log = console.log,
+  removeFile = fs.rmSync,
 } = {}) {
   if (!VERSION_PATTERN.test(String(version ?? ""))) {
     throw new Error(`Version must look like 0.14.0, got: ${version ?? "(missing)"}`);
@@ -396,7 +396,8 @@ export function compileChangelog({
 
   const changelogPath = path.join(repoRoot, "CHANGELOG.md");
   const fragmentsDir = path.join(repoRoot, FRAGMENTS_DIRNAME);
-  const changelog = fs.readFileSync(changelogPath, "utf8").replace(/\r\n/g, "\n");
+  const originalChangelog = fs.readFileSync(changelogPath);
+  const changelog = originalChangelog.toString("utf8").replace(/\r\n/g, "\n");
 
   if (changelog.split("\n").some((line) => line.startsWith(`## ${version} `))) {
     throw new Error(`CHANGELOG.md already has a "## ${version}" section — nothing to compile.`);
@@ -435,6 +436,7 @@ export function compileChangelog({
   const retiredAllowances = retiredAllowancePaths(repoRoot);
   const names = fragments.map((fragment) => fragment.name);
   if (dryRun) {
+    log(`  Source is local ${MERGED_ALLOWANCE_REF}; refresh it before release prep.`);
     log(`[dry run] Would add "## ${version} - ${date}" to CHANGELOG.md with:`);
     if (composed.restoredPointerNote) {
       log('  - a restored changelog.d pointer note under "## Unreleased" (it is missing)');
@@ -452,14 +454,66 @@ export function compileChangelog({
     return { written: false, version, date, fragments: names, retiredAllowances, ...composed };
   }
 
-  fs.writeFileSync(changelogPath, composed.changelog);
-  for (const name of names) {
-    fs.rmSync(path.join(fragmentsDir, name));
-  }
-  for (const relative of retiredAllowances) {
-    fs.rmSync(path.join(repoRoot, relative));
+  // Snapshot every planned deletion before the first write. An ordinary I/O
+  // failure must not leave a new version heading with half its source files
+  // still present, which would make a safe retry impossible.
+  const removalPaths = [
+    ...names.map((name) => path.join(fragmentsDir, name)),
+    ...retiredAllowances.map((relative) => path.join(repoRoot, relative)),
+  ];
+  const originals = removalPaths.map((file) => {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile()) throw new Error(`Release fragment must be a regular file: ${file}`);
+    return { file, bytes: fs.readFileSync(file), mode: stat.mode };
+  });
+
+  try {
+    fs.writeFileSync(changelogPath, composed.changelog);
+    for (const file of removalPaths) removeFile(file);
+  } catch (error) {
+    const restoreErrors = [];
+    for (const { file, bytes, mode } of originals) {
+      try {
+        const current = fs.lstatSync(file, { throwIfNoEntry: false });
+        if (!current) {
+          fs.writeFileSync(file, bytes, { mode, flag: "wx" });
+        } else if (!current.isFile() || !fs.readFileSync(file).equals(bytes)) {
+          throw new Error(`Release input changed during rollback; left untouched: ${file}`);
+        }
+      } catch (restoreError) {
+        restoreErrors.push(restoreError);
+      }
+    }
+    try {
+      const current = fs.lstatSync(changelogPath, { throwIfNoEntry: false });
+      if (!current) {
+        fs.writeFileSync(changelogPath, originalChangelog, { flag: "wx" });
+      } else if (!current.isFile()) {
+        throw new Error(`CHANGELOG.md changed during rollback; left untouched: ${changelogPath}`);
+      } else {
+        const currentBytes = fs.readFileSync(changelogPath);
+        if (!currentBytes.equals(originalChangelog)) {
+          if (!currentBytes.equals(Buffer.from(composed.changelog))) {
+            throw new Error(`CHANGELOG.md changed during rollback; left untouched: ${changelogPath}`);
+          }
+          fs.writeFileSync(changelogPath, originalChangelog);
+        }
+      }
+    } catch (restoreError) {
+      restoreErrors.push(restoreError);
+    }
+    if (restoreErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...restoreErrors],
+        "Release compilation failed and automatic restoration was incomplete; inspect the listed files before retrying.",
+      );
+    }
+    throw new Error("Release compilation failed; original files restored and the release can be retried.", {
+      cause: error,
+    });
   }
 
+  log(`  Source was local ${MERGED_ALLOWANCE_REF}; it must be refreshed before release prep.`);
   log(`Added "## ${version} - ${date}" to CHANGELOG.md.`);
   if (composed.restoredPointerNote) {
     log('  Restored the changelog.d pointer note under "## Unreleased" (it was missing).');

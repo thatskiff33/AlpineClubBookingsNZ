@@ -397,6 +397,70 @@ describe("compile-changelog", () => {
     expect(fragmentFiles(root)).toEqual(["2452-release.md"]);
     expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
     expect(log.text()).toContain("size-allowances.d/2991-old.md (spent allowance; would be deleted)");
+    expect(log.text()).toContain("Source is local origin/main; refresh it before release prep");
+  });
+
+  it("restores all release inputs after a later unlink failure, then retries safely", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: {
+        "2991-old.md": "first allowance\n",
+        "3031-new.md": "second allowance\n",
+      },
+    });
+    const before = read(root);
+    const fragment = path.join(root, "changelog.d", "2452-release.md");
+    const allowance = path.join(root, "size-allowances.d", "3031-new.md");
+
+    expect(() =>
+      compileChangelog({
+        repoRoot: root,
+        version: "0.14.0",
+        date: "2026-08-04",
+        log: silentLog(),
+        removeFile(file) {
+          fs.rmSync(file);
+          if (file === allowance) throw new Error("injected unlink failure after deletion");
+        },
+      }),
+    ).toThrow(/original files restored.*retried/);
+    expect(read(root)).toBe(before);
+    expect(fs.readFileSync(fragment, "utf8")).toBe("- **Release entry (#2452).**\n");
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "3031-new.md", "README.md"]);
+
+    const retry = compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+    expect(retry.written).toBe(true);
+    expect(read(root)).toContain("## 0.14.0 - 2026-08-04");
+    expect(allowanceFiles(root)).toEqual(["README.md"]);
+  });
+
+  it("does not overwrite a concurrent edit while reporting incomplete rollback", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "original allowance\n" },
+    });
+    const before = read(root);
+    const allowance = path.join(root, "size-allowances.d", "2991-old.md");
+
+    expect(() =>
+      compileChangelog({
+        repoRoot: root,
+        version: "0.14.0",
+        date: "2026-08-04",
+        log: silentLog(),
+        removeFile(file) {
+          if (file === allowance) {
+            fs.writeFileSync(file, "concurrent edit\n");
+            throw new Error("injected conflict");
+          }
+          fs.rmSync(file);
+        },
+      }),
+    ).toThrow(/automatic restoration was incomplete/);
+    expect(read(root)).toBe(before);
+    expect(fs.readFileSync(path.join(root, "changelog.d", "2452-release.md"), "utf8"))
+      .toBe("- **Release entry (#2452).**\n");
+    expect(fs.readFileSync(allowance, "utf8")).toBe("concurrent edit\n");
   });
 
   it("keeps an allowance committed only on the release-prep branch", () => {
@@ -482,19 +546,37 @@ describe("compile-changelog", () => {
     expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md"]);
   });
 
-  it("fails closed on unsafe committed filenames before writing the changelog", () => {
+  it("retires a valid spaced allowance filename accepted by the budget reader", () => {
     const root = makeTrackedAllowanceRepo({
       fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
-      allowances: { "unsafe name.md": "file: src/lib/waitlist.ts\n" },
+      allowances: { "2991 old allowance.md": "file: src/lib/waitlist.ts\n" },
     });
+    expect(retiredAllowancePaths(root)).toEqual(["size-allowances.d/2991 old allowance.md"]);
+
+    const result = compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    expect(result.retiredAllowances).toEqual(["size-allowances.d/2991 old allowance.md"]);
+    expect(allowanceFiles(root)).toEqual(["README.md"]);
+  });
+
+  it("fails closed on a nested Git path before writing the changelog", () => {
+    const root = makeTrackedAllowanceRepo({
+      fragments: { "2452-release.md": "- **Release entry (#2452).**\n" },
+      allowances: { "2991-old.md": "file: src/lib/waitlist.ts\n" },
+    });
+    const nested = path.join(root, "size-allowances.d", "nested");
+    fs.mkdirSync(nested);
+    fs.writeFileSync(path.join(nested, "wrong.md"), "not a direct child\n");
+    git(root, "add", "size-allowances.d/nested/wrong.md");
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "nested path");
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD");
     const before = read(root);
 
-    expect(() => retiredAllowancePaths(root)).toThrow(/Unsafe allowance filename/);
     expect(() =>
       compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() }),
-    ).toThrow(/Unsafe allowance filename/);
+    ).toThrow(/Unsafe allowance path/);
     expect(read(root)).toBe(before);
-    expect(allowanceFiles(root)).toEqual(["README.md", "unsafe name.md"]);
+    expect(allowanceFiles(root)).toEqual(["2991-old.md", "README.md", "nested"]);
   });
 
   it("refuses a linked allowance directory before writing the changelog", () => {
