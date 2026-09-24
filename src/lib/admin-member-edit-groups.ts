@@ -13,6 +13,7 @@ import {
 } from "@/lib/member-address"
 import type { AppRole } from "@/lib/member-roles"
 import { formatDateOnly } from "@/lib/date-only";
+import { normalizeDietaryRequirements } from "@/lib/member-dietary-field";
 
 // Per-group edit forms for the admin member detail page. Each group unlocks
 // and saves independently; its payload builder emits ONLY that group's fields
@@ -41,6 +42,12 @@ export interface MemberContactEditForm extends MemberAddressValues {
    * means the Contact save sends nothing and the stored value is untouched.
    */
   dietaryRequirements?: string
+  /**
+   * The value the form was built from, so a Contact save sends the field only
+   * when the admin actually changed it. Sending it on every save would
+   * silently revert a newer edit the member made after this page loaded.
+   */
+  dietaryRequirementsAsLoaded?: string
   comments: string
   ageTier: string
   postalSameAsPhysical: boolean
@@ -118,7 +125,10 @@ export function buildContactEditForm(
     joinedDate: toDateInputValue(member.joinedDate),
     occupation: member.occupation ?? "",
     ...("dietaryRequirements" in member
-      ? { dietaryRequirements: member.dietaryRequirements ?? "" }
+      ? {
+          dietaryRequirements: member.dietaryRequirements ?? "",
+          dietaryRequirementsAsLoaded: member.dietaryRequirements ?? "",
+        }
       : {}),
     comments: member.comments || "",
     ageTier: member.ageTier,
@@ -169,7 +179,11 @@ export function buildContactPayload(
     dateOfBirth: form.dateOfBirth || null,
     joinedDate: form.joinedDate || null,
     occupation: form.occupation || null,
-    ...(form.dietaryRequirements !== undefined
+    // #2941: only a CHANGED value is sent (compared after normalisation), so
+    // an unrelated Contact save cannot overwrite a newer member edit.
+    ...(form.dietaryRequirements !== undefined &&
+    normalizeDietaryRequirements(form.dietaryRequirements) !==
+      normalizeDietaryRequirements(form.dietaryRequirementsAsLoaded)
       ? { dietaryRequirements: form.dietaryRequirements || null }
       : {}),
     comments: form.comments || null,
