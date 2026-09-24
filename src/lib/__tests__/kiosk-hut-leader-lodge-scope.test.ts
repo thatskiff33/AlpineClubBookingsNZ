@@ -34,9 +34,9 @@ function matching(where: {
 
 const db = {
   hutLeaderAssignment: {
-    findMany: vi.fn(async (args: { where: Parameters<typeof matching>[0] }) => [
-      ...new Set(matching(args.where).map((row) => row.lodgeId)),
-    ].map((lodgeId) => ({ lodgeId }))),
+    findMany: vi.fn(async (args: { where: Parameters<typeof matching>[0] }) =>
+      matching(args.where).map(({ lodgeId, startDate }) => ({ lodgeId, startDate })),
+    ),
     count: vi.fn(async (args: { where: Parameters<typeof matching>[0] }) =>
       matching(args.where).length,
     ),
@@ -82,6 +82,19 @@ describe("own-account hut leader lodge scope (#3029 S1)", () => {
     await expect(resolveKioskLodgeId(leader("2026-09-01"), db as never)).rejects.toBeInstanceOf(
       KioskLodgeUnresolvedError,
     );
+  });
+
+  it("a changeover day belongs to the assignment whose own dates cover it (N4)", async () => {
+    state.assignments = [
+      { memberId: "leader-1", lodgeId: "lodge-a", startDate: day("2026-08-05"), endDate: day("2026-08-10") },
+      { memberId: "leader-1", lodgeId: "lodge-b", startDate: day("2026-08-11"), endDate: day("2026-08-15") },
+    ];
+    // The 10th is inside A and inside B's day-before window: A's own dates win.
+    await expect(resolveKioskLodgeId(leader("2026-08-10"), db as never)).resolves.toBe("lodge-a");
+    await expect(resolveKioskLodgeId(leader("2026-08-11"), db as never)).resolves.toBe("lodge-b");
+    // The day before B starts, with nothing else covering it, still reaches B.
+    state.assignments = [state.assignments[1]!];
+    await expect(resolveKioskLodgeId(leader("2026-08-10"), db as never)).resolves.toBe("lodge-b");
   });
 
   it("assignments at two lodges on the same day are refused as ambiguous", async () => {

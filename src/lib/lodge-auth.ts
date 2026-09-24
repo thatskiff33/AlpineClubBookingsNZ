@@ -240,8 +240,9 @@ interface ResolveKioskLodgeIdAuthResult {
  *
  * - hut-leader: the PIN session's HutLeaderAssignment carries its own
  *   lodgeId. Signed in on their own account, the leader's lodge is the one
- *   whose assignment covers the day the tier was judged for (`date`); no such
- *   assignment, or assignments at two lodges, is denied (#3029 S1).
+ *   whose assignment covers the day the tier was judged for (`date`) — its own
+ *   dates first, the day-before window only when none does (#3029 N4); no such
+ *   assignment, or two lodges on the same basis, is denied (#3029 S1).
  * - lodge / admin: a STAFF MemberLodgeAccess grant binds the kiosk account
  *   to a lodge; no grant falls back to the default lodge. Admin kiosk
  *   devices may also be bound, so the same lookup applies. A grant at more
@@ -286,19 +287,25 @@ export async function resolveKioskLodgeId(
           startDate: { lte: addDaysDateOnly(day, 1) },
           endDate: { gte: day },
         },
-        distinct: ["lodgeId"],
         orderBy: [{ lodgeId: "asc" }],
-        select: { lodgeId: true },
-        take: 2,
+        select: { lodgeId: true, startDate: true },
       });
-      if (covering.length > 1) {
+      // The tier window opens the day BEFORE an assignment starts, so on a
+      // changeover day (lodge A ends on the 10th, lodge B starts on the 11th)
+      // both cover the 10th. The assignment whose own dates cover the day wins;
+      // the day-before window counts only when none does (#3029 N4). Two lodges
+      // on the same basis are still ambiguous.
+      const actual = covering.filter((assignment) => assignment.startDate <= day);
+      const basis = actual.length > 0 ? actual : covering;
+      const lodges = [...new Set(basis.map((assignment) => assignment.lodgeId))];
+      if (lodges.length > 1) {
         throw new AmbiguousKioskLodgeError(
           "You are hut leader at more than one lodge on this date — an admin must fix the assignments.",
         );
       }
-      const own = covering[0];
+      const own = lodges[0];
       if (!own) throw new KioskLodgeUnresolvedError();
-      return own.lodgeId;
+      return own;
     }
     case "lodge":
     case "admin": {
