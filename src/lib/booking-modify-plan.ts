@@ -759,11 +759,7 @@ export async function prepareGuestPlan(
      * host's.
      */
     today: Date;
-    /**
-     * The club's date format, for the person-night guard's refusal (#3566).
-     * Threaded for the reason `today` is: this runs inside the caller's
-     * transaction, where no setting may be read (`INV-LOCK-004`).
-     */
+    /** The guard's refusal copy (#3566); threaded for the reason `today` is. */
     format: ClubDateFormat;
     now?: Date;
   },

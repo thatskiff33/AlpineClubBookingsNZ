@@ -188,8 +188,7 @@ async function loadLayoutRender(
         },
       }),
       getWebsiteThemeRenderState(),
-      // The club's date format (#3566), for the {{display-date}} token.
-      clubFormatValues(),
+      clubFormatValues(), // the {{display-date}} token's format (#3566)
     ]);
     if (!template) {
       logger.warn(

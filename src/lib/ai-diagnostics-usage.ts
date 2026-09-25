@@ -327,10 +327,7 @@ export async function reserveDiagnosticsBudget(
       budgetCents: DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
     };
   }
-
-  // The club's STORED currency (#3566) — the one the cap is labelled in —
-  // resolved BEFORE the transaction and its advisory lock, never under them.
-  const clubCurrency = (await getClubFormat()).currencyCode;
+  const clubCurrency = (await getClubFormat()).currencyCode; // stored (#3566), before the lock
   try {
     return await prisma.$transaction(async (tx) => {
       // Serialise every reserve for THIS month so the read-check-insert below is
@@ -347,8 +344,7 @@ export async function reserveDiagnosticsBudget(
       });
 
       // The rate is read under the same lock and snapshot as the budget (#3354):
-      // one PK read of a one-row table, none for an NZD club. The currency it
-      // is read for was resolved above, before the lock (#3566). It only sizes THIS
+      // one PK read of a one-row table, none for an NZD club. It only sizes THIS
       // reservation; every stored term the lock protects is already club cents.
       const [settings, monthly, activeAgg, currency] = await Promise.all([
         tx.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),
@@ -543,10 +539,7 @@ export async function settleDiagnosticsRoundtrip(
     recordMeteringFailure(new Error("Diagnostics usage delegates unavailable"), failureContext);
     return;
   }
-
-  // The club's STORED currency (#3566), resolved before the lock like the
-  // reserve's.
-  const clubCurrency = (await getClubFormat()).currencyCode;
+  const clubCurrency = (await getClubFormat()).currencyCode; // stored (#3566), before the lock
   try {
     await prisma.$transaction(async (tx) => {
       // Take the SAME per-month advisory lock as reserveDiagnosticsBudget as the
@@ -658,8 +651,7 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
       orderBy: { createdAt: "desc" },
       take: 2000,
     }),
-    // The club's STORED currency (#3566), the one the cap is labelled in.
-    getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)),
+    getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)), // stored (#3566)
   ]);
 
   const limitCents = settings?.monthlyBudgetCents ?? DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;

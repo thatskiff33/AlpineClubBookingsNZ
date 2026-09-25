@@ -55,6 +55,11 @@ vi.mock("@/lib/ai-spend-currency-settings", () => ({
   AI_SPEND_CURRENCY_SETTINGS_ID: "default",
   loadAiSpendCurrency: rateMocks.loadAiSpendCurrency,
 }));
+// #3566: the rate is read for the club's STORED currency.
+const formatMocks = vi.hoisted(() => ({ getClubFormat: vi.fn() }));
+vi.mock("@/lib/club-format-settings", () => ({
+  getClubFormat: formatMocks.getClubFormat,
+}));
 
 import {
   aiUsageMonthKey,
@@ -78,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetAiMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
+  formatMocks.getClubFormat.mockResolvedValue({ currencyCode: "AUD", locale: "en-AU" });
   // $transaction executes the array of pending ops (which are already-resolved
   // promises from the create/upsert mocks).
   mocks.transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
@@ -342,6 +348,7 @@ describe("club-currency conversion (#3354)", () => {
     mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 1000 });
     await checkAiBudget();
     expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD");
   });
 
   it("FAILS CLOSED when the rate cannot be read", async () => {
@@ -366,6 +373,7 @@ describe("club-currency conversion (#3354)", () => {
       increment: 1218,
     });
     expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD");
   });
 
   it("books the NZD estimate unchanged at the identity rate", async () => {

@@ -1674,9 +1674,7 @@ export async function holdBookingRequestSlots(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
-  // The club's date format (#3566), for the person-night guard's refusal,
-  // resolved before the transaction for the reason the day above is.
-  const format = await clubFormatValues();
+  const format = await clubFormatValues(); // the guard's refusal copy (#3566), before the locks
 
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },

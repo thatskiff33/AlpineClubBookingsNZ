@@ -77,9 +77,7 @@ function handleAllocatedToSearchKeyDown(
 
 export default function LockersPage() {
   const { confirm, confirmDialog } = useConfirm();
-  // Sorting and case-folding follow the CLUB's language (#3566, owner decision
-  // 6) rather than a hard-coded New Zealand English collation.
-  const { locale: clubLocale } = useClubFormat();
+  const { locale: clubLocale } = useClubFormat(); // collation follows the club (#3566)
   // Lockers live under the membership area (their write routes enforce
   // membership:edit), so gate the editor on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");

@@ -192,8 +192,7 @@ export async function checkAiBudget(
         where: { month: aiUsageMonthKey(now) },
       }),
       prisma.aiAssistantSettings.findUnique({ where: { id: "default" } }),
-      // The club's STORED currency (#3566), the one the cap is labelled in.
-      getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)),
+      getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)), // stored (#3566)
     ]);
     const budgetCents = settings?.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS;
     const spentCents = monthly?.costCents ?? 0;
@@ -315,10 +314,7 @@ export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   }
 
   try {
-    // The club's STORED currency (#3566), the one the cap is labelled in.
-    const currency = await loadAiSpendCurrency(
-      (await getClubFormat()).currencyCode,
-    );
+    const currency = await loadAiSpendCurrency((await getClubFormat()).currencyCode); // stored (#3566)
     const costCents = convertNzdCentsToClubCents(
       nzdCostCents,
       currency.clubUnitsPerNzdMicros,

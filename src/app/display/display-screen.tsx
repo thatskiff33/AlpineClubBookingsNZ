@@ -37,12 +37,7 @@ import {
   type DisplayModuleProps,
 } from "@/components/lodge-display/modules";
 import { useDisplayState, type DisplayPayload } from "./use-display-state";
-import {
-  DisplayClubTimeProvider,
-  HeaderClock,
-  readPreviewState,
-  useDisplayClubTime,
-} from "./display-header-clock";
+import { DisplayClubTimeProvider, HeaderClock, readPreviewState, useDisplayClubTime } from "./display-header-clock";
 
 // The lobby display screen (fork issue #32): full-screen, non-interactive,
 // driven entirely by the display-state payload + resolved template. States:

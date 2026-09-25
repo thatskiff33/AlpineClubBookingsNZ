@@ -250,11 +250,7 @@ function monthEndString(monthKey: string): string {
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;
 }
 
-function monthRangeLabel(
-  fromMonth: string,
-  toMonth: string,
-  format: ClubDateFormat,
-) {
+function monthRangeLabel(fromMonth: string, toMonth: string, format: ClubDateFormat) {
   return fromMonth === toMonth
     ? financeDashboardMonthLabel(fromMonth, format)
     : `${financeDashboardMonthLabel(fromMonth, format)} to ${financeDashboardMonthLabel(toMonth, format)}`;
@@ -615,11 +611,7 @@ export function resolveFinanceDashboardSelection(input: {
   searchParams?: SearchParams;
   /** The club's today, as a UTC-midnight date-only instant. See above. */
   today: Date;
-  /**
-   * The club's date format, for every range, comparison and forward-window
-   * label (#3566). Required for the same reason `today` is: this module is on
-   * the browser graph and cannot read the setting itself.
-   */
+  /** The club's date format for every label (#3566); required, like `today`. */
   format: ClubDateFormat;
   seasons?: FinanceDashboardSeasonWindow[];
   financialYearEndMonth?: number;

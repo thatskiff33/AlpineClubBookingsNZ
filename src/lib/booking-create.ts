@@ -299,9 +299,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // this module is CLI-reachable through `e2e/setup/seed-second-lodge.ts`, and
   // `server-only` is a bare throw outside the `react-server` condition.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
-  // The club's date format (#3566), for the person-night guard's refusal, read
-  // here for the reason the day above is: nothing under the locks may read it.
-  const clubFormat = await getClubFormat();
+  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
 
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -663,9 +661,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // promo row by the time it needs the day.
   const todayAtClub = input.todayAtClub;
   const todayDateOnly = dateOnlyInstantOf(todayAtClub);
-  // The club's date format (#3566), for the person-night guard's refusal —
-  // read before the transaction below opens, like the day above.
-  const clubFormat = await getClubFormat();
+  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
   const retroactiveOverride = allowPastDates && checkIn < todayDateOnly;
   // Over-capacity warn-and-confirm (#1668/#1695, widened by #1767): every
   // on-behalf create may overbook behind an explicit admin confirmation —
@@ -1759,9 +1755,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   // where the transaction starts and silently breaks an unrelated ordering
   // contract. Say "the transaction below".
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
-  // The club's date format (#3566), for the person-night guard's refusal —
-  // read before the transaction below opens, like the day above.
-  const clubFormat = await getClubFormat();
+  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
 
   const waitlistLodgeId = await resolveBookingLodgeId(
     prisma,

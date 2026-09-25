@@ -39,11 +39,10 @@
 import { BookingEventType } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
 import {
-  type BoundClubTime,
   calendarDateOfDateOnlyInstant,
-  type ClubDateFormat,
   formatClubDate,
   requireStoredCalendarDay,
+  type BoundClubTime,
 } from "@/lib/club-time";
 import type {
   CancellationEventSnapshot,
@@ -176,7 +175,7 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
  * day and silently wrong for the rest, which is the hardest kind of wrong to
  * notice. Same composition as `emailCalendarDay`, deliberately.
  */
-function storedNight(value: Date, format: ClubDateFormat): string {
+function storedNight(value: Date, format: ClubFormat): string {
   return formatClubDate(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
@@ -190,12 +189,8 @@ function storedNight(value: Date, format: ClubDateFormat): string {
   );
 }
 
-/**
- * The stay window. Takes no `club` binding, because a calendar day has no zone —
- * but it does take the club's format, because a calendar day still has a
- * language (#3566).
- */
-function dateRange(booking: NarrativeBooking, format: ClubDateFormat): string {
+/** The stay window. No `club` binding (a calendar day has no zone), but a format (#3566). */
+function dateRange(booking: NarrativeBooking, format: ClubFormat): string {
   return `${storedNight(booking.checkIn, format)} to ${storedNight(booking.checkOut, format)}`;
 }
 
@@ -460,10 +455,7 @@ function buildPayableNarrative(
  * word of it; the two compositions state, each in its own docblock, why a figure
  * the member is genuinely owed an answer about survives beside them.
  */
-function buildFinancialReviewPendingNarrative(
-  booking: NarrativeBooking,
-  format: ClubDateFormat,
-): BookingNarrative {
+function buildFinancialReviewPendingNarrative(booking: NarrativeBooking, format: ClubFormat): BookingNarrative {
   return {
     state: "financial_review_pending",
     headline: "Your booking change is saved",

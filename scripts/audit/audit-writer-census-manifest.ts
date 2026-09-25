@@ -553,8 +553,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 487 -> 488 (#3566): `AI_SPEND_CURRENCY_RATE_CLEARED`, the record that a
   // currency change in `/api/admin/club-format` cleared the stored AI spend
   // rate (owner decision 4) - who, the previous and new currency, and the rate
-  // that was cleared. One `tx.auditLog.create` inside that route's own
-  // Serializable transaction, written only when a rate existed. Categorised
+  // that was cleared. One `tx.auditLog.create` in
+  // `src/lib/ai-spend-currency-clear.ts`, on that route's own Serializable
+  // transaction client, written only when a rate existed. Categorised
   // `admin` at the site like the rate writer it undoes, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census`, not incremented.
