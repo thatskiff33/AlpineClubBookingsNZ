@@ -117,11 +117,10 @@ optional, and the compiler can. `club-format-kernel.test.ts` pins that with a
 `@ts-expect-error` per rendering, which turns a re-added optional parameter into
 an "unused directive" compile error under `tsc -p tsconfig.test.json`.
 
-**This stage is money only**, by the owner's decision on #3565: every currency
-amount, percentage and count. The DATE locale — `club-time/intl.ts`,
-`induction-display.ts` and the stuck-states page, which still read `APP_LOCALE`
-— is [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566)'s
-to move, and nothing here touches it.
+**Stage 3 was money only**, by the owner's decision on #3565: every currency
+amount, percentage and count. The DATE locale moved in stage 4
+([#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566)) —
+see "Dates take the same format" below.
 
 The rules that make a required argument bearable, and that every call site now
 follows:
@@ -149,7 +148,44 @@ surface, including email bodies and the text written to Xero, which
 `club-format-kernel.test.ts` proves against the retired module constants and the
 email and Xero suites prove on their rendered output. `APP_CURRENCY` /
 `APP_LOCALE` remain only as the seed-only environment reading `resolveClubFormat`
-falls back to when nothing is persisted; #3567 retires them.
+falls back to when nothing is persisted; since #3566 no module outside
+`src/config/operational.ts` reads either (the seed reader, `club-format-env.ts`,
+aside), and #3567 retires them.
+
+## Dates take the same format (#3566)
+
+Stage 4 made the club-time kernel's date renderings take the club's format the
+same way money does, by the owner's decision of 25 Sep 2026. Every exported
+rendering in `club-time/format.ts` ends in a **required** `format:
+ClubDateFormat` — `Pick<ClubFormat, "locale">`, so any `ClubFormat` satisfies
+it and a date does not depend on the currency — and `club-time/intl.ts` no
+longer imports `APP_LOCALE`. `house-shapes.test.ts` carries one
+`@ts-expect-error` per rendering, the same TS2578 lock as above.
+
+- **Bound calls did not change.** `bindClubTime(zone, format)` closes over
+  both, and `clubTime()` binds the persisted zone with `clubFormatValues()` —
+  the same memo the money kernel and the providers read — so
+  `clubTime.instantDate(x)` and friends take neither. `BoundClubTime.format`
+  hands the locale to the zone-free calendar renderings.
+- **In the browser**, `ClubTimeProvider` takes a required `locale` prop beside
+  `zone`, the value `ClubFormatProvider` receives. A prop rather than an internal
+  `useClubFormat()` read because the root-404 embeds mount it outside both
+  chromes, where no `ClubFormatProvider` exists.
+- **Emails** read the locale from the same boot-primed, five-minute cache that
+  gives them the club's zone (`email-templates-club-time.ts`, owner decision 2),
+  so their date calls are unchanged. The stated cost: email dates can lag a
+  locale change by up to five minutes, and the compiler does not check that
+  path — the render pins and the seam's own tests do.
+- **The projection formatters stay `en-US`.** `clubZoneParts` and
+  `clubZoneDateString` parse their parts back into numbers, and a club locale
+  with non-Latin digits would break that; they render nothing a person reads.
+- **The memo is keyed on the locale too** — `display|locale|zone|shape` — so the
+  first locale asked for cannot win for the life of the process.
+
+The AI spend conversion takes the club's STORED currency on the same terms
+(`loadAiSpendCurrency(clubCurrency, db?)`); its price table stays in NZD, the
+currency it is written in. A currency change clears the stored rate in the
+club-format route's own transaction, because the rate records no currency.
 
 ## Adding a new rendering
 

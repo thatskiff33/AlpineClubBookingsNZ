@@ -9,13 +9,13 @@ import "server-only";
  * `ClubFormatSettings` (id="default"); the environment is consulted only when
  * nothing is persisted, and the reader in the browser is never consulted at all.
  *
- * NOTHING READS IT FOR DISPLAY YET, AND THAT IS THE POINT OF STAGE 1. Owner
- * decision D1 on #3205: the authority is created first and the readers move
- * behind it, so there is no throwaway plumbing. The transitional `APP_CURRENCY`
- * / `APP_LOCALE` constants still answer for every display call site until #3564
- * (the browser seam), #3565 (the shared formatters) and #3566 (the remaining
- * server readers) move them, and #3567 retires the constants. A reader added
- * before then should come here rather than to `@/config/operational`.
+ * EVERY DISPLAY READER NOW COMES HERE. Owner decision D1 on #3205: the
+ * authority was created first (stage 1) and the readers moved behind it — the
+ * browser seam (#3564), the money formatters (#3565) and the date locale and
+ * remaining server readers (#3566) — so no module outside
+ * `src/config/operational.ts` reads `APP_CURRENCY` / `APP_LOCALE` any more, the
+ * seed reader aside, and #3567 retires the constants. A new reader comes here
+ * (or to `club-format-server.ts` in a request), never to `@/config/operational`.
  *
  * WHY IT IS SERVER-OWNED. A viewer in London must see the same club currency as
  * a viewer in Ohakune, so it cannot come from the machine rendering the page,

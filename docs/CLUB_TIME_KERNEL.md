@@ -196,7 +196,7 @@ one of these, there is a function.
 | You are about to write | Use instead |
 | --- | --- |
 | `requireCalendarDate(v.slice(0, 10))`, or `calendarDateOfDateOnlyInstant(new Date(v))`, over a serialised `@db.Date` | `calendarDateOfSerialisedDbDate(v)` — and the `…OrNull` sibling inside a client render, where a throw blanks the screen |
-| `formatClubDate(calendarDateOfSerialisedDbDate(v))` — a stay date to SHOW, `checkIn`/`checkOut`, a join deadline, a period edge | `formatStayDate(v)`, which also takes the `Date` Prisma returned; `formatStayDateOrNull(v) ?? fallback` inside a client render. Fifteen production files spelled the serialised pair out before #3507 and `stay-date-format-census.test.ts` now refuses THAT pair anywhere but `format.ts` (`INV-SSOT-001`). Not yet converged, and not guarded: the `Date`-form `formatClubDate(calendarDateOfDateOnlyInstant(x))` in about a dozen server files, and `admin/_lib/calendar-day.ts`'s `formatPayloadCalendarDay`, a sibling with its own pinned rejection semantics — #3511 |
+| `formatClubDate(calendarDateOfSerialisedDbDate(v), format)` — a stay date to SHOW, `checkIn`/`checkOut`, a join deadline, a period edge | `formatStayDate(v, format)`, which also takes the `Date` Prisma returned; `formatStayDateOrNull(v, format) ?? fallback` inside a client render. Fifteen production files spelled the serialised pair out before #3507 and `stay-date-format-census.test.ts` now refuses THAT pair anywhere but `format.ts` (`INV-SSOT-001`). Not yet converged, and not guarded: the `Date`-form `formatClubDate(calendarDateOfDateOnlyInstant(x))` in about a dozen server files, and `admin/_lib/calendar-day.ts`'s `formatPayloadCalendarDay`, a sibling with its own pinned rejection semantics — #3511 |
 | `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)` | `endOfClubDayInclusive(d, zone)` — but prefer the half-open bound wherever a `lt` will do |
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
@@ -457,8 +457,11 @@ rather than reaching for a module kept alive for that purpose.
   instrumentation separately from routes and a module-level `let` is not
   reliably shared between them; `null` there means **unknown**, never
   agreement.
-- `APP_LOCALE` is still an environment-derived constant. Locale is a separate
-  axis this epic does not touch.
+- The LOCALE is an argument too, since #3566 (stage 4 of programme #3205):
+  every rendering takes the club's `ClubDateFormat`, `bindClubTime(zone,
+  format)` closes over it, and `ClubTimeProvider` takes a required `locale`
+  prop. `docs/CLUB_FORMAT_KERNEL.md` -> "Dates take the same format" is its
+  home.
 
 ## What the guards will stop you doing
 
@@ -469,7 +472,14 @@ rather than reaching for a module kept alive for that purpose.
   off disk and fails if a second `new Date()` appears outside `clock.ts`, if
   `Intl` escapes `intl.ts`, if a module-level formatter is frozen anywhere, if
   the calendar-date pin stops being literally `"UTC"`, if the barrel gains a
-  `server-only` or Prisma import, or if `APP_TIME_ZONE` comes back.
+  `server-only` or Prisma import, or if `APP_TIME_ZONE`, `APP_LOCALE` or
+  `@/config/operational` comes back.
+- The same census refuses a date formatter anywhere in `src/` outside the
+  kernel (#3566): a constructed `Intl.DateTimeFormat`, or a
+  `toLocaleDateString` / `toLocaleTimeString`, outside five named exemptions —
+  the factory itself, two validation probes and two ISO month-key extractors —
+  each of which must still need its permission. A missing shape is declared in
+  `HOUSE_SHAPES`, never built locally.
 - The census also fails a `Date.now()` outside `clock.ts` — it is the same
   ambient clock read as `new Date()` and the earlier guard could not see it.
 - **Any module citing `INV-DATE-003` or `INV-DATE-020` may not reach

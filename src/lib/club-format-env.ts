@@ -8,9 +8,10 @@
  * thing a first boot after the upgrade can copy from. That is the whole of their
  * remaining role: `resolveClubFormat` consults the seed only when nothing is
  * persisted, and the boot backfill persists it once so that stops being true.
- * The transitional `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and `APP_LOCALE`
- * constants in `src/config/operational.ts` still derive from the same variables
- * for the call sites #3564 to #3566 have not migrated yet; #3567 retires them.
+ * The `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and `APP_LOCALE` constants in
+ * `src/config/operational.ts` still derive from the same variables; since #3566
+ * nothing outside that file reads the first and last, and #3567 retires them
+ * (and decides where the charge currency, `APP_STRIPE_CURRENCY`, comes from).
  *
  * WHY THIS IS ITS OWN MODULE rather than sitting beside the validators, and it
  * is the reason `club-time-zone-env.ts` records for `TZ`, transferred without a
