@@ -64,6 +64,7 @@ export declare const AMBIENT_AUTHORITY_RESOLVERS: {
     readonly [detail: string]: unknown;
   }>;
 };
+export declare const RETIRED_FORMAT_CONSTANT_ARMS: readonly string[];
 export declare const CLUB_FORMAT_GUARD_ARMS: {
   readonly requiredParameter: readonly string[];
 };

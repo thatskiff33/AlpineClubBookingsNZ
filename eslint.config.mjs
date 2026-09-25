@@ -475,6 +475,39 @@ export const CLUB_FORMAT_GUARD_ARMS = {
   requiredParameter: CLUB_FORMAT_PARAMETER_RESTRICTIONS.map((entry) => entry.selector),
 };
 
+// INV-CONFIG-006 / #3566 — nothing outside `src/config/operational.ts` IMPORTS
+// `APP_LOCALE` or `APP_CURRENCY` (#3628 review, finding B9). The acceptance
+// criterion of #3566, enforced rather than measured once.
+//
+// A `no-restricted-syntax` arm on the mandatory set rather than
+// `no-restricted-imports`, for the reason the environment-zone note above gives:
+// flat config REPLACES a rule's options, and `src/lib/xero-*` sets its own
+// `no-restricted-imports`, so an import rule would be silently lifted for the
+// modules that write Xero documents. Every spelling of the module path is
+// matched, and a namespace import, a default import and a re-export are refused
+// too, since each reaches the constants without naming them. Tests are outside
+// it (they are outside `no-restricted-syntax` altogether); #3567 retires the
+// constants and the tests' last references.
+//
+// `APP_STRIPE_CURRENCY`, the card-charge currency derived from `APP_CURRENCY`,
+// is NOT covered here: its seven importers are the named #3567 exception, pinned
+// by `app-currency-import-census.test.ts` so an eighth fails there.
+const OPERATIONAL_MODULE = "/(?:^|\\/)config\\/operational$/";
+const RETIRED_FORMAT_CONSTANT_MESSAGE =
+  "INV-CONFIG-006 / #3566: do not import APP_LOCALE or APP_CURRENCY. The club's locale and currency are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma, and a date's locale through the club-time binding's .format. The environment is a seed only (club-format-env.ts); #3567 retires these constants.";
+const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportSpecifier[imported.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportNamespaceSpecifier`,
+  `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}] ExportSpecifier[local.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
+  `ExportAllDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.value=${OPERATIONAL_MODULE}]`,
+].map((selector) => ({ selector, message: RETIRED_FORMAT_CONSTANT_MESSAGE }));
+
+/** The #3566 retired-constant arm as bare selectors, read by its guard test. */
+export const RETIRED_FORMAT_CONSTANT_ARMS = RETIRED_FORMAT_CONSTANT_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
 const CURRENCY_LOCALE_MESSAGE =
   "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; since #3565 both TAKE the club's resolved format, which a server caller gets from clubFormat() and a browser caller from bindClubFormat. A genuinely new rendering SHAPE is declared in @/lib/club-format-intl beside the others, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
 
@@ -2573,6 +2606,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
   ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
+  ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
 ];
 
 /**
