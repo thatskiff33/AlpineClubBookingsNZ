@@ -44,6 +44,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type MemberSummary = {
   id: string;
@@ -76,6 +77,9 @@ function handleAllocatedToSearchKeyDown(
 
 export default function LockersPage() {
   const { confirm, confirmDialog } = useConfirm();
+  // Sorting and case-folding follow the CLUB's language (#3566, owner decision
+  // 6) rather than a hard-coded New Zealand English collation.
+  const { locale: clubLocale } = useClubFormat();
   // Lockers live under the membership area (their write routes enforce
   // membership:edit), so gate the editor on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -391,25 +395,25 @@ export default function LockersPage() {
       const bValue =
         sortField === "name" ? b.name : memberDisplayName(b.allocatedTo);
 
-      const result = aValue.localeCompare(bValue, "en-NZ", {
+      const result = aValue.localeCompare(bValue, clubLocale, {
         sensitivity: "base",
       });
       return sortDirection === "asc" ? result : -result;
     });
 
     return clone;
-  }, [lockers, sortDirection, sortField]);
+  }, [clubLocale, lockers, sortDirection, sortField]);
 
   const filteredMembers = useMemo(() => {
-    const query = allocatedToSearch.trim().toLocaleLowerCase("en-NZ");
+    const query = allocatedToSearch.trim().toLocaleLowerCase(clubLocale);
     if (!query) {
       return members;
     }
 
     return members.filter((member) =>
-      memberDisplayName(member).toLocaleLowerCase("en-NZ").includes(query),
+      memberDisplayName(member).toLocaleLowerCase(clubLocale).includes(query),
     );
-  }, [allocatedToSearch, members]);
+  }, [allocatedToSearch, clubLocale, members]);
 
   const SortIcon = sortDirection === "asc" ? ArrowUp : ArrowDown;
 
