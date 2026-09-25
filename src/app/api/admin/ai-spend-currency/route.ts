@@ -5,11 +5,6 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import {
-  CLUB_FORMAT_SETTINGS_ID,
-  normaliseClubCurrencyCode,
-} from "@/lib/club-format";
-import { clubFormatValues } from "@/lib/club-format-server";
 import logger from "@/lib/logger";
 import {
   describeRateInputRule,
@@ -35,8 +30,8 @@ import { prisma } from "@/lib/prisma";
 // (see config-transfer club-settings.ts). Not module-gated (feature-routes.ts):
 // it belongs to two modules and spends nothing.
 //
-// THE CLUB SIDE IS THE CLUB'S STORED CURRENCY (#3566): `clubFormatValues()`,
-// the same setting the caps are labelled in — no longer the environment's
+// THE CLUB SIDE IS THE CLUB'S STORED CURRENCY (#3566), which the reader reads
+// through the same client as the rate, the same setting the caps are labelled in — no longer the environment's
 // `APP_CURRENCY`. A currency change in the admin panel CLEARS the stored rate
 // in that save's own transaction (`/api/admin/club-format`), so the rate a
 // `PUT` here writes must be for the currency still in force when it commits:
@@ -83,10 +78,7 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  const format = await clubFormatValues();
-  return NextResponse.json(
-    toResponse(await loadAiSpendCurrency(format.currencyCode)),
-  );
+  return NextResponse.json(toResponse(await loadAiSpendCurrency()));
 }
 
 export async function PUT(request: Request) {
@@ -99,8 +91,7 @@ export async function PUT(request: Request) {
   // An NZD club has nothing to convert: the rate is identity by definition and
   // the settings pages render no editor. Refuse rather than store a row that
   // nothing would ever read.
-  const format = await clubFormatValues();
-  const current = await loadAiSpendCurrency(format.currencyCode);
+  const current = await loadAiSpendCurrency();
   if (current.isNzd) {
     return NextResponse.json(
       {
@@ -148,13 +139,7 @@ export async function PUT(request: Request) {
         // written after that clear would price the new currency at the old one's
         // rate. A club with no stored row is still on the environment seed, which
         // `current` already reflects.
-        const stored = await tx.clubFormatSettings.findUnique({
-          where: { id: CLUB_FORMAT_SETTINGS_ID },
-          select: { currencyCode: true },
-        });
-        const currencyNow =
-          normaliseClubCurrencyCode(stored?.currencyCode) ?? current.clubCurrency;
-        if (currencyNow !== current.clubCurrency) {
+        if ((await loadAiSpendCurrency(tx)).clubCurrency !== current.clubCurrency) {
           throw new ClubCurrencyChangedError();
         }
 

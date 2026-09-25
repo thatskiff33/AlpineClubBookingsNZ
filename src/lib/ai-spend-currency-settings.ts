@@ -9,13 +9,16 @@
  * used to be `APP_CURRENCY`, the server's environment, while the cap beside it
  * was labelled from the stored setting — so a club that switched from NZD to
  * CHF in the admin panel saw "Monthly cap (CHF)", a rate card saying there was
- * nothing to convert, and every NZ cent counted as a Swiss centime. The
- * currency is now a REQUIRED argument, resolved by the caller from
- * `clubFormatValues()` / `getClubFormat()` before any transaction, so the cap
- * and the spend are always denominated in the same currency. The REFERENCE side
- * is unchanged and deliberately independent of the club: the AI price table is
- * written in NZD (`AI_PRICE_TABLE_CURRENCY`), and following the club there
- * would need live exchange rates the product does not have.
+ * nothing to convert, and every NZ cent counted as a Swiss centime. The reader
+ * now reads the stored currency itself, THROUGH THE SAME CLIENT as the rate —
+ * inside the diagnostics reserve and settle that is their transaction, so the
+ * currency, the rate and the budget come from one snapshot under one lock and
+ * no second connection is opened under it (`INV-LOCK-004`). A failed read
+ * PROPAGATES, like the rate's: pricing NZ cents as a currency we could not
+ * confirm is not fail-closed. The REFERENCE side is unchanged and deliberately
+ * independent of the club: the AI price table is written in NZD
+ * (`AI_PRICE_TABLE_CURRENCY`), and following the club there would need live
+ * exchange rates the product does not have.
  *
  * A stored rate does not record which currency it was set for, so a club that
  * changes currency has its rate CLEARED in the same transaction
@@ -23,6 +26,8 @@
  * pricing a later EUR or JPY club's spend.
  */
 
+import { CLUB_FORMAT_SETTINGS_ID } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
 import { prisma } from "@/lib/prisma";
 import {
   AI_PRICE_TABLE_CURRENCY,
@@ -41,6 +46,9 @@ export const AI_SPEND_CURRENCY_SETTINGS_ID = "default";
  */
 type AiSpendCurrencyReader = {
   aiSpendCurrencySettings?: {
+    findUnique?: (args: unknown) => unknown;
+  };
+  clubFormatSettings?: {
     findUnique?: (args: unknown) => unknown;
   };
 };
@@ -90,19 +98,29 @@ function identityAiSpendCurrency(clubCurrency: string): AiSpendCurrency {
  *    caller sits behind a fail-closed catch that denies the spend, and a rate
  *    we could not read is not a rate to price at.
  *
- * `clubCurrency` is the club's STORED ISO 4217 code (`ClubFormat.currencyCode`),
- * required and resolved by the caller before any transaction — see the module
- * doc. Pass a transaction client as `db` to read inside an existing transaction
- * (the diagnostics reserve and settle do, so the rate and the budget come from
- * the same snapshot under the same lock).
+ * The club's currency is read through `db` too (#3566) — see the module doc.
+ * A missing `clubFormatSettings` delegate (an old-colour client) resolves to
+ * the environment seed, the same answer `getClubFormat()` gives for an absent
+ * row; a database ERROR propagates. Pass a transaction client as `db` to read
+ * inside an existing transaction (the diagnostics reserve and settle do, so the
+ * currency, the rate and the budget come from the same snapshot under the same
+ * lock).
  */
 export async function loadAiSpendCurrency(
-  clubCurrency: string,
   db: unknown = prisma,
 ): Promise<AiSpendCurrency> {
+  const reader = db as AiSpendCurrencyReader;
+  const findFormat = reader.clubFormatSettings?.findUnique;
+  const storedFormat = findFormat
+    ? ((await findFormat({
+        where: { id: CLUB_FORMAT_SETTINGS_ID },
+        select: { currencyCode: true, locale: true },
+      })) as { currencyCode: string; locale: string } | null)
+    : null;
+  const clubCurrency = resolveStoredClubFormat(storedFormat).currencyCode;
   const identity = identityAiSpendCurrency(clubCurrency);
   if (identity.isNzd) return identity;
-  const findUnique = (db as AiSpendCurrencyReader).aiSpendCurrencySettings?.findUnique;
+  const findUnique = reader.aiSpendCurrencySettings?.findUnique;
   if (!findUnique) return identity;
   const row = (await findUnique({
     where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },

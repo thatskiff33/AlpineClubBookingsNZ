@@ -41,10 +41,12 @@ import {
   CLUB_FORMAT_SETTINGS_ID,
   normaliseClubCurrencyCode,
   normaliseClubLocale,
-  resolveClubFormat,
   type ClubFormat,
 } from "@/lib/club-format";
-import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
+import {
+  readEnvironmentClubFormatSeed,
+  resolveStoredClubFormat,
+} from "@/lib/club-format-env";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -123,8 +125,7 @@ export async function loadPersistedClubFormatSettings(): Promise<PersistedClubFo
  * documentation has to say plainly.
  */
 export async function getClubFormat(): Promise<ClubFormat> {
-  const persisted = await loadPersistedClubFormatSettings();
-  return resolveClubFormat(persisted, readEnvironmentClubFormatSeed());
+  return resolveStoredClubFormat(await loadPersistedClubFormatSettings());
 }
 
 /**
@@ -181,7 +182,7 @@ export async function resolveClubFormatWithSource(): Promise<ResolvedClubFormat>
   const persisted = await loadPersistedClubFormatSettings();
   const environment = readEnvironmentClubFormatSeed();
   return {
-    format: resolveClubFormat(persisted, environment),
+    format: resolveStoredClubFormat(persisted),
     currencySource: fieldSource(
       persisted !== null,
       persisted?.currencyCode,

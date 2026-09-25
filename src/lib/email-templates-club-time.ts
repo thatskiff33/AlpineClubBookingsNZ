@@ -141,8 +141,8 @@ import {
   type ClubTimeZone,
   type Instant,
 } from "@/lib/club-time";
-import { normaliseClubLocale, resolveClubFormat } from "@/lib/club-format";
-import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
+import { normaliseClubLocale } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
 import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { resolveClubTimeZone } from "@/lib/club-time-zone";
 import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
@@ -168,10 +168,7 @@ const ENVIRONMENT_ZONE: ClubTimeZone = requireClubTimeZone(
   resolveClubTimeZone(null, readEnvironmentClubTimeZoneSeed()),
 );
 /** The environment seed's locale, resolved once, for the same reason. */
-const ENVIRONMENT_LOCALE: string = resolveClubFormat(
-  null,
-  readEnvironmentClubFormatSeed(),
-).locale;
+const ENVIRONMENT_LOCALE: string = resolveStoredClubFormat(null).locale;
 const ENVIRONMENT_FALLBACK: BoundClubTime = bindClubTime(ENVIRONMENT_ZONE, {
   locale: ENVIRONMENT_LOCALE,
 });

@@ -5,8 +5,8 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { resolveClubFormat, type ClubFormatCandidate } from "@/lib/club-format";
-import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
+import type { ClubFormatCandidate } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
 
 /**
  * A change of the club's CURRENCY clears the stored AI spend conversion rate
@@ -42,10 +42,7 @@ export async function clearAiSpendRateOnCurrencyChange(
     request: Request;
   },
 ): Promise<void> {
-  const previousCurrency = resolveClubFormat(
-    input.before,
-    readEnvironmentClubFormatSeed(),
-  ).currencyCode;
+  const previousCurrency = resolveStoredClubFormat(input.before).currencyCode;
   if (previousCurrency === input.currencyCode) return;
 
   const cleared = await tx.aiSpendCurrencySettings.findUnique({

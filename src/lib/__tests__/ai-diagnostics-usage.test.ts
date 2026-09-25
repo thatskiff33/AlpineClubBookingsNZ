@@ -84,12 +84,6 @@ vi.mock("@/lib/ai-spend-currency-settings", () => ({
   AI_SPEND_CURRENCY_SETTINGS_ID: "default",
   loadAiSpendCurrency: rateMocks.loadAiSpendCurrency,
 }));
-// #3566: the currency the rate is read FOR is the club's stored one, resolved
-// before the transaction and its lock.
-const formatMocks = vi.hoisted(() => ({ getClubFormat: vi.fn() }));
-vi.mock("@/lib/club-format-settings", () => ({
-  getClubFormat: formatMocks.getClubFormat,
-}));
 
 import {
   AI_DIAGNOSTICS_PRICE_TABLE_NZ_CENTS_PER_MTOK,
@@ -110,7 +104,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetDiagnosticsMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
-  formatMocks.getClubFormat.mockResolvedValue({ currencyCode: "AUD", locale: "en-AU" });
   mocks.execRaw.mockResolvedValue(1);
   mocks.resvDeleteMany.mockResolvedValue({ count: 0 });
   mocks.resvAggregate.mockResolvedValue({ _sum: { reservedCents: 0 } });
@@ -681,11 +674,7 @@ describe("club-currency conversion (#3354)", () => {
     // The rate is read through the SAME transaction client as the budget, so
     // both come from one snapshot under the per-month lock.
     expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
-    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD", dbShape);
-    // The stored currency is read BEFORE the advisory lock, never under it.
-    expect(formatMocks.getClubFormat.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.execRaw.mock.invocationCallOrder[0],
-    );
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith(dbShape);
   });
 
   it("reserves the NZD worst case unchanged at the identity rate", async () => {
@@ -728,10 +717,7 @@ describe("club-currency conversion (#3354)", () => {
     expect(mocks.monthlyUpsert.mock.calls[0][0].update.settledCents).toEqual({
       increment: 829,
     });
-    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD", dbShape);
-    expect(formatMocks.getClubFormat.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.execRaw.mock.invocationCallOrder[0],
-    );
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith(dbShape);
     // Lock first, then the rate read, then the writes.
     const lockOrder = mocks.execRaw.mock.invocationCallOrder[0];
     const rateOrder = rateMocks.loadAiSpendCurrency.mock.invocationCallOrder[0];

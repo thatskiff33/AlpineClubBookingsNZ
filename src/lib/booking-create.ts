@@ -121,7 +121,6 @@ import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
-import { getClubFormat } from "@/lib/club-format-settings";
 import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
 
 // The helper types, errors, and pure functions that used to live here now live
@@ -300,7 +299,6 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // this module is CLI-reachable through `e2e/setup/seed-second-lodge.ts`, and
   // `server-only` is a bare throw outside the `react-server` condition.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
-  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
 
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -330,7 +328,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       // (`INV-LOCK-004`). The guard reaches `evaluateGuestSelfRemoval` with it,
       // and the promo window below reads the same one — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
-    }, clubFormat);
+    }, input.format);
     const draftExpiresAt = review.blockForReview
       ? null
       : new Date(Date.now() + 72 * 60 * 60 * 1000);
@@ -671,7 +669,6 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // promo row by the time it needs the day.
   const todayAtClub = input.todayAtClub;
   const todayDateOnly = dateOnlyInstantOf(todayAtClub);
-  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
   const retroactiveOverride = allowPastDates && checkIn < todayDateOnly;
   // Over-capacity warn-and-confirm (#1668/#1695, widened by #1767): every
   // on-behalf create may overbook behind an explicit admin confirmation —
@@ -900,7 +897,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // The same club day the retroactive envelope and the promo window use,
         // resolved before this transaction opened (`INV-LOCK-004`).
         today: todayDateOnly,
-      }, clubFormat);
+      }, input.format);
 
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
       const capacityCheck = await checkCapacityForGuestRanges(
@@ -1786,7 +1783,6 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   // where the transaction starts and silently breaks an unrelated ordering
   // contract. Say "the transaction below".
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
-  const clubFormat = await getClubFormat(); // the guard's refusal copy (#3566), before the locks
 
   const waitlistLodgeId = await resolveBookingLodgeId(
     prisma,
@@ -1943,7 +1939,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       // Resolved above, before this transaction opened (`INV-LOCK-004`), and
       // shared with the promotion's validity window — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
-    }, clubFormat);
+    }, input.format);
     // #3029 (`INV-MOD-059`): the waitlisted guest rows are the rows a later
     // promotion keeps, so they are seeded here, when they are first created.
     const guestDietary = await resolveBookingGuestDietary(

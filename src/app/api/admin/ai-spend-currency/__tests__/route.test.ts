@@ -8,14 +8,6 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(),
   transaction: vi.fn(),
   buildAudit: vi.fn(),
-  clubFormatValues: vi.fn(),
-  formatFindUnique: vi.fn(),
-}));
-
-// #3566: the club side is the club's STORED currency, read through the
-// request-scoped reader — mocked here so the currency is the test's choice.
-vi.mock("@/lib/club-format-server", () => ({
-  clubFormatValues: mocks.clubFormatValues,
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -68,9 +60,6 @@ beforeEach(() => {
     session: { user: { id: "admin-1" } },
   });
   mocks.loadAiSpendCurrency.mockResolvedValue(unconfiguredAud());
-  mocks.clubFormatValues.mockResolvedValue({ currencyCode: "AUD", locale: "en-AU" });
-  // The currency is still AUD when the transaction re-reads it.
-  mocks.formatFindUnique.mockResolvedValue({ currencyCode: "AUD" });
   mocks.buildAudit.mockReturnValue({ data: {} });
   mocks.settingsFindUnique.mockResolvedValue(null);
   mocks.settingsUpsert.mockImplementation(async (args: { create: Record<string, unknown> }) => ({
@@ -88,7 +77,6 @@ beforeEach(() => {
         findUnique: mocks.settingsFindUnique,
         upsert: mocks.settingsUpsert,
       },
-      clubFormatSettings: { findUnique: mocks.formatFindUnique },
       auditLog: { create: mocks.auditCreate },
     }),
   );
@@ -237,33 +225,31 @@ describe("PUT /api/admin/ai-spend-currency", () => {
 });
 
 describe("#3566: the rate belongs to the club's STORED currency", () => {
-  it("GET reads the rate for the stored currency, not the environment's", async () => {
-    await GET();
-    expect(mocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD");
-  });
-
-  it("PUT prices against the stored currency and names it in the refusal", async () => {
+  it("PUT names the stored currency in the refusal", async () => {
     const res = await PUT(makeReq({ clubUnitsPerNzd: "abc" }));
-    expect(mocks.loadAiSpendCurrency).toHaveBeenCalledWith("AUD");
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("AUD");
   });
 
-  it("runs the write Serializable, so a currency change cannot interleave", async () => {
+  it("re-reads the currency THROUGH the transaction, which runs Serializable", async () => {
     await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
     expect(mocks.transaction.mock.calls[0][1]).toEqual({
       isolationLevel: "Serializable",
     });
-    expect(mocks.formatFindUnique).toHaveBeenCalledWith({
-      where: { id: "default" },
-      select: { currencyCode: true },
-    });
+    // Once before the transaction (module client), once inside it (the tx).
+    expect(mocks.loadAiSpendCurrency).toHaveBeenCalledTimes(2);
+    expect(mocks.loadAiSpendCurrency.mock.calls[0]).toEqual([]);
+    expect(mocks.loadAiSpendCurrency.mock.calls[1][0]).toHaveProperty(
+      "aiSpendCurrencySettings",
+    );
   });
 
   it("refuses with 409 and writes nothing when the currency moved under the save", async () => {
     // Read AUD before the transaction; a club-format save committed CHF (and
     // cleared the rate) before this transaction re-read it.
-    mocks.formatFindUnique.mockResolvedValue({ currencyCode: "CHF" });
+    mocks.loadAiSpendCurrency
+      .mockResolvedValueOnce(unconfiguredAud())
+      .mockResolvedValueOnce({ ...unconfiguredAud(), clubCurrency: "CHF" });
     const res = await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
     expect(res.status).toBe(409);
     expect(mocks.settingsUpsert).not.toHaveBeenCalled();
@@ -276,12 +262,5 @@ describe("#3566: the rate belongs to the club's STORED currency", () => {
     );
     const res = await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
     expect(res.status).toBe(503);
-  });
-
-  it("accepts a rate for a club still on the environment seed (no stored row)", async () => {
-    mocks.formatFindUnique.mockResolvedValue(null);
-    const res = await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
-    expect(res.status).toBe(200);
-    expect(mocks.settingsUpsert).toHaveBeenCalledTimes(1);
   });
 });

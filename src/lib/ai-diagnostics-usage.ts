@@ -42,7 +42,6 @@ import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import type { AiUsage } from "@/lib/anthropic-client";
-import { getClubFormat } from "@/lib/club-format-settings";
 
 export const DIAGNOSTICS_SETTINGS_ID = "default";
 
@@ -327,7 +326,6 @@ export async function reserveDiagnosticsBudget(
       budgetCents: DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
     };
   }
-  const clubCurrency = (await getClubFormat()).currencyCode; // stored (#3566), before the lock
   try {
     return await prisma.$transaction(async (tx) => {
       // Serialise every reserve for THIS month so the read-check-insert below is
@@ -353,7 +351,7 @@ export async function reserveDiagnosticsBudget(
           _sum: { reservedCents: true },
           where: { month, expiresAt: { gt: now } },
         }),
-        loadAiSpendCurrency(clubCurrency, tx),
+        loadAiSpendCurrency(tx),
       ]);
 
       const budgetCents =
@@ -539,7 +537,6 @@ export async function settleDiagnosticsRoundtrip(
     recordMeteringFailure(new Error("Diagnostics usage delegates unavailable"), failureContext);
     return;
   }
-  const clubCurrency = (await getClubFormat()).currencyCode; // stored (#3566), before the lock
   try {
     await prisma.$transaction(async (tx) => {
       // Take the SAME per-month advisory lock as reserveDiagnosticsBudget as the
@@ -555,7 +552,7 @@ export async function settleDiagnosticsRoundtrip(
 
       // Same lock and snapshot as the reserve's rate read (#3354). A failed read
       // fails the settle and trips the breaker — never books NZD cents.
-      const currency = await loadAiSpendCurrency(clubCurrency, tx);
+      const currency = await loadAiSpendCurrency(tx);
       const costCents = convertNzdCentsToClubCents(
         nzdCostCents,
         currency.clubUnitsPerNzdMicros,
@@ -651,7 +648,7 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
       orderBy: { createdAt: "desc" },
       take: 2000,
     }),
-    getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)), // stored (#3566)
+    loadAiSpendCurrency(),
   ]);
 
   const limitCents = settings?.monthlyBudgetCents ?? DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;
