@@ -56,6 +56,7 @@ import {
   seasonYearsLabel,
 } from "@/lib/season-label";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** 1..12, so no sweep below has to decide which year-ends are interesting. */
 const EVERY_YEAR_END_MONTH = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -72,7 +73,7 @@ describe("seasonSelectLabel", () => {
   it("renders the shipped default exactly as the hard-coded label did", () => {
     // The literal that shipped, reproduced here rather than referenced, so a
     // change to the rendered text has to be made on purpose.
-    expect(seasonSelectLabel(2026)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
     expect(DEFAULT_FINANCIAL_YEAR_END_MONTH).toBe(3);
   });
 
@@ -87,7 +88,7 @@ describe("seasonSelectLabel", () => {
     [9, "2026 - 2027 (Oct-Sept)"],
   ])("follows a year-end of month %i", (yearEndMonth, expected) => {
     __setFinancialYearEndMonthForTesting(yearEndMonth);
-    expect(seasonSelectLabel(2026)).toBe(expected);
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe(expected);
   });
 
   it("agrees with the season derivation about whether one year or two", () => {
@@ -115,9 +116,9 @@ describe("seasonSelectLabel", () => {
 
   it("names the months independently of which season is being labelled", () => {
     __setFinancialYearEndMonthForTesting(6);
-    expect(seasonMonthsLabel(6)).toBe("Jul-Jun");
+    expect(seasonMonthsLabel(6, CLUB_FORMAT_TEST)).toBe("Jul-Jun");
     for (const seasonYear of [1999, 2026, 2400]) {
-      expect(seasonSelectLabel(seasonYear)).toBe(
+      expect(seasonSelectLabel(seasonYear, CLUB_FORMAT_TEST)).toBe(
         `${seasonYear} - ${seasonYear + 1} (Jul-Jun)`,
       );
     }
@@ -133,7 +134,7 @@ describe("seasonSelectLabel", () => {
     */
     const widths = new Map<number, number>();
     for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
-      widths.set(yearEndMonth, seasonSelectLabel(2026, yearEndMonth).length);
+      widths.set(yearEndMonth, seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth).length);
     }
     expect(widths.get(12)).toBe(14); // "2026 (Jan-Dec)" — the single-year form
     expect(widths.get(8)).toBe(22);
@@ -175,9 +176,9 @@ describe("the explicit yearEndMonth argument", () => {
     // stay Apr-Mar; wire it into `seasonMonthsLabel` only and December still
     // reads "2026 - 2027". Either way this fails.
     for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
-      const viaArgument = seasonSelectLabel(2026, yearEndMonth);
+      const viaArgument = seasonSelectLabel(2026, CLUB_FORMAT_TEST, yearEndMonth);
       __setFinancialYearEndMonthForTesting(yearEndMonth);
-      const viaCache = seasonSelectLabel(2026);
+      const viaCache = seasonSelectLabel(2026, CLUB_FORMAT_TEST);
       __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
       expect(viaArgument, `year-end ${yearEndMonth}`).toBe(viaCache);
     }
@@ -185,21 +186,21 @@ describe("the explicit yearEndMonth argument", () => {
 
   it("reads the argument, not the cache, and writes nothing back", () => {
     expect(getFinancialYearEndMonth()).toBe(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-    expect(seasonSelectLabel(2026, 12)).toBe("2026 (Jan-Dec)");
-    expect(seasonMonthsLabel(6)).toBe("Jul-Jun");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 12)).toBe("2026 (Jan-Dec)");
+    expect(seasonMonthsLabel(6, CLUB_FORMAT_TEST)).toBe("Jul-Jun");
     expect(seasonYearsLabel(2026, 12)).toBe("2026");
     // The cache is untouched, which is the whole point of the argument.
     expect(getFinancialYearEndMonth()).toBe(DEFAULT_FINANCIAL_YEAR_END_MONTH);
-    expect(seasonSelectLabel(2026)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
   });
 
   it("clamps a nonsense year-end the same way the cache setter does", () => {
     // `normalizeYearEndMonth` falls back to March rather than throwing, and a
     // caller passing a value straight out of a settings payload gets that
     // behaviour rather than a different one.
-    expect(seasonSelectLabel(2026, 0)).toBe("2026 - 2027 (Apr-Mar)");
-    expect(seasonSelectLabel(2026, 13)).toBe("2026 - 2027 (Apr-Mar)");
-    expect(seasonSelectLabel(2026, Number.NaN)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 0)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, 13)).toBe("2026 - 2027 (Apr-Mar)");
+    expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST, Number.NaN)).toBe("2026 - 2027 (Apr-Mar)");
   });
 });
 
@@ -214,10 +215,10 @@ describe("the host machine cannot move a month name", () => {
 
     for (const yearEndMonth of EVERY_YEAR_END_MONTH) {
       __setFinancialYearEndMonthForTesting(yearEndMonth);
-      const expected = withTimeZone("UTC", () => seasonSelectLabel(2026));
+      const expected = withTimeZone("UTC", () => seasonSelectLabel(2026, CLUB_FORMAT_TEST));
       for (const zone of ["Pacific/Pago_Pago", "Pacific/Kiritimati"]) {
         withTimeZone(zone, () => {
-          expect(seasonSelectLabel(2026), `${zone} / ${yearEndMonth}`).toBe(
+          expect(seasonSelectLabel(2026, CLUB_FORMAT_TEST), `${zone} / ${yearEndMonth}`).toBe(
             expected,
           );
         });
@@ -252,10 +253,10 @@ describe("the host machine cannot move a month name", () => {
     // default by construction rather than by this file's beforeEach.
     withTimeZone("Pacific/Pago_Pago", () => {
       expect(
-        fresh.seasonMonthsLabel(DEFAULT_FINANCIAL_YEAR_END_MONTH),
+        fresh.seasonMonthsLabel(DEFAULT_FINANCIAL_YEAR_END_MONTH, CLUB_FORMAT_TEST),
       ).toBe("Apr-Mar");
-      expect(fresh.seasonSelectLabel(2026)).toBe("2026 - 2027 (Apr-Mar)");
-      expect(fresh.seasonMonthsLabel(12)).toBe("Jan-Dec");
+      expect(fresh.seasonSelectLabel(2026, CLUB_FORMAT_TEST)).toBe("2026 - 2027 (Apr-Mar)");
+      expect(fresh.seasonMonthsLabel(12, CLUB_FORMAT_TEST)).toBe("Jan-Dec");
     });
   });
 });

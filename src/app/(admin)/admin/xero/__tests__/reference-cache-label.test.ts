@@ -4,6 +4,7 @@ import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatReferenceCacheLabel } from "../_components/shared";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * #2256 first fixed this label: it was built from bare `toLocaleString()` calls,
@@ -106,7 +107,7 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
     // The host, which the assertion pins to UTC so a host read is visible.
     alsoDifferFrom: ["UTC"],
   });
-  const clubTime = bindClubTime(requireClubTimeZone(chosen.zone));
+  const clubTime = bindClubTime(requireClubTimeZone(chosen.zone), CLUB_FORMAT_TEST);
 
   it("has a premise: the chosen club zone answers differently from the environment and from UTC", () => {
     // `chooseDivergentClubZone` already threw if this were false — it runs in

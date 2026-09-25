@@ -43,9 +43,9 @@ import {
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";
-const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
-const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"));
-const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
+const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"), CLUB_FORMAT_TEST);
+const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
 
 /**
  * A stored `@db.Date`, spelled the way Prisma hands one back: UTC midnight.

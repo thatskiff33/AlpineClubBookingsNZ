@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({ lodgeCapacity: 20 }),
@@ -112,7 +114,13 @@ function stubEmptyAvailability() {
 }
 
 function renderForViewer(ui: React.ReactElement) {
-  return render(<ClubTimeProvider zone={CLUB_ZONE}>{ui}</ClubTimeProvider>);
+  return render(
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={CLUB_ZONE} locale={CLUB_FORMAT_TEST.locale}>
+        {ui}
+      </ClubTimeProvider>
+    </ClubFormatTestProvider>,
+  );
 }
 
 describe("the matrix premise: each viewer really sees a different day", () => {

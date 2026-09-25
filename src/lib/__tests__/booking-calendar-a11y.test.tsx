@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   CLUB_TIME_TEST_ZONE,
   fireEvent,
@@ -8,7 +9,6 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_LOCALE } from "@/config/operational";
 
 /*
   #2930: the calendar no longer reads the club-identity bed count. That figure is
@@ -44,7 +44,7 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
   `now.get*()` reader below keeps working unchanged and returns the club's
   year/month/day in any host zone.
 */
-const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST).today();
 const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
 const now = new Date(clubYear, clubMonth - 1, clubDay);
 const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -75,7 +75,7 @@ describe("BookingCalendar accessibility", () => {
     render(<BookingCalendar onDateSelect={() => {}} />);
 
     const date = new Date(now.getFullYear(), now.getMonth(), targetDay);
-    const dateLabel = date.toLocaleDateString(APP_LOCALE, {
+    const dateLabel = date.toLocaleDateString(CLUB_FORMAT_TEST.locale, {
       weekday: "long",
       day: "numeric",
       month: "long",
@@ -102,7 +102,7 @@ describe("BookingCalendar accessibility", () => {
     const date = new Date(now.getFullYear(), now.getMonth(), targetDay);
     render(<BookingCalendar onDateSelect={() => {}} selectedCheckIn={targetIso} />);
 
-    const dateLabel = date.toLocaleDateString(APP_LOCALE, {
+    const dateLabel = date.toLocaleDateString(CLUB_FORMAT_TEST.locale, {
       weekday: "long",
       day: "numeric",
       month: "long",

@@ -36,6 +36,7 @@ import type { ReactNode } from "react"
 import { ClubTimeProvider } from "@/components/club-time-provider"
 import { APP_TIME_ZONE } from "@/config/operational"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 function roster(date = "2026-07-01", guestName = "Aroha Guest") {
   const [firstName, lastName] = guestName.split(" ")
@@ -380,7 +381,7 @@ describe("admin roster page draft transitions", () => {
     vi.stubGlobal("fetch", fetchMock)
     render(<RosterPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     })
     await waitFor(() => expect(getRosterCalls(fetchMock).length).toBeGreaterThan(0))

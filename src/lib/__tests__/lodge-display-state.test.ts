@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DisplayNameGranularity } from "@prisma/client";
 
@@ -79,7 +80,7 @@ vi.mock("@/lib/club-time/server", async () => {
     requireClubTimeZone,
   } = await import("@/lib/club-time");
   const bindWithKnobs = () => {
-    const bound = bindClubTime(requireClubTimeZone(clubTimeState.zone));
+    const bound = bindClubTime(requireClubTimeZone(clubTimeState.zone), CLUB_FORMAT_TEST);
     return {
       ...bound,
       today: () =>

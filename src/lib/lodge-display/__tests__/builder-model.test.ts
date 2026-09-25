@@ -12,6 +12,7 @@ import {
   type BuilderModel,
   type BuilderSkeleton,
 } from "@/lib/lodge-display/builder-model";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // buildLayoutRender / the save contract import `server-only`, which throws
 // outside an RSC context; stub it (mirrors lodge-display-layout-render.test).
@@ -167,7 +168,8 @@ describe("builder generators — golden output + save-contract validity (ADR-004
               cssOverrides: "",
               footerHtml: "",
             },
-            state()
+            state(),
+            CLUB_FORMAT_TEST
           )
         ).not.toThrow();
       });

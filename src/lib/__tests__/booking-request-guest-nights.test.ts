@@ -16,6 +16,7 @@
  * total is divided by exactly the rule Xero line building already synthesises,
  * so no money moves on that path.
  */
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgeTier } from "@prisma/client";
 
@@ -262,6 +263,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
   it("attaches nights to every guest, matching each one's own price", async () => {
     const guestCreates = await buildApprovalGuestCreates(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [
         { firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT },
         { firstName: "Sam", lastName: "Student", ageTier: AgeTier.CHILD },
@@ -283,6 +285,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
   it("nests them the way Prisma wants at the shared write point", async () => {
     const [guestCreate] = await buildApprovalGuestCreates(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],
@@ -365,6 +368,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
   async function pipelineNights() {
     const [guestCreate] = await buildApprovalGuestCreates({} as never, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],

@@ -176,7 +176,7 @@ const EXPIRES_AT = paymentLinkExpiryForCheckIn(CHECK_IN, CLUB_ZONE);
 /** What the `/pay` page shows for that row — the page's own formatter. */
 const PAGE_SAYS = formatLinkExpiry(
   EXPIRES_AT.toISOString(),
-  bindClubTime(CLUB_ZONE),
+  bindClubTime(CLUB_ZONE, CLUB_FORMAT_TEST),
 );
 
 /**
@@ -194,6 +194,7 @@ const PAGE_SAYS = formatLinkExpiry(
 const ENVIRONMENT_SAYS = formatClubInstantDateTime(
   EXPIRES_AT,
   unvalidatedLegacyClubTimeZone(APP_TIME_ZONE),
+  CLUB_FORMAT_TEST,
 );
 
 const APPROVED = "booking-request-approved";

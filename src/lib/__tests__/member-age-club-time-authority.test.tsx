@@ -87,6 +87,7 @@ import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render
 import { MemberSummaryStrip } from "@/app/(admin)/admin/members/[id]/_components/member-summary-strip";
 import { searchFamilyGroupCandidateMembers } from "@/lib/admin-family-group-member-search";
 import type { MemberDetail } from "@/app/(admin)/admin/members/[id]/_types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";
 /** 1 July at the frozen instant. The environment is still on 30 June. */
@@ -123,7 +124,7 @@ function memberFixture(): MemberDetail {
 function renderStripUnderClubZone(zone: string) {
   return render(
     <ClubFormatTestProvider>
-      <ClubTimeProvider zone={zone}>
+      <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
         <MemberSummaryStrip
           member={memberFixture()}
           membershipLabel="Full"

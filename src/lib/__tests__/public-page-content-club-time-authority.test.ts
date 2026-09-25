@@ -168,7 +168,7 @@ describe("public content loaders take today from the club, not the container (#3
     // the container's day it has expired and the visitor sees nothing.
     mocks.periods.mockResolvedValue([periodEndingOnTheClubDay()]);
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.periods.map((period) => period.name)).toEqual(["Winter"]);
   });

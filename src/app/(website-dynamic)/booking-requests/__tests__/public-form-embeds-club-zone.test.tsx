@@ -81,6 +81,7 @@ import { bindClubTime, fixedClubClock, requireClubTimeZone } from "@/lib/club-ti
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const PERSISTED_ZONE = "America/Denver";
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
@@ -141,10 +142,10 @@ describe("public form embeds carry the club's persisted zone (CT-4, #2870)", () 
     // instant ever made these agree, this fails here rather than leaving both
     // cases below quietly asserting nothing.
     expect(
-      bindClubTime(requireClubTimeZone(PERSISTED_ZONE)).today(frozenClock),
+      bindClubTime(requireClubTimeZone(PERSISTED_ZONE), CLUB_FORMAT_TEST).today(frozenClock),
     ).toBe("2026-06-30");
     expect(
-      bindClubTime(requireClubTimeZone(ENVIRONMENT_ZONE)).today(frozenClock),
+      bindClubTime(requireClubTimeZone(ENVIRONMENT_ZONE), CLUB_FORMAT_TEST).today(frozenClock),
     ).toBe("2026-07-01");
   });
 

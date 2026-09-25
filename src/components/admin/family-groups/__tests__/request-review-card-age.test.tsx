@@ -14,6 +14,7 @@ import type {
   FamilyGroupRequest,
   RequestMemberMatch,
 } from "@/lib/admin-family-group-ui-helpers";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * How the calculated age is PRESENTED on the request review card (#2568).
@@ -31,7 +32,7 @@ afterEach(cleanup);
  * The harness default zone, which is also what the environment resolves to — so
  * nothing in this file can tell the two apart, and nothing in it tries to.
  */
-const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE));
+const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST);
 
 const noopHandlers = {
   onSelectMember: vi.fn(),

@@ -24,6 +24,7 @@ import {
 } from "@/lib/calendar-recurrence";
 import { divergentClubZone } from "./helpers/club-time-zone";
 import { captureHostTimeZone } from "./helpers/timezone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The zone for the blocks below whose subject is a ZONE-INDEPENDENT rule —
@@ -421,12 +422,13 @@ describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
     return {
       appTimeZone: operational.APP_TIME_ZONE,
       weekly: recurrence
-        .recurrenceOptionsForDate(date)
+        .recurrenceOptionsForDate(date, CLUB_FORMAT_TEST)
         .find((o) => o.value === "WEEKLY")?.label,
       described: recurrence.describeRecurrence(
         { frequency: "MONTHLY_NTH_WEEKDAY", interval: 1, endMode: "never" },
         kernel.requireInstant("2026-07-21T00:00:00.000Z"),
         kernel.requireClubTimeZone("Pacific/Auckland"),
+        CLUB_FORMAT_TEST,
       ),
     };
   }
@@ -455,7 +457,7 @@ describe("recurrenceOptionsForDate", () => {
   it("labels a calendar day from that day, with no zone at all", () => {
     // 21 Jul 2026 is the 3rd Tuesday. A calendar day is a Tuesday everywhere on
     // earth, so this needs — and takes — no zone.
-    const opts = recurrenceOptionsForDate(requireCalendarDate("2026-07-21"));
+    const opts = recurrenceOptionsForDate(requireCalendarDate("2026-07-21"), CLUB_FORMAT_TEST);
     expect(opts[0].value).toBe("NONE");
     expect(opts.find((o) => o.value === "WEEKLY")?.label).toBe(
       "Weekly on Tuesday",
@@ -474,7 +476,7 @@ describe("recurrenceOptionsForDate", () => {
     // where the 16th was a Wednesday.
     for (const day of ["2026-07-01", "2026-07-15", "2026-12-31"]) {
       const date = requireCalendarDate(day);
-      const opts = recurrenceOptionsForDate(date);
+      const opts = recurrenceOptionsForDate(date, CLUB_FORMAT_TEST);
       const { day: dayNumber, weekday } = dayAndWeekday(date);
       const weekdayName = opts
         .find((o) => o.value === "WEEKLY")!
@@ -502,6 +504,7 @@ describe("describeRecurrence", () => {
       { frequency: "MONTHLY_DAY_OF_MONTH", interval: 1, endMode: "never" },
       anchor,
       zone,
+      CLUB_FORMAT_TEST,
     );
     expect(summary).toBe(`Monthly on day ${expected.day}`);
     // The two wrong answers are genuinely different strings, so the assertion
@@ -516,6 +519,7 @@ describe("describeRecurrence", () => {
         { frequency: "WEEKLY", interval: 1, endMode: "never" },
         requireInstant("2026-07-21T00:00:00.000Z"),
         RULE_ZONE,
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("Weekly on Tuesday");
     expect(
@@ -523,6 +527,7 @@ describe("describeRecurrence", () => {
         { frequency: "WEEKLY", interval: 2, endMode: "never" },
         requireInstant("2026-07-21T00:00:00.000Z"),
         RULE_ZONE,
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("Every 2 weeks on Tuesday");
   });
@@ -540,6 +545,7 @@ describe("describeRecurrence", () => {
         },
         anchorUtc,
         zone,
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("Weekly on Tuesday, until 11 Aug 2026");
     // A throw here would blank the whole "Repeat" picker behind an error
@@ -554,6 +560,7 @@ describe("describeRecurrence", () => {
         },
         anchorUtc,
         zone,
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("Weekly on Tuesday, until not-a-date");
   });
@@ -566,7 +573,7 @@ describe("describeRecurrence", () => {
       count: 5,
     };
     expect(
-      describeRecurrence(rule, requireInstant("2026-07-21T00:00:00.000Z"), RULE_ZONE),
+      describeRecurrence(rule, requireInstant("2026-07-21T00:00:00.000Z"), RULE_ZONE, CLUB_FORMAT_TEST),
     ).toBe("Daily, 5 times");
   });
 });

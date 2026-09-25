@@ -125,6 +125,7 @@ import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
 import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The zone the `@/config/operational` factory above pins, named rather than left
@@ -269,18 +270,18 @@ describe("the finance dashboard's trend labels take no timezone (CT-4, #2870)", 
   });
 
   it("names the month a month key holds, not the month behind it", () => {
-    expect(financeDashboardTrendMonthLabel("2026-06")).toBe("Jun 2026");
+    expect(financeDashboardTrendMonthLabel("2026-06", CLUB_FORMAT_TEST)).toBe("Jun 2026");
   });
 
   it("keeps the YEAR on a January key, which the projection also moved", () => {
     // The worst reading of the old defect: projecting `2026-01-01T00:00:00.000Z`
     // into a zone behind Greenwich lands on 31 December 2025, so the axis tick
     // named a month in the previous financial year.
-    expect(financeDashboardTrendMonthLabel("2026-01")).toBe("Jan 2026");
+    expect(financeDashboardTrendMonthLabel("2026-01", CLUB_FORMAT_TEST)).toBe("Jan 2026");
   });
 
   it("keeps December on a December key, where the projection stays in year", () => {
-    expect(financeDashboardTrendMonthLabel("2026-12")).toBe("Dec 2026");
+    expect(financeDashboardTrendMonthLabel("2026-12", CLUB_FORMAT_TEST)).toBe("Dec 2026");
   });
 
   it("labels each occupancy trend point with the day its metric key holds", async () => {

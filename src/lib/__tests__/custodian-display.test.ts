@@ -58,8 +58,9 @@ vi.mock("@/lib/club-time/server", async () => {
     requireCalendarDate,
     requireClubTimeZone,
   } = await import("@/lib/club-time");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
   const zone = requireClubTimeZone("Pacific/Auckland");
-  const bound = bindClubTime(zone);
+  const bound = bindClubTime(zone, CLUB_FORMAT_TEST);
   const today = () => requireCalendarDate("2026-07-02");
   return {
     clubTimeZone: async () => zone,
