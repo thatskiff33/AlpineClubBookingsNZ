@@ -203,6 +203,21 @@ describe("the kernel owns exactly one formatter factory", () => {
     ).toEqual([]);
   });
 
+  it("keeps the two projection formatters on en-US, never the club's locale (#3566)", () => {
+    /*
+      `clubZoneParts` and `clubZoneDateString` parse their parts back into
+      numbers. A club locale with non-Latin digits (`ar-EG`, `hi-IN-u-nu-deva`)
+      would break `Number(...)` there, silently, so these two stay pinned to
+      "en-US" while every DISPLAY formatter takes the club's locale.
+    */
+    const source =
+      kernelFiles.find((file) => file.rel === "src/lib/club-time/intl.ts")?.text ??
+      "";
+    expect(source).toMatch(/`parts\|\$\{timeZone\}`,\s*"en-US",/);
+    expect(source).toMatch(/`date-parts\|\$\{timeZone\}`,\s*"en-US",/);
+    expect(source).toMatch(/`display\|\$\{locale\}\|\$\{timeZone\}\|\$\{shape\}`,\s*locale,/);
+  });
+
   it("never asks the host or the browser what zone it is in", () => {
     const mentions = kernelFiles
       .filter((file) => /resolvedOptions\(\)\s*\.\s*timeZone/.test(file.text))

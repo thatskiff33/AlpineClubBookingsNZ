@@ -218,6 +218,25 @@ describe("the lobby display writes its date in the club's locale (#3564)", () =>
     expect(text).not.toContain(EXPECTED_DAY["ja-JP"]);
   });
 
+  it("the live clock follows the club's locale too, not only the date line (#3566)", async () => {
+    /*
+      Until #3566 the clock went through the club-time kernel, which read the
+      environment's locale, so a Swiss club's wall showed "Mi., 1. Juli" beside
+      "12:00 PM". The binding now carries the recorded locale.
+    */
+    const clock = (header: HTMLElement) =>
+      header.querySelector(".display-clock-time")?.textContent ?? "";
+    const swiss = clock(await renderHeaderFor(SWISS_FORMAT));
+    expect(swiss).toBe("12:00");
+    const nz = clock(await renderHeaderFor(DEFAULT_FORMAT));
+    expect(nz).toBe(
+      new Intl.DateTimeFormat("en-NZ", { timeZone: ZONE, timeStyle: "short" })
+        .format(NOW)
+        .toUpperCase(),
+    );
+    expect(nz).not.toBe(swiss);
+  });
+
   it("an unusable recorded locale falls back rather than blanking the wall", async () => {
     /*
       The provider re-validates what it is handed, for the reason

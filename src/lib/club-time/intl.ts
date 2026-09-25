@@ -244,7 +244,7 @@ function requireLocale(format: ClubDateFormat): string {
     throw new TypeError(
       "INV-CONFIG-006: a club date rendering was handed a format with no locale. " +
         "Pass the club's resolved format — clubTime().format / clubFormatValues() on " +
-        "the server, useClubTime().format or useClubFormat() in the browser.",
+        "the server, or the club-time binding's `.format` in the browser.",
     );
   }
   return locale;
