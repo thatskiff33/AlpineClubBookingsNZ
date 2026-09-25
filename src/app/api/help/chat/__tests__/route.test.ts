@@ -49,9 +49,6 @@ vi.mock("@/lib/anthropic-client", () => ({
 vi.mock("@/lib/help/grounding", () => ({
   buildHelpGrounding: mocks.buildHelpGrounding,
 }));
-vi.mock("@/lib/access-role-definitions", () => ({
-  MEMBER_ACCESS_ROLE_SELECT: {},
-}));
 /*
   `@/lib/admin-permissions` IS DELIBERATELY NOT MOCKED (#2975). This file used to
   stub `hasAdminPortalAccess`/`hasFinanceViewerAccess` with `vi.fn()`, so the two
@@ -61,9 +58,15 @@ vi.mock("@/lib/access-role-definitions", () => ({
   admin path at all. Everything below now runs the real permission matrix and
   the real route-to-area map over real access-role grids.
 */
-vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: mocks.memberFindUnique } },
-}));
+// The member row is projected through the route's real `select` (#3603): the
+// access-role definitions module is not mocked either, so a field the route
+// stops selecting stops reaching the permission checks, as with the real client.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: { member: { findUnique: honourSelect(mocks.memberFindUnique, "Member") } },
+  };
+});
 vi.mock("@/lib/observability-bridge", () => ({
   reportAiError: mocks.reportAiError,
 }));
@@ -112,7 +115,7 @@ beforeEach(() => {
   });
   mocks.getOperationalAnthropicApiKey.mockResolvedValue("sk-ant-key");
   mocks.buildHelpGrounding.mockReturnValue("GROUNDING");
-  mocks.memberFindUnique.mockResolvedValue({ accessRoles: [] });
+  mocks.memberFindUnique.mockResolvedValue({ canLogin: true, accessRoles: [] });
   mocks.recordAiUsage.mockResolvedValue(undefined);
   mocks.answerHelpQuestion.mockResolvedValue({
     ok: true,
@@ -254,8 +257,10 @@ describe("POST /api/help/chat — gate order (each early exit leaves the provide
  */
 function signInWithGrid(
   levels: Partial<Record<`${AdminPermissionArea}Level`, AccessRoleGridLevel>>,
+  canLogin = true,
 ) {
   mocks.memberFindUnique.mockResolvedValue({
+    canLogin,
     accessRoles: [
       {
         role: null,
@@ -268,7 +273,7 @@ function signInWithGrid(
 
 describe("POST /api/help/chat — surface downgrade + happy path", () => {
   it("downgrades a claimed admin surface to member when the DB member holds no admin area", async () => {
-    mocks.memberFindUnique.mockResolvedValue({ accessRoles: [] });
+    mocks.memberFindUnique.mockResolvedValue({ canLogin: true, accessRoles: [] });
     await POST(
       makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/members" }),
     );
@@ -338,6 +343,35 @@ describe("POST /api/help/chat — surface downgrade + happy path", () => {
       makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/fees" }),
     );
     expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("admin", "/admin/fees");
+  });
+
+  // #3603: the grid a login-disabled member still stores grounds nothing. The
+  // two tests above ("keeps a claimed admin surface…", "gives a finance-only
+  // admin…") are the same claims admitted with login enabled.
+  it("downgrades a login-disabled admin's admin claim to the member corpus", async () => {
+    signInWithGrid({ membershipLevel: "VIEW" }, false);
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "admin", pathname: "/admin/members" }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith(
+      "member",
+      "/admin/members",
+    );
+  });
+
+  it("downgrades a login-disabled finance viewer's finance claim to the member corpus", async () => {
+    signInWithGrid({ financeLevel: "VIEW" }, false);
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "finance", pathname: "/finance" }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("member", "/finance");
+
+    vi.clearAllMocks();
+    signInWithGrid({ financeLevel: "VIEW" }, true);
+    await POST(
+      makeRequest({ ...VALID_BODY, surface: "finance", pathname: "/finance" }),
+    );
+    expect(mocks.buildHelpGrounding).toHaveBeenCalledWith("finance", "/finance");
   });
 
   it("refuses a member path claimed as admin, whoever asks", async () => {

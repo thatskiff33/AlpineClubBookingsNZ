@@ -520,7 +520,7 @@ describe("#2620 the combination: anonymise, then try every way back in", () => {
     const editRes = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
       dietaryGrant: null,
       data: { active: true } as never,
@@ -657,7 +657,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
       dietaryGrant: null,
       data: { active: true } as never,
@@ -677,7 +677,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
       dietaryGrant: null,
       data: { canLogin: true } as never,
@@ -699,7 +699,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
     const res = await updateAdminMember({
       id: "m1",
       currentAdminMemberId: "admin-1",
-      currentAdminAccessRoles: ["ADMIN"],
+      currentAdminAccess: { accessRoles: ["ADMIN"], canLogin: true },
       request: editRequest(),
       dietaryGrant: null,
       data: { active: false, canLogin: true } as never,

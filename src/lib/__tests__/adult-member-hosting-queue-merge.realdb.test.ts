@@ -373,7 +373,9 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
           role: id === IDS.actor ? ("ADMIN" as const) : ("USER" as const),
           ageTier: "ADULT" as const,
           active: true,
-          canLogin: false,
+          // The merging actor is a Full Admin in the sense `actorIsFullAdmin`
+          // checks: active, login-enabled, holding the ADMIN row (#3603).
+          canLogin: id === IDS.actor,
         })),
       });
       await primary.memberAccessRole.create({

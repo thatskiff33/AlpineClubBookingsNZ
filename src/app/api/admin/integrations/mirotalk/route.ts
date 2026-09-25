@@ -112,7 +112,7 @@ export async function PUT(request: Request) {
   if (!guard.ok) return guard.response;
 
   const memberId = guard.session.user.id;
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (!isFullAdmin(guard.session.user)) {
     await createAuditLog({
       action: "mirotalk.settings.denied",
       category: "security",

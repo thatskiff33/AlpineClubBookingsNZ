@@ -429,6 +429,47 @@ describe("member delete lifecycle actions", () => {
     mockPrisma.member.updateMany.mockResolvedValue({ count: 0 });
   });
 
+  // #3603: the live privilege checks now honour `canLogin`; this blocker must
+  // not. An account that stores the Full Admin row stays undeletable after its
+  // login is switched off, and the blocker still keys on that row alone.
+  it.each([false, true])(
+    "keeps an account storing the Full Admin row undeletable (canLogin %s)",
+    async (canLogin) => {
+      mockPrisma.member.findUnique.mockResolvedValue({
+        ...cleanMember,
+        canLogin,
+        accessRoles: [{ role: "ADMIN" }],
+      });
+
+      const eligibility = await getMemberDeleteEligibility({
+        memberId: "member-1",
+        currentAdminMemberId: "admin-2",
+      });
+
+      expect(eligibility.eligible).toBe(false);
+      expect(eligibility.blockers.map((blocker) => blocker.code)).toContain(
+        "admin_account",
+      );
+    },
+  );
+
+  it("does not widen the admin-account blocker to a scoped admin role", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue({
+      ...cleanMember,
+      canLogin: false,
+      accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+    });
+
+    const eligibility = await getMemberDeleteEligibility({
+      memberId: "member-1",
+      currentAdminMemberId: "admin-2",
+    });
+
+    expect(eligibility.blockers.map((blocker) => blocker.code)).not.toContain(
+      "admin_account",
+    );
+  });
+
   it("reports blockers for meaningful member history", async () => {
     mockPrisma.booking.count.mockResolvedValue(1);
     mockPrisma.memberCredit.count.mockResolvedValue(2);

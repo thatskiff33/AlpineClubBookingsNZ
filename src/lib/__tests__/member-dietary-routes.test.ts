@@ -152,7 +152,7 @@ let actorMembership: "none" | "view" | "edit" = "none";
 
 function adminSession(membership: "none" | "view" | "edit") {
   actorMembership = membership;
-  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
+  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"], canLogin: true });
   return {
     ok: true,
     session: {

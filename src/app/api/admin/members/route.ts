@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
 
   const result = await createAdminMember(parsed.data, {
     accessRoles: guard.session.user.accessRoles,
+    canLogin: guard.session.user.canLogin,
     // #2941: only asked for (a database read) while the field is collected.
     dietaryGrant: (await isDietaryFieldEnabled())
       ? await grantMembershipAdminDietaryAccess(guard, "edit")

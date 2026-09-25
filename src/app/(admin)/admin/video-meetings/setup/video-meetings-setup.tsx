@@ -178,7 +178,7 @@ export function VideoMeetingsSetup({
       ? undefined
       : canEditFinance &&
         Boolean(
-          session?.user && isFullAdmin({ accessRoles: session.user.accessRoles }),
+          session?.user && isFullAdmin(session.user),
         );
 
   const [status, setStatus] = useState(initialStatus);

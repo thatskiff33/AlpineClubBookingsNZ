@@ -78,6 +78,40 @@ export type AccessRoleInput = {
   canLogin?: boolean | null;
 };
 
+/**
+ * Input to a PRIVILEGE decision (#3603): `canLogin` is required, not optional.
+ *
+ * A member whose login is switched off holds no access at all, whatever rows it
+ * still stores (`normalizeAssignableAccessRoles` and the admin permission matrix
+ * both clear on `canLogin === false`). That rule only applies when the caller
+ * hands the field over: a gate that re-read the member without selecting it
+ * passed `undefined` and resolved the full stored role set. Requiring it here
+ * turns "forgot to select `canLogin`" into a compile error at every privilege
+ * check. Select it with `MEMBER_PRIVILEGE_CHECK_SELECT`
+ * (`@/lib/access-role-definitions`); a session user carries it as
+ * `session.user.canLogin`.
+ *
+ * Classification helpers (`resolveAccessRoles`, `hasAccessRole`,
+ * `deriveUserType`, the USER/ORG checks) keep the optional `AccessRoleInput`:
+ * they label a record rather than admit anybody. A blocker that must see a
+ * dormant role on a login-disabled record says so by name instead
+ * (`memberHoldsFullAdminRole`, `memberHoldsPrivilegedRole`).
+ */
+export type PrivilegeCheckInput = AccessRoleInput & { canLogin: boolean };
+
+/**
+ * A possibly absent session user as a privilege-check input (#3603): no session
+ * means no roles and no login.
+ */
+export function sessionPrivilegeInput(
+  user:
+    | { accessRoles?: AccessRoleInput["accessRoles"]; canLogin?: boolean }
+    | null
+    | undefined,
+): PrivilegeCheckInput {
+  return { accessRoles: user?.accessRoles ?? [], canLogin: user?.canLogin ?? false };
+}
+
 export function isAccessRole(
   value: string | null | undefined,
 ): value is AppAccessRole {
@@ -124,7 +158,7 @@ export function legacyRoleFromAccessRoles(
   return "USER";
 }
 
-export function authorizationRoleFromAccessRoles(input: AccessRoleInput): Role {
+export function authorizationRoleFromAccessRoles(input: PrivilegeCheckInput): Role {
   return legacyRoleFromAccessRoles(resolveAccessRoles(input));
 }
 
@@ -248,19 +282,78 @@ export function accessRolesFromCompatibilityFields(
   ], { canLogin: input.canLogin });
 }
 
+/**
+ * The access roles that CLASSIFY a record rather than grant anything: a plain
+ * member (`USER`) and an organisation (`ORG`). Every other role is privileged
+ * (`isPrivilegedAccessRole`).
+ */
+type ClassificationAccessRole = Extract<AppAccessRole, "USER" | "ORG">;
+
+/**
+ * Whether the member holds `role`, with the login-disabled rule applied when
+ * the caller hands `canLogin` over.
+ *
+ * Two overloads, so the privilege type lock cannot be walked around (#3603).
+ * Asking about `USER` or `ORG` is a classification question and accepts the
+ * optional `AccessRoleInput`. Asking about any privileged role — `ADMIN`,
+ * `LODGE`, a finance or scoped admin role — is a privilege question and
+ * requires `canLogin` (`PrivilegeCheckInput`), exactly as `hasAdminAccess` does.
+ * Overloads rather than a conditional generic: a generic over the role would
+ * distribute across a union argument and accept the optional input again.
+ */
+export function hasAccessRole(
+  input: AccessRoleInput,
+  role: ClassificationAccessRole,
+): boolean;
+export function hasAccessRole(
+  input: PrivilegeCheckInput,
+  role: Exclude<AppAccessRole, ClassificationAccessRole>,
+): boolean;
 export function hasAccessRole(input: AccessRoleInput, role: AppAccessRole) {
   return resolveAccessRoles(input).includes(role);
 }
 
-export function hasAdminAccess(input: AccessRoleInput) {
+/**
+ * RECORD CLASSIFICATION: an admin-only or kiosk-only account — one holding
+ * `ADMIN` or `LODGE` but not `USER`, so not a bookable member. Used to exempt
+ * such accounts from the confirm-details onboarding. It applies `canLogin`
+ * exactly as far as the caller supplies it, and admits nobody: a gate uses
+ * `hasAdminAccess` / `hasLodgeAccess`, which require it (#3603).
+ */
+export function isAdminOrKioskOnlyRecord(input: AccessRoleInput): boolean {
+  const roles = resolveAccessRoles(input);
+  return (
+    (roles.includes("ADMIN") || roles.includes("LODGE")) &&
+    !roles.includes("USER")
+  );
+}
+
+export function hasAdminAccess(input: PrivilegeCheckInput) {
   return hasAccessRole(input, "ADMIN");
+}
+
+/**
+ * The enum access-role claim a session carries for this member (#3603): the
+ * stored rows' enum values, deduplicated, and EMPTY once `canLogin` is false.
+ * One definition for the two places that stamp it — the per-request token
+ * refresh in `auth.ts` and `requireAdmin`'s DB-verified session — so neither
+ * can hand a downstream `isFullAdmin(session.user)` a role the member no
+ * longer exercises. Definition-backed custom roles carry `role: null` and are
+ * absent by design; they reach a session through `adminPermissionMatrix`.
+ */
+export function sessionAccessRoleClaim(input: {
+  accessRoles: ReadonlyArray<{ role: AppAccessRole | AccessRole | string | null }>;
+  canLogin: boolean;
+}): AppAccessRole[] {
+  if (input.canLogin === false) return [];
+  return dedupeAccessRoles(input.accessRoles.map(({ role }) => role));
 }
 
 /**
  * Separation-of-duties check for access-role writes (issue #1012): only a
  * Full Admin (the `ADMIN` access role) may grant or revoke privileged access.
  */
-export function isFullAdmin(input: AccessRoleInput) {
+export function isFullAdmin(input: PrivilegeCheckInput) {
   return hasAdminAccess(input);
 }
 
@@ -286,7 +379,7 @@ export function isPrivilegedAccessRole(role: string) {
  * address. Evaluated over role tokens so definition-backed custom roles
  * (which are always privileged) count.
  */
-export function hasPrivilegedAccess(input: AccessRoleInput) {
+export function hasPrivilegedAccess(input: PrivilegeCheckInput) {
   return resolveAccessRoleTokens(input).some(isPrivilegedAccessRole);
 }
 
@@ -306,6 +399,24 @@ export function memberHoldsPrivilegedRole(member: {
   financeAccessLevel?: FinanceAccessLevel | string | null;
 }): boolean {
   return storedAccessRolesForFullAdminGate(member).some(isPrivilegedAccessRole);
+}
+
+/**
+ * True when the stored access-role rows include the Full Admin (`ADMIN`) row,
+ * evaluated canLogin-BLIND (#3603). The narrower sibling of
+ * `memberHoldsPrivilegedRole`, for the two blockers that have always keyed on
+ * the Full Admin row alone and must keep refusing an account that holds it
+ * dormantly after its login was switched off: the member-merge duplicate
+ * (`loser_is_admin`) and hard-delete eligibility (`admin_account`). A
+ * canLogin-aware `hasAdminAccess` there would let a login-disabled Full Admin
+ * through both. It never ADMITS anybody — a gate uses `hasAdminAccess`.
+ */
+export function memberHoldsFullAdminRole(member: {
+  accessRoles?: AccessRoleInput["accessRoles"];
+}): boolean {
+  return (member.accessRoles ?? []).some(
+    (item) => (typeof item === "string" ? item : item.role) === "ADMIN",
+  );
 }
 
 /**
@@ -353,7 +464,7 @@ export function storedAccessRolesForFullAdminGate(member: {
   return tokens;
 }
 
-export function hasLodgeAccess(input: AccessRoleInput) {
+export function hasLodgeAccess(input: PrivilegeCheckInput) {
   const roles = resolveAccessRoles(input);
   return roles.includes("LODGE") || roles.includes("ADMIN");
 }

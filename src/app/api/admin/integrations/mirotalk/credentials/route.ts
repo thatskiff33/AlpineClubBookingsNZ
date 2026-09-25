@@ -92,7 +92,7 @@ async function requireFullAdmin(action: "store" | "clear") {
   });
   if (!guard.ok) return { ok: false as const, response: guard.response };
   const memberId = guard.session.user.id;
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (!isFullAdmin(guard.session.user)) {
     await createAuditLog({
       action: "mirotalk.credentials.denied",
       category: "security",

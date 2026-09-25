@@ -510,6 +510,12 @@ model Member {
   passwordHash            String
   forcePasswordChange     Boolean          @default(false)
   passwordChangedAt       DateTime?
+  // #3603: when this member's login last went from on to off. Stamped by the
+  // database trigger "Member_stamp_sessions_revoked_at" on every such write,
+  // whichever path makes it, and backfilled for members whose login was already
+  // off. The token refresh refuses any session issued before it, the same way
+  // it treats passwordChangedAt, so re-enabling login never revives one.
+  sessionsRevokedAt       DateTime?
   lastLoginAt             DateTime?
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?

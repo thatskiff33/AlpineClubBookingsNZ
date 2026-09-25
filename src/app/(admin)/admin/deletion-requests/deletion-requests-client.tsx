@@ -148,7 +148,7 @@ export default function DeletionRequestsClient({
   // authority; hiding the control for everyone else keeps the UI honest.
   const { data: session } = useSession();
   const canReleaseApprovalClaim = session?.user
-    ? isFullAdmin({ accessRoles: session.user.accessRoles })
+    ? isFullAdmin(session.user)
     : false;
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [page, setPage] = useState(1);

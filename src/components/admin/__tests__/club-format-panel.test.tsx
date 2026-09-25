@@ -27,7 +27,7 @@ import {
 const session = vi.hoisted(() => ({
   value: {
     status: "authenticated" as "authenticated" | "loading",
-    data: null as null | { user: { id: string; accessRoles: string[] } },
+    data: null as null | { user: { id: string; accessRoles: string[]; canLogin: boolean } },
   },
 }));
 
@@ -60,7 +60,7 @@ const fetchMock = vi.fn();
 function signInAs(accessRoles: string[]) {
   session.value = {
     status: "authenticated",
-    data: { user: { id: "member-1", accessRoles } },
+    data: { user: { id: "member-1", accessRoles, canLogin: true } },
   };
 }
 

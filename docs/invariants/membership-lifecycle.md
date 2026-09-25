@@ -255,19 +255,20 @@ this property is pinned by unit tests over the helper instead
 Cancellation approval does NOT clear `MemberAccessRole` rows,
 `financeAccessLevel`, or the legacy `role` column (#2383, confirming existing
 behaviour). Archive approval, deletion anonymisation, and bulk deactivate all
-leave them too. **`active: false` is the load-bearing flag**, not
-`canLogin: false`: `requireAdmin` (`src/lib/session-guards.ts`) rejects an
-inactive member, and it does not select `canLogin` at all, while
-`getAdminPermissionMatrix` zeroes the matrix only on an explicit
-`canLogin === false` — pass it a row set without that field and the full bundle
-resolves. De-logined accounts that still hold live rows therefore exist today
-(the login-holder transfer again), so nothing may be built on "no login means no
-permissions". The dormant rows are what keep the account inside the
-canLogin-blind `memberHoldsPrivilegedRole` guard for any later archive, and
-deleting them on cancellation would be novel and would weaken that later guard.
-The corollary is a hard constraint on any future work: **a path that reactivates
-a member who kept privileged roles would silently restore every one of them.**
-Any path that is added must clear or re-grant the roles deliberately.
+leave them too. **The rows stay, dormant behind `active` and `canLogin`:**
+`requireAdmin` (`src/lib/session-guards.ts`) rejects an inactive member, and
+since #3603 every privilege check requires `canLogin` and resolves nothing for a
+login-disabled member (INV-LIFE-092). Cancellation and archive write both flags
+false, so such an account holds no access. De-logined accounts that still hold
+the rows exist (the login-holder transfer leaves them), so nothing may be built
+on "no login means no rows". The dormant rows are what keep the account inside
+the canLogin-blind `memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole`
+guards for any later archive, merge or hard delete, and deleting them on
+cancellation would be novel and would weaken those guards. The corollary is a
+hard constraint on any future work: **a path that reactivates a member, or
+switches their login back on, while they kept privileged roles would silently
+restore every one of them.** Any path that is added must clear or re-grant the
+roles deliberately.
 
 ## INV-LIFE-013
 
@@ -329,14 +330,51 @@ unresolved state; the owner decision and rationale are recorded in
 
 ## INV-LIFE-016
 
-The same fact constrains session-authenticated routes: cancellation neither
-clears the rows nor invalidates the JWT (`auth()` invalidates only on
-`passwordChangedAt`, and re-stamps `token.accessRoles` from the retained rows on
-every request), so any route that resolves admin access from a member row must
-re-read `active` rather than trusting the rows. `requireAdmin` does; the display
-preview branch of `GET /api/display/state` did not, and now does (#2383) — it
-was unreachable before, because a cancelled member could not previously hold an
-`ADMIN` row.
+The same fact constrains session-authenticated routes: cancellation clears no
+rows, and the per-request token refresh re-reads the retained ones. Cancellation
+also writes `canLogin: false`, so the refresh now ends that session
+(INV-LIFE-092), but any route that resolves admin access from a member row must
+still re-read `active` and `canLogin` rather than trusting the rows.
+`requireAdmin` does; the display preview branch of `GET /api/display/state` did
+not, and now does (#2383) — it was unreachable before, because a cancelled
+member could not previously hold an `ADMIN` row.
+
+## INV-LIFE-092
+
+A member whose `canLogin` is false holds no access and keeps no session,
+whatever access-role rows it still stores (#3603). Every sign-in provider
+already refuses such a member; this rule covers a session minted before the
+switch-off.
+
+**The type:** `hasAdminAccess`, `isFullAdmin`, `hasPrivilegedAccess`,
+`hasLodgeAccess`, `authorizationRoleFromAccessRoles`, `hasAccessRole` for any
+privileged role, and every `AdminPermissionInput` matrix check take a
+`PrivilegeCheckInput`, on which `canLogin` is required, so a gate whose member
+read forgot it does not compile. Select it with `MEMBER_PRIVILEGE_CHECK_SELECT`;
+a session carries it as `session.user.canLogin`. **The gates:** `requireAdmin`,
+the finance loader, the lodge kiosk gate, help-chat and both member-facing
+layouts re-read it; `requireActiveSessionUser` refuses the member outright.
+**The session:** the database trigger `Member_stamp_sessions_revoked_at` stamps
+`Member.sessionsRevokedAt` on every true-to-false write, whichever path makes
+it, and the token refresh in `src/lib/auth.ts` refuses any session issued
+before that time, as it does one issued before `passwordChangedAt`. The time
+lives on the row, so re-enabling login never revives such a session, whatever
+cookie is replayed; members already off at upgrade are backfilled. The refresh
+also refuses while `canLogin` is false, empties the role claims, and keeps a
+token it invalidated invalidated, for a sign-in racing the switch-off or clock
+skew; signing in clears that.
+
+A hut leader's PIN is a separate assignment credential, governed by `active`
+rather than by this rule: hut leaders can be members who never had a login.
+
+Record-classification helpers (`resolveAccessRoles`, `hasAccessRole` for `USER`
+or `ORG`, `isAdminOrKioskOnlyRecord`, `deriveUserType`) keep an optional
+`canLogin`. A blocker that must see a dormant role says so by name:
+`memberHoldsPrivilegedRole` and `memberHoldsFullAdminRole` ignore `canLogin`,
+so a login-disabled Full Admin still cannot be merged away or hard-deleted
+(INV-LIFE-012). Guard tests project fixtures through the query's `select`
+(`honourSelect`), because a fixture carrying an unselected field is how the gap
+went unseen.
 
 ## INV-LIFE-017
 
