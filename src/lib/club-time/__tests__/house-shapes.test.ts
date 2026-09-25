@@ -40,6 +40,7 @@ import {
   formatClubWeekdayDate,
   formatClubWeekdayDay,
   formatClubWeekdayDayMonth,
+  formatClubWeekdayHeaders,
 } from "../format";
 import { formatCalendarDateShape, formatHouseShape, HOUSE_SHAPES } from "../intl";
 import type { ClubDateFormat } from "../types";
@@ -739,5 +740,53 @@ describe("#3566: the format argument is required, and the compiler is the census
     ];
     // The directives are the assertion; the closures are never called.
     expect(calls).toHaveLength(28);
+  });
+});
+
+describe("#3566 review (B8): the grid column heads and the month labels, byte for byte", () => {
+  it("the weekday headers are the hard-coded arrays they replaced, on en-NZ", () => {
+    // booking-calendar.tsx, calendar-client.ts, occupancy-calendar.tsx and
+    // admin-booking-calendar.tsx each carried exactly this array.
+    expect(formatClubWeekdayHeaders(NZ)).toEqual([
+      "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+    ]);
+    expect(formatClubWeekdayHeaders(CH)).toEqual(
+      ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07"].map(
+        (day) => formatClubWeekday(cd(day), CH),
+      ),
+    );
+    expect(formatClubWeekdayHeaders(CH)).not.toEqual(formatClubWeekdayHeaders(NZ));
+  });
+
+  it("the admin calendar's month heading is the monthYear shape the array spelled", () => {
+    const LONG = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ];
+    for (let month = 1; month <= 12; month += 1) {
+      const day = cd(`2026-${String(month).padStart(2, "0")}-01`);
+      expect(formatClubMonthYear(day, NZ)).toBe(`${LONG[month - 1]} 2026`);
+    }
+  });
+
+  it("the report subtitle's day and month is the date-fns \"d MMM\" it replaced", () => {
+    const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    for (let month = 1; month <= 12; month += 1) {
+      for (const dayOfMonth of [1, 9, 10, 28]) {
+        const day = cd(`2026-${String(month).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`);
+        // en-NZ abbreviates September to "Sept"; date-fns wrote "Sep".
+        const expectedMonth = month === 9 ? "Sept" : SHORT[month - 1];
+        expect(formatClubDayMonth(day, NZ)).toBe(`${dayOfMonth} ${expectedMonth}`);
+      }
+    }
+  });
+
+  it("the booking filter's month options match the old array except September", () => {
+    const SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    for (let month = 1; month <= 12; month += 1) {
+      const day = cd(`2026-${String(month).padStart(2, "0")}-01`);
+      const expected = month === 9 ? "Sept 2026" : `${SHORT[month - 1]} 2026`;
+      expect(formatClubShortMonthYear(day, NZ)).toBe(expected);
+    }
   });
 });

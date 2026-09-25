@@ -41,10 +41,11 @@ work out which of two is winning.
   amount, an invoice figure, a statement line, a finance dashboard figure, a
   booking-request total, an email total, and the amount inside a description
   sent to Xero;
-- **every date and time on screen** — a lodge night, a booking's stay dates, an
-  audit-log entry, the health dashboard (its "Last refresh" line as well as its
-  rows), the stuck-states page, the induction record, and the lobby display's
-  date and clock;
+- **every written date and time on screen** — a lodge night, a booking's stay
+  dates, an audit-log entry, the health dashboard (its "Last refresh" line as
+  well as its rows), the stuck-states page, the induction record, the lobby
+  display's date and clock, the month headings and weekday column heads on the
+  booking calendars, and the month options in the bookings filter;
 - the currency code shown beside a fee or a monthly AI spend cap, **and the
   currency AI spend is counted in** (see below);
 - alphabetical order where the site sorts by name — the lockers list, and the
@@ -61,11 +62,19 @@ next sends an email more than five minutes after its last check, so that first
 email can still show dates the old way. Its amounts already show the new
 currency either way.
 
-**What does not follow it.** The date labels along the bottom of the report
-charts (for example "Apr 16") are always written in English, whatever is set
-here. That is a known limitation of the charting code and is recorded rather
-than fixed for now; the figures and every other date on those pages do follow
-this page.
+**What does not follow it.** Three things stay in English whatever is set
+here, and are recorded rather than fixed for now:
+
+- the date labels along the bottom of the report charts (for example
+  "Apr 16") — the figures and every other date on the reports page do follow
+  this page;
+- the day-of-week names on the chore schedule and minimum-stay setup screens,
+  which are fixed lists of choices rather than dates;
+- relative times such as "3 hours ago", which are wording, not a date format.
+
+On `en-NZ` the one visible change this brought is September: the bookings
+filter's month options and the reports page's "Joined between" line now write
+"Sept", the way every other `en-NZ` date on the site already did.
 
 **Expect some screens to look different on another format.** A different
 language tag does more than reorder the day and month. `de-CH`, for example,

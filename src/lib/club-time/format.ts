@@ -41,7 +41,11 @@
  * invariant. Everything admin-side or internal uses the medium shape.
  */
 
-import { calendarDateParts } from "./calendar-date";
+import {
+  addCalendarDays,
+  calendarDateParts,
+  requireCalendarDate,
+} from "./calendar-date";
 import {
   calendarDateOfDateOnlyInstant,
   calendarDateOfSerialisedDbDate,
@@ -131,6 +135,22 @@ export function formatClubWeekday(
   format: ClubDateFormat,
 ): string {
   return formatCalendarDateShape("weekday", date, format);
+}
+
+/**
+ * The seven short weekday names a Monday-first calendar grid heads its columns
+ * with — "Mon" … "Sun" for `en-NZ` — in the club's locale (#3566 review, B8).
+ *
+ * Four grids kept a hard-coded English `["Mon", …, "Sun"]` array, so a de-CH
+ * club read English column heads over German day names. Rendered from a fixed
+ * Monday-to-Sunday week through the `weekday` house shape, so it is the same
+ * string `formatClubWeekday` gives each day.
+ */
+export function formatClubWeekdayHeaders(format: ClubDateFormat): string[] {
+  const monday = requireCalendarDate("2024-01-01");
+  return Array.from({ length: 7 }, (_, offset) =>
+    formatClubWeekday(addCalendarDays(monday, offset), format),
+  );
 }
 
 /** "Thursday" — the weekday alone, spelled out. */

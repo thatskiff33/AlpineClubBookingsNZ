@@ -114,6 +114,7 @@ export {
   formatClubWeekdayDate,
   formatClubWeekdayDay,
   formatClubWeekdayDayMonth,
+  formatClubWeekdayHeaders,
   formatStayDate,
   formatStayDateOrNull,
 } from "./format";

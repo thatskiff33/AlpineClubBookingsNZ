@@ -7,10 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubMonthYear,
   formatClubWeekdayDayMonth,
+  formatClubWeekdayHeaders,
   requireCalendarDate,
-  type ClubDateFormat,
 } from "@/lib/club-time";
 import { formatMonthOnly, parseDateOnly } from "@/lib/date-only";
 import {
@@ -89,7 +90,6 @@ type OccupancyCalendarProps = {
   onVisibleMonthChange?: (month: string) => void;
 };
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 
 // The cell label deliberately carries the weekday and drops the year — the year
@@ -441,7 +441,7 @@ export function OccupancyCalendar({
       )}
 
       <div className="grid grid-cols-7 border-b border-border">
-        {DAY_LABELS.map((label) => (
+        {formatClubWeekdayHeaders(clubTime.format).map((label) => (
           <div key={label} className="px-1 py-2 text-center text-xs font-medium text-muted-foreground">
             {label}
           </div>

@@ -44,7 +44,7 @@ const HEADER =
 describe("#3566: a club format parameter cannot regain a default", () => {
   it("is on the mandatory set, so no block can lift it", () => {
     const mandatory = new Set(
-      (MANDATORY_SRC_RESTRICTIONS as Array<{ selector: string }>).map((r) => r.selector),
+      MANDATORY_SRC_RESTRICTIONS.map((r: { selector: string }) => r.selector),
     );
     expect(CLUB_FORMAT_GUARD_ARMS.requiredParameter.length).toBeGreaterThan(0);
     for (const selector of CLUB_FORMAT_GUARD_ARMS.requiredParameter) {

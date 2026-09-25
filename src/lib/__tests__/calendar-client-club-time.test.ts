@@ -64,7 +64,7 @@ function makeEvent(overrides: Partial<CalendarEventDTO> = {}): CalendarEventDTO 
 
 describe("the grid is calendar dates, and needs no zone", () => {
   it("starts weeks on Monday", () => {
-    expect(weekdayLabels()).toEqual([
+    expect(weekdayLabels(CLUB_FORMAT_TEST)).toEqual([
       "Mon",
       "Tue",
       "Wed",

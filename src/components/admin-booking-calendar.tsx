@@ -21,6 +21,8 @@ import {
   calendarDayOfWeek,
   daysInCalendarMonth,
   formatClubDate,
+  formatClubMonthYear,
+  formatClubWeekdayHeaders,
   requireCalendarDate,
 } from "@/lib/club-time";
 
@@ -57,7 +59,6 @@ export const STATUS_COLORS: Record<string, string> = {
 
 const ALL_STATUSES = Object.keys(STATUS_COLORS);
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // CELL_HEIGHT is the MINIMUM week-row height. Rows grow past it when a busy week
 // stacks more lanes than fit (issue #2088); quiet months keep the original 80px.
@@ -406,10 +407,6 @@ export function AdminBookingCalendar() {
   })();
   const openDayShown = Math.max(0, openDayBookings.length - openDayHidden);
 
-  const monthNames = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-  ];
 
   return (
     <div className="rounded-lg border bg-card shadow-sm">
@@ -420,7 +417,7 @@ export function AdminBookingCalendar() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <h2 className="text-sm font-semibold min-w-[140px] text-center">
-            {monthNames[month]} {year}
+            {formatClubMonthYear(calendarDateFromParts(year, month + 1, 1), clubTime.format)}
           </h2>
           <Button variant="outline" size="sm" onClick={goNext} aria-label="Next month">
             <ChevronRight className="h-4 w-4" />
@@ -456,7 +453,7 @@ export function AdminBookingCalendar() {
 
       {/* Day headers */}
       <div className="grid grid-cols-7 border-b">
-        {DAY_LABELS.map((d) => (
+        {formatClubWeekdayHeaders(clubTime.format).map((d) => (
           <div key={d} className="text-center text-xs font-medium text-muted-foreground py-1.5 border-r last:border-r-0">
             {d}
           </div>

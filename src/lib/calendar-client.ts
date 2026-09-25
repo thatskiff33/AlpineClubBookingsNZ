@@ -11,6 +11,7 @@ import {
   endOfClubDayExclusive,
   formatClubInstantTime,
   formatClubLongWeekdayDate,
+  formatClubWeekdayHeaders,
   type Instant,
   instantForClubWallTime,
   parseCalendarDate,
@@ -63,10 +64,9 @@ import type { CalendarEventDTO } from "@/lib/calendar-events";
  * from the browser's own clock.
  */
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-export function weekdayLabels(): string[] {
-  return WEEKDAY_LABELS;
+/** The Monday-first column heads, in the club's locale (#3566). */
+export function weekdayLabels(format: ClubDateFormat): string[] {
+  return formatClubWeekdayHeaders(format);
 }
 
 /** Whether a grid cell belongs to the month being displayed. */

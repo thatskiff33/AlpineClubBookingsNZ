@@ -11,6 +11,7 @@ import {
   daysInCalendarMonth,
   formatClubLongWeekdayDate,
   formatClubMonthYear,
+  formatClubWeekdayHeaders,
   requireCalendarDate,
 } from "@/lib/club-time";
 import { formatCalendarDayOnly } from "@/lib/date-only";
@@ -478,7 +479,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       </div>
 
       <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+        {formatClubWeekdayHeaders(clubTime.format).map((d) => (
           <div key={d} className="w-10 py-2 text-xs font-medium text-muted-foreground">
             {d}
           </div>

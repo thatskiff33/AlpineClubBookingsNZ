@@ -570,20 +570,6 @@ const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
   "src/lib/membership-cancellation-blocker-messages.ts",
 ];
 
-/**
- * The one `CENTS_DISPLAY_EXEMPTIONS` file that is ALSO a `DATE_FNS_ADAPTER_FILES`
- * member: it already drops `DATE_FNS_RESTRICTIONS` (CT-6, #2991) via its own
- * block, so the block that additionally drops `CENTS_DISPLAY_RESTRICTIONS` for
- * it has to replicate THAT swap too, for the same flat-config-replaces-not-merges
- * reason as `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` above. Found by `npm run lint`
- * actually going red the first time this file's exemption was wired as an
- * ordinary one — proof this kind of overlap is exactly the failure mode that
- * reading glob text instead of asking ESLint misses.
- */
-const CENTS_DISPLAY_DATE_FNS_OVERLAP = [
-  "src/app/(admin)/admin/reports/page.tsx",
-];
-
 // Where a bare `x * 100` is money by construction.
 //
 // The families are matched by PREFIX so the guard follows the code through an
@@ -1054,7 +1040,6 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  */
 const DATE_FNS_ADAPTER_FILES = [
   "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
-  "src/app/(admin)/admin/reports/page.tsx",
   "src/app/(admin)/admin/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
@@ -1074,12 +1059,6 @@ export const DATE_FNS_ADAPTERS = [
     uses: "formatDistanceToNow",
     reason:
       "The same relative-duration hint on a password action, zone-independent for the same reason.",
-  },
-  {
-    file: "src/app/(admin)/admin/reports/page.tsx",
-    uses: "format",
-    reason:
-      "The admin report date-series surface #2870's ledger carries as an open residual. Migrating it is a report-shape change, not a formatter swap, so it is scoped there rather than re-scoped here.",
   },
   {
     file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
@@ -2615,7 +2594,7 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     files: DATE_FNS_ADAPTER_FILES,
     omits: DATE_FNS_RESTRICTIONS,
     reason:
-      "The seven files still importing `date-fns`, measured by CT-6 (#2991). Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
+      "The files still importing `date-fns`, measured by CT-6 (#2991) at seven and six since #3566 moved the reports page off it. Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
   },
   {
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
@@ -3039,33 +3018,19 @@ const eslintConfig = defineConfig([
   },
   {
     // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
-    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` and
-    // `CENTS_DISPLAY_DATE_FNS_OVERLAP` below. Drops only the new group by
+    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` below (the
+    // date-fns overlap went with #3566, when the reports page stopped importing
+    // date-fns). Drops only the new group by
     // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
     // `src/**` block's own addition, not part of the mandatory set), so
     // nothing else these files were guarded against is lifted with it.
     files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
       (file) =>
-        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file) &&
-        !CENTS_DISPLAY_DATE_FNS_OVERLAP.includes(file),
+        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file),
     ),
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
-        ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3302 — `CENTS_DISPLAY_DATE_FNS_OVERLAP`: the one exempted file that is
-    // ALSO a `DATE_FNS_ADAPTER_FILES` member, so it already drops
-    // `DATE_FNS_RESTRICTIONS` via its own block. Replicated here for the same
-    // flat-config-replaces reason as the money-domain overlap below — `npm run
-    // lint` caught this one going red before this block existed.
-    files: CENTS_DISPLAY_DATE_FNS_OVERLAP,
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...DATE_FNS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
         ...DATE_RENDERING_RESTRICTIONS,
       ),
     },
