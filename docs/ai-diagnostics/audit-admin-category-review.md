@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  487
+row-producing sites:  488
 uncategorised:        0
-category values: admin 108, booking 104, xero 37, family 35, payment 48,
+category values: admin 109, booking 104, xero 37, family 35, payment 48,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -716,6 +716,15 @@ currency or locale. `admin` for exactly the reason `CLUB_TIME_ZONE_UPDATED` and
 by the same administrators who can already see those - so it widens nobody's
 readership. The row carries the actor and the before/after pair and nothing
 else: no request echo and no settings blob.
+
+#3566 then added one more (`admin` 108 -> 109, 487 -> 488, RE-MEASURED with
+`npm run audit:census` rather than added to the literal):
+`AI_SPEND_CURRENCY_RATE_CLEARED`, the record that changing the club's currency
+cleared the stored AI spend conversion rate, which records no currency of its
+own and would otherwise go on pricing the new currency at the old one's rate.
+`admin` for the reason `AI_SPEND_CURRENCY_RATE_UPDATED` is: installation
+configuration, readable with `support:view` alone, carrying two currency codes,
+a ratio and an administrator id and no member data.
 
 #3531 3b then added one more (`payment` 47 -> 48, 486 -> 487, RE-MEASURED with
 `npm run audit:census` on the tree composed with #3563, not incremented):

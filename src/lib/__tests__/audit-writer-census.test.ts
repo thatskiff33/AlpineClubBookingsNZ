@@ -1393,7 +1393,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // covers. RE-MEASURED with `npm run audit:census`, not incremented.
     // 358 -> 359 (#3531 3b): the rate-derived night-price backfill record,
     // `payment` at the site, unpinned like every other new feature's writer.
-    ).toEqual({ pinned: 128, unpinned: 359 });
+    // 359 -> 360 (#3566): the AI spend rate clear in `/api/admin/club-format/`,
+    // unpinned for the reason #3563's writer beside it is. RE-MEASURED with
+    // `npm run audit:census`, not incremented.
+    ).toEqual({ pinned: 128, unpinned: 360 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
