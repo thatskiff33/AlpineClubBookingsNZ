@@ -75,6 +75,10 @@ import {
   type BookingGuestInput as PricedGuestInput,
 } from "@/lib/booking-create";
 import {
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
   type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
@@ -1070,6 +1074,9 @@ export async function joinGroupBookingAsMember(
     // raises + emails the Xero invoice when internet_banking is chosen.
     paymentMethod: effectivePaymentMethod,
     internetBankingSettings,
+    // #3029 (`INV-MOD-059`): the joiner's guest rows are new, so a linked member
+    // is seeded from their current profile. Read here, outside every transaction.
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
     });
   } catch (err) {
     if (isHostingCoverageParticipantRetry(err)) {
@@ -1638,6 +1645,8 @@ export async function verifyAndCreateNonMemberJoin(
 
   let capacityFullNights: string[] | null = null;
   let created: { bookingId: string; memberId: string };
+  // #3029: read before the capacity-lock transaction below (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     created = await prisma.$transaction(async (tx) => {
@@ -1706,7 +1715,16 @@ export async function verifyAndCreateNonMemberJoin(
             // carries `| undefined` from an internal array read. Proven here
             // at the boundary rather than asserted, so a real gap throws
             // instead of writing a bed-allocation row with no stay range.
-            create: buildGuestCreateData(guests, price, checkIn, checkOut).map((guestCreate) => {
+            create: buildGuestCreateData(
+              guests,
+              price,
+              checkIn,
+              checkOut,
+              // #3029 (W5): a non-member joiner's party, so nothing is seeded —
+              // resolved through the one door all the same, so the rule is not
+              // restated here.
+              await resolveBookingGuestDietary(tx, guestDietarySeeding, guests),
+            ).map((guestCreate) => {
               if (guestCreate.stayStart === undefined || guestCreate.stayEnd === undefined) {
                 throw new Error("Guest create data is missing its stay range");
               }

@@ -189,9 +189,12 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     expect(plan.memberGuestEntries.size).toBe(0);
 
     // The linked row displays the member's name, not the "Guest 1" placeholder.
+    // ...and carries the member's own age tier, which the dietary link rule
+    // compares with the row's (#3029, INV-MOD-059).
     expect(plan.guestMemberLinkNames.get("g1")).toEqual({
       firstName: "Ada",
       lastName: "Lovelace",
+      ageTier: "ADULT",
     });
   });
 

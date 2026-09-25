@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import {
   evaluateGuestSelfRemoval,
   describeGuestSelfRemovalBlocker,
@@ -119,6 +120,7 @@ describe("D-13: an edit never revisits a consent that has already been given", (
     await applyGuestChanges(
       tx as unknown as Parameters<typeof applyGuestChanges>[0],
       {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-1",
         newCheckIn: NEW_CHECK_IN,
         newCheckOut: NEW_CHECK_OUT,

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 /** The shipped default: the memberGuests module off, consent required. */
 const MEMBER_GUEST_POLICY = {
@@ -148,6 +149,7 @@ const FIXTURE_PRE_TRANSACTION = {
   },
   subscriptionLockoutMode: "off",
   xeroLockDates: { kind: "not-applicable" },
+  guestDietarySeeding: { seedFromProfile: false },
 } as unknown as BatchModificationPreTransaction;
 
 const LODGE = "lodge-a";
@@ -789,6 +791,7 @@ describe("executeApprovedProposal — new booking", () => {
         holdDays: 0,
         paymentMethod: "stripe",
         memberGuestPolicy: MEMBER_GUEST_POLICY,
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
       },
     });
   }
@@ -946,6 +949,7 @@ describe("executeApprovedProposal — new booking", () => {
         holdDays: 0,
         paymentMethod: "stripe",
         memberGuestPolicy: MEMBER_GUEST_POLICY,
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
       },
     });
     await hooks.executeApprovedProposal({

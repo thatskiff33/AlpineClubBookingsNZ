@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 /**
  * #2265 (epic #2245, E1) — saving as a draft must REMEMBER the member's credit
@@ -138,6 +139,7 @@ function draftInput(overrides: Record<string, unknown> = {}) {
     checkOut: new Date("2026-08-16"),
     guests: GUESTS,
     lodgeId: "lodge-1",
+    guestDietarySeeding: bookingGuestDietarySeeding(false),
     format: CLUB_FORMAT_TEST,
     ...overrides,
   };
@@ -224,6 +226,7 @@ describe("#2265 a booking held for admin review keeps the election", () => {
       shouldBePending: false,
       holdDays: 0,
       lodgeId: "lodge-1",
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
       format: CLUB_FORMAT_TEST,
       ...overrides,
     };

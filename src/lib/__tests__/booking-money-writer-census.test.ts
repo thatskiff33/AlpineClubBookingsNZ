@@ -36,6 +36,7 @@ const REVIEWED_WRITERS = [
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts|booking|opaquePayload||1",
   "src/app/api/admin/bookings/[id]/return-to-waitlist/route.ts|booking|opaquePayload||1",
   "src/app/api/admin/bookings/[id]/review/route.ts|booking|opaquePayload||2",
+  "src/app/api/admin/deletion-requests/[id]/route.ts|bookingGuest|opaquePayload||1",
   "src/app/api/bookings/[id]/guests/route.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuest|create|priceCents|1",
   "src/app/api/bookings/[id]/guests/route.ts|bookingGuestNight|create||1",
@@ -73,6 +74,7 @@ const REVIEWED_WRITERS = [
   "src/lib/payment-reconciliation.ts|booking|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",
   "src/lib/promo.ts|promoRedemptionAllocation|deleteMany,opaquePayload||4",
+  "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
   "src/lib/school-booking-request.ts|booking|create,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "src/lib/school-booking-request.ts|bookingGuest|create||2",
   "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload||2",
@@ -130,6 +132,16 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     },
   ],
   [
+    // #3029: the account-erasure anonymisation of the member's guest rows. It
+    // became opaque only because it now spreads the dietary erasure patch
+    // (`INV-PRIV-022`); it still names no money column.
+    "src/app/api/admin/deletion-requests/[id]/route.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "anonymisation: name, member link and the dietary erasure patch only",
+      sourceShape: /firstName:\s*"Deleted",[\s\S]*?memberId:\s*null,\s*\.\.\.DIETARY_ERASURE_PATCH/,
+    },
+  ],
+  [
     "src/app/api/lodge/guests/[date]/arrive/route.ts|bookingGuest|opaquePayload||1",
     {
       reason: "arrival state only",
@@ -176,6 +188,17 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     {
       reason: "consent lifecycle only",
       sourceShape: /data:[\s\S]*?consentStatus:/,
+    },
+  ],
+  [
+    // #3029: the school attendee rename. It became opaque only because it now
+    // spreads the rename's dietary decision (`INV-MOD-059`); it still writes
+    // names and nothing that holds money.
+    "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "attendee name and the rename's dietary decision only",
+      sourceShape:
+        /data:\s*\{\s*firstName:\s*update\.firstName,\s*lastName:\s*update\.lastName,\s*\.\.\.bookingGuestDietaryUpdateData\(renameDietary\(update\.guestId\)\),\s*\}/,
     },
   ],
   [

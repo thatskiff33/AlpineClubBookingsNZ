@@ -127,6 +127,40 @@ describe("admin-member-edit-groups", () => {
     })
   })
 
+  // #2941: the dietary field is sent only when the admin changed it, so an
+  // unrelated Contact save cannot revert a newer member edit (lost update).
+  describe("buildContactPayload dietary/allergy field", () => {
+    it("sends nothing when the detail response carried no key", () => {
+      expect(buildContactPayload(buildContactEditForm(contactSource()))).not.toHaveProperty(
+        "dietaryRequirements",
+      )
+    })
+
+    it("sends nothing on an unrelated save, even with whitespace-only churn", () => {
+      const form = buildContactEditForm({
+        ...contactSource(),
+        dietaryRequirements: "Vegetarian",
+      })
+      expect(buildContactPayload(form)).not.toHaveProperty("dietaryRequirements")
+      expect(
+        buildContactPayload({ ...form, dietaryRequirements: "  Vegetarian  " }),
+      ).not.toHaveProperty("dietaryRequirements")
+    })
+
+    it("sends the value the admin changed, and a clear as null", () => {
+      const form = buildContactEditForm({
+        ...contactSource(),
+        dietaryRequirements: "Vegetarian",
+      })
+      expect(
+        buildContactPayload({ ...form, dietaryRequirements: "Vegan" }).dietaryRequirements,
+      ).toBe("Vegan")
+      expect(
+        buildContactPayload({ ...form, dietaryRequirements: "" }).dietaryRequirements,
+      ).toBeNull()
+    })
+  })
+
   describe("buildAccountPayload", () => {
     it("emits exactly the account group's keys — no contact fields", () => {
       const payload = buildAccountPayload(buildAccountEditForm(accountSource()))

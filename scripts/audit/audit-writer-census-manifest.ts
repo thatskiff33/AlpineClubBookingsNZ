@@ -550,7 +550,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // night prices from the rate table, every guest total unchanged. `payment`
   // beside the officer night-price repair it mirrors. RE-MEASURED with
   // `npm run audit:census` on the tree composed with #3563, not incremented.
-  writeSites: 487,
+  // 487 -> 488 (#3029): `booking.guest_dietary.updated`/`.cleared`, the one
+  // awaited `createAuditLog` in the booking-value edit route, under `booking`
+  // and carrying the guest id and a changed flag, never the value
+  // (`INV-PRIV-022`). RE-MEASURED with `npm run audit:census`.
+  writeSites: 488,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -710,7 +714,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // record of that change should not be able to be the part that quietly
     // failed.
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
-    createAuditLog: { total: 134, uncategorised: 0 },
+    // 134 -> 135 (#3029): the booking dietary edit record, awaited inside the
+    // edit's own transaction so the row and its audit commit together.
+    createAuditLog: { total: 135, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -824,7 +830,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // per-booking breakdown never reach a member surface — what is left is a
     // `details` sentence naming no booking, no nights and no party
     // (`INV-PRIV`).
-    booking: 104,
+    // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
+    // note is booking data, read by booking officers, so `booking` is its
+    // affected domain (`INV-PRIV-012`); the row names the field, never its value.
+    booking: 105,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

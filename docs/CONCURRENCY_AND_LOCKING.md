@@ -1510,6 +1510,27 @@ exempt from both — `concurrency-lock-races.realdb.test.ts` reads raw counts on
 purpose, and a test's wrong shape fails the test on the spot rather than
 mispricing a booking.
 
+- **Held-party guest rows before a dietary rebuild** —
+  `src/lib/booking-guest-row-lock.ts` (`lockBookingGuestRowsForUpdate`, #3029
+  C3): when a booking-request approval deletes and recreates a held party
+  because its head-count changed, `planHeldPartyRebuildDietary` first takes
+  `SELECT 1 FROM "BookingGuest" WHERE "bookingId" = … ORDER BY "id" FOR UPDATE`,
+  then reads each row's dietary/allergy value through the model and carries it
+  by identity. Counterpart writer: the admin guest-dietary edit
+  (`PATCH /api/admin/bookings/[id]/guest-dietary`), a single-row occupant-matched
+  `updateMany` that holds no advisory key. An edit that committed first is read;
+  one that arrives later waits on the row lock and, once the rebuild commits,
+  matches no row and is refused — never lost while audited as a success. Order:
+  the approval already holds `pg_advisory_xact_lock(1)` and the lodge capacity
+  key, so global -> lodge -> BookingGuest rows; rows are taken in id order.
+  The in-place rewrite (same head-count) takes the same lock before it reads
+  the stored values it keeps or replaces (#3029 F1). `bookingId` never changes
+  on a guest row, and every writer that INSERTS a guest into a party takes the
+  global key first, so no row can appear unlocked between the lock and the
+  read. Member merge takes no global key; it never inserts a guest — it
+  re-points existing rows' `memberId` — and it serialises with the approval on
+  the lodge capacity key.
+
 - **Trusted legacy induction baseline** —
   `src/lib/induction-baseline.ts` (`runInductionBaseline`, #2361): apply takes
   `LOCK TABLE "MemberInduction" IN SHARE ROW EXCLUSIVE MODE` as the **first

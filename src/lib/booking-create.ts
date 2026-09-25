@@ -121,6 +121,7 @@ import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
 
 // The helper types, errors, and pure functions that used to live here now live
 // in three cohesive sibling modules (types <- promo, types <- guests). Re-export
@@ -405,6 +406,13 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       promoAdjustmentCents,
     });
     const hasNonMembers = guests.some((g) => !g.isMember);
+    // #3029 (`INV-MOD-059`): each new guest row's dietary/allergy snapshot, from
+    // the linked members' CURRENT profiles through this transaction's client.
+    const guestDietary = await resolveBookingGuestDietary(
+      tx,
+      input.guestDietarySeeding,
+      guests,
+    );
 
     const createdBooking = await tx.booking.create({
       data: {
@@ -450,7 +458,9 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         adminReviewNotes: review.adminReviewNotes,
         adminReviewedById: review.adminReviewedById,
         adminReviewedAt: review.adminReviewedAt,
-        guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+        guests: {
+          create: buildGuestCreateData(guests, price, checkIn, checkOut, guestDietary),
+        },
       },
       include: { guests: true },
     });
@@ -1090,7 +1100,21 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           adminReviewNotes: review.adminReviewNotes,
           adminReviewedById: review.adminReviewedById,
           adminReviewedAt: review.adminReviewedAt,
-          guests: { create: buildGuestCreateData(primaryGuests, price, checkIn, checkOut) },
+          guests: {
+            create: buildGuestCreateData(
+              primaryGuests,
+              price,
+              checkIn,
+              checkOut,
+              // #3029 (`INV-MOD-059`): carried values (the cross-lodge offer) as
+              // they are; linked members seeded from their current profiles.
+              await resolveBookingGuestDietary(
+                tx,
+                input.guestDietarySeeding,
+                primaryGuests,
+              ),
+            ),
+          },
         },
         include: { guests: true },
       });
@@ -1359,7 +1383,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
                 nonMemberGuests,
                 childPrice,
                 checkIn,
-                checkOut
+                checkOut,
+                // #3029: non-members, so nothing is seeded; a carried value
+                // (cross-lodge offer) is kept.
+                await resolveBookingGuestDietary(
+                  tx,
+                  input.guestDietarySeeding,
+                  nonMemberGuests,
+                ),
               ),
             },
           },
@@ -1909,6 +1940,13 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       // shared with the promotion's validity window — one day per create.
       today: dateOnlyInstantOf(todayAtClub),
     });
+    // #3029 (`INV-MOD-059`): the waitlisted guest rows are the rows a later
+    // promotion keeps, so they are seeded here, when they are first created.
+    const guestDietary = await resolveBookingGuestDietary(
+      tx,
+      input.guestDietarySeeding,
+      guests,
+    );
 
     const createdBooking = await tx.booking.create({
       data: {
@@ -1935,7 +1973,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         adminReviewNotes: review.adminReviewNotes,
         adminReviewedById: review.adminReviewedById,
         adminReviewedAt: review.adminReviewedAt,
-        guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+        guests: {
+          create: buildGuestCreateData(guests, price, checkIn, checkOut, guestDietary),
+        },
       },
       include: { guests: true },
     });

@@ -629,8 +629,14 @@ const CENSUS_CEILING = {
    * alone and the zone-free direction: it keys a strand's stored night rows
    * (`@db.Date` lodge nights) by their date-only string to pair each with the
    * engine's `nightDates`. Re-measured by RUNNING this suite on this tree.
+   *
+   * 226 -> 227 (#3029 S1): `member-dietary.ts`, `addDaysDateOnly` alone and the
+   * zone-free direction: the kiosk dietary grant re-checks a hut-leader
+   * assignment window (`startDate <= day + 1`, `endDate >= day`) over the
+   * `@db.Date` day `checkLodgeAuth` already judged, the same window
+   * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 226,
+  dateOnlyImporters: 227,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

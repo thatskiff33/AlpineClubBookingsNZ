@@ -59,6 +59,10 @@ import {
 } from "@/lib/capacity";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import {
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
@@ -1844,6 +1848,11 @@ export async function holdBookingRequestSlots(input: {
   }));
 
   let capacityFullNights: string[] | null = null;
+  // #3029 (W6, `INV-MOD-059`): a linked member on the held party is seeded from
+  // their profile when the held row is created. Read before the transaction
+  // (`INV-LOCK-004`). The public request itself carries no dietary field, so
+  // there is nothing further to preserve.
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
@@ -2013,6 +2022,12 @@ export async function holdBookingRequestSlots(input: {
         bookingCheckIn: request.checkIn,
       });
 
+      const guestDietary = await resolveBookingGuestDietary(
+        tx,
+        guestDietarySeeding,
+        consentPlan.guests,
+      );
+
       const held = await tx.booking.create({
         data: {
           memberId: member.id,
@@ -2025,7 +2040,11 @@ export async function holdBookingRequestSlots(input: {
           hasNonMembers: true,
           notes: request.message,
           createdById: input.adminMemberId,
-          guests: { create: consentPlan.guests.map(toPipelineGuestCreateData) },
+          guests: {
+            create: consentPlan.guests.map((guest, index) =>
+              toPipelineGuestCreateData(guest, guestDietary[index]),
+            ),
+          },
         },
         // The created rows' ids are needed to match the notification plan, and
         // this is the only moment they exist in hand.

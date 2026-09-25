@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import fs from "node:fs";
 import path from "node:path";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
@@ -532,6 +533,7 @@ describe("#3031 no magic zero reaches a night row", () => {
 
     await expect(
       applyGuestChanges(tx, {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-parity",
         newCheckIn: D(HELD[0]),
         newCheckOut: D("2026-08-23"),
@@ -577,6 +579,7 @@ describe("#3031 no magic zero reaches a night row", () => {
     const { tx, created } = writeDouble();
 
     await applyGuestChanges(tx, {
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
       bookingId: "bk-parity",
       newCheckIn: D(HELD[0]),
       newCheckOut: D("2026-08-23"),
@@ -617,6 +620,7 @@ describe("#3031 no magic zero reaches a night row", () => {
 
     await expect(
       applyGuestChanges(tx, {
+        guestDietarySeeding: bookingGuestDietarySeeding(false),
         bookingId: "bk-parity",
         newCheckIn: D(HELD[0]),
         newCheckOut: D("2026-08-23"),
@@ -653,6 +657,7 @@ describe("#3031 no magic zero reaches a night row", () => {
     const { tx, created } = writeDouble();
 
     await applyGuestChanges(tx, {
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
       bookingId: "bk-parity",
       newCheckIn: D(HELD[0]),
       newCheckOut: D("2026-08-23"),

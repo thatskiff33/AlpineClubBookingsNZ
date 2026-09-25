@@ -94,6 +94,16 @@ club's accounting system. Your date of birth sets your membership age tier. The
 turn it on only if you are happy for your number to appear on the lodge's public
 display screen (lodge staff can still see it at check-in either way).
 
+If your club has turned it on, the section also has **Dietary/allergy
+information**, where you can note any dietary needs or allergies the club
+should know about (up to 500 characters; leave it blank if there are none). It
+is **not** synced with Xero. On your profile, only you and the club's membership
+administrators can see it — not other members, including your family. When you
+are added to a booking, it is copied to that stay, where the club's booking
+officers and the hut leader running the stay can see it (see
+[Being added to a booking](being-added-to-a-booking.md)). If the club turns the
+field off later, what you wrote is kept, not deleted.
+
 ### Notification preferences
 
 The **Notification Preferences** section lets you turn optional emails on or off —
@@ -107,7 +117,9 @@ turned off, so you never miss news about a stay you have booked.
 The **Privacy & Data** section gives you two rights:
 
 - **Download My Data** — a machine-readable (JSON) copy of the data the system
-  holds about you, limited to a few downloads per day.
+  holds about you, limited to a few downloads per day. It includes any
+  dietary/allergy information you have recorded, even if the club has since
+  turned that field off.
 - **Request Account Deletion** — asks the club to permanently delete your
   account. This is **irreversible** and an admin reviews it first; on approval
   you are anonymised, your future bookings are cancelled, and your login is

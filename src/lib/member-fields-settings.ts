@@ -12,9 +12,12 @@ import {
  * Server loaders for the single-row ("default") club setting controlling which
  * optional member fields are collected and displayed. Constants/types live in
  * src/config/member-fields.ts so client code can import them without pulling in
- * prisma. Defaults are ON to preserve existing behaviour; a club can switch a
- * field off to avoid collecting data it does not need (Privacy Act
- * minimisation). Gates admin UI, member onboarding/profile capture, and CSV.
+ * prisma. Title, gender and occupation default ON to preserve existing
+ * behaviour; a club can switch a field off to avoid collecting data it does not
+ * need (Privacy Act minimisation). The dietary/allergy toggle defaults OFF
+ * (#2941, `INV-PRIV-022`) — including on the read-failure fallback below, which
+ * uses the same defaults. Gates admin UI, member onboarding/profile capture,
+ * and CSV.
  */
 
 export const MEMBER_FIELDS_SETTINGS_ID = "default";

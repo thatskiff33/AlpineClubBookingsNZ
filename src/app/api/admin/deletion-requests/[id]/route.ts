@@ -82,6 +82,7 @@ import {
   XERO_CONTACT_OPERATION_RESOLVE_REMEDY,
   XeroContactCreateBlocksDeletionError,
 } from "@/lib/xero-contact-create-recovery";
+import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 // Route-private: a Next.js route module's export surface is its handlers.
@@ -964,6 +965,9 @@ export async function POST(
           // Billing-family removal sweep (#1932, E6): the member is leaving all
           // families here, so clear any billing-family selection they hold.
           billingFamilyGroupId: null,
+          // #2941 (INV-PRIV-022): dietary/allergy information is erased with
+          // the rest of the person, regardless of the club toggle.
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 
@@ -1105,13 +1109,17 @@ export async function POST(
         actorMemberId: session.user.id,
       });
 
-      // 5. Anonymise BookingGuest names for this member's guest appearances
+      // 5. Anonymise BookingGuest names for this member's guest appearances —
+      // and their per-stay dietary/allergy snapshot with them (#3029, W16,
+      // `INV-PRIV-022`): the same erasure patch as the profile value, whatever
+      // the toggle says, in the same update.
       await tx.bookingGuest.updateMany({
         where: { memberId: member.id },
         data: {
           firstName: "Deleted",
           lastName: "Member",
           memberId: null,
+          ...DIETARY_ERASURE_PATCH,
         },
       });
 

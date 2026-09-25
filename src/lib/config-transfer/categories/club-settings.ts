@@ -384,13 +384,24 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "member-fields-settings",
     delegate: "memberFieldsSettings",
-    fields: ["showTitle", "showGender", "showOccupation"],
-    // All three columns are non-null Boolean (@default true); a present null
-    // fails the dry-run (#2200). No route enforces a numeric range.
+    fields: [
+      "showTitle",
+      "showGender",
+      "showOccupation",
+      "showDietaryRequirements",
+    ],
+    // All four columns are non-null Boolean (three @default true, the dietary
+    // toggle @default false); a present null fails the dry-run (#2200). No route
+    // enforces a numeric range. The dietary toggle (#2941) travels because it is
+    // a club's own answer to whether it collects the data; it carries no member
+    // value. An older bundle without the key imports unchanged, because an
+    // absent field is skipped rather than defaulted, so importing one never
+    // turns the field on or off.
     constraints: {
       showTitle: { required: true },
       showGender: { required: true },
       showOccupation: { required: true },
+      showDietaryRequirements: { required: true },
     },
     defaults: () => DEFAULT_MEMBER_FIELDS_SETTINGS,
   },

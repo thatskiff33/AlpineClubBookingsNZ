@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { noStoreLodgeResponse } from "@/lib/lodge-cache-headers";
-import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
+import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
+import { attachKioskGuestDietary } from "@/lib/member-dietary";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { GROUP_TRIP_IDENTITY_SELECT } from "@/lib/group-trip-identity";
 import { attachKioskGroupTrip } from "@/lib/kiosk-group-trip";
@@ -14,12 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
-import {
-  getGuestOperationalDayPresence,
-  isGuestDepartureMorning,
-  isGuestReturningOnDay,
-  getOperationallyPresentGuestsForDay,
-} from "@/lib/booking-guest-stay-ranges";
+import { getGuestOperationalDayPresence, isGuestDepartureMorning, isGuestReturningOnDay, getOperationallyPresentGuestsForDay } from "@/lib/booking-guest-stay-ranges";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -233,12 +229,15 @@ async function handleGet(req: NextRequest, dateStr: string) {
     })
     .filter((booking) => booking.guests.length > 0);
 
+  // #3029 (`INV-PRIV-022`): admin + hut-leader tiers only; every other tier's guests carry no key.
+  const withDietary = await attachKioskGuestDietary({ ...authResult, actorMemberId: getLodgeAuthActorMemberId(authResult), lodgeId, date }, result);
+
   // #3040: after the filter, so linkage is asked of the list the reader sees.
   const capabilities = kioskGroupTripCapabilities(tier);
   // #3369: a group trip is a MEMBER's, so a school's booking is not offered to
   // the linkage pass. It still appears on the kiosk list itself, above.
   const linkable = bookings.filter((b): b is typeof b & { memberId: string } => Boolean(bookingOwner(b).memberId));
-  const withGroupTrip = await attachKioskGroupTrip(result, linkable, { db: prisma, lodgeId, capabilities });
+  const withGroupTrip = await attachKioskGroupTrip(withDietary, linkable, { db: prisma, lodgeId, capabilities });
 
   return NextResponse.json({
     date: dateStr,

@@ -82,6 +82,7 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
   assertCheckInClearsXeroLockDate,
@@ -852,6 +853,10 @@ export async function POST(request: NextRequest) {
   // requirement below cannot branch on different answers if an admin saves the
   // setting mid-request.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // #3029 (`INV-MOD-059`) — whether the new guest rows are seeded from the
+  // members' dietary/allergy profiles: the toggle, read ONCE here, before any
+  // create service opens its transaction (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   // Subscription gate for the booking owner. Bypassed when the Xero module
   // is effectively off, because subscriptions are invoiced through Xero, and
@@ -1142,6 +1147,7 @@ export async function POST(request: NextRequest) {
         // #2543 — the mode resolved once above, handed to pricing so no path in
         // this request can price under a regime the gates did not branch on.
         subscriptionLockoutMode,
+        guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
         lodgeId: parsed.data.lodgeId,
@@ -1308,6 +1314,7 @@ export async function POST(request: NextRequest) {
       groupDiscount,
       // #2543 — see the draft branch above.
       subscriptionLockoutMode,
+      guestDietarySeeding,
       status,
       shouldBePending,
       holdDays: holdPolicy.holdDays,
@@ -1360,6 +1367,7 @@ export async function POST(request: NextRequest) {
         groupDiscount,
         // #2543 — see the draft branch above.
         subscriptionLockoutMode,
+        guestDietarySeeding,
         memberReviewJustification,
         adultMemberHostingReason,
         lodgeId: parsed.data.lodgeId,

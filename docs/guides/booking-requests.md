@@ -259,6 +259,22 @@ replace them; the audit log records who they were.
 Nothing here creates or changes a school record on its own. A correction changes
 what approval will resolve, not what it has already resolved.
 
+#### Dietary/allergy information on a request
+
+A public, school or whole-lodge request never asks for dietary or allergy
+information, and nothing on it collects any. When a request's party names a
+club member (a linked guest), the held or approved booking copies that
+member's profile value onto their guest row while the club collects the field;
+everybody else starts empty, and a booking officer can fill a value in on the
+booking page afterwards (see
+[Bookings](bookings.md#dietaryallergy-information-for-a-stay)). If an approval
+has to rebuild the held party because its size changed, each person keeps their
+own value and nobody inherits somebody else's. One limit: **anything that
+releases the hold** — a correction, **Release hold**, the quote expiring, or a
+cancellation — leaves a value you typed on the held booking with that cancelled
+booking; the next hold creates new guest rows, so enter it again on the new
+one.
+
 #### Member whole-lodge requests
 
 A signed-in member can ask to book the **whole lodge** for their party. These

@@ -13,6 +13,7 @@ import {
 } from "@/lib/member-address"
 import type { AppRole } from "@/lib/member-roles"
 import { formatDateOnly } from "@/lib/date-only";
+import { normalizeDietaryRequirements } from "@/lib/member-dietary-field";
 
 // Per-group edit forms for the admin member detail page. Each group unlocks
 // and saves independently; its payload builder emits ONLY that group's fields
@@ -35,6 +36,18 @@ export interface MemberContactEditForm extends MemberAddressValues {
   dateOfBirth: string
   joinedDate: string
   occupation: string
+  /**
+   * #2941: present only when the detail response carried the key — i.e. the
+   * admin holds a membership dietary grant and the club has the field ON. Absent
+   * means the Contact save sends nothing and the stored value is untouched.
+   */
+  dietaryRequirements?: string
+  /**
+   * The value the form was built from, so a Contact save sends the field only
+   * when the admin actually changed it. Sending it on every save would
+   * silently revert a newer edit the member made after this page loaded.
+   */
+  dietaryRequirementsAsLoaded?: string
   comments: string
   ageTier: string
   postalSameAsPhysical: boolean
@@ -64,6 +77,7 @@ interface MemberContactSource {
   dateOfBirth: string | null
   joinedDate: string | null
   occupation: string | null
+  dietaryRequirements?: string | null
   comments: string | null
   ageTier: string
   streetAddressLine1: string | null
@@ -110,6 +124,12 @@ export function buildContactEditForm(
     dateOfBirth: toDateInputValue(member.dateOfBirth),
     joinedDate: toDateInputValue(member.joinedDate),
     occupation: member.occupation ?? "",
+    ...("dietaryRequirements" in member
+      ? {
+          dietaryRequirements: member.dietaryRequirements ?? "",
+          dietaryRequirementsAsLoaded: member.dietaryRequirements ?? "",
+        }
+      : {}),
     comments: member.comments || "",
     ageTier: member.ageTier,
     streetAddressLine1: member.streetAddressLine1 || "",
@@ -159,6 +179,13 @@ export function buildContactPayload(
     dateOfBirth: form.dateOfBirth || null,
     joinedDate: form.joinedDate || null,
     occupation: form.occupation || null,
+    // #2941: only a CHANGED value is sent (compared after normalisation), so
+    // an unrelated Contact save cannot overwrite a newer member edit.
+    ...(form.dietaryRequirements !== undefined &&
+    normalizeDietaryRequirements(form.dietaryRequirements) !==
+      normalizeDietaryRequirements(form.dietaryRequirementsAsLoaded)
+      ? { dietaryRequirements: form.dietaryRequirements || null }
+      : {}),
     comments: form.comments || null,
     // Age tier: a real person tier is always sent. NOT_APPLICABLE is normally
     // server-managed (#1440) — organisations get it forced, and a member
