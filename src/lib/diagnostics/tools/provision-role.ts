@@ -591,7 +591,9 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
      * The responder id is compared only to the target id, and expiry only by
      * presence; neither raw value is projected. NOT GRANTED:
      * `rateMembershipTypeId` (a pricing snapshot, not evidence about the guest),
-     * `arrivedAt`, `departedAt` and `createdAt`.
+     * `arrivedAt`, `departedAt` and `createdAt` — and never `dietaryRequirements`,
+     * the stay's dietary/allergy note (#3029, `INV-PRIV-022`), which PostgreSQL
+     * then refuses to this role (42501) however a statement names it.
      *
      * Some columns were granted in an earlier revision and are not now; the
      * reason is worth recording because it is a property of this allowlist rather

@@ -28,6 +28,7 @@ import {
 } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
+import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -257,6 +258,10 @@ export async function copyBookingToDraft({
     guests,
     notes: source.notes ?? undefined,
     expectedArrivalTime: source.expectedArrivalTime ?? undefined,
+    // #3029 (`INV-MOD-059`, `INV-GUEST-011`): a copy is a NEW stay, so its guest
+    // rows are seeded afresh from the members' current profiles and the source
+    // booking's values are not carried. Read before the create's transaction.
+    guestDietarySeeding: await resolveBookingGuestDietarySeeding(),
   });
 
   // AFTER the draft's transaction has committed. Awaited so a copy that could not

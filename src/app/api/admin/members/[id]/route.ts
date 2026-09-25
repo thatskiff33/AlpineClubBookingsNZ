@@ -6,6 +6,10 @@ import {
   updateMemberSchema,
 } from "@/lib/admin-member-detail-service";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  grantMembershipAdminDietaryAccess,
+  isDietaryFieldEnabled,
+} from "@/lib/member-dietary";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -44,6 +48,11 @@ export async function GET(
   const result = await getAdminMemberDetail({
     id: parsed.data.id,
     currentAdminMemberId: guard.session.user.id,
+    // #2941: the grant re-reads the actor's roles from the database, so it is
+    // only asked for while the club collects the field at all.
+    dietaryGrant: (await isDietaryFieldEnabled())
+      ? await grantMembershipAdminDietaryAccess(guard, "view")
+      : null,
   });
   return NextResponse.json(result.body, result.init);
 }
@@ -91,6 +100,9 @@ export async function PUT(
     currentAdminAccess: guard.session.user,
     request: req,
     data: parsedBody.data,
+    dietaryGrant: (await isDietaryFieldEnabled())
+      ? await grantMembershipAdminDietaryAccess(guard, "edit")
+      : null,
   });
   return NextResponse.json(result.body, result.init);
 }

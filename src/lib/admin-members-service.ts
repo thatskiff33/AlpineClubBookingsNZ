@@ -108,6 +108,12 @@ import {
 } from "@/lib/admin-permissions";
 import { getMemberLoginStageSortRank } from "@/lib/member-login-stage";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
+import { dietaryRequirementsInputSchema } from "@/lib/member-dietary-field";
+import {
+  buildDietaryRequirementsPatch,
+  isDietaryFieldEnabled,
+  type DietaryAccessGrant,
+} from "@/lib/member-dietary";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -139,6 +145,9 @@ export const createMemberSchema = z.object({
   lastName: nameField({ required: "Last name is required" }),
   gender: genderEnum.optional().nullable(),
   occupation: z.string().max(100).optional().nullable().or(z.literal("")),
+  // #2941: any age tier; stored only with a membership:edit dietary grant and
+  // while the club has the field ON.
+  dietaryRequirements: dietaryRequirementsInputSchema,
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
@@ -1265,7 +1274,10 @@ export async function listAdminMembers(
 
 export async function createAdminMember(
   data: CreateMemberInput,
-  actor: PrivilegeCheckInput,
+  actor: PrivilegeCheckInput & {
+    /** #2941: a membership:edit dietary grant, or null (the field is not stored). */
+    dietaryGrant: DietaryAccessGrant | null;
+  },
 ): Promise<JsonRouteResult> {
   // Full Admin gate (issue #1012): a scoped admin (e.g. membership:edit)
   // must not be able to mint a privileged account. Evaluated canLogin-blind
@@ -1570,6 +1582,17 @@ export async function createAdminMember(
         postalCountry: data.postalCountry,
       };
 
+  // #2941 (INV-PRIV-022): the toggle is re-read here; OFF, or no grant, stores
+  // nothing. The created row handed back below never carries the value — the
+  // select does not name it and the client omits it by default.
+  const dietaryPatch =
+    actor.dietaryGrant && data.dietaryRequirements !== undefined
+      ? buildDietaryRequirementsPatch({
+          enabled: await isDietaryFieldEnabled(),
+          value: data.dietaryRequirements,
+        })
+      : {};
+
   try {
     const member = await prisma.$transaction(async (tx) => {
       const created = await tx.member.create({
@@ -1580,6 +1603,7 @@ export async function createAdminMember(
           lastName: data.lastName.trim(),
           gender: data.gender ?? null,
           occupation: data.occupation?.trim() || null,
+          ...dietaryPatch,
           phoneCountryCode: data.phoneCountryCode?.trim() || null,
           phoneAreaCode: data.phoneAreaCode?.trim() || null,
           phoneNumber: data.phoneNumber?.trim() || null,

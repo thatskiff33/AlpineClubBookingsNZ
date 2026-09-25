@@ -292,6 +292,10 @@ function makeWorld(rows: GuestRow[]) {
         if ("consentStatus" in args.where && row.consentStatus !== args.where.consentStatus) {
           return { count: 0 };
         }
+        // #3029 N3/P2: the claim may also pin the member it authorised against.
+        if ("memberId" in args.where && row.memberId !== args.where.memberId) {
+          return { count: 0 };
+        }
         Object.assign(row, args.data);
         return { count: 1 };
       },
@@ -961,6 +965,39 @@ function membershipPolicyRefusal() {
     },
   ]);
 }
+
+describe("#3029 P2 — the blocked-claim fallback only claims the member it was about", () => {
+  it("does not mark a row DECLINED when a held-party rewrite hands it to someone else after the rollback", async () => {
+    // The refused removal rolls back, then `recordBlockedConsentTransition` opens
+    // a FRESH transaction. A held-party approval (W14) can rewrite the row to a
+    // different member, still PENDING, in between. Claiming by id + PENDING alone
+    // would record the first member's "No thanks" on the substitute's row.
+    let transactions = 0;
+    world().state.raceHook = () => {
+      transactions += 1;
+      if (transactions === 2) {
+        world().guests.get(GUEST)!.memberId = "m-substitute";
+      }
+    };
+    refuseAfterPartialRemoval(membershipPolicyRefusal());
+
+    const result = await respondToMemberGuestConsent({
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      format: CLUB_FORMAT_TEST,
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+
+    expect(result).toEqual({ outcome: "ALREADY_RESOLVED" });
+    expect(world().guests.get(GUEST)).toMatchObject({
+      memberId: "m-substitute",
+      consentStatus: "PENDING",
+    });
+  });
+});
 
 describe("D-14 — a decline refused, and a row left blocked rather than half-removed", () => {
   async function declineRefusedWith(error: Error) {
