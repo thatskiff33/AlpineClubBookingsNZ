@@ -16,22 +16,34 @@ import {
 } from "./layout";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { emailPalette } from "@/lib/email-theme";
-import { emailCalendarDay } from "@/lib/email-templates-club-time";
+import { parseCalendarDate } from "@/lib/club-time";
+import {
+  emailCalendarDay,
+  emailLongWeekdayCalendarDay,
+} from "@/lib/email-templates-club-time";
 
 /**
  * Chore-roster date: the deliberate long-weekday form ("Thursday, 16 April
  * 2026") the roster emails have always used, NOT the house `emailClubDate`
- * medium form. `date` is a lodge-night date-only string; parsing it with the
- * `T00:00:00` suffix pins it to local midnight, which round-trips back to the
- * same calendar date when formatted without a `timeZone` override. Do not
- * change the format — subject line and body must stay identical, which is why
- * this lives here and is shared with `src/lib/email/chores.ts` (#2256).
+ * medium form. `date` is a lodge-night date-only string. Subject line and body
+ * must stay identical, which is why this lives here and is shared with
+ * `src/lib/email/chores.ts` (#2256).
+ *
+ * THE CLUB'S LOCALE SINCE #3566. This used to call `toLocaleDateString("en-NZ",
+ * …)` on a host-local midnight, so every club's roster was written the New
+ * Zealand way whatever it had recorded, and this file carried the tree's one
+ * file-wide date-lint exemption to allow it. It now renders the kernel's
+ * `longWeekdayDate` house shape — the identical options bag — through the email
+ * seam, which supplies the club's locale from the same cache as its zone. A
+ * calendar day consults no zone at all, so the host-midnight trick is gone too.
+ *
+ * A value that is not a calendar day renders as itself rather than throwing:
+ * the roster still goes out, and the raw text is more honest than the
+ * "Invalid Date" the old call produced.
  */
 export function formatChoreRosterDate(date: string): string {
-  return new Date(date + "T00:00:00").toLocaleDateString(
-    "en-NZ",
-    { weekday: "long", year: "numeric", month: "long", day: "numeric" }
-  );
+  const day = parseCalendarDate(date);
+  return day === null ? date : emailLongWeekdayCalendarDay(day);
 }
 
 export function choreRosterTemplate(
