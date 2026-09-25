@@ -441,6 +441,40 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // aliased constructor, `Intl["NumberFormat"]`, or `toLocaleString(...)` — the
 // guard is a structural check on the one shape this codebase has actually
 // written, not a proof that no other shape exists.
+// INV-CONFIG-006 / #3566 — the club's FORMAT is a required argument, and this
+// arm keeps it one (#3628 review, finding B7).
+//
+// The compiler is the census for a missing format only while the parameter is
+// REQUIRED. A `format: ClubDateFormat = { locale: "en-NZ" }` default, a
+// `format = CLUB_FORMAT_TEST`, or a `format?: ClubFormat` would make every
+// caller that forgets the club's format compile again — silently, in a wrapper
+// such as `season-label.ts` that the `@ts-expect-error` locks in
+// `house-shapes.test.ts` and `club-format-kernel.test.ts` never call. So a
+// default value (an `AssignmentPattern`) or an optional marker on ANY parameter
+// typed `ClubDateFormat` or `ClubFormat`, anywhere in `src/`, is refused. On the
+// mandatory set, so no block can lift it. Branding the type was the
+// alternative and was not taken: every test fixture and every server reader
+// would need to mint the brand, for no protection this arm does not give.
+// Known limit, as for every selector here: a destructured property default
+// (`{ format = x }: Options`) is not seen.
+const CLUB_FORMAT_TYPE_NAME = "/^(?:ClubDateFormat|ClubFormat)$/";
+const CLUB_FORMAT_REQUIRED_MESSAGE =
+  "INV-CONFIG-006 / #3566: a `ClubDateFormat` / `ClubFormat` parameter is REQUIRED — no default value and no `?`. A default is the ambient-locale shape the owner declined on #3566 and #3565: it lets a caller that forgot the club's format compile. Take the format from the caller (clubTime().format / clubFormatValues() on the server, useClubTime().format / useClubFormat() in the browser).";
+const CLUB_FORMAT_PARAMETER_RESTRICTIONS = [
+  `AssignmentPattern[left.typeAnnotation.typeAnnotation.typeName.name=${CLUB_FORMAT_TYPE_NAME}]`,
+  `AssignmentPattern[left.typeAnnotation.typeAnnotation.typeName.right.name=${CLUB_FORMAT_TYPE_NAME}]`,
+  `:function > Identifier[optional=true][typeAnnotation.typeAnnotation.typeName.name=${CLUB_FORMAT_TYPE_NAME}]`,
+  `:function > Identifier[optional=true][typeAnnotation.typeAnnotation.typeName.right.name=${CLUB_FORMAT_TYPE_NAME}]`,
+].map((selector) => ({ selector, message: CLUB_FORMAT_REQUIRED_MESSAGE }));
+
+/**
+ * The #3566 required-format arm as bare selector strings, for
+ * `club-format-required-guard.test.ts` — read from HERE, never copied.
+ */
+export const CLUB_FORMAT_GUARD_ARMS = {
+  requiredParameter: CLUB_FORMAT_PARAMETER_RESTRICTIONS.map((entry) => entry.selector),
+};
+
 const CURRENCY_LOCALE_MESSAGE =
   "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; since #3565 both TAKE the club's resolved format, which a server caller gets from clubFormat() and a browser caller from bindClubFormat. A genuinely new rendering SHAPE is declared in @/lib/club-format-intl beside the others, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
 
@@ -2559,6 +2593,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...CENTS_IN_PROSE_RESTRICTIONS,
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
+  ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
 ];
 
 /**

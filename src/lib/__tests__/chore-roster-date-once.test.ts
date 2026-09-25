@@ -12,7 +12,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   calls: 0,
-  sendEmail: vi.fn(async (_args: { subject: string; html: string }) => undefined),
+  sendEmail: vi.fn<(args: { subject: string; html: string }) => Promise<void>>(
+    async () => undefined,
+  ),
 }));
 
 vi.mock("@/lib/email-templates-club-time", () => ({
