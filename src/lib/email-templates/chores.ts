@@ -46,14 +46,19 @@ export function formatChoreRosterDate(date: string): string {
   return day === null ? date : emailLongWeekdayCalendarDay(day);
 }
 
+/**
+ * `formattedDate` is the roster date ALREADY rendered by
+ * {@link formatChoreRosterDate}, and the sender renders it ONCE for the subject
+ * and this body (#3566): formatting it twice, either side of the palette await,
+ * could read the email seam's locale cache before and after a refresh and put
+ * two different dates in one message.
+ */
 export function choreRosterTemplate(
   guestName: string,
-  date: string,
+  formattedDate: string,
   chores: Array<{ name: string; description: string | null }>,
   choreLink?: string
 ): string {
-  const formattedDate = formatChoreRosterDate(date);
-
   const choreRows = chores.map((c) => ({
     label: escapeHtml(c.name),
     value: c.description ? escapeHtml(c.description) : "",

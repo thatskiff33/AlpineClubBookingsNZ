@@ -105,10 +105,14 @@
  * environment seed resolved through `resolveClubFormat`, frozen at module load
  * for the reason the zone's is.
  *
- * THE STATED COST, which the owner accepted: after an admin changes the club's
- * locale, email DATES can take up to one TTL to follow it, while the MONEY in the
- * same email follows at once (its format is handed in by the sender, #3565). And
- * the compiler does not check this path — a template reaches the format through
+ * THE STATED COST, which the owner accepted: the cache refreshes only when it
+ * is READ, so `/api/admin/club-format` calls `primeEmailClubTimeZone()` after its
+ * save commits (the Site Style save does the same for the palette) and the
+ * process that took the save follows at once. Another running process — a
+ * blue/green twin — still serves its old locale to the first email it renders
+ * after its TTL lapses, and refreshes behind it; the MONEY in that email follows
+ * at once, because its format is handed in by the sender (#3565). And the
+ * compiler does not check this path — a template reaches the format through
  * this accessor, not through an argument. `email-render-equivalence.test.ts`
  * pins the New Zealand defaults byte for byte, and a de-CH render in
  * `email-templates-club-time.test.ts` proves the dates really do follow.

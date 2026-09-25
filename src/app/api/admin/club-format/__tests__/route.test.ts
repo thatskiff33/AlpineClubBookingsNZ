@@ -109,6 +109,11 @@ const h = vi.hoisted(() => {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
+// #3566: a saved change re-primes the email seam's cached locale after commit.
+const primeEmail = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/email-templates-club-time", () => ({
+  primeEmailClubTimeZone: primeEmail,
+}));
 vi.mock("next/headers", () => ({
   headers: async () =>
     new Headers({
@@ -688,5 +693,32 @@ describe("PUT /api/admin/club-format — a currency change clears the AI spend r
     expect(
       h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
     ).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PUT /api/admin/club-format — emails follow a change at once (#3566)", () => {
+  it("re-primes the email cache AFTER the transaction commits, on a real change", async () => {
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(response.status).toBe(200);
+    expect(primeEmail).toHaveBeenCalledTimes(1);
+    // After the transaction, never inside it: a read on the module client under
+    // the Serializable transaction would be a second connection mid-save.
+    expect(primeEmail.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.prisma.$transaction.mock.invocationCallOrder[0],
+    );
+    const auditCreate = h.tx.client.auditLog.create as ReturnType<typeof vi.fn>;
+    expect(primeEmail.mock.invocationCallOrder[0]).toBeGreaterThan(
+      auditCreate.mock.invocationCallOrder.at(-1) ?? Infinity,
+    );
+  });
+
+  it("does not re-prime when nothing changed, or when the save lost a race", async () => {
+    await put({ currencyCode: "NZD", locale: "en-NZ", confirmed: true });
+    expect(primeEmail).not.toHaveBeenCalled();
+    h.prisma.$transaction.mockRejectedValueOnce(
+      Object.assign(new Error("could not serialize access"), { code: "P2034" }),
+    );
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(primeEmail).not.toHaveBeenCalled();
   });
 });

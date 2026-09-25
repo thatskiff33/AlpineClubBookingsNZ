@@ -7,7 +7,7 @@
   time on screen, in the club's time zone, is now written the way the club
   recorded, including the lobby display's clock, the health dashboard's "Last
   refresh" line, the audit log, the stuck-states page and the induction record.
-  Emails follow too, within five minutes of a change, and the daily chore-roster
+  Emails follow too, as soon as the setting is saved, and the daily chore-roster
   email — which always wrote its date the New Zealand way — now does as well.
   Alphabetical order on the lockers list and in photo galleries follows the same
   setting.

@@ -17,6 +17,7 @@ import {
   resolveClubFormatWithSource,
 } from "@/lib/club-format-settings";
 import logger from "@/lib/logger";
+import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -34,11 +35,9 @@ import { requireAdmin } from "@/lib/session-guards";
  * wrong on both and looks right at a glance: it infers `support` from the path,
  * refusing the read to a finance-only admin and granting the write to a
  * support editor. The path is registered under `support` in
- * `ROUTE_AREA_PREFIXES` only so the drift guard resolves it to a concrete area;
- * both divergences from that map are declared in
- * `REVIEWED_PERMISSION_DIVERGENCES`. `/api/admin/club-time-zone` and
- * `/api/admin/environment-safety` stay Full Admin on both verbs, so this route
- * is their twin on the write only.
+ * `ROUTE_AREA_PREFIXES` only so the drift guard resolves it; both divergences
+ * are declared in `REVIEWED_PERMISSION_DIVERGENCES`. `/api/admin/club-time-zone`
+ * and `/api/admin/environment-safety` are Full Admin on both verbs.
  *
  * THE CONFIRMATION IS ENFORCED HERE, not only in the panel. A checkbox in a
  * browser is a courtesy to the operator, and the panel is not the only caller.
@@ -229,7 +228,8 @@ export async function PUT(request: Request) {
       },
       { isolationLevel: "Serializable" },
     );
-
+    // Emails' cached locale re-reads NOW, after commit, not on its next TTL (#3566).
+    if (outcome.changed) await primeEmailClubTimeZone();
     return NextResponse.json({
       changed: outcome.changed,
       state: await stateFromRow(outcome.row),

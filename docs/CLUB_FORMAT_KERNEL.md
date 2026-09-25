@@ -171,11 +171,13 @@ longer imports `APP_LOCALE`. `house-shapes.test.ts` carries one
   `zone`, the value `ClubFormatProvider` receives. A prop rather than an internal
   `useClubFormat()` read because the root-404 embeds mount it outside both
   chromes, where no `ClubFormatProvider` exists.
-- **Emails** read the locale from the same boot-primed, five-minute cache that
-  gives them the club's zone (`email-templates-club-time.ts`, owner decision 2),
-  so their date calls are unchanged. The stated cost: email dates can lag a
-  locale change by up to five minutes, and the compiler does not check that
-  path — the render pins and the seam's own tests do.
+- **Emails** read the locale from the same boot-primed cache that gives them
+  the club's zone (`email-templates-club-time.ts`, owner decision 2), so their
+  date calls are unchanged. `/api/admin/club-format` re-primes that cache after
+  its save commits, so the process that took the save follows at once; another
+  running process (a blue/green twin) refreshes on the first read after its
+  five-minute TTL, and serves the old locale to that one read. The compiler does
+  not check this path — the render pins and the seam's own tests do.
 - **The projection formatters stay `en-US`.** `clubZoneParts` and
   `clubZoneDateString` parse their parts back into numbers, and a club locale
   with non-Latin digits would break that; they render nothing a person reads.

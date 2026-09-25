@@ -50,12 +50,16 @@ work out which of two is winning.
 - alphabetical order where the site sorts by name — the lockers list, and the
   pictures in a photo gallery.
 
-**Emails follow within five minutes.** Dates in an email — a booking
+**Emails follow as soon as you save.** Dates in an email — a booking
 confirmation, a reminder, the daily chore roster — are written the way this
-page says, but the running server re-reads the setting for emails every five
-minutes rather than on every message. So for up to five minutes after a
-change, an email can show its dates the old way while its amounts already show
-the new currency. After that the two agree, with nothing to do.
+page says. Emails read the setting from a copy the server keeps in memory
+rather than on every message, and saving here refreshes that copy straight
+away, on the server that took the save. The one exception is a second copy of
+the app running at the same time — during a blue/green switch-over, for
+example — which does not see the save: it refreshes its own copy only when it
+next sends an email more than five minutes after its last check, so that first
+email can still show dates the old way. Its amounts already show the new
+currency either way.
 
 **What does not follow it.** The date labels along the bottom of the report
 charts (for example "Apr 16") are always written in English, whatever is set
@@ -150,7 +154,7 @@ is older than the currency.
 | --- | --- | --- |
 | Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
 | Changing `LOCALE` on the server did not change the dates | Expected. The server value seeded the setting once; this page is the authority for dates as well as money | Change it here instead |
-| An email still shows dates the old way just after a change | Emails re-read the setting every five minutes | Wait five minutes. Nothing to fix |
+| An email still shows dates the old way just after a change | It was sent by a second copy of the app (for example during a blue/green switch-over), which refreshes its copy of the setting only when it sends an email more than five minutes after its last check | Nothing to fix. The next email that copy sends uses the new format |
 | The report charts' date labels are still in English | A known limitation: the chart axis labels ("Apr 16") are written in English whatever the format | Nothing to fix. The figures and the other dates follow this page |
 | The AI settings page says the conversion rate is not set | The club's currency was changed, which clears the rate set for the old one | Enter the rate for the new currency on the AI settings page. **Admin → Audit Log**, action `AI_SPEND_CURRENCY_RATE_CLEARED`, says when and by whom |
 | Saving an AI spend rate says the club's currency changed | Someone changed the currency while the rate was being saved, so it was not stored | Reload the page and enter the rate for the new currency |
