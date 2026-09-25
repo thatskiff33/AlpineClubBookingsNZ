@@ -13,6 +13,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Vitest 5 clears call history by default. Keep that isolation explicit;
+    // tests inspecting module-registration calls must import inside the test.
+    clearMocks: true,
     // Provide fake email-delivery env so the delivery-config gate is satisfied
     // in tests (nodemailer is mocked, so nothing is actually sent).
     // ORDER MATTERS. vitest.clock-setup.ts freezes "today" (#2481) and must be
