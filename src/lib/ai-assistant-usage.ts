@@ -27,6 +27,7 @@ import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import type { AiUsage } from "@/lib/anthropic-client";
+import { getClubFormat } from "@/lib/club-format-settings";
 
 /**
  * Default monthly budget when no AiAssistantSettings row is stored: 10.00 in
@@ -191,7 +192,8 @@ export async function checkAiBudget(
         where: { month: aiUsageMonthKey(now) },
       }),
       prisma.aiAssistantSettings.findUnique({ where: { id: "default" } }),
-      loadAiSpendCurrency(),
+      // The club's STORED currency (#3566), the one the cap is labelled in.
+      getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)),
     ]);
     const budgetCents = settings?.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS;
     const spentCents = monthly?.costCents ?? 0;
@@ -313,7 +315,10 @@ export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   }
 
   try {
-    const currency = await loadAiSpendCurrency();
+    // The club's STORED currency (#3566), the one the cap is labelled in.
+    const currency = await loadAiSpendCurrency(
+      (await getClubFormat()).currencyCode,
+    );
     const costCents = convertNzdCentsToClubCents(
       nzdCostCents,
       currency.clubUnitsPerNzdMicros,

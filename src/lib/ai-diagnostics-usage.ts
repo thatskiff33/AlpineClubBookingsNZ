@@ -42,6 +42,7 @@ import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { reportAiError } from "@/lib/observability-bridge";
 import type { AiUsage } from "@/lib/anthropic-client";
+import { getClubFormat } from "@/lib/club-format-settings";
 
 export const DIAGNOSTICS_SETTINGS_ID = "default";
 
@@ -327,6 +328,9 @@ export async function reserveDiagnosticsBudget(
     };
   }
 
+  // The club's STORED currency (#3566) — the one the cap is labelled in —
+  // resolved BEFORE the transaction and its advisory lock, never under them.
+  const clubCurrency = (await getClubFormat()).currencyCode;
   try {
     return await prisma.$transaction(async (tx) => {
       // Serialise every reserve for THIS month so the read-check-insert below is
@@ -343,7 +347,8 @@ export async function reserveDiagnosticsBudget(
       });
 
       // The rate is read under the same lock and snapshot as the budget (#3354):
-      // one PK read of a one-row table, none for an NZD club. It only sizes THIS
+      // one PK read of a one-row table, none for an NZD club. The currency it
+      // is read for was resolved above, before the lock (#3566). It only sizes THIS
       // reservation; every stored term the lock protects is already club cents.
       const [settings, monthly, activeAgg, currency] = await Promise.all([
         tx.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),
@@ -352,7 +357,7 @@ export async function reserveDiagnosticsBudget(
           _sum: { reservedCents: true },
           where: { month, expiresAt: { gt: now } },
         }),
-        loadAiSpendCurrency(tx),
+        loadAiSpendCurrency(clubCurrency, tx),
       ]);
 
       const budgetCents =
@@ -539,6 +544,9 @@ export async function settleDiagnosticsRoundtrip(
     return;
   }
 
+  // The club's STORED currency (#3566), resolved before the lock like the
+  // reserve's.
+  const clubCurrency = (await getClubFormat()).currencyCode;
   try {
     await prisma.$transaction(async (tx) => {
       // Take the SAME per-month advisory lock as reserveDiagnosticsBudget as the
@@ -554,7 +562,7 @@ export async function settleDiagnosticsRoundtrip(
 
       // Same lock and snapshot as the reserve's rate read (#3354). A failed read
       // fails the settle and trips the breaker — never books NZD cents.
-      const currency = await loadAiSpendCurrency(tx);
+      const currency = await loadAiSpendCurrency(clubCurrency, tx);
       const costCents = convertNzdCentsToClubCents(
         nzdCostCents,
         currency.clubUnitsPerNzdMicros,
@@ -650,7 +658,8 @@ export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
       orderBy: { createdAt: "desc" },
       take: 2000,
     }),
-    loadAiSpendCurrency(),
+    // The club's STORED currency (#3566), the one the cap is labelled in.
+    getClubFormat().then((format) => loadAiSpendCurrency(format.currencyCode)),
   ]);
 
   const limitCents = settings?.monthlyBudgetCents ?? DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS;

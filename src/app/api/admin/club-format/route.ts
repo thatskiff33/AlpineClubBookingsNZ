@@ -5,11 +5,14 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { AI_SPEND_CURRENCY_SETTINGS_ID } from "@/lib/ai-spend-currency-settings";
 import {
   normaliseClubCurrencyCode,
   normaliseClubLocale,
+  resolveClubFormat,
 } from "@/lib/club-format";
 import { stateFromResolved, stateFromRow } from "@/lib/club-format-admin-state";
+import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
 import {
   CLUB_FORMAT_SETTINGS_ID,
   CLUB_FORMAT_SETTINGS_SELECT,
@@ -42,13 +45,26 @@ import { requireAdmin } from "@/lib/session-guards";
  * THE CONFIRMATION IS ENFORCED HERE, not only in the panel. A checkbox in a
  * browser is a courtesy to the operator, and the panel is not the only caller.
  *
- * THE TRANSACTION TOUCHES EXACTLY TWO TABLES — `ClubFormatSettings` and
- * `AuditLog` — and that is a contract, not an implementation detail. Changing
- * the club's currency or locale rewrites NO stored amount: every `Int` column
- * of cents holds exactly what it held before, and no payment, invoice or credit
- * is re-denominated. A write here reaching a booking, a payment or a member
- * would be that promise broken, so the route's test enumerates the delegates
- * and fails if any other one is called.
+ * THE TRANSACTION TOUCHES EXACTLY THREE TABLES — `ClubFormatSettings`,
+ * `AuditLog`, and (only when the CURRENCY changes) `AiSpendCurrencySettings` —
+ * and that is a contract, not an implementation detail. Changing the club's
+ * currency or locale rewrites NO stored amount: every `Int` column of cents
+ * holds exactly what it held before, and no payment, invoice or credit is
+ * re-denominated. A write here reaching a booking, a payment or a member would
+ * be that promise broken, so the route's test enumerates the delegates and
+ * fails if any other one is called.
+ *
+ * THE THIRD TABLE IS A CLEAR, NOT A CONVERSION (#3566, owner decision 4). The
+ * AI spend rate is "how many of the club's currency one NZ dollar buys", and it
+ * does not record which currency it was set for — so after a currency change it
+ * would silently go on pricing the new currency at the old one's rate (a CHF
+ * rate under-counts a JPY club about 170 times). A save that changes the
+ * currency therefore deletes the stored rate in this same transaction and
+ * records that it did, and both AI cards then say the rate is not set, which is
+ * the existing state of a new non-NZD club. A locale-only save leaves it alone.
+ * `/api/admin/ai-spend-currency` re-reads the currency inside its own
+ * Serializable transaction, so a rate saved across this one is refused rather
+ * than resurrected.
  *
  * SERIALIZABLE, AND NO ADVISORY LOCK. A single-row configuration upsert
  * composes no capacity claim, no settlement money and no lifecycle transition,
@@ -70,10 +86,12 @@ import { requireAdmin } from "@/lib/session-guards";
  * P2002 joins them here for the reason `/api/admin/club-time-zone` states: on a
  * one-row singleton whose id is a constant, a primary-key collision can only be
  * this upsert's create arm losing a race with another administrator recording
- * the setting for the first time. That rests on the ONLY other table this
+ * the setting for the first time. That rests on the only other tables this
  * transaction writes being `AuditLog`, whose primary key is a per-row `cuid`
- * and which carries no other unique constraint — add one and a duplicate-audit
- * bug starts being answered "try again shortly", which retrying cannot fix.
+ * and which carries no other unique constraint, and `AiSpendCurrencySettings`,
+ * which it only ever DELETES from — add a unique constraint, or an insert, and
+ * a real bug starts being answered "try again shortly", which retrying cannot
+ * fix.
  */
 const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
 
@@ -196,6 +214,52 @@ export async function PUT(request: Request) {
           },
           select: CLUB_FORMAT_SETTINGS_SELECT,
         });
+
+        /*
+          A CURRENCY CHANGE CLEARS THE AI SPEND RATE (#3566) — see the module
+          doc. "Before" is the currency the club was effectively on, which is
+          the environment seed while nothing is persisted, so the first save of
+          an unchanged seed currency does not clear a rate set against it.
+        */
+        const previousCurrency = resolveClubFormat(
+          before,
+          readEnvironmentClubFormatSeed(),
+        ).currencyCode;
+        const clearedRate =
+          previousCurrency === currencyCode
+            ? null
+            : await tx.aiSpendCurrencySettings.findUnique({
+                where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
+                select: { clubUnitsPerNzdMicros: true },
+              });
+        if (clearedRate) {
+          await tx.aiSpendCurrencySettings.deleteMany({
+            where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
+          });
+          await tx.auditLog.create(
+            buildStructuredAuditLogCreateArgs({
+              action: "AI_SPEND_CURRENCY_RATE_CLEARED",
+              actor: { memberId: actingMemberId },
+              entity: {
+                type: "AiSpendCurrencySettings",
+                id: AI_SPEND_CURRENCY_SETTINGS_ID,
+              },
+              // The sibling of AI_SPEND_CURRENCY_RATE_UPDATED, and `admin` for
+              // the same reason: installation configuration.
+              category: "admin",
+              severity: "important",
+              outcome: "success",
+              summary:
+                "AI spend conversion rate cleared because the club's currency changed",
+              metadata: {
+                previousCurrency,
+                newCurrency: currencyCode,
+                previousClubUnitsPerNzdMicros: clearedRate.clubUnitsPerNzdMicros,
+              },
+              request: getAuditRequestContext(request),
+            }),
+          );
+        }
 
         await tx.auditLog.create(
           buildStructuredAuditLogCreateArgs({
