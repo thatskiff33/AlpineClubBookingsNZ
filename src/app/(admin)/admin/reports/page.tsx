@@ -29,7 +29,11 @@ import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
 import { calendarDayAsLocalDate } from "./_components/host-local-day";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  formatClubDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
 import {
@@ -156,8 +160,8 @@ function getAdditionalLedgerGapWarning(
  * A range bound (`yyyy-MM-dd`) in the house medium shape — "16 Apr 2026".
  *
  * WHICH FORMATTER, and the rule that decides it (CT-4 review, #2870). The
- * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through
- * `APP_LOCALE`, while a date-fns pattern string hard-codes English month names
+ * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through the
+ * club's persisted locale (#3566), while a date-fns pattern string hard-codes English month names
  * whatever the deployment is configured for. So a value in a house shape belongs
  * on the kernel — which is also what `payments/page.tsx` and
  * `subscriptions/page.tsx` did with this same "d MMM yyyy" shape, and leaving
@@ -173,9 +177,9 @@ function getAdditionalLedgerGapWarning(
  * The bounds come from the URL, so an unusable one renders as itself rather
  * than throwing a `RangeError` that blanks the report.
  */
-function formatRangeDay(value: string): string {
+function formatRangeDay(value: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(value);
-  return day === null ? value : formatClubDate(day);
+  return day === null ? value : formatClubDate(day, format);
 }
 
 /**
@@ -562,8 +566,8 @@ export default function ReportsPage() {
           <div className="hidden print:block">
             <h1 className="text-2xl font-bold text-foreground">Reports</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Date range: {formatRangeDay(from)} to{" "}
-              {formatRangeDay(to)}
+              Date range: {formatRangeDay(from, clubFormat)} to{" "}
+              {formatRangeDay(to, clubFormat)}
             </p>
             <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
@@ -671,7 +675,7 @@ export default function ReportsPage() {
               <StatCard
                 title="New Members"
                 value={data.memberStats.newMembers}
-                subtitle={`Joined between ${formatRangeDayPattern(from, "d MMM")} and ${formatRangeDay(to)}`}
+                subtitle={`Joined between ${formatRangeDayPattern(from, "d MMM")} and ${formatRangeDay(to, clubFormat)}`}
                 icon={UserPlus}
               />
             </div>

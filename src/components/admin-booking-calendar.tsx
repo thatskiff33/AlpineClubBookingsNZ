@@ -609,7 +609,7 @@ export function AdminBookingCalendar() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Bookings on {openDay ? formatClubDate(requireCalendarDate(openDay)) : ""}
+              Bookings on {openDay ? formatClubDate(requireCalendarDate(openDay), clubTime.format) : ""}
             </DialogTitle>
             <DialogDescription>
               All {openDayBookings.length} booking

@@ -5,6 +5,7 @@ import {
   parseCalendarDate,
   parseInstant,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 export interface MemberOption {
@@ -220,13 +221,16 @@ export function normalizeFamilyEmail(email: string) {
  * UTC-midnight encoding in UTC, which is the identity for every club rather
  * than a projection.
  */
-export function formatFamilyGroupCalendarDay(value: string | null | undefined) {
+export function formatFamilyGroupCalendarDay(
+  value: string | null | undefined,
+  format: ClubDateFormat,
+) {
   if (!value) return "Not provided";
   const bare = parseCalendarDate(value);
-  if (bare !== null) return formatClubDate(bare);
+  if (bare !== null) return formatClubDate(bare, format);
   const instant = parseInstant(value);
   if (instant === null) return "Not provided";
-  return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
 }
 
 /**

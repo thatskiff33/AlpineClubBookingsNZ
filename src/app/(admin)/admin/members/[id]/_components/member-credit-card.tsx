@@ -269,13 +269,13 @@ export function MemberCreditCard({
                       <TableCell className="text-sm">
                         {item.sourceBooking ? (
                           <span className="text-info-11">
-                            {formatPayloadCalendarDay(item.sourceBooking.checkIn)} -{" "}
-                            {formatPayloadCalendarDay(item.sourceBooking.checkOut)}
+                            {formatPayloadCalendarDay(item.sourceBooking.checkIn, format)} -{" "}
+                            {formatPayloadCalendarDay(item.sourceBooking.checkOut, format)}
                           </span>
                         ) : item.appliedToBooking ? (
                           <span className="text-cat1-11">
-                            {formatPayloadCalendarDay(item.appliedToBooking.checkIn)} -{" "}
-                            {formatPayloadCalendarDay(item.appliedToBooking.checkOut)}
+                            {formatPayloadCalendarDay(item.appliedToBooking.checkIn, format)} -{" "}
+                            {formatPayloadCalendarDay(item.appliedToBooking.checkOut, format)}
                           </span>
                         ) : (
                           "-"

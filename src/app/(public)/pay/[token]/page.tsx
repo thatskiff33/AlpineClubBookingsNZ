@@ -385,8 +385,8 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatStayDay(payable.checkIn)} to{" "}
-            {formatStayDay(payable.checkOut)}
+            Dates: {formatStayDay(payable.checkIn, format)} to{" "}
+            {formatStayDay(payable.checkOut, format)}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">

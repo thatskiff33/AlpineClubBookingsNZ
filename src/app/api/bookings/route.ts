@@ -702,7 +702,7 @@ export async function POST(request: NextRequest) {
   }
   if (memberNightConflicts.length > 0) {
     return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
+      getBookingMemberNightConflictResponse(memberNightConflicts, format),
       { status: 409 },
     );
   }
@@ -1198,7 +1198,7 @@ export async function POST(request: NextRequest) {
       }
       if (err instanceof BookingMemberNightConflictError) {
         return NextResponse.json(
-          getBookingMemberNightConflictResponse(err.conflicts),
+          getBookingMemberNightConflictResponse(err.conflicts, format),
           { status: 409 },
         );
       }
@@ -1399,7 +1399,7 @@ export async function POST(request: NextRequest) {
       }
       if (waitlistErr instanceof BookingMemberNightConflictError) {
         return NextResponse.json(
-          getBookingMemberNightConflictResponse(waitlistErr.conflicts),
+          getBookingMemberNightConflictResponse(waitlistErr.conflicts, format),
           { status: 409 },
         );
       }
@@ -1452,7 +1452,7 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, format),
         { status: 409 },
       );
     }

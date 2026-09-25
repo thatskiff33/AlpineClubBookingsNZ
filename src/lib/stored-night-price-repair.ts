@@ -7,7 +7,11 @@ import {
   type EditFinancialReviewCause,
 } from "@/lib/edit-financial-review-context";
 import { formatCents } from "@/lib/utils";
-import { formatClubDate, type CalendarDate } from "@/lib/club-time";
+import {
+  formatClubDate,
+  type CalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -386,8 +390,9 @@ export const NIGHT_PRICE_REPAIR_AMOUNT_MESSAGE =
  */
 export function nightPriceRepairUnreadableMessage(
   dates: NonEmptyDates,
+  format: ClubDateFormat,
 ): string {
-  const listed = dates.map((date) => formatClubDate(date)).join(", ");
+  const listed = dates.map((date) => formatClubDate(date, format)).join(", ");
   return dates.length === 1
     ? `The amount for ${listed} is not one this box can read. Give it as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`
     : `The amounts for ${listed} are not ones these boxes can read. Give each as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`;

@@ -1181,6 +1181,7 @@ export async function modifyBookingBatch({
       // locks this transaction holds (`INV-LOCK-004`). The planner hands it to
       // the person-night guard, whose self-removal window is member-facing.
       today: clubTodayDateOnly,
+      format,
       // #2543 — read before the transaction opened (like `memberGuestPolicy`), so
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under

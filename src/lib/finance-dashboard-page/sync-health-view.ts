@@ -9,6 +9,7 @@ import type {
   FinanceDashboardStatusPanel,
   FinanceDashboardViewModel,
 } from "@/lib/finance-dashboard-page/model";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 const SYNC_HEALTH_BADGE_TONES: Record<FinanceSyncHealthTone, BadgeVariant> = {
   green: "success",
@@ -23,10 +24,12 @@ const SYNC_HEALTH_BADGE_LABELS: Record<FinanceSyncHealthTone, string> = {
 };
 
 export async function buildSyncHealthDashboard(
-  selection: FinanceDashboardSelection
+  selection: FinanceDashboardSelection,
+  format: ClubDateFormat,
 ): Promise<FinanceDashboardViewModel> {
   const health = await buildFinanceSyncHealth({
     currentMonth: selection.currentMonth,
+    format,
   });
 
   const cards: FinanceDashboardKpiCard[] = [

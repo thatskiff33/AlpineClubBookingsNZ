@@ -149,7 +149,7 @@ function StrandNightPriceForm({
       : unreadableDates !== null
         ? {
             ok: false,
-            message: nightPriceRepairUnreadableMessage(unreadableDates),
+            message: nightPriceRepairUnreadableMessage(unreadableDates, format),
             // The ONE definition of what the nights must come to, shared with
             // the checker rather than restated for this branch.
             targetCents: unpricedNightTargetCents(offer.summary, 0),
@@ -215,7 +215,7 @@ function StrandNightPriceForm({
         {offer.storedByDate
           .map(
             (night) =>
-              `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents, format)}`,
+              `${formatClubDate(night.date, format)} ${formatStoredNightPrice(night.priceCents, format)}`,
           )
           .join(" · ")}
       </p>

@@ -13,6 +13,16 @@
  * `formatDate` here — the issue forbids one, and a catch-all is precisely what
  * lets a `createdAt` be rendered as if it were a lodge night.
  *
+ * ## Every rendering takes the club's format, and the compiler is the census
+ *
+ * Each function below ends in a REQUIRED `format: ClubDateFormat` — the club's
+ * persisted locale (stage 4 of programme #3205, #3566; INV-CONFIG-006). There is
+ * no one-argument spelling, the same shape the money kernel took in #3565, so a
+ * date that forgets the club's locale does not compile.
+ * `house-shapes.test.ts` pins that with one `@ts-expect-error` per export.
+ * Inside a component, `bindClubTime(zone, format)` closes over both, so the
+ * bound methods take neither.
+ *
  * ## The output is byte-identical to what shipped before
  *
  * `__tests__/house-shapes.test.ts` pins every shape against the frozen
@@ -38,25 +48,39 @@ import {
   calendarDateOfSerialisedDbDateOrNull,
 } from "./instant";
 import { formatCalendarDateShape, formatHouseShape } from "./intl";
-import type { CalendarDate, ClubTimeZone, Instant } from "./types";
+import type {
+  CalendarDate,
+  ClubDateFormat,
+  ClubTimeZone,
+  Instant,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Calendar dates — no zone, because a calendar day has none
 // ---------------------------------------------------------------------------
 
 /** "16 Apr 2026" — the house medium form. */
-export function formatClubDate(date: CalendarDate): string {
-  return formatCalendarDateShape("date", date);
+export function formatClubDate(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("date", date, format);
 }
 
 /** "16 April 2026" — reserved by INV-DATE-016 for four member-facing surfaces. */
-export function formatClubLongDate(date: CalendarDate): string {
-  return formatCalendarDateShape("longDate", date);
+export function formatClubLongDate(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("longDate", date, format);
 }
 
 /** "April 2026" — a month heading. */
-export function formatClubMonthYear(date: CalendarDate): string {
-  return formatCalendarDateShape("monthYear", date);
+export function formatClubMonthYear(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("monthYear", date, format);
 }
 
 /**
@@ -66,8 +90,11 @@ export function formatClubMonthYear(date: CalendarDate): string {
  * dozen ticks side by side and the long month does not. Two call sites kept
  * their own pinned formatter with a comment saying exactly that.
  */
-export function formatClubShortMonthYear(date: CalendarDate): string {
-  return formatCalendarDateShape("shortMonthYear", date);
+export function formatClubShortMonthYear(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("shortMonthYear", date, format);
 }
 
 /**
@@ -76,30 +103,42 @@ export function formatClubShortMonthYear(date: CalendarDate): string {
  * Asked of `Intl` as its own shape rather than sliced out of
  * {@link formatClubShortMonthYear}, for the reason `HOUSE_SHAPES` records: a
  * locale is free to order or punctuate a month-and-year differently, so
- * subtracting the year from a rendered pair is a guess about `APP_LOCALE` and
+ * subtracting the year from a rendered pair is a guess about the club's locale and
  * declaring the shape is not.
  *
  * The one caller is the membership-season label (`@/lib/season-label`), which
  * names the months a season runs between and derives them from the club's
  * financial year-end (`seasonStartMonthOf`) rather than from a hard-coded April.
  */
-export function formatClubShortMonth(date: CalendarDate): string {
-  return formatCalendarDateShape("shortMonth", date);
+export function formatClubShortMonth(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("shortMonth", date, format);
 }
 
 /** "Thu, 16 Apr 2026" — for lists scanned by day of the week. */
-export function formatClubWeekdayDate(date: CalendarDate): string {
-  return formatCalendarDateShape("weekdayDate", date);
+export function formatClubWeekdayDate(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("weekdayDate", date, format);
 }
 
 /** "Thu" — the weekday alone. */
-export function formatClubWeekday(date: CalendarDate): string {
-  return formatCalendarDateShape("weekday", date);
+export function formatClubWeekday(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("weekday", date, format);
 }
 
 /** "Thursday" — the weekday alone, spelled out. */
-export function formatClubLongWeekday(date: CalendarDate): string {
-  return formatCalendarDateShape("longWeekday", date);
+export function formatClubLongWeekday(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("longWeekday", date, format);
 }
 
 /**
@@ -109,8 +148,11 @@ export function formatClubLongWeekday(date: CalendarDate): string {
  * that six call sites were keeping a local formatter for: a grid column head or
  * a tight dashboard slot, where the year is already stated by the heading above.
  */
-export function formatClubDayMonth(date: CalendarDate): string {
-  return formatCalendarDateShape("dayMonth", date);
+export function formatClubDayMonth(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("dayMonth", date, format);
 }
 
 /**
@@ -119,22 +161,31 @@ export function formatClubDayMonth(date: CalendarDate): string {
  * ASSEMBLED rather than asked of `Intl` as one shape, and the difference is not
  * cosmetic: the day number comes from the calendar-date STRING, so it is the day
  * that was asked for in every locale. `{ weekday: "short", day: "numeric" }`
- * happens to render "Thu 16" for `en-NZ`, but `APP_LOCALE` is configurable and a
+ * happens to render "Thu 16" for `en-NZ`, but the club's locale is a setting and a
  * locale that ordered or punctuated the pair differently would silently change
  * six lobby screens.
  */
-export function formatClubWeekdayDay(date: CalendarDate): string {
-  return `${formatClubWeekday(date)} ${calendarDateParts(date).day}`;
+export function formatClubWeekdayDay(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return `${formatClubWeekday(date, format)} ${calendarDateParts(date).day}`;
 }
 
 /** "Thu, 16 Apr" — the lobby wall's short date, deliberately without a year. */
-export function formatClubWeekdayDayMonth(date: CalendarDate): string {
-  return formatCalendarDateShape("weekdayDayMonth", date);
+export function formatClubWeekdayDayMonth(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("weekdayDayMonth", date, format);
 }
 
 /** "Thursday, 16 April" — the lobby wall's long date, deliberately without a year. */
-export function formatClubLongWeekdayDayMonth(date: CalendarDate): string {
-  return formatCalendarDateShape("longWeekdayDayMonth", date);
+export function formatClubLongWeekdayDayMonth(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("longWeekdayDayMonth", date, format);
 }
 
 /**
@@ -152,8 +203,11 @@ export function formatClubLongWeekdayDayMonth(date: CalendarDate): string {
  * That rule is about the date form; this shape leads with a weekday and answers
  * a different question.
  */
-export function formatClubLongWeekdayDate(date: CalendarDate): string {
-  return formatCalendarDateShape("longWeekdayDate", date);
+export function formatClubLongWeekdayDate(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatCalendarDateShape("longWeekdayDate", date, format);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,11 +252,15 @@ export function formatClubLongWeekdayDate(date: CalendarDate): string {
  * (`xero-record-activity`); sweeping the rest, and deciding which rejection
  * semantics survive, is #3511 rather than this change.
  */
-export function formatStayDate(value: string | Instant): string {
+export function formatStayDate(
+  value: string | Instant,
+  format: ClubDateFormat,
+): string {
   return formatClubDate(
     typeof value === "string"
       ? calendarDateOfSerialisedDbDate(value)
       : calendarDateOfDateOnlyInstant(value),
+    format,
   );
 }
 
@@ -216,9 +274,10 @@ export function formatStayDate(value: string | Instant): string {
  */
 export function formatStayDateOrNull(
   value: string | null | undefined,
+  format: ClubDateFormat,
 ): string | null {
   const day = calendarDateOfSerialisedDbDateOrNull(value);
-  return day === null ? null : formatClubDate(day);
+  return day === null ? null : formatClubDate(day, format);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,48 +288,54 @@ export function formatStayDateOrNull(
 export function formatClubInstantDate(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("date", instant, zone);
+  return formatHouseShape("date", instant, zone, format);
 }
 
 /** "16 Apr 2026, 2:30 pm" */
 export function formatClubInstantDateTime(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("dateTime", instant, zone);
+  return formatHouseShape("dateTime", instant, zone, format);
 }
 
 /** "16 April 2026" — INV-DATE-016 applies. */
 export function formatClubInstantLongDate(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("longDate", instant, zone);
+  return formatHouseShape("longDate", instant, zone, format);
 }
 
 /** "2:30 pm" — time of day only, no date, no seconds. */
 export function formatClubInstantTime(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("time", instant, zone);
+  return formatHouseShape("time", instant, zone, format);
 }
 
 /** "April 2026" */
 export function formatClubInstantMonthYear(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("monthYear", instant, zone);
+  return formatHouseShape("monthYear", instant, zone, format);
 }
 
 /** "Thu, 16 Apr 2026" */
 export function formatClubInstantWeekdayDate(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("weekdayDate", instant, zone);
+  return formatHouseShape("weekdayDate", instant, zone, format);
 }
 
 /**
@@ -288,8 +353,9 @@ export function formatClubInstantWeekdayDate(
 export function formatClubInstantDayMonth(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("dayMonth", instant, zone);
+  return formatHouseShape("dayMonth", instant, zone, format);
 }
 
 /**
@@ -305,6 +371,34 @@ export function formatClubInstantDayMonth(
 export function formatClubInstantWeekdayDayMonth(
   instant: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape("weekdayDayMonth", instant, zone);
+  return formatHouseShape("weekdayDayMonth", instant, zone, format);
+}
+
+/**
+ * "16 Apr, 02:30 pm" — a dense operations stamp with no year and two-digit
+ * fields, for the stuck-states "generated at" line and the health dashboard,
+ * which sit side by side and must agree (#2264). Declared by #3566 in place of
+ * the local formatter each of those screens kept.
+ */
+export function formatClubInstantCompactDateTime(
+  instant: Instant,
+  zone: ClubTimeZone,
+  format: ClubDateFormat,
+): string {
+  return formatHouseShape("compactDateTime", instant, zone, format);
+}
+
+/**
+ * "16 Apr 2026, 2:30:05 pm" — the medium date-time WITH seconds, for the audit
+ * log, where two rows a second apart have to read as two moments. Declared by
+ * #3566 in place of that page's local formatter.
+ */
+export function formatClubInstantDateTimeWithSeconds(
+  instant: Instant,
+  zone: ClubTimeZone,
+  format: ClubDateFormat,
+): string {
+  return formatHouseShape("dateTimeSeconds", instant, zone, format);
 }

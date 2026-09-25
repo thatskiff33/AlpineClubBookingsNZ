@@ -135,7 +135,7 @@ export async function getPaymentLinkContext(
   // container's (#3123). The runtime reader, not `clubTime()`: this module is
   // reachable from `src/instrumentation.node.ts`, where `server-only` throws at
   // import. Its stay dates are @db.Date lodge nights and take no zone.
-  const club = bindClubTime(await readClubTimeZoneOutsideRequest());
+  const club = bindClubTime(await readClubTimeZoneOutsideRequest(), format);
 
   const financialReviewPending = await readOpenFinancialReview(booking.id);
 

@@ -532,7 +532,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
       parts.push({ type: "hut-fees", tables: await loadPublicHutFees(format, feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
-      parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
+      parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(format, parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {
       parts.push({ type: "cancellation-policy", policy: await loadPublicCancellationPolicy(format, parsed.parameter) });
     } else if (parsed.token === "contact-form") {

@@ -41,6 +41,7 @@ import {
   DisplayClubTimeProvider,
   HeaderClock,
   readPreviewState,
+  useDisplayClubTime,
 } from "./display-header-clock";
 
 // The lobby display screen (fork issue #32): full-screen, non-interactive,
@@ -78,6 +79,7 @@ function LodgeHeader({ state }: DisplayModuleProps) {
 }
 
 function InfoFooter({ state }: DisplayModuleProps) {
+  const { format } = useDisplayClubTime();
   const wifiName = state.config["wifi-name"];
   const wifiCode = state.config["wifi-code"];
   const email = state.config["contact-email"];
@@ -121,7 +123,7 @@ function InfoFooter({ state }: DisplayModuleProps) {
         </span>
       )}
       {note && (
-        <span className="display-footer-note">{resolveDisplayText(note, state)}</span>
+        <span className="display-footer-note">{resolveDisplayText(note, state, format)}</span>
       )}
     </div>
   );

@@ -98,8 +98,8 @@ export function NonMemberGuestsSection({
                           `formatNZDate` projected it through `APP_TIME_ZONE`,
                           which is a day early for any club west of Greenwich.
                         */}
-                        {formatClubDate(calendarDateOfDateOnlyInstant(child.checkIn))}{" "}
-                        - {formatClubDate(calendarDateOfDateOnlyInstant(child.checkOut))}
+                        {formatClubDate(calendarDateOfDateOnlyInstant(child.checkIn), money.format)}{" "}
+                        - {formatClubDate(calendarDateOfDateOnlyInstant(child.checkOut), money.format)}
                       </p>
                     ) : null}
                     <p className="text-xs font-medium text-info-11 underline">

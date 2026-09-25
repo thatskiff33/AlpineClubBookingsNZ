@@ -66,7 +66,7 @@ export function CalendarView({
   // Day-detail overflow list ("+N more"): the day whose full event list is open.
   const [dayDetailKey, setDayDetailKey] = useState<CalendarDate | null>(null);
 
-  const monthTitle = formatClubMonthYear(monthStart);
+  const monthTitle = formatClubMonthYear(monthStart, club.format);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);

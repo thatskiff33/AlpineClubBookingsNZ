@@ -1086,7 +1086,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatStayDate(d))
+              .map((d: string) => formatStayDate(d, format))
               .join(", ")}`
           );
         }
@@ -1312,7 +1312,7 @@ export function PublicBookingRequestsPanel({
         if (response.status === 409 && Array.isArray(data.fullNights)) {
           throw new Error(
             `The lodge is at capacity for: ${data.fullNights
-              .map((d: string) => formatStayDate(d))
+              .map((d: string) => formatStayDate(d, format))
               .join(", ")}`
           );
         }
@@ -1616,7 +1616,7 @@ export function PublicBookingRequestsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatStayDate(request.checkIn)} to {formatStayDate(request.checkOut)}
+                      {formatStayDate(request.checkIn, format)} to {formatStayDate(request.checkOut, format)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Nights:</span>{" "}
@@ -2159,10 +2159,10 @@ export function PublicBookingRequestsPanel({
                                 <li key={`${conflict.memberId}-${conflict.bookingCheckIn}`}>
                                   {conflict.memberName} is already on{" "}
                                   {conflict.bookingOwnerName}&apos;s booking (
-                                  {formatStayDate(conflict.bookingCheckIn)}–
-                                  {formatStayDate(conflict.bookingCheckOut)}) for{" "}
+                                  {formatStayDate(conflict.bookingCheckIn, format)}–
+                                  {formatStayDate(conflict.bookingCheckOut, format)}) for{" "}
                                   {conflict.conflictingNights
-                                    .map((night) => formatStayDate(night))
+                                    .map((night) => formatStayDate(night, format))
                                     .join(", ")}
                                   .
                                 </li>

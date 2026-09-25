@@ -2265,6 +2265,7 @@ export async function approveBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
       });
 
       let booking: { id: string };

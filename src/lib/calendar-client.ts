@@ -1,21 +1,22 @@
 import {
   addCalendarDays,
+  type CalendarDate,
   calendarDayOfWeek,
   calendarMonthOf,
   clubCalendarDateOf,
+  type ClubDateFormat,
+  type ClubTimeZone,
   clubWallTimeOf,
   countClubNights,
   endOfClubDayExclusive,
   formatClubInstantTime,
   formatClubLongWeekdayDate,
+  type Instant,
   instantForClubWallTime,
   parseCalendarDate,
   parseInstant,
   startOfCalendarMonth,
   startOfClubDay,
-  type CalendarDate,
-  type ClubTimeZone,
-  type Instant,
 } from "@/lib/club-time";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 
@@ -212,22 +213,27 @@ export function groupEventsByDay(
 }
 
 /** "2:30 pm" in CLUB time for a serialised instant; the raw value if malformed. */
-export function formatInstantTime(iso: string, zone: ClubTimeZone): string {
+export function formatInstantTime(
+  iso: string,
+  zone: ClubTimeZone,
+  format: ClubDateFormat,
+): string {
   const instant = parseInstant(iso);
   // The kernel's formatters throw a RangeError on an unusable value, and an
   // unhandled throw in a client render blanks the screen behind an error
   // boundary. Falling back to the raw text is the same judgement
   // `describeRecurrence` makes for a malformed `until`.
-  return instant === null ? iso : formatClubInstantTime(instant, zone);
+  return instant === null ? iso : formatClubInstantTime(instant, zone, format);
 }
 
 /** Short chip/list label for an event's time ("All day", "7:00 pm"). */
 export function formatEventTime(
   event: CalendarEventDTO,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
   if (event.allDay) return "All day";
-  return formatInstantTime(event.startsAt, zone);
+  return formatInstantTime(event.startsAt, zone, format);
 }
 
 /**
@@ -241,10 +247,11 @@ export function formatEventTime(
 export function formatEventDateLong(
   event: CalendarEventDTO,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
   const instant = parseInstant(event.startsAt);
   if (instant === null) return event.startsAt;
-  return formatCalendarDateLong(clubCalendarDateOf(instant, zone));
+  return formatCalendarDateLong(clubCalendarDateOf(instant, zone), format);
 }
 
 /**
@@ -255,10 +262,13 @@ export function formatEventDateLong(
  * F3 (#3079) declared this bag as the kernel's `longWeekdayDate` shape — the
  * fourth caller was what earned it — so the local formatter this file carried is
  * gone rather than composed from `longWeekdayDayMonth` plus the year, which is
- * byte-identical for `en-NZ` and not safe for a configurable `APP_LOCALE`.
+ * byte-identical for `en-NZ` and not safe for the club's configurable locale.
  */
-function formatCalendarDateLong(date: CalendarDate): string {
-  return formatClubLongWeekdayDate(date);
+function formatCalendarDateLong(
+  date: CalendarDate,
+  format: ClubDateFormat,
+): string {
+  return formatClubLongWeekdayDate(date, format);
 }
 
 /**
@@ -267,9 +277,12 @@ function formatCalendarDateLong(date: CalendarDate): string {
  * is malformed — the key reaches here through React state typed `string | null`,
  * and showing the stored text beats blanking the dialog.
  */
-export function formatDayKeyLong(dayKey: string): string {
+export function formatDayKeyLong(
+  dayKey: string,
+  format: ClubDateFormat,
+): string {
   const date = parseCalendarDate(dayKey);
-  return date === null ? dayKey : formatCalendarDateLong(date);
+  return date === null ? dayKey : formatCalendarDateLong(date, format);
 }
 
 /**

@@ -89,7 +89,7 @@ export function MonthCalendar({
           const dayEvents = eventsByDay.get(day) ?? [];
           const shown = dayEvents.slice(0, MAX_CHIPS_PER_DAY);
           const overflow = dayEvents.length - shown.length;
-          const dayLabel = formatDayKeyLong(day);
+          const dayLabel = formatDayKeyLong(day, club.format);
 
           return (
             <div
@@ -163,7 +163,7 @@ export function MonthCalendar({
                     <span className="truncate">
                       {!event.allDay && (
                         <span className="mr-1 tabular-nums opacity-70">
-                          {formatEventTime(event, club.zone)}
+                          {formatEventTime(event, club.zone, club.format)}
                         </span>
                       )}
                       {event.title}

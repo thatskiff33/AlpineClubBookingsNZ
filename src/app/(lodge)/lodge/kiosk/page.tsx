@@ -6,7 +6,11 @@ import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  formatClubLongWeekdayDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 // #2621: one 12-hour rendering of the expected arrival time, shared with the
 // booking page editor and the lobby wall. Three private copies of the same six
 // lines is how three surfaces end up disagreeing about midnight.
@@ -186,7 +190,7 @@ const CLUB_DAY_TICK_MS = 60000;
 // the identity for every club. The local formatter this replaces was the fourth
 // copy of the same options in the same locale.
 
-function displayDate(dateStr: string): string {
+function displayDate(dateStr: string, format: ClubDateFormat): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this is the night the whole
   // page is keyed on, and a throw here would blank an unattended wall tablet.
   // The fallback is NEW rather than preserved — `parseDateOnly` returned
@@ -194,7 +198,7 @@ function displayDate(dateStr: string): string {
   // value` out of the render, which on a lodge wall screen nobody is watching is
   // the worst available outcome.
   const night = parseCalendarDate(dateStr);
-  return night === null ? dateStr : formatClubLongWeekdayDate(night);
+  return night === null ? dateStr : formatClubLongWeekdayDate(night, format);
 }
 
 export default function KioskPage() {
@@ -879,7 +883,7 @@ export default function KioskPage() {
               <CalendarDays className="h-4 w-4" />
               &lsaquo; Week
             </button>
-            <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
+            <h1 className="text-2xl font-bold">{displayDate(date, clubTime.format)}</h1>
             <p className="text-lg text-kiosk-muted-fg">
               {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
             </p>

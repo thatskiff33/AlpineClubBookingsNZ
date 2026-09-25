@@ -8,6 +8,7 @@ import {
   requireClubTimeZone,
 } from "@/lib/club-time";
 import type { BoundClubTime } from "@/lib/club-time";
+import { CLUB_LOCALE_FALLBACK, normaliseClubLocale } from "@/lib/club-format";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 
 /**
@@ -120,6 +121,7 @@ const ClubTimeContext = createContext<BoundClubTime | null>(null);
 
 export function ClubTimeProvider({
   zone,
+  locale,
   children,
 }: {
   /**
@@ -129,6 +131,16 @@ export function ClubTimeProvider({
    * it is re-validated below.
    */
   zone: string;
+  /**
+   * The club's persisted BCP 47 locale, resolved on the SERVER (#3566) — the
+   * same value `ClubFormatProvider` receives. REQUIRED, and a prop rather than
+   * an internal `useClubFormat()` read, because three mounts (the public-form
+   * embeds and the ski-field widget) render inside the root 404, which sits
+   * outside both chromes and has no `ClubFormatProvider` above it. A required
+   * prop makes a mount that forgets the locale a compile error; a context read
+   * would make it a white screen on the one page nobody tests.
+   */
+  locale: string;
   children: React.ReactNode;
 }) {
   const bound = useMemo(() => {
@@ -141,8 +153,12 @@ export function ClubTimeProvider({
      */
     const validated =
       asClubTimeZone(zone) ?? requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK);
-    return bindClubTime(validated);
-  }, [zone]);
+    // The locale gets the judgement `club-format-provider.tsx` makes for it,
+    // word for word, so the two providers cannot disagree about one value.
+    return bindClubTime(validated, {
+      locale: normaliseClubLocale(locale) ?? CLUB_LOCALE_FALLBACK,
+    });
+  }, [zone, locale]);
 
   return (
     <ClubTimeContext.Provider value={bound}>
@@ -165,9 +181,10 @@ export function useClubTime(): BoundClubTime {
       "useClubTime must be used within ClubTimeProvider (CT-4, #2870; INV-CONFIG-002). " +
         "Every route group is wrapped by AppProviders or WebsiteChrome, both of which mount it, " +
         "so this means either a new tree that mounts neither, or a test that renders the " +
-        'component bare — wrap it in <ClubTimeProvider zone="..."> and choose the zone the ' +
-        "assertion is about. If what you are rendering is a CALENDAR DATE, you need no zone " +
-        "at all: use formatClubDate and friends, which take none.",
+        'component bare — wrap it in <ClubTimeProvider zone="..." locale="..."> and choose the ' +
+        "zone and locale the assertion is about. If what you are rendering is a CALENDAR DATE, " +
+        "you need no zone at all: use formatClubDate and friends, which take none — but they " +
+        "do take the club's format (useClubFormat()).",
     );
   }
   return bound;

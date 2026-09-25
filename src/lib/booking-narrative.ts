@@ -39,10 +39,11 @@
 import { BookingEventType } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
 import {
+  type BoundClubTime,
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubDate,
   requireStoredCalendarDay,
-  type BoundClubTime,
 } from "@/lib/club-time";
 import type {
   CancellationEventSnapshot,
@@ -175,7 +176,7 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
  * day and silently wrong for the rest, which is the hardest kind of wrong to
  * notice. Same composition as `emailCalendarDay`, deliberately.
  */
-function storedNight(value: Date): string {
+function storedNight(value: Date, format: ClubDateFormat): string {
   return formatClubDate(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
@@ -185,12 +186,17 @@ function storedNight(value: Date): string {
           "which reads it in the club's persisted zone.",
       }),
     ),
+    format,
   );
 }
 
-/** The stay window. Takes no `club` binding, because a calendar day has no zone. */
-function dateRange(booking: NarrativeBooking): string {
-  return `${storedNight(booking.checkIn)} to ${storedNight(booking.checkOut)}`;
+/**
+ * The stay window. Takes no `club` binding, because a calendar day has no zone —
+ * but it does take the club's format, because a calendar day still has a
+ * language (#3566).
+ */
+function dateRange(booking: NarrativeBooking, format: ClubDateFormat): string {
+  return `${storedNight(booking.checkIn, format)} to ${storedNight(booking.checkOut, format)}`;
 }
 
 function asCancellationSnapshot(
@@ -219,7 +225,7 @@ function buildPaidNarrative(
       (e) => PAID_EVENT_TYPES.includes(e.type) && (e.amountCents ?? 0) > 0
     ) ?? events.find((e) => PAID_EVENT_TYPES.includes(e.type));
   const amountCents = paidEvent?.amountCents ?? 0;
-  const range = dateRange(booking);
+  const range = dateRange(booking, format);
 
   if (amountCents > 0 && paidEvent) {
     return {
@@ -379,8 +385,8 @@ function buildCancelledNarrative(
     state: "cancelled_pre_payment",
     headline: "Booking cancelled",
     message: cancelOn
-      ? `This booking for ${dateRange(booking)} was cancelled on ${cancelOn}. No payment had been taken, so there is nothing to refund.`
-      : `This booking for ${dateRange(booking)} was cancelled. No payment had been taken, so there is nothing to refund.`,
+      ? `This booking for ${dateRange(booking, format)} was cancelled on ${cancelOn}. No payment had been taken, so there is nothing to refund.`
+      : `This booking for ${dateRange(booking, format)} was cancelled. No payment had been taken, so there is nothing to refund.`,
     nextStep:
       "If you'd like to stay another time, you can book again from the bookings page whenever you're ready.",
   };
@@ -391,7 +397,7 @@ function buildPayableNarrative(
   link: NarrativeLinkState | null | undefined,
   now: Date, format: ClubFormat
 ): BookingNarrative {
-  const range = dateRange(booking);
+  const range = dateRange(booking, format);
   const amountDue = formatCents(booking.finalPriceCents, format);
 
   const linkUnusable =
@@ -456,11 +462,12 @@ function buildPayableNarrative(
  */
 function buildFinancialReviewPendingNarrative(
   booking: NarrativeBooking,
+  format: ClubDateFormat,
 ): BookingNarrative {
   return {
     state: "financial_review_pending",
     headline: "Your booking change is saved",
-    message: `Thanks ${booking.firstName} — the change to your booking has been saved, and your stay is now ${dateRange(booking)}. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    message: `Thanks ${booking.firstName} — the change to your booking has been saved, and your stay is now ${dateRange(booking, format)}. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
     nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK}`,
   };
 }
@@ -650,7 +657,7 @@ export function resolveBookingNarrative({
     return {
       state: "under_review",
       headline: "Awaiting review",
-      message: `Your booking for ${dateRange(booking)} is waiting for an admin to review it before any payment is taken.`,
+      message: `Your booking for ${dateRange(booking, format)} is waiting for an admin to review it before any payment is taken.`,
       nextStep:
         "No action is needed right now — we'll email you as soon as it's approved.",
     };
@@ -676,7 +683,7 @@ export function resolveBookingNarrative({
     if (status === "PAID" || status === "COMPLETED") {
       return buildPaidWithFinancialReviewNarrative(booking, ordered, club, format);
     }
-    return buildFinancialReviewPendingNarrative(booking);
+    return buildFinancialReviewPendingNarrative(booking, format);
   }
 
   if (status === "PAID" || status === "COMPLETED") {
@@ -692,7 +699,7 @@ export function resolveBookingNarrative({
   return {
     state: "unknown",
     headline: "Booking link",
-    message: `We couldn't find a payment due for your booking for ${dateRange(booking)} right now.`,
+    message: `We couldn't find a payment due for your booking for ${dateRange(booking, format)} right now.`,
     nextStep:
       "Check the booking on your bookings page, or contact the club if something looks wrong.",
   };

@@ -19,12 +19,13 @@
 
 import {
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
+  type ClubTimeZone,
   formatClubInstantDayMonth,
   formatClubInstantWeekdayDate,
   formatClubInstantWeekdayDayMonth,
   formatClubWeekdayDate,
   formatClubWeekdayDayMonth,
-  type ClubTimeZone,
 } from "@/lib/club-time";
 
 /*
@@ -100,8 +101,12 @@ export function formatConsentGuestName(guest: {
 /** "7 Aug" — the badge / inline-sentence shape. A real INSTANT
  * (`consentExpiresAt`, `consentRespondedAt`), so the club's persisted zone is
  * required: see the note above the formatters. */
-export function formatConsentShortDate(date: Date, zone: ClubTimeZone): string {
-  return formatClubInstantDayMonth(date, zone);
+export function formatConsentShortDate(
+  date: Date,
+  zone: ClubTimeZone,
+  format: ClubDateFormat,
+): string {
+  return formatClubInstantDayMonth(date, zone, format);
 }
 
 /** "Sat 8 Aug" — the lapse sentence's deadline. An INSTANT, as above.
@@ -110,14 +115,19 @@ export function formatConsentShortDate(date: Date, zone: ClubTimeZone): string {
 export function formatConsentWeekdayDate(
   date: Date,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
-  return formatClubInstantWeekdayDayMonth(date, zone).replace(/,/g, "");
+  return formatClubInstantWeekdayDayMonth(date, zone, format).replace(/,/g, "");
 }
 
 /** "Fri 7 Aug 2026" — the facts-table shape (comma stripped, as above). Also an
  * INSTANT at every call site: `consentExpiresAt` and `consentRespondedAt`. */
-export function formatConsentFullDate(date: Date, zone: ClubTimeZone): string {
-  return formatClubInstantWeekdayDate(date, zone).replace(/,/g, "");
+export function formatConsentFullDate(
+  date: Date,
+  zone: ClubTimeZone,
+  format: ClubDateFormat,
+): string {
+  return formatClubInstantWeekdayDate(date, zone, format).replace(/,/g, "");
 }
 
 /*
@@ -148,16 +158,19 @@ export function formatConsentFullDate(date: Date, zone: ClubTimeZone): string {
 */
 
 /** One `@db.Date` night as "Sat 8 Aug" — comma stripped, as above. */
-function consentCalendarNight(night: Date): string {
-  return formatClubWeekdayDayMonth(calendarDateOfDateOnlyInstant(night)).replace(
+function consentCalendarNight(night: Date, format: ClubDateFormat): string {
+  return formatClubWeekdayDayMonth(
+    calendarDateOfDateOnlyInstant(night),
+    format,
+  ).replace(
     /,/g,
     "",
   );
 }
 
 /** One `@db.Date` day as "Mon 10 Aug 2026" — comma stripped, as above. */
-function consentCalendarDay(day: Date): string {
-  return formatClubWeekdayDate(calendarDateOfDateOnlyInstant(day)).replace(
+function consentCalendarDay(day: Date, format: ClubDateFormat): string {
+  return formatClubWeekdayDate(calendarDateOfDateOnlyInstant(day), format).replace(
     /,/g,
     "",
   );
@@ -165,21 +178,28 @@ function consentCalendarDay(day: Date): string {
 
 /** "Sat 8 Aug – Mon 10 Aug 2026 (2 nights)" — the facts-table stay row.
  * `checkIn`/`checkOut` are `@db.Date` CALENDAR DAYS at every call site. */
-export function formatConsentStayLabel(checkIn: Date, checkOut: Date): string {
+export function formatConsentStayLabel(
+  checkIn: Date,
+  checkOut: Date,
+  format: ClubDateFormat,
+): string {
   const nights = Math.max(
     1,
     Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000),
   );
   return (
-    `${consentCalendarNight(checkIn)} – ${consentCalendarDay(checkOut)} ` +
+    `${consentCalendarNight(checkIn, format)} – ${consentCalendarDay(checkOut, format)} ` +
     `(${nights} night${nights === 1 ? "" : "s"})`
   );
 }
 
 /** "Sat 8 Aug, Sun 9 Aug" — the guest's own nights row. Every entry is a
  * `@db.Date` lodge night, so this takes no zone at all. */
-export function formatConsentNightsLabel(nights: readonly Date[]): string {
-  return nights.map((night) => consentCalendarNight(night)).join(", ");
+export function formatConsentNightsLabel(
+  nights: readonly Date[],
+  format: ClubDateFormat,
+): string {
+  return nights.map((night) => consentCalendarNight(night, format)).join(", ");
 }
 
 const NIGHT_COUNT_WORDS = [

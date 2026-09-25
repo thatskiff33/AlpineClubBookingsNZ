@@ -23,7 +23,11 @@ import {
   formatDollarsDisplay,
   formatFinancePercent,
 } from "@/lib/finance-format";
-import { formatClubShortMonthYear, requireCalendarDate } from "@/lib/club-time";
+import {
+  formatClubShortMonthYear,
+  requireCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import { monthPointLabel } from "@/lib/finance-dashboard-page/model";
 
 /*
@@ -61,8 +65,8 @@ interface RangeChip {
   toMonth: string;
 }
 
-function shortMonthLabel(monthKey: string) {
-  return formatClubShortMonthYear(requireCalendarDate(`${monthKey}-01`));
+function shortMonthLabel(monthKey: string, format: ClubDateFormat) {
+  return formatClubShortMonthYear(requireCalendarDate(`${monthKey}-01`), format);
 }
 
 function defaultSeriesId(
@@ -188,14 +192,14 @@ export function RatioExplorer({
       return [
         {
           label: monthPointLabel({
-            label: shortMonthLabel(month),
+            label: shortMonthLabel(month, format),
             isProvisional: provisional.has(month),
           }),
           ratio: (numerator.valuesCents[index] ?? 0) / denominatorCents,
         },
       ];
     });
-  }, [matrix, numerator, denominator, activeChip]);
+  }, [matrix, numerator, denominator, activeChip, format]);
 
   const includesProvisional = Boolean(
     activeChip &&

@@ -32,7 +32,7 @@ import { formatCalendarDayOnly } from "@/lib/date-only";
  * `HOUSE_SHAPES.longWeekdayDate` carries the long weekday, the long month AND
  * the year, declared as one shape rather than composed from
  * `longWeekdayDayMonth` plus the year — which is byte-identical for `en-NZ` and
- * not safe for a configurable `APP_LOCALE`, the exact hazard
+ * not safe for the club's persisted locale (#3566), the exact hazard
  * `formatClubWeekdayDay`'s own docblock records.
  */
 
@@ -455,6 +455,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     requireCalendarDate(
       formatCalendarDayOnly(currentMonth.year, currentMonth.month, 1),
     ),
+    clubTime.format,
   );
 
   // Unique seasons visible in the current month for the legend
@@ -513,7 +514,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             availabilityUnknown,
             isFull,
           };
-          const dateLabel = formatClubLongWeekdayDate(requireCalendarDate(dateStr));
+          const dateLabel = formatClubLongWeekdayDate(requireCalendarDate(dateStr), clubTime.format);
           const isCheckIn = Boolean(checkIn && dateStr === checkIn);
           const isCheckOut = Boolean(checkOut && dateStr === checkOut);
           const inRange = Boolean(

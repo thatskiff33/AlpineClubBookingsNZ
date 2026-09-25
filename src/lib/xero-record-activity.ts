@@ -39,8 +39,12 @@ interface XeroRecordScope {
  * concepts is how a `submittedAt` came to be rendered by the same helper as a
  * lodge night (INV-DATE-019).
  */
-function formatInstantDate(value: Date, zone: ClubTimeZone): string {
-  return formatClubInstantDate(value, zone);
+function formatInstantDate(
+  value: Date,
+  zone: ClubTimeZone,
+  format: ClubFormat,
+): string {
+  return formatClubInstantDate(value, zone, format);
 }
 
 function formatStatusLabel(value: string): string {
@@ -193,7 +197,7 @@ async function getPaymentScope(localId: string, format: ClubFormat): Promise<Xer
   const relatedBooking = createRecordReference(
     "Booking",
     payment.booking.id,
-    `Booking ${formatStayDate(payment.booking.checkIn)} - ${formatStayDate(payment.booking.checkOut)}`,
+    `Booking ${formatStayDate(payment.booking.checkIn, format)} - ${formatStayDate(payment.booking.checkOut, format)}`,
     "Booking"
   );
 
@@ -247,7 +251,7 @@ async function getBookingScope(localId: string, format: ClubFormat): Promise<Xer
   const rootRecord = createRecordReference(
     "Booking",
     booking.id,
-    `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} (${formatStayDate(booking.checkIn)} - ${formatStayDate(booking.checkOut)})`,
+    `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} (${formatStayDate(booking.checkIn, format)} - ${formatStayDate(booking.checkOut, format)})`,
     "Booking"
   );
   const scopeRecords = [rootRecord];
@@ -337,7 +341,7 @@ async function getBookingModificationScope(localId: string, format: ClubFormat):
     createRecordReference(
       "Booking",
       modification.booking.id,
-      `Booking ${formatStayDate(modification.booking.checkIn)} - ${formatStayDate(modification.booking.checkOut)}`,
+      `Booking ${formatStayDate(modification.booking.checkIn, format)} - ${formatStayDate(modification.booking.checkOut, format)}`,
       "Booking"
     ),
   ];
@@ -417,7 +421,7 @@ async function getManualRefundTaskScope(localId: string, format: ClubFormat): Pr
     createRecordReference(
       "Booking",
       task.booking.id,
-      `Booking ${formatStayDate(task.booking.checkIn)} - ${formatStayDate(task.booking.checkOut)}`,
+      `Booking ${formatStayDate(task.booking.checkIn, format)} - ${formatStayDate(task.booking.checkOut, format)}`,
       "Booking"
     ),
   ];
@@ -489,7 +493,7 @@ async function getMemberSubscriptionScope(localId: string, yearEndMonth: number)
   };
 }
 
-async function getMembershipCancellationRequestScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMembershipCancellationRequestScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const request = await prisma.membershipCancellationRequest.findUnique({
     where: { id: localId },
     select: {
@@ -520,7 +524,7 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
   const rootRecord = createRecordReference(
     "MembershipCancellationRequest",
     request.id,
-    `Membership cancellation ${formatInstantDate(request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(request.status)})`,
+    `Membership cancellation ${formatInstantDate(request.submittedAt, await readClubTimeZoneOutsideRequest(), format)} (${formatStatusLabel(request.status)})`,
     "Membership Cancellation Request",
   );
   const participantRecords = request.participants.map((participant) =>
@@ -551,7 +555,7 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
   };
 }
 
-async function getMembershipCancellationParticipantScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMembershipCancellationParticipantScope(localId: string, format: ClubFormat): Promise<XeroRecordScope | null> {
   const participant = await prisma.membershipCancellationRequestParticipant.findUnique({
     where: { id: localId },
     select: {
@@ -588,7 +592,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
   const requestRecord = createRecordReference(
     "MembershipCancellationRequest",
     participant.request.id,
-    `Membership cancellation ${formatInstantDate(participant.request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(participant.request.status)})`,
+    `Membership cancellation ${formatInstantDate(participant.request.submittedAt, await readClubTimeZoneOutsideRequest(), format)} (${formatStatusLabel(participant.request.status)})`,
     "Membership Cancellation Request",
   );
   const relatedMember = createRecordReference(
@@ -624,9 +628,9 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string, f
     case "MemberSubscription":
       return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":
-      return getMembershipCancellationRequestScope(localId);
+      return getMembershipCancellationRequestScope(localId, format);
     case "MembershipCancellationRequestParticipant":
-      return getMembershipCancellationParticipantScope(localId);
+      return getMembershipCancellationParticipantScope(localId, format);
     default:
       return null;
   }
