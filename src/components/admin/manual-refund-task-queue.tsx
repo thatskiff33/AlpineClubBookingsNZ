@@ -21,7 +21,7 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 import type { ManualRefundTaskKind } from "@prisma/client";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSE_LABEL,
@@ -1626,31 +1626,14 @@ export function ManualRefundTaskQueue() {
                           // a review raised unpriced opens blank rather than at
                           // a figure nobody decided.
                           setDirection(null);
-                          /*
-                            #3191: the ONE thing in this file the night-price
-                            census does not scan, and it is five lines wide. It
-                            is the task's own settled amount rendered into its
-                            box - cents to dollars, the conversion every money
-                            input on this screen does - and no night price passes
-                            through it. EVERYTHING ELSE IN THIS FILE IS SCANNED,
-                            so a helper that could produce a per-night figure
-                            cannot be written anywhere in it, one line above the
-                            night-price code or a thousand lines below.
-
-                            Adding to the region is a real decision rather than
-                            paperwork: the census caps how large it may grow, and
-                            refuses a region that excludes nothing. Each marker
-                            sits on a line of its own and is a WHOLE comment, so
-                            removing the region cannot leave a half-open
-                            delimiter behind and blank the rest of the file.
-                          */
-                          /* MONEY-DISPLAY EXEMPTION START (stored-night-price-repair-census) */
+                          // #3399: the shared plain formatter seeds this editable
+                          // dollars box; the night-price census now scans this
+                          // whole file without a division exemption.
                           setAmountInput(
                             task.amountCents === null
                               ? ""
-                              : (task.amountCents / 100).toFixed(2),
+                              : formatCentsPlain(task.amountCents),
                           );
-                          /* MONEY-DISPLAY EXEMPTION END (stored-night-price-repair-census) */
                           // #3191: always empty. See `nightPriceInputs`.
                           setNightPriceInputs({});
                           setTarget({ task, resolution: "completed" });

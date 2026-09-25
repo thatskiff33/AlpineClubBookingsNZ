@@ -1,0 +1,1 @@
+- **Admin money boxes now share one plain-dollar formatter (#3399).** Six existing fee, promotion, quote, and refund forms now seed editable amounts through the same formatter. The values shown and saved are unchanged; the redundant hand-written conversions and their lint exemptions are gone.

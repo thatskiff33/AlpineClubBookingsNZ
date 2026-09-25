@@ -8,7 +8,7 @@
 // no Xero calls.
 
 import { useEffect, useRef, useState } from "react"
-import { formatCents } from "@/lib/utils"
+import { formatCents, formatCentsPlain } from "@/lib/utils"
 import { useClubFormat } from "@/components/club-format-provider"
 
 export interface JoiningFeePreviewResult {
@@ -142,7 +142,7 @@ export function useJoiningFeePrefill(args: {
     // here, so an edit is never clobbered; a new key re-arms prefill.
     if (doneKeyRef.current === prefillKey) return
     doneKeyRef.current = prefillKey
-    if (amount.trim() === "") setAmount((preview.defaultAmountCents / 100).toFixed(2))
+    if (amount.trim() === "") setAmount(formatCentsPlain(preview.defaultAmountCents))
     if (narration.trim() === "") setNarration(preview.defaultNarration)
   }, [preview, prefillKey, amount, narration, setAmount, setNarration])
 }
