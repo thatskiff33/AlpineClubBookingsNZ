@@ -83,7 +83,7 @@ describe("POST /api/bookings/[id]/cancel for a login-disabled admin (#3603)", ()
     expect(res.status).toBe(200);
     expect(h.cancelBooking).toHaveBeenCalledTimes(1);
     expect(h.cancelBooking.mock.calls[0][2]).toBe("ADMIN");
-    expect(h.cancelBooking.mock.calls[0][5]).toMatchObject({
+    expect(h.cancelBooking.mock.calls[0][6]).toMatchObject({
       hasBookingsEditAccess: true,
       notifyMember: false,
     });
@@ -108,7 +108,7 @@ describe("POST /api/bookings/[id]/cancel for a login-disabled admin (#3603)", ()
     const plain = await POST(req({ refundMethod: "card" }), { params });
     expect(plain.status).toBe(200);
     expect(h.cancelBooking.mock.calls[0][2]).toBe("USER");
-    expect(h.cancelBooking.mock.calls[0][5]).toMatchObject({
+    expect(h.cancelBooking.mock.calls[0][6]).toMatchObject({
       hasBookingsEditAccess: false,
     });
   });
