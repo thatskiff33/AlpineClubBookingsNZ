@@ -162,7 +162,7 @@ describe("the kernel owns exactly one formatter factory", () => {
     const body = source.slice(source.indexOf("export function formatCalendarDateShape"));
     expect(body.length).toBeGreaterThan(0);
     expect(body).toMatch(
-      /formatHouseShape\(\s*shape,\s*new Date\(`\$\{date\}T00:00:00\.000Z`\),\s*"UTC",?\s*\)/,
+      /formatHouseShape\(\s*shape,\s*new Date\(`\$\{date\}T00:00:00\.000Z`\),\s*"UTC",\s*format,?\s*\)/,
     );
   });
 
@@ -174,8 +174,32 @@ describe("the kernel owns exactly one formatter factory", () => {
       mentions,
       "INV-CONFIG-002: the kernel takes the club's zone as an argument and never reads " +
         "the environment for it. `APP_TIME_ZONE` is process.env.TZ, which is precisely " +
-        "the competing authority this epic exists to retire. The locale still comes from " +
-        "configuration; the zone never does.",
+        "the competing authority this epic exists to retire.",
+    ).toEqual([]);
+  });
+
+  it("never reads the locale from configuration either (#3566)", () => {
+    /*
+      Stage 4 of programme #3205 took `APP_LOCALE` out of `intl.ts`, the last
+      configuration read in the kernel: every rendering now takes the club's
+      persisted locale as a REQUIRED `format` argument. A kernel module that
+      imported `@/config/operational` again would hand every date in the product
+      back to the build's `NEXT_PUBLIC_LOCALE` (browser) or the server's `LOCALE`
+      — which could differ from each other, and from the club's setting.
+    */
+    const mentions = kernelFiles
+      .filter(
+        (file) =>
+          file.text.includes("APP_LOCALE") ||
+          file.text.includes("@/config/operational"),
+      )
+      .map((file) => file.rel);
+    expect(
+      mentions,
+      "INV-CONFIG-006: the kernel takes the club's locale as an argument — a " +
+        "`ClubDateFormat`, from `clubTime()` / `clubFormatValues()` on the server or " +
+        "`useClubTime()` / `useClubFormat()` in the browser — and never reads " +
+        "`APP_LOCALE` or anything else from `@/config/operational`.",
     ).toEqual([]);
   });
 
@@ -396,5 +420,124 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
         "which is what pinning a lodge night to UTC midnight and then reading a part " +
         "back off it does. A lodge night is a calendar day; format it as one.",
     ).toEqual([]);
+  });
+});
+
+/**
+ * THE TREE-WIDE GUARD (#3566, owner decision 5): no date formatter outside the
+ * shared machinery.
+ *
+ * `club-time/intl.ts` owns the only `Intl.DateTimeFormat` factory the product
+ * renders dates with. Before #3566 five screens and one email kept a formatter
+ * of their own — the lobby clock, the stuck-states and health stamps, the audit
+ * log's stamp, the induction date and the chore-roster email — each a second
+ * authority that the memo, the club's locale and `house-shapes.test.ts`'s
+ * byte-identity proof all missed, and one of them (the chore roster) wrote every
+ * club's dates the New Zealand way. They were moved onto house shapes; this
+ * refuses the next one.
+ *
+ * The `INV-DATE-015` eslint arms refuse a bare `toLocale*` and a zone-less
+ * `Intl.DateTimeFormat`; they cannot refuse a ZONED formatter built with every
+ * argument right and simply in the wrong module. This can.
+ *
+ * Comments are stripped first, because this repository documents a defect at
+ * the site it removed it. Tests are outside the population by construction:
+ * a transcription of the pre-kernel formatters is how `house-shapes.test.ts`
+ * proves byte identity.
+ */
+const SRC_ROOT = path.join(ROOT, "src");
+
+/** Modules allowed to construct one, each with the reason. Never a renderer. */
+const DATE_FORMATTER_EXEMPTIONS = new Map<string, string>([
+  [
+    "src/lib/club-time/intl.ts",
+    "THE ONE HOME: the memoised factory every house shape and every projection in the product goes through.",
+  ],
+  [
+    "src/lib/club-format.ts",
+    "A VALIDATION PROBE, not a rendering: `normaliseClubLocale` asks the runtime whether it will build a formatter for a locale tag at all, and discards it after `resolvedOptions()`. Nothing is formatted.",
+  ],
+  [
+    "src/lib/club-time-zone.ts",
+    "TWO VALIDATION PROBES, not renderings: the zone normalisers ask the runtime to accept an IANA identifier and report its canonical name through `resolvedOptions().timeZone`. Nothing is formatted.",
+  ],
+  [
+    "src/lib/ai-assistant-usage.ts",
+    "An `en-CA` ISO MONTH-KEY EXTRACTOR for the AI page-help budget ledger (`yyyy-MM`), an encoding rather than a display string, and an `ENVIRONMENT_ZONE_ADAPTERS` ratchet entry with its own reason in `eslint.config.mjs`.",
+  ],
+  [
+    "src/lib/ai-diagnostics-usage.ts",
+    "The same `en-CA` ISO month-key extractor for the diagnostics budget ledger, on the same ratchet for the same reason.",
+  ],
+]);
+
+/** A constructed (or called) `Intl.DateTimeFormat`, or a `toLocaleDateString` / `toLocaleTimeString`. */
+export function findDateFormatterConstructions(source: string): string[] {
+  return [
+    ...source.matchAll(
+      /\bIntl\s*\.\s*DateTimeFormat\s*\(|\.toLocale(?:Date|Time)String\s*\(/g,
+    ),
+  ].map((match) => match[0]);
+}
+
+function productionSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) {
+      if (name === "__tests__" || name === "node_modules") continue;
+      productionSourceFiles(full, out);
+    } else if (/\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery", () => {
+  it("counts the shapes it claims to, and not their near misses", () => {
+    expect(findDateFormatterConstructions('new Intl.DateTimeFormat("en-NZ", { timeZone })')).toHaveLength(1);
+    expect(findDateFormatterConstructions("Intl.DateTimeFormat(locale, opts).format(d)")).toHaveLength(1);
+    expect(findDateFormatterConstructions("new Intl . DateTimeFormat (x)")).toHaveLength(1);
+    expect(findDateFormatterConstructions('d.toLocaleDateString("en-NZ")')).toHaveLength(1);
+    expect(findDateFormatterConstructions("d.toLocaleTimeString()")).toHaveLength(1);
+    // A number's thousands separators and a type annotation are not a date formatter.
+    expect(findDateFormatterConstructions("n.toLocaleString()")).toEqual([]);
+    expect(findDateFormatterConstructions("const f: Intl.DateTimeFormat = memo;")).toEqual([]);
+    expect(findDateFormatterConstructions("Intl.DateTimeFormatOptions")).toEqual([]);
+  });
+
+  it("finds none outside the declared exemptions", () => {
+    const files = productionSourceFiles(SRC_ROOT);
+    // The walk must really see the tree, or an empty offender list is vacuous.
+    expect(files.length).toBeGreaterThan(1000);
+    const offenders = files
+      .map((file) => ({ rel: rel(file), text: stripComments(readFileSync(file, "utf8")) }))
+      .filter(
+        (file) =>
+          !DATE_FORMATTER_EXEMPTIONS.has(file.rel) &&
+          findDateFormatterConstructions(file.text).length > 0,
+      )
+      .map((file) => file.rel);
+    expect(
+      offenders,
+      "INV-CONFIG-006 (#3566): these modules build a date formatter of their own. Render " +
+        "through a house shape in `@/lib/club-time` (`formatClub*` with the club's format, " +
+        "or a `BoundClubTime` method), which follows the club's persisted zone AND locale and " +
+        "is covered by `house-shapes.test.ts`. A genuinely new shape is declared in " +
+        "`club-time/intl.ts` `HOUSE_SHAPES`, with a `format.ts` export beside the others. A " +
+        "validation probe or an ISO extractor that renders nothing goes on " +
+        `DATE_FORMATTER_EXEMPTIONS with its reason. Offenders: ${offenders.join(", ") || "(none)"}`,
+    ).toEqual([]);
+  });
+
+  it("keeps every exemption real and reasoned", () => {
+    for (const [relative, reason] of DATE_FORMATTER_EXEMPTIONS) {
+      const text = stripComments(readFileSync(path.join(ROOT, relative), "utf8"));
+      expect(
+        findDateFormatterConstructions(text).length,
+        `${relative} no longer builds a date formatter — delete its exemption rather than leave a permission nobody needs.`,
+      ).toBeGreaterThan(0);
+      expect(reason.trim().length).toBeGreaterThanOrEqual(40);
+    }
   });
 });

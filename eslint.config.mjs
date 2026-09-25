@@ -1117,7 +1117,6 @@ const ENVIRONMENT_ZONE_ADAPTER_FILES = [
   "src/lib/club-time-zone-env.ts",
   "src/lib/ai-assistant-usage.ts",
   "src/lib/ai-diagnostics-usage.ts",
-  "src/lib/induction-display.ts",
 ];
 
 export const ENVIRONMENT_ZONE_ADAPTERS = [
@@ -1134,17 +1133,12 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
     file: "src/lib/ai-assistant-usage.ts",
     reason:
-      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the five below.",
+      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the one below.",
   },
   {
     file: "src/lib/ai-diagnostics-usage.ts",
     reason:
       "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
-  },
-  {
-    file: "src/lib/induction-display.ts",
-    reason:
-      "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
   },
 ];
 
@@ -2801,14 +2795,12 @@ const eslintConfig = defineConfig([
     //   * `src/lib/date-only.ts` — the helper module itself, the sanctioned home
     //     for the date-only encoding. `src/lib/nzst-date.ts` sat beside it until
     //     CT-2 (#2990) took its exemption away and #3123 deleted the file.
-    //   * `src/lib/email-templates/chores.ts` — `formatChoreRosterDate`
-    //     (#2256): the chore-roster long-weekday subject line and body must stay
-    //     byte-identical, and the helper is shared with `src/lib/email/chores.ts`.
-    //     Flat config cannot scope a rule to one function, so the exemption is
-    //     still file-wide — but the file is now the 88-line chore-template
-    //     module rather than the 5,000-line template monolith (#2689), which is
-    //     as narrow as flat config allows. New date rendering in it must still
-    //     use the helpers.
+    //   * `src/lib/email-templates/chores.ts` USED TO BE HERE, for the
+    //     chore-roster date (#2256), and #3566 took the exemption away: the
+    //     roster now renders the kernel's `longWeekdayDate` house shape through
+    //     the email seam, in the club's locale rather than a hard-coded `en-NZ`,
+    //     so the file needs no exemption at all. `date-only.ts` is now the only
+    //     file-wide DATE-rule exclusion.
     //   * the three Number-formatting files — a narrowed block, NOT an `off`:
     //     they keep both date restrictions and drop only `toLocaleString`.
     //   * `src/lib/xero-invoice-helpers.ts` — ISO payload dates for the Xero
@@ -2909,30 +2901,6 @@ const eslintConfig = defineConfig([
     files: ["prisma/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-syntax": operatorSeedRestrictedSyntax(),
-    },
-  },
-  {
-    // The one documented format exclusion left.
-    // Flat config replaces a rule's whole option list rather than merging it, so
-    // this block re-states the mandatory restrictions (#2289, #2684) instead of
-    // switching `no-restricted-syntax` off outright: the file contains no raw
-    // SQL and no hand-written date truncation, and the exemption it needs is
-    // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
-    // Number-formatting block below.
-    //
-    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE, was taken off in CT-2
-    // (#2990), and no longer exists at all: #3123 deleted it. It held the six
-    // frozen `Intl.DateTimeFormat` constants the club's rendering seam was built
-    // from, then delegated every one of them to `@/lib/club-time` and so needed
-    // no exemption. Recorded because the sequence is the rule: an adapter loses
-    // its exemption when it stops formatting, and is deleted when its last
-    // caller moves — it is never left exempt "for now". The census in
-    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the other
-    // half: it refuses an `Intl.DateTimeFormat` in the remaining adapter, and
-    // refuses the deleted file coming back.
-    files: ["src/lib/email-templates/chores.ts"],
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntax(),
     },
   },
   {
