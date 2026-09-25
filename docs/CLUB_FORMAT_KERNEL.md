@@ -153,6 +153,15 @@ falls back to when nothing is persisted; #3567 retires them.
 
 ## Adding a new rendering
 
+Operator-facing Xero repair sentences are rendering surfaces too. The
+`CENTS_IN_PROSE_RESTRICTIONS` lint group in `eslint.config.mjs` refuses both
+`${amountCents} cents` and `${amountCents}c`; the bounded
+`operator-cents-message-census.test.ts` also catches bare cent-valued
+interpolations in the four repair paths covered by #3589. Numeric payloads stay
+in integer cents. Because a bare interpolation has no distinctive suffix,
+this census is deliberately scoped to those message sources and must be extended
+when another operator repair message is added.
+
 Declare the shape in `club-format-intl.ts` beside the others and expose it from
 the module the callers already import. **Never construct another
 `Intl.NumberFormat`**: `club-format-kernel.test.ts` fails a second one anywhere

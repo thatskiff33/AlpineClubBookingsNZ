@@ -12,6 +12,8 @@ import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
+import { getClubFormat } from "@/lib/club-format-settings";
+import { formatCents } from "@/lib/utils";
 
 const APPLIED_CREDIT_ALLOCATION_ROLES = [
   "APPLIED_CREDIT_ALLOCATION",
@@ -324,6 +326,9 @@ export async function repairRefundedPaymentBusinessState(input: {
   }
 
   let updatedPayments = 0;
+  // Resolve once for the whole inbound repair run, never inside the payment
+  // loop or a write transaction (the operator message may name several rows).
+  const format = await getClubFormat();
 
   for (const payment of payments) {
     const directRefundTotalCents = Array.from(
@@ -395,7 +400,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       await notifyXeroSyncError({
         errorType: "refund-ledger-divergence",
         operation: `inbound-credit-note-repair:${input.creditNoteId}`,
-        errorMessage: `Xero-derived refund total (${nextRefundedTotalCents}c) for payment ${payment.id} is below the local Stripe refund ledger (${payment.refundedAmountCents}c). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
+        errorMessage: `Xero-derived refund total (${formatCents(nextRefundedTotalCents, format)}) for payment ${payment.id} is below the local Stripe refund ledger (${formatCents(payment.refundedAmountCents, format)}). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
