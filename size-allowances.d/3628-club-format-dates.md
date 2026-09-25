@@ -1,6 +1,6 @@
-# File-size allowances for #3566 (`3566` is a placeholder until the PR number is known)
+# File-size allowances for PR #3628 (#3566)
 
-Every entry below grows by one to seven lines for ONE reason: stage 4 of programme
+Every entry below but one grows by one to seven lines for ONE reason: stage 4 of programme
 #3205 made the club's date format a REQUIRED argument of every date rendering
 (owner decision 1 on #3566), so each already-oversized module that renders a date
 gains the parameter, the value it is threaded from, or a line-wrap where a call
@@ -8,6 +8,8 @@ got longer. The comments this change added in these files were trimmed to one
 line first, and the three modules this would have carried over budget for the
 first time were trimmed back under it instead. Splitting any of these is a
 refactor of its own and would move no date rendering closer to the kernel.
+The exception is `lockers/page.tsx`, which grows for the sorting change
+(owner decision 6) and says so.
 
 file: src/app/(admin)/admin/book/page.tsx
 lines: 1690
@@ -29,9 +31,9 @@ reason: the required club date format threaded through an already-oversized
 
 file: src/app/(admin)/admin/lockers/page.tsx
 lines: 746
-reason: the required club date format threaded through an already-oversized
-  module (#3566); splitting it is a separate refactor that would not remove
-  the parameter.
+reason: the lockers list now sorts and case-folds in the club's locale
+  (#3566, owner decision 6), which reads the format from the provider in the
+  page component; splitting the page is a separate refactor.
 
 file: src/app/(admin)/admin/member-applications/page.tsx
 lines: 818
@@ -137,12 +139,6 @@ reason: the required club date format threaded through an already-oversized
 
 file: src/lib/booking-batch-modification-service.ts
 lines: 2619
-reason: the required club date format threaded through an already-oversized
-  module (#3566); splitting it is a separate refactor that would not remove
-  the parameter.
-
-file: src/lib/booking-create.ts
-lines: 2112
 reason: the required club date format threaded through an already-oversized
   module (#3566); splitting it is a separate refactor that would not remove
   the parameter.
