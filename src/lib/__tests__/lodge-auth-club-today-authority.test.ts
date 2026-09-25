@@ -30,7 +30,7 @@ vi.mock("@/config/operational", () => ({
 
 const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
-  assignmentFindFirst: vi.fn(),
+  assignmentFindMany: vi.fn(),
   bookingFindFirst: vi.fn(),
   getDefaultLodgeId: vi.fn(),
 }));
@@ -50,6 +50,7 @@ vi.mock("@/lib/lodge-pin-session", () => ({
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: mocks.getDefaultLodgeId }));
 vi.mock("@/lib/lodge-access", () => ({
   AmbiguousKioskLodgeError: class extends Error {},
+  KioskLodgeUnresolvedError: class extends Error {},
   getStaffLodgeBinding: vi.fn(),
 }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn() }));
@@ -73,7 +74,7 @@ function persistClubZone(timeZone: string) {
 
 const db = {
   hutLeaderAssignment: {
-    findFirst: mocks.assignmentFindFirst,
+    findMany: mocks.assignmentFindMany,
     findUnique: vi.fn(),
   },
   booking: { findFirst: mocks.bookingFindFirst },
@@ -82,7 +83,7 @@ const db = {
 beforeEach(() => {
   vi.clearAllMocks();
   persistClubZone(PERSISTED_ZONE);
-  mocks.assignmentFindFirst.mockResolvedValue({ lodgeId: "lodge-a" });
+  mocks.assignmentFindMany.mockResolvedValue([{ lodgeId: "lodge-a" }]);
   mocks.bookingFindFirst.mockResolvedValue({ lodgeId: "lodge-b" });
   mocks.getDefaultLodgeId.mockResolvedValue("lodge-default");
 });
@@ -100,7 +101,7 @@ describe("kiosk lodge resolution uses the club's day (#3123)", () => {
       db,
     );
 
-    const where = mocks.assignmentFindFirst.mock.calls[0]?.[0] as {
+    const where = mocks.assignmentFindMany.mock.calls[0]?.[0] as {
       where: { startDate: { lte: Date }; endDate: { gte: Date } };
     };
     // `startDate <= today + 1` is the arm's own pre-existing window; only the
@@ -134,7 +135,7 @@ describe("kiosk lodge resolution uses the club's day (#3123)", () => {
       db,
     );
 
-    const where = mocks.assignmentFindFirst.mock.calls.at(-1)?.[0] as {
+    const where = mocks.assignmentFindMany.mock.calls.at(-1)?.[0] as {
       where: { endDate: { gte: Date } };
     };
     expect(where.where.endDate.gte.toISOString()).toBe(CLUB_DAY_PLUS_1);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -171,6 +172,7 @@ describe("createWaitlistedBooking per-lodge position", () => {
       checkIn: new Date("2026-08-10"),
       checkOut: new Date("2026-08-12"),
       lodgeId: "lodge-b",
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
       guests: [
         {
           firstName: "Bea",

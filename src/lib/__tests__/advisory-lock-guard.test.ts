@@ -1177,6 +1177,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // Singleton-keyed; no advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md -> "Club-theme logo writer".
   "src/lib/club-theme.ts": 1,
+  // #3029 C3: the held-party dietary rebuild locks the booking's guest rows
+  // (`SELECT 1 … FOR UPDATE`, id order) before reading the values it carries,
+  // so a concurrent single-row admin edit is read or refused, never lost.
+  // Order: global -> lodge (held by the approval) -> BookingGuest rows. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Held-party guest rows before a dietary
+  // rebuild".
+  "src/lib/booking-guest-row-lock.ts": 1,
   // Member-photo upload (POST) and remove (DELETE) each lock the member row
   // (`SELECT 1 … FOR UPDATE`) so concurrent replace/remove
   // serialise and never orphan a MEMBER_PHOTO blob. Member-id keyed; no

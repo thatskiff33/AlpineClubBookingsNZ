@@ -1396,6 +1396,79 @@ If it says anything else, member email and writes into the club's Xero
 organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
 `.env` and restart.
 
+### 3.1b Dietary/allergy information arrives switched off (#2941)
+
+`20261010010000_add_member_dietary_requirements` adds an empty
+`Member.dietaryRequirements` column and a `MemberFieldsSettings` toggle that
+defaults to **off**, so nothing changes for members until the club decides to
+collect the information. It is purely additive: no row is rewritten. The previous
+colour never reads either column, but two things it does still touch the stored
+values — account deletion and member merge, listed below — so a rollback is not
+free of them.
+
+If the club wants it, turn on **Dietary/allergy information** in **Admin >
+Setup & Configuration > Membership & Members > Member Fields** (see
+[`guides/member-fields.md`](guides/member-fields.md)). Before you do, check the
+club's privacy notice covers health information, because the member CSV export
+then carries the column (`INV-PRIV-022`).
+
+`20261011010000_add_booking_guest_dietary_requirements` (#3029) adds an empty
+`BookingGuest.dietaryRequirements` column in the same additive way. While the
+field is on, each booking copies a member's profile value when they are first
+added and keeps it for that stay; booking officers and the hut leader running
+the stay see it. Turning the field on does **not** fill in existing bookings.
+While the old colour still serves — during the drain, and again after any
+rollback to it — it does not know either dietary column exists:
+
+- bookings it creates are not seeded, and a held party it rebuilds at approval
+  loses its values (both leave an empty value a booking officer can fill in);
+- **a held-request approval it performs that rewrites the party in place keeps
+  each row's value while changing who the row is for**, so a substituted guest
+  can show the previous person's note. Review the dietary card on any booking
+  whose held request was approved on the old colour;
+- **an account deletion it approves anonymises the member — their record and
+  their guest rows — without clearing either dietary value;**
+- **a member merge it performs deletes the losing record without carrying its
+  profile value to the surviving one**, so that value is lost for good (the new
+  colour keeps it when the survivor's is blank). No query can bring it back: ask
+  the member to re-enter it on their profile;
+- **a booking change it makes that renames a non-member guest to a different
+  person keeps the previous person's note** (the new colour clears it).
+
+**Write down when each old-colour window starts and ends** — the drain, and any
+rollback until the new colour is back. After each window ends:
+
+1. Clear the values the old colour left on anonymised accounts and their
+   guest rows (`deletedAt` is the mark an approved deletion leaves,
+   `src/lib/deleted-account.ts`):
+
+   ```sql
+   UPDATE "Member" SET "dietaryRequirements" = NULL
+   WHERE "deletedAt" IS NOT NULL AND "dietaryRequirements" IS NOT NULL;
+
+   UPDATE "BookingGuest" SET "dietaryRequirements" = NULL
+   WHERE "memberId" IS NULL AND "firstName" = 'Deleted' AND "lastName" = 'Member'
+     AND "dietaryRequirements" IS NOT NULL;
+   ```
+
+2. List the bookings to review — held-request approvals, school approvals and
+   booking changes made inside the window, on bookings that hold a dietary
+   note — substituting the times you wrote down:
+
+   ```sql
+   SELECT DISTINCT a."metadata"->>'bookingId' AS "bookingId", a."action", a."createdAt"
+   FROM "AuditLog" a
+   JOIN "BookingGuest" g ON g."bookingId" = a."metadata"->>'bookingId'
+   WHERE a."action" IN ('booking_request.approved', 'booking_request.school_approved',
+                        'booking.modify.batch', 'booking.modify.admin_override')
+     AND a."createdAt" BETWEEN '<window start>' AND '<window end>'
+     AND g."dietaryRequirements" IS NOT NULL
+   ORDER BY a."createdAt";
+   ```
+
+   Open each booking's **Dietary/allergy information** card and correct any
+   note that belongs to somebody no longer on that row.
+
 ### 3.2 Re-run the audit category backfills
 
 Two data-only migrations rewrite the stored audit `category` and each wants one

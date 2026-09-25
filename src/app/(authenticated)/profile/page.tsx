@@ -52,6 +52,10 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  grantSelfDietaryAccess,
+  loadDietaryRequirementsForDisplay,
+} from "@/lib/member-dietary";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -246,6 +250,14 @@ export default async function ProfilePage({
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
+  // #2941 (INV-PRIV-022): the member's own dietary/allergy value, read through
+  // the one dietary door and only while the club has the field ON — while OFF
+  // the key is absent from the props the client receives.
+  const dietary = await loadDietaryRequirementsForDisplay(
+    grantSelfDietaryAccess(session),
+    session.user.id,
+    { enabled: memberFieldsFlags.showDietaryRequirements },
+  );
   const modules = await loadEffectiveModuleFlags();
   const showTwoFactorSecurityCard =
     modules.twoFactor || member.twoFactorEnabled;
@@ -283,6 +295,7 @@ export default async function ProfilePage({
     postalPostalCode: member.postalPostalCode ?? "",
     postalCountry: member.postalCountry ?? "",
     occupation: member.occupation ?? "",
+    ...(dietary.enabled ? { dietaryRequirements: dietary.value ?? "" } : {}),
     lodgeScreenPhoneOptIn: member.lodgeScreenPhoneOptIn,
   };
 
@@ -624,6 +637,7 @@ export default async function ProfilePage({
             returnTo={returnTo}
             ageTier={member.ageTier}
             showOccupation={memberFieldsFlags.showOccupation}
+            showDietaryRequirements={dietary.enabled}
           />
         </div>
 

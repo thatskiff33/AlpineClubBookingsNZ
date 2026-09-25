@@ -44,6 +44,17 @@ import {
 import { parseDateOnly } from "@/lib/date-only";
 import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import {
+  bookingGuestDietarySeeding,
+  resolveBookingGuestDietary,
+} from "@/lib/member-dietary-booking-writes";
+
+// #3029: builder calls need a dietary decision per guest; nothing is seeded here.
+const NO_DIETARY = await resolveBookingGuestDietary(
+  {} as never,
+  bookingGuestDietarySeeding(false),
+  [{}, {}, {}],
+);
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -295,7 +306,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
       heldBookingId: null,
     });
 
-    const prismaData = toPipelineGuestCreateData(guestCreate);
+    const prismaData = toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]);
     expect(prismaData.nights).toEqual({
       create: [
         { stayDate: parseDateOnly("2026-08-01"), priceCents: 3000, priceSource: "EVEN_SPLIT" },
@@ -328,7 +339,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
         firstName: "Tara",
         lastName: "Tester",
         priceCents: 9000,
-      }),
+      }, NO_DIETARY[0]),
     ).toThrow();
   });
 });
@@ -377,7 +388,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
       adminMemberId: "admin-1",
       heldBookingId: null,
     });
-    return toPipelineGuestCreateData(guestCreate).nights.create;
+    return toPipelineGuestCreateData(guestCreate, NO_DIETARY[0]).nights.create;
   }
 
   it("counts a converted guest once the pipeline writes their nights", async () => {

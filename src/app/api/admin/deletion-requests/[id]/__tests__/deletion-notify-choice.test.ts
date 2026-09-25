@@ -524,6 +524,8 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
         data: expect.objectContaining({
           active: false,
           deletedAt: expect.any(Date),
+          // #2941 (INV-PRIV-022): erased with the rest of the person.
+          dietaryRequirements: null,
         }),
       }),
     );

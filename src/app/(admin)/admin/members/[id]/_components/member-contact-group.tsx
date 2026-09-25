@@ -38,6 +38,8 @@ import {
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import type { MemberGroupEditState } from "../_hooks/use-member-group-edit";
 import type { MemberDetail } from "../_types";
+import { MemberDietaryRequirementsField } from "@/components/member-dietary-requirements-field";
+import { DIETARY_REQUIREMENTS_LABEL } from "@/lib/member-dietary-field";
 
 /*
   #2264 — ONE hint for the whole phone row (country / area / number) rather than
@@ -363,6 +365,19 @@ export function MemberContactGroup({
             />
           </div>
         )}
+        {/* #2941 (INV-PRIV-022): the key is on the form only when the server
+            sent it — a membership dietary grant and the field ON — so its
+            presence IS the gate; any age tier. */}
+        {form.dietaryRequirements !== undefined && (
+          <MemberDietaryRequirementsField
+            id="contact-dietaryRequirements"
+            audience="admin"
+            value={form.dietaryRequirements}
+            onChange={(value) =>
+              updateForm((f) => ({ ...f, dietaryRequirements: value }))
+            }
+          />
+        )}
         <MemberAddressFields
           idPrefix="contact-group"
           onSameAsPhysicalChange={(value) =>
@@ -495,6 +510,16 @@ export function MemberContactGroup({
           <div>
             <dt className="text-muted-foreground">Occupation</dt>
             <dd className="font-medium">{member.occupation || "Not set"}</dd>
+          </div>
+        )}
+        {"dietaryRequirements" in member && (
+          <div className="sm:col-span-2">
+            <dt className="text-muted-foreground">
+              {DIETARY_REQUIREMENTS_LABEL}
+            </dt>
+            <dd className="font-medium whitespace-pre-wrap">
+              {member.dietaryRequirements || "Not set"}
+            </dd>
           </div>
         )}
         <div>

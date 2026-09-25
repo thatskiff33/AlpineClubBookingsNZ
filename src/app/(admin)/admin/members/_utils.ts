@@ -29,6 +29,7 @@ export const emptyForm: MemberForm = {
   joinedDate: "",
   lifeMemberDate: "",
   occupation: "",
+  dietaryRequirements: "",
   comments: "",
   canLogin: true,
   streetAddressLine1: "",

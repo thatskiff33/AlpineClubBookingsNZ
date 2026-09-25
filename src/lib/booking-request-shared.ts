@@ -34,6 +34,10 @@ import {
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import logger from "@/lib/logger";
 import {
+  bookingGuestDietaryCreateData,
+  type BookingGuestDietaryWrite,
+} from "@/lib/member-dietary-booking-writes";
+import {
   assertMembershipTypeBookingAllowed,
   resolveGuestRateMembershipTypes,
 } from "@/lib/membership-type-policy";
@@ -496,9 +500,19 @@ export async function planBookingRequestGuestConsent<
  * question" true rather than aspirational. Pinned by the `@ts-expect-error` case
  * in `src/lib/__tests__/booking-request-guest-nights.test.ts`, which fails
  * `npm run typecheck` if the field ever goes back to optional.
+ *
+ * `dietary` IS REQUIRED for the same reason (#3029, `INV-MOD-059`): the new
+ * row's dietary/allergy snapshot, as `resolveBookingGuestDietary` decided it for
+ * this guest inside the pipeline's transaction. A pipeline that maps guests
+ * straight through (`.map(toPipelineGuestCreateData)`) would hand the array
+ * index here, which does not type-check — so a fifth pipeline cannot skip the
+ * seeding question either.
  */
 export function toPipelineGuestCreateData<Guest extends object>(
-  guest: Guest & MemberGuestConsentGuestFields & { nights: readonly ApprovalGuestNight[] }
+  guest: Guest & MemberGuestConsentGuestFields & { nights: readonly ApprovalGuestNight[] },
+  // `| undefined` so an index read (`writes[i]`) passes straight through; the
+  // spread below refuses a missing decision at runtime (#3029).
+  dietary: BookingGuestDietaryWrite | undefined,
 ): Omit<Guest, keyof MemberGuestConsentGuestFields | "nights"> & {
   nights: { create: ApprovalGuestNight[] };
 } {
@@ -507,6 +521,7 @@ export function toPipelineGuestCreateData<Guest extends object>(
   return {
     ...rest,
     ...(memberGuestConsent ?? {}),
+    ...bookingGuestDietaryCreateData(dietary),
     nights: { create: [...nights] },
   } as unknown as Omit<Guest, keyof MemberGuestConsentGuestFields | "nights"> & {
     nights: { create: ApprovalGuestNight[] };

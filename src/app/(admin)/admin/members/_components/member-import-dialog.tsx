@@ -58,6 +58,7 @@ import {
 } from "@/lib/member-csv-import";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import type { ImportResult } from "../_types";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 
 interface MemberImportDialogProps {
   open: boolean;
@@ -365,6 +366,9 @@ export function MemberImportDialog({
   // back to a plausible wrong day.
   const club = useClubTime();
   const todayAtClub = club.today();
+  // #2941: the dietary column is previewed (and judged) only while the club
+  // takes it; the server makes the same decision for itself.
+  const { showDietaryRequirements } = useMemberFieldsSettings();
   const preview = useMemo(
     () =>
       csvData
@@ -373,9 +377,10 @@ export function MemberImportDialog({
             columnMapping,
             todayAtClub,
             dateFormats,
+            { importsDietaryRequirements: showDietaryRequirements },
           )
         : null,
-    [columnMapping, csvData, dateFormats, todayAtClub],
+    [columnMapping, csvData, dateFormats, todayAtClub, showDietaryRequirements],
   );
 
   useEffect(() => {

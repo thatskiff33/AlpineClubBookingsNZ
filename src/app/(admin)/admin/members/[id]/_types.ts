@@ -215,6 +215,11 @@ export interface MemberDetail {
   joinedDate: string | null;
   lifeMemberDate: string | null;
   occupation: string | null;
+  /**
+   * #2941 (INV-PRIV-022): an ABSENT key unless the viewing admin holds
+   * membership access and the club has the dietary field ON.
+   */
+  dietaryRequirements?: string | null;
   createdAt: string;
   canLogin: boolean;
   requiresInduction: boolean;

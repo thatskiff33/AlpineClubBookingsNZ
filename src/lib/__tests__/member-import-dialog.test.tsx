@@ -10,6 +10,14 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const fetchMock = vi.fn();
 
+// #2941: the dialog reads the member-field flags (dietary column on/off) for
+// its preview. Served from a mock so the settings read does not consume the
+// import POST's queued fetch response.
+vi.mock("@/lib/use-member-fields-settings", async () => {
+  const { DEFAULT_MEMBER_FIELDS_SETTINGS } = await import("@/config/member-fields");
+  return { useMemberFieldsSettings: () => DEFAULT_MEMBER_FIELDS_SETTINGS };
+});
+
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
