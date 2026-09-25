@@ -148,6 +148,8 @@ describe("cents-display guard: catches the shape", () => {
       .find((entry) => entry.message?.startsWith(RULE_ID))?.message;
     expect(message).toContain("formatCents");
     expect(message).toContain("formatCentsPlain");
+    expect(message).toContain("including editable dollars inputs");
+    expect(message).toContain("Only a genuinely different output");
     expect(message).toContain("CENTS_DISPLAY_EXEMPTIONS");
   });
 
