@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { formatReferenceCacheLabel } from "../_components/shared";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
@@ -90,7 +90,7 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
     timeStyle: "short",
   };
   const answerFor = (zone: string) => {
-    const formatter = new Intl.DateTimeFormat(APP_LOCALE, {
+    const formatter = new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
       ...DATE_TIME_SHAPE,
       timeZone: zone,
     });

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { captureHostTimeZone, withTimeZone } from "@/lib/__tests__/helpers/timezone";
-import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import {
+  CLUB_FORMAT_TEST,
+  CLUB_FORMAT_TEST_OTHER,
+} from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * Email dates are the CLUB's civil time (CT-5, #2869; epic #2988).
@@ -465,11 +468,11 @@ describe("emailCalendarDayOrUnknown", () => {
  * module doc's; these pin the behaviour.
  */
 describe("#3566: the club's date format, from the same cache as the zone", () => {
-  const DE_CH_ROW = { currencyCode: "CHF", locale: "de-CH" };
+  const DE_CH_ROW = CLUB_FORMAT_TEST_OTHER;
 
   it("is the shipped default while cold, so New Zealand emails are unchanged", async () => {
     const clubTime = await import("@/lib/email-templates-club-time");
-    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "en-NZ" });
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: CLUB_FORMAT_TEST.locale });
     expect(clubTime.emailCalendarDay(new Date("2026-04-16T00:00:00.000Z"))).toBe(
       "16 Apr 2026",
     );
@@ -483,10 +486,10 @@ describe("#3566: the club's date format, from the same cache as the zone", () =>
     const nzRoster = formatChoreRosterDate("2026-04-16");
     await clubTime.primeEmailClubTimeZone();
 
-    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: CLUB_FORMAT_TEST_OTHER.locale });
     const stay = new Date("2026-03-16T00:00:00.000Z");
     expect(clubTime.emailCalendarDay(stay)).toBe(
-      new Intl.DateTimeFormat("de-CH", { timeZone: "UTC", dateStyle: "medium" }).format(
+      new Intl.DateTimeFormat(CLUB_FORMAT_TEST_OTHER.locale, { timeZone: "UTC", dateStyle: "medium" }).format(
         stay,
       ),
     );
@@ -496,7 +499,7 @@ describe("#3566: the club's date format, from the same cache as the zone", () =>
     expect(formatChoreRosterDate("2026-04-16")).toBe("Donnerstag, 16. April 2026");
     // An instant stamp follows too, in the club's zone.
     expect(clubTime.emailClubDateTime(DIVERGENT)).toBe(
-      new Intl.DateTimeFormat("de-CH", {
+      new Intl.DateTimeFormat(CLUB_FORMAT_TEST_OTHER.locale, {
         timeZone: "Pacific/Auckland",
         dateStyle: "medium",
         timeStyle: "short",
@@ -516,12 +519,9 @@ describe("#3566: the club's date format, from the same cache as the zone", () =>
       expect(fresh.emailClubDateFormatForTests()).toEqual({ locale: "en-US" });
 
       mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(null);
-      mocks.loadPersistedClubFormatSettings.mockResolvedValue({
-        currencyCode: "NZD",
-        locale: "en-NZ",
-      });
+      mocks.loadPersistedClubFormatSettings.mockResolvedValue(CLUB_FORMAT_TEST);
       await fresh.primeEmailClubTimeZone();
-      expect(fresh.emailClubDateFormatForTests()).toEqual({ locale: "en-NZ" });
+      expect(fresh.emailClubDateFormatForTests()).toEqual({ locale: CLUB_FORMAT_TEST.locale });
     } finally {
       if (previous === undefined) delete process.env.LOCALE;
       else process.env.LOCALE = previous;
@@ -536,16 +536,16 @@ describe("#3566: the club's date format, from the same cache as the zone", () =>
     mocks.loadPersistedClubFormatSettings.mockResolvedValue(DE_CH_ROW);
     await clubTime.primeEmailClubTimeZone();
     expect(clubTime.emailClubTimeZoneForTests()).toBe(coldZone);
-    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: CLUB_FORMAT_TEST_OTHER.locale });
 
     // And a later read that finds a zone but no usable locale keeps de-CH.
     mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(PERSISTED_ZONE);
     mocks.loadPersistedClubFormatSettings.mockResolvedValue({
-      currencyCode: "CHF",
+      currencyCode: CLUB_FORMAT_TEST_OTHER.currencyCode,
       locale: "not a tag",
     });
     await clubTime.primeEmailClubTimeZone();
     expect(clubTime.emailClubTimeZoneForTests()).toBe(PERSISTED_ZONE);
-    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: CLUB_FORMAT_TEST_OTHER.locale });
   });
 });

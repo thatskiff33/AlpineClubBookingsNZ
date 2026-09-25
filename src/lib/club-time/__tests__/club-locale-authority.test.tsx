@@ -44,6 +44,10 @@ import { formatDate as formatHealthStamp } from "@/app/(admin)/admin/health/_com
 import { ClubTimeProvider, useClubTime } from "@/components/club-time-provider";
 import { clubTime } from "@/lib/club-time/server";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
+import {
+  CLUB_FORMAT_TEST as NZ,
+  CLUB_FORMAT_TEST_OTHER as CH,
+} from "@/lib/__tests__/support/club-format-fixture";
 
 const AT = new Date("2026-03-16T02:30:00.000Z");
 
@@ -74,25 +78,25 @@ afterEach(() => {
 
 describe("#3566: clubTime() binds the STORED locale", () => {
   it("premise: with nothing stored, the environment's LOCALE really answers", async () => {
-    process.env.LOCALE = "de-CH";
+    process.env.LOCALE = CH.locale;
     const club = await clubTime();
-    expect(club.format).toEqual({ locale: "de-CH" });
+    expect(club.format).toEqual({ locale: CH.locale });
   });
 
   it("stored en-NZ wins over LOCALE=de-CH", async () => {
-    process.env.LOCALE = "de-CH";
-    stored.row = { currencyCode: "NZD", locale: "en-NZ" };
+    process.env.LOCALE = CH.locale;
+    stored.row = NZ;
     const club = await clubTime();
-    expect(club.format).toEqual({ locale: "en-NZ" });
-    expect(club.instantDateTime(AT)).toBe(inLocale("en-NZ", MEDIUM_DATE_TIME));
+    expect(club.format).toEqual({ locale: NZ.locale });
+    expect(club.instantDateTime(AT)).toBe(inLocale(NZ.locale, MEDIUM_DATE_TIME));
   });
 
   it("stored de-CH wins over LOCALE=en-NZ", async () => {
-    process.env.LOCALE = "en-NZ";
-    stored.row = { currencyCode: "CHF", locale: "de-CH" };
+    process.env.LOCALE = NZ.locale;
+    stored.row = CH;
     const club = await clubTime();
-    expect(club.instantDateTime(AT)).toBe(inLocale("de-CH", MEDIUM_DATE_TIME));
-    expect(club.instantDateTime(AT)).not.toBe(inLocale("en-NZ", MEDIUM_DATE_TIME));
+    expect(club.instantDateTime(AT)).toBe(inLocale(CH.locale, MEDIUM_DATE_TIME));
+    expect(club.instantDateTime(AT)).not.toBe(inLocale(NZ.locale, MEDIUM_DATE_TIME));
   });
 });
 
@@ -102,20 +106,20 @@ function Stamp({ at }: { at: Date }) {
 
 describe("#3566: a server-rendered date and its hydrated twin agree", () => {
   it("renders the same de-CH string on both sides of the network", async () => {
-    process.env.LOCALE = "en-NZ";
-    process.env.NEXT_PUBLIC_LOCALE = "en-NZ";
-    stored.row = { currencyCode: "CHF", locale: "de-CH" };
+    process.env.LOCALE = NZ.locale;
+    process.env.NEXT_PUBLIC_LOCALE = NZ.locale;
+    stored.row = CH;
     const server = (await clubTime()).instantDateTime(AT);
 
     const { getByTestId } = render(
       <ClubFormatTestProvider>
-        <ClubTimeProvider zone="Pacific/Auckland" locale="de-CH">
+        <ClubTimeProvider zone="Pacific/Auckland" locale={CH.locale}>
           <Stamp at={AT} />
         </ClubTimeProvider>
       </ClubFormatTestProvider>,
     );
     expect(getByTestId("stamp").textContent).toBe(server);
-    expect(server).toBe(inLocale("de-CH", MEDIUM_DATE_TIME));
+    expect(server).toBe(inLocale(CH.locale, MEDIUM_DATE_TIME));
   });
 
   it("an unusable locale prop falls back to the default rather than blanking", () => {
@@ -127,16 +131,16 @@ describe("#3566: a server-rendered date and its hydrated twin agree", () => {
       </ClubFormatTestProvider>,
     );
     expect(getByTestId("stamp").textContent).toBe(
-      inLocale("en-NZ", MEDIUM_DATE_TIME),
+      inLocale(NZ.locale, MEDIUM_DATE_TIME),
     );
   });
 });
 
 describe("#3566: the health dashboard stamps follow the binding's locale", () => {
   it("writes the compact stamp in de-CH for a de-CH club, and en-NZ otherwise", async () => {
-    stored.row = { currencyCode: "CHF", locale: "de-CH" };
+    stored.row = CH;
     const swiss = await clubTime();
-    stored.row = { currencyCode: "NZD", locale: "en-NZ" };
+    stored.row = NZ;
     const kiwi = await clubTime();
     const compact: Intl.DateTimeFormatOptions = {
       day: "2-digit",
@@ -144,10 +148,10 @@ describe("#3566: the health dashboard stamps follow the binding's locale", () =>
       hour: "2-digit",
       minute: "2-digit",
     };
-    expect(formatHealthStamp(swiss, AT.toISOString())).toBe(inLocale("de-CH", compact));
-    expect(formatHealthStamp(kiwi, AT.toISOString())).toBe(inLocale("en-NZ", compact));
+    expect(formatHealthStamp(swiss, AT.toISOString())).toBe(inLocale(CH.locale, compact));
+    expect(formatHealthStamp(kiwi, AT.toISOString())).toBe(inLocale(NZ.locale, compact));
     // The "Last refresh" line is the binding's `instantTime`, so it follows too.
     expect(swiss.instantTime(AT)).toBe("15:30");
-    expect(kiwi.instantTime(AT)).toBe(inLocale("en-NZ", { timeStyle: "short" }));
+    expect(kiwi.instantTime(AT)).toBe(inLocale(NZ.locale, { timeStyle: "short" }));
   });
 });

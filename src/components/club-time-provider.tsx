@@ -134,11 +134,12 @@ export function ClubTimeProvider({
   /**
    * The club's persisted BCP 47 locale, resolved on the SERVER (#3566) — the
    * same value `ClubFormatProvider` receives. REQUIRED, and a prop rather than
-   * an internal `useClubFormat()` read, because three mounts (the public-form
-   * embeds and the ski-field widget) render inside the root 404, which sits
-   * outside both chromes and has no `ClubFormatProvider` above it. A required
-   * prop makes a mount that forgets the locale a compile error; a context read
-   * would make it a white screen on the one page nobody tests.
+   * an internal `useClubFormat()` read. Three mounts (the public-form embeds and
+   * the ski-field widget) render inside the root 404, outside both chromes; that
+   * page mounts its own `ClubFormatProvider` around the embedded body today
+   * (`not-found.tsx`), but a context read would make this provider's correctness
+   * depend on every such page remembering to, where a required prop makes a
+   * mount that forgets the locale a compile error.
    */
   locale: string;
   children: React.ReactNode;

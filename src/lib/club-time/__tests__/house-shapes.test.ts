@@ -658,10 +658,10 @@ describe("#3566: the bound API carries the format", () => {
   it("copies the locale down rather than keeping the caller's object", () => {
     // A `ClubFormat` carries the currency too, which no date depends on; and a
     // caller mutating the object it handed in must not re-price the binding.
-    const handed = { currencyCode: "NZD", locale: "en-NZ" };
+    const handed = { ...CLUB_FORMAT_TEST };
     const bound = bindClubTime(AUCKLAND, handed);
-    handed.locale = "de-CH";
-    expect(bound.format).toEqual({ locale: "en-NZ" });
+    handed.locale = CLUB_FORMAT_TEST_OTHER.locale;
+    expect(bound.format).toEqual({ locale: CLUB_FORMAT_TEST.locale });
     expect(Object.isFrozen(bound.format)).toBe(true);
   });
 });
