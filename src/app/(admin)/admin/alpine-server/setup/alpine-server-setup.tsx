@@ -54,7 +54,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
     canEdit === undefined
       ? undefined
       : canEdit &&
-        Boolean(session?.user && isFullAdmin({ accessRoles: session.user.accessRoles }));
+        Boolean(session?.user && isFullAdmin(session.user));
   const [baseUrl, setBaseUrl] = useState(initialState.baseUrl ?? "");
   const [savedBaseUrl, setSavedBaseUrl] = useState(initialState.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");

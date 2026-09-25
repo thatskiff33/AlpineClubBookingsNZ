@@ -115,6 +115,7 @@ export default async function LoginPage({
       landingPreference: session.user.postLoginLanding,
       permissionInput: {
         adminPermissionMatrix: session.user.adminPermissionMatrix,
+        canLogin: session.user.canLogin,
       },
     });
     redirect(landing);

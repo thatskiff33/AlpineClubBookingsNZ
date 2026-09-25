@@ -268,7 +268,7 @@ describe("assertBookingModifiable authorization outcome (#1313 A2)", () => {
   // Derive the role exactly as the widened routes do, so this proves the full
   // composition: accessRoles -> bookingManagementAuthorizationRole -> gate.
   const roleFor = (accessRoles: AppAccessRole[]) =>
-    bookingManagementAuthorizationRole({ accessRoles });
+    bookingManagementAuthorizationRole({ canLogin: true, accessRoles });
 
   it("allows a non-owner actor resolved to ADMIN (Full Admin or Booking Officer)", () => {
     for (const roles of [["ADMIN"], ["ADMIN_BOOKINGS"]] as AppAccessRole[][]) {

@@ -1,14 +1,12 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import { AccessRoleManager } from "./_components/access-role-manager";
 
 export default function AccessRolesPage() {
   const { data: session } = useSession();
-  const actorIsFullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
+  const actorIsFullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   return (
     <div className="space-y-6">

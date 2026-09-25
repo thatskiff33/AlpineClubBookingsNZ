@@ -3,12 +3,10 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { MemberAgeChip } from "@/components/admin/family-groups/member-age-display";
 import {
   getMemberName,
+  LOGIN_HOLDER_SIGN_OUT_NOTICE,
   type FamilyGroupMemberRow,
   type SharedEmailCluster,
 } from "@/lib/admin-family-group-ui-helpers";
-
-const SESSION_LAG_WARNING =
-  "The previous holder's session may remain valid for up to 8 hours after the swap.";
 
 export interface FamilyGroupLoginHolderSectionProps {
   // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
@@ -147,7 +145,7 @@ export function FamilyGroupLoginHolderSection({
                   })}
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">{SESSION_LAG_WARNING}</p>
+              <p className="text-xs text-muted-foreground">{LOGIN_HOLDER_SIGN_OUT_NOTICE}</p>
               {errors[cluster.email] && (
                 <p className="text-sm text-danger-11">{errors[cluster.email]}</p>
               )}

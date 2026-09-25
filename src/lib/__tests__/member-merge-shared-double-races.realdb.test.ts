@@ -555,6 +555,7 @@ async function seedMergeMembers(): Promise<void> {
         role: member.role,
         ageTier: "ADULT",
         active: true,
+        canLogin: member.id === ACTOR_ID,
       },
       update: {
         email: member.email,
@@ -563,11 +564,13 @@ async function seedMergeMembers(): Promise<void> {
         role: member.role,
         ageTier: "ADULT",
         active: true,
+        canLogin: member.id === ACTOR_ID,
         archivedAt: null,
       },
     });
   }
-  // `actorIsFullAdmin` reads the access-role join, not `Member.role`.
+  // `actorIsFullAdmin` reads the access-role join, not `Member.role`, and since
+  // #3603 counts only an active, login-enabled actor, hence `canLogin` above.
   await prisma.memberAccessRole.upsert({
     where: { memberId_role: { memberId: ACTOR_ID, role: "ADMIN" } },
     create: { memberId: ACTOR_ID, role: "ADMIN" },

@@ -92,7 +92,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   AdminAccountGuardError,
@@ -823,7 +823,7 @@ export async function getAdminMemberDetail(params: {
 export async function updateAdminMember(params: {
   id: string;
   currentAdminMemberId: string;
-  currentAdminAccessRoles: AccessRoleInput["accessRoles"];
+  currentAdminAccess: PrivilegeCheckInput;
   request: NextRequest;
   data: UpdateMemberInput;
   /** #2941: a membership:edit dietary grant, or null (the field is not written). */
@@ -832,7 +832,7 @@ export async function updateAdminMember(params: {
   const {
     id,
     currentAdminMemberId,
-    currentAdminAccessRoles,
+    currentAdminAccess,
     request: req,
     data,
     dietaryGrant,
@@ -973,7 +973,7 @@ export async function updateAdminMember(params: {
   if (
     (deactivatesTarget || deLoginsTarget) &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     memberHoldsPrivilegedRole(existing)
   ) {
     return jsonResult(
@@ -994,7 +994,7 @@ export async function updateAdminMember(params: {
     data.email !== undefined &&
     data.email.toLowerCase().trim() !== existing.email &&
     id !== currentAdminMemberId &&
-    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    !isFullAdmin(currentAdminAccess) &&
     hasPrivilegedAccess(existing)
   ) {
     return jsonResult(
@@ -1159,7 +1159,7 @@ export async function updateAdminMember(params: {
       );
     if (
       requiresFullAdmin &&
-      !isFullAdmin({ accessRoles: currentAdminAccessRoles })
+      !isFullAdmin(currentAdminAccess)
     ) {
       return jsonResult(
         { error: "Only a Full Admin can change member access roles" },

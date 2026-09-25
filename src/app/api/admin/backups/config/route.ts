@@ -103,9 +103,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const actorIsFullAdmin = isFullAdmin({
-    accessRoles: guard.session.user.accessRoles,
-  });
+  const actorIsFullAdmin = isFullAdmin(guard.session.user);
 
   if (touchesDestination(body) && !actorIsFullAdmin) {
     return NextResponse.json(

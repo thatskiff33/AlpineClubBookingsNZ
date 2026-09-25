@@ -60,18 +60,21 @@ describe("access role compatibility helpers", () => {
   it("projects a runtime authorization role from access role rows only", () => {
     expect(
       authorizationRoleFromAccessRoles({
+        canLogin: true,
         role: "USER",
         accessRoles: [{ role: "ADMIN" }],
       }),
     ).toBe("ADMIN");
     expect(
       authorizationRoleFromAccessRoles({
+        canLogin: true,
         role: "ADMIN",
         accessRoles: [{ role: "USER" }],
       }),
     ).toBe("USER");
     expect(
       authorizationRoleFromAccessRoles({
+        canLogin: true,
         role: "ADMIN",
         financeAccessLevel: "MANAGER",
         accessRoles: [],
@@ -83,6 +86,7 @@ describe("access role compatibility helpers", () => {
     expect(legacyRoleFromAccessRoles(["ADMIN_READONLY"])).toBe("USER");
     expect(legacyRoleFromAccessRoles(["ADMIN_BOOKINGS"])).toBe("USER");
     expect(authorizationRoleFromAccessRoles({
+      canLogin: true,
       accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
     })).toBe("USER");
   });

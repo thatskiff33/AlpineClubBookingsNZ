@@ -149,7 +149,7 @@ const bodySchema = z.object({
 async function requireFullAdmin() {
   const guard = await requireAdmin();
   if (!guard.ok) return { ok: false as const, response: guard.response };
-  if (!isFullAdmin({ accessRoles: guard.session.user.accessRoles })) {
+  if (!isFullAdmin(guard.session.user)) {
     return {
       ok: false as const,
       response: NextResponse.json(

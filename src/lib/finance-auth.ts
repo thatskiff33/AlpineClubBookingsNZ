@@ -9,7 +9,7 @@ import {
   hasFinanceManagerAccess,
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
-import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { prisma } from "@/lib/prisma";
 import {
@@ -24,6 +24,8 @@ export type FinanceAccessMember = {
   lastName: string;
   role: Role;
   accessRoles: Array<AccessRoleAssignmentInput>;
+  /** Required so the finance checks apply the login-disabled rule (#3603). */
+  canLogin: boolean;
   active: boolean;
   forcePasswordChange: boolean;
   twoFactorEnabled: boolean;
@@ -32,8 +34,9 @@ export type FinanceAccessMember = {
 // `hasFinanceViewerAccess` / `hasFinanceManagerAccess` are defined once, in
 // `@/lib/admin-permissions`, and imported from there everywhere. This module
 // used to wrap them (#3264), which gave the same guard two import paths.
-// Requires the member's accessRoles rows to be selected with
-// MEMBER_ACCESS_ROLE_SELECT so definitions resolve.
+// Requires the member's accessRoles rows and `canLogin` to be selected with
+// MEMBER_PRIVILEGE_CHECK_SELECT, so definitions resolve and a login-disabled
+// member resolves to no finance access (#3603).
 
 export async function loadFinanceAccessMember(
   memberId: string
@@ -46,7 +49,7 @@ export async function loadFinanceAccessMember(
       firstName: true,
       lastName: true,
       role: true,
-      accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+      ...MEMBER_PRIVILEGE_CHECK_SELECT,
       active: true,
       forcePasswordChange: true,
       twoFactorEnabled: true,

@@ -8,7 +8,7 @@ import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { hasAdminAccess, memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import { memberHoldsFullAdminRole, memberHoldsPrivilegedRole } from "@/lib/access-roles";
 import {
   actorIsFullAdmin,
   LAST_FULL_ADMIN_GUARD_MESSAGE,
@@ -586,7 +586,7 @@ export async function getMemberDeleteEligibility({
     });
   }
 
-  if (hasAdminAccess(member)) {
+  if (memberHoldsFullAdminRole(member)) {
     blockers.push({
       code: "admin_account",
       label: "Admin accounts cannot be hard deleted.",
