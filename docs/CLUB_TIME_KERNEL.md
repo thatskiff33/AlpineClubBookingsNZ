@@ -475,10 +475,12 @@ rather than reaching for a module kept alive for that purpose.
   `server-only` or Prisma import, or if `APP_TIME_ZONE`, `APP_LOCALE` or
   `@/config/operational` comes back.
 - The same census refuses a date formatter anywhere in `src/` outside the
-  kernel (#3566): a constructed `Intl.DateTimeFormat`, or a
-  `toLocaleDateString` / `toLocaleTimeString`, outside five named exemptions —
-  the factory itself, two validation probes and two ISO month-key extractors —
-  each of which must still need its permission. A missing shape is declared in
+  kernel (#3566), in TypeScript or JavaScript: any `DateTimeFormat` (built,
+  destructured, aliased or bracketed), `toLocaleDateString` /
+  `toLocaleTimeString` in any spelling, a `toLocaleString` given date options,
+  a `date-fns/locale` import and a `locale:` option beside `date-fns`. Five
+  named exemptions — the factory itself, two validation probes and two ISO
+  month-key extractors — are each pinned to an exact hit count. A missing shape is declared in
   `HOUSE_SHAPES`, never built locally.
 - The census also fails a `Date.now()` outside `clock.ts` — it is the same
   ambient clock read as `new Date()` and the earlier guard could not see it.

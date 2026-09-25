@@ -451,6 +451,26 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
  * club's dates the New Zealand way. They were moved onto house shapes; this
  * refuses the next one.
  *
+ * WHAT IT SEES, each a probe class the #3628 review found the first version
+ * blind to and each mutation-proven by planting it in the tree:
+ *
+ *  - ANY mention of `DateTimeFormat` as a word — so a destructured
+ *    (`const { DateTimeFormat } = Intl`), aliased (`const F = Intl.DateTimeFormat`)
+ *    or bracketed (`Intl["DateTimeFormat"]`) formatter counts, not only
+ *    `new Intl.DateTimeFormat(`. `DateTimeFormatOptions` is a different word;
+ *  - `toLocaleDateString` / `toLocaleTimeString` by name, dotted, bracketed or
+ *    detached;
+ *  - `toLocaleString(...)` whose arguments carry a DATE option key
+ *    (`dateStyle`, `month`, `hour`, `timeZone`, ...) — the number form, with a
+ *    bare locale, stays legal;
+ *  - an import of `date-fns/locale`, and a `locale:` option in any module that
+ *    imports `date-fns` — the date-fns adapters render English patterns, and a
+ *    locale smuggled in there is a second authority for the club's language;
+ *  - `.js`, `.jsx`, `.mjs` and `.cjs` modules as well as TypeScript.
+ *
+ * The exemptions are PINNED TO AN EXACT COUNT of hits, so a second formatter
+ * added to a whole-file exemption fails as surely as one anywhere else.
+ *
  * The `INV-DATE-015` eslint arms refuse a bare `toLocale*` and a zone-less
  * `Intl.DateTimeFormat`; they cannot refuse a ZONED formatter built with every
  * argument right and simply in the wrong module. This can.
@@ -458,42 +478,93 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
  * Comments are stripped first, because this repository documents a defect at
  * the site it removed it. Tests are outside the population by construction:
  * a transcription of the pre-kernel formatters is how `house-shapes.test.ts`
- * proves byte identity.
+ * proves byte identity. The known limit: `d.toLocaleString("en-NZ")` on a Date
+ * with no options cannot be told from the number form without types.
  */
 const SRC_ROOT = path.join(ROOT, "src");
 
-/** Modules allowed to construct one, each with the reason. Never a renderer. */
-const DATE_FORMATTER_EXEMPTIONS = new Map<string, string>([
+/** Modules allowed a hit, each with its EXACT hit count and the reason. */
+const DATE_FORMATTER_EXEMPTIONS = new Map<string, { hits: number; reason: string }>([
   [
     "src/lib/club-time/intl.ts",
-    "THE ONE HOME: the memoised factory every house shape and every projection in the product goes through.",
+    {
+      hits: 6,
+      reason:
+        "THE ONE HOME: the memoised factory every house shape and every projection in the product goes through — the construction, the memo's and two signatures' types, and two error messages naming it.",
+    },
   ],
   [
     "src/lib/club-format.ts",
-    "A VALIDATION PROBE, not a rendering: `normaliseClubLocale` asks the runtime whether it will build a formatter for a locale tag at all, and discards it after `resolvedOptions()`. Nothing is formatted.",
+    {
+      hits: 1,
+      reason:
+        "A VALIDATION PROBE, not a rendering: `normaliseClubLocale` asks the runtime whether it will build a formatter for a locale tag at all, and discards it after `resolvedOptions()`. Nothing is formatted.",
+    },
   ],
   [
     "src/lib/club-time-zone.ts",
-    "TWO VALIDATION PROBES, not renderings: the zone normalisers ask the runtime to accept an IANA identifier and report its canonical name through `resolvedOptions().timeZone`. Nothing is formatted.",
+    {
+      hits: 2,
+      reason:
+        "TWO VALIDATION PROBES, not renderings: the zone normalisers ask the runtime to accept an IANA identifier and report its canonical name through `resolvedOptions().timeZone`. Nothing is formatted.",
+    },
   ],
   [
     "src/lib/ai-assistant-usage.ts",
-    "An `en-CA` ISO MONTH-KEY EXTRACTOR for the AI page-help budget ledger (`yyyy-MM`), an encoding rather than a display string, and an `ENVIRONMENT_ZONE_ADAPTERS` ratchet entry with its own reason in `eslint.config.mjs`.",
+    {
+      hits: 1,
+      reason:
+        "An `en-CA` ISO MONTH-KEY EXTRACTOR for the AI page-help budget ledger (`yyyy-MM`), an encoding rather than a display string, and an `ENVIRONMENT_ZONE_ADAPTERS` ratchet entry with its own reason in `eslint.config.mjs`.",
+    },
   ],
   [
     "src/lib/ai-diagnostics-usage.ts",
-    "The same `en-CA` ISO month-key extractor for the diagnostics budget ledger, on the same ratchet for the same reason.",
+    {
+      hits: 1,
+      reason:
+        "The same `en-CA` ISO month-key extractor for the diagnostics budget ledger, on the same ratchet for the same reason.",
+    },
   ],
 ]);
 
-/** A constructed (or called) `Intl.DateTimeFormat`, or a `toLocaleDateString` / `toLocaleTimeString`. */
-export function findDateFormatterConstructions(source: string): string[] {
-  return [
-    ...source.matchAll(
-      /\bIntl\s*\.\s*DateTimeFormat\s*\(|\.toLocale(?:Date|Time)String\s*\(/g,
-    ),
-  ].map((match) => match[0]);
+const DATE_OPTION_KEYS =
+  /\b(?:dateStyle|timeStyle|weekday|era|year|month|day|dayPeriod|hour|minute|second|fractionalSecondDigits|timeZone|timeZoneName|hour12|hourCycle)\s*:/;
+
+/** The balanced argument text of the call whose `(` is at `open`. */
+function callArguments(source: string, open: number): string {
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  return source.slice(open + 1);
 }
+
+/** Every date-formatter hit in `source` (comments already stripped). */
+export function findDateFormatterConstructions(source: string): string[] {
+  const hits: string[] = [];
+  for (const match of source.matchAll(/\bDateTimeFormat\b/g)) hits.push(match[0]);
+  for (const match of source.matchAll(/\btoLocale(?:Date|Time)String\b/g)) {
+    hits.push(match[0]);
+  }
+  for (const match of source.matchAll(/\btoLocaleString\b\s*(?:["'`]\s*\]\s*)?\(/g)) {
+    const open = (match.index ?? 0) + match[0].length - 1;
+    if (DATE_OPTION_KEYS.test(callArguments(source, open))) hits.push("toLocaleString(date)");
+  }
+  for (const match of source.matchAll(/["'`]date-fns\/locale(?:\/[^"'`]*)?["'`]/g)) {
+    hits.push(match[0]);
+  }
+  if (/["'`]date-fns(?:\/[^"'`]*)?["'`]/.test(source)) {
+    for (const match of source.matchAll(/\blocale\s*:/g)) hits.push(`date-fns ${match[0]}`);
+  }
+  return hits;
+}
+
+const SCANNED_EXTENSION = /\.(?:tsx?|jsx?|mjs|cjs)$/;
 
 function productionSourceFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -501,7 +572,7 @@ function productionSourceFiles(dir: string, out: string[] = []): string[] {
     if (statSync(full).isDirectory()) {
       if (name === "__tests__" || name === "node_modules") continue;
       productionSourceFiles(full, out);
-    } else if (/\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) {
+    } else if (SCANNED_EXTENSION.test(name) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(name)) {
       out.push(full);
     }
   }
@@ -510,18 +581,34 @@ function productionSourceFiles(dir: string, out: string[] = []): string[] {
 
 describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery", () => {
   it("counts the shapes it claims to, and not their near misses", () => {
-    expect(findDateFormatterConstructions('new Intl.DateTimeFormat("en-NZ", { timeZone })')).toHaveLength(1);
-    expect(findDateFormatterConstructions("Intl.DateTimeFormat(locale, opts).format(d)")).toHaveLength(1);
-    expect(findDateFormatterConstructions("new Intl . DateTimeFormat (x)")).toHaveLength(1);
-    expect(findDateFormatterConstructions('d.toLocaleDateString("en-NZ")')).toHaveLength(1);
-    expect(findDateFormatterConstructions("d.toLocaleTimeString()")).toHaveLength(1);
+    const count = (source: string) => findDateFormatterConstructions(source).length;
+    expect(count('new Intl.DateTimeFormat("en-NZ", { timeZone })')).toBe(1);
+    expect(count("Intl.DateTimeFormat(locale, opts).format(d)")).toBe(1);
+    expect(count("new Intl . DateTimeFormat (x)")).toBe(1);
+    // The probe classes the #3628 review found the first version blind to.
+    expect(count("const { DateTimeFormat } = Intl; new DateTimeFormat(l)")).toBe(2);
+    expect(count("const F = Intl.DateTimeFormat;")).toBe(1);
+    expect(count('new Intl["DateTimeFormat"]("de-CH")')).toBe(1);
+    expect(count('d.toLocaleDateString("en-NZ")')).toBe(1);
+    expect(count("d.toLocaleTimeString()")).toBe(1);
+    expect(count('d["toLocaleDateString"]()')).toBe(1);
+    expect(count("const f = d.toLocaleDateString;")).toBe(1);
+    expect(count('d.toLocaleString("en-NZ", { dateStyle: "long" })')).toBe(1);
+    expect(count('d["toLocaleString"]("en-NZ", { month: "short" })')).toBe(1);
+    expect(count('import { enNZ } from "date-fns/locale";')).toBe(1);
+    expect(
+      count('import { format } from "date-fns"; format(d, "PP", { locale: enNZ });'),
+    ).toBe(1);
     // A number's thousands separators and a type annotation are not a date formatter.
-    expect(findDateFormatterConstructions("n.toLocaleString()")).toEqual([]);
-    expect(findDateFormatterConstructions("const f: Intl.DateTimeFormat = memo;")).toEqual([]);
-    expect(findDateFormatterConstructions("Intl.DateTimeFormatOptions")).toEqual([]);
+    expect(count("n.toLocaleString()")).toBe(0);
+    expect(count("n.toLocaleString(locale)")).toBe(0);
+    expect(count("n.toLocaleString(locale, { maximumFractionDigits: 0 })")).toBe(0);
+    expect(count("Intl.DateTimeFormatOptions")).toBe(0);
+    // `locale:` is only suspect beside date-fns.
+    expect(count("const format = { locale: club.locale };")).toBe(0);
   });
 
-  it("finds none outside the declared exemptions", () => {
+  it("finds none outside the declared exemptions, in TypeScript or JavaScript", () => {
     const files = productionSourceFiles(SRC_ROOT);
     // The walk must really see the tree, or an empty offender list is vacuous.
     expect(files.length).toBeGreaterThan(1000);
@@ -535,23 +622,25 @@ describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery
       .map((file) => file.rel);
     expect(
       offenders,
-      "INV-CONFIG-006 (#3566): these modules build a date formatter of their own. Render " +
-        "through a house shape in `@/lib/club-time` (`formatClub*` with the club's format, " +
-        "or a `BoundClubTime` method), which follows the club's persisted zone AND locale and " +
-        "is covered by `house-shapes.test.ts`. A genuinely new shape is declared in " +
+      "INV-CONFIG-006 (#3566): these modules build or reach a date formatter of their own. " +
+        "Render through a house shape in `@/lib/club-time` (`formatClub*` with the club's " +
+        "format, or a `BoundClubTime` method), which follows the club's persisted zone AND " +
+        "locale and is covered by `house-shapes.test.ts`. A genuinely new shape is declared in " +
         "`club-time/intl.ts` `HOUSE_SHAPES`, with a `format.ts` export beside the others. A " +
         "validation probe or an ISO extractor that renders nothing goes on " +
-        `DATE_FORMATTER_EXEMPTIONS with its reason. Offenders: ${offenders.join(", ") || "(none)"}`,
+        `DATE_FORMATTER_EXEMPTIONS with its exact count and reason. Offenders: ${offenders.join(", ") || "(none)"}`,
     ).toEqual([]);
   });
 
-  it("keeps every exemption real and reasoned", () => {
-    for (const [relative, reason] of DATE_FORMATTER_EXEMPTIONS) {
+  it("holds every exemption to its EXACT count, so nothing rides in beside it", () => {
+    for (const [relative, { hits, reason }] of DATE_FORMATTER_EXEMPTIONS) {
       const text = stripComments(readFileSync(path.join(ROOT, relative), "utf8"));
       expect(
         findDateFormatterConstructions(text).length,
-        `${relative} no longer builds a date formatter — delete its exemption rather than leave a permission nobody needs.`,
-      ).toBeGreaterThan(0);
+        `${relative} is exempt for exactly ${hits} date-formatter hit(s). A different ` +
+          "count means a formatter was added beside the one it is exempt for (move it onto " +
+          "a house shape) or removed (lower the count, or delete the exemption at zero).",
+      ).toBe(hits);
       expect(reason.trim().length).toBeGreaterThanOrEqual(40);
     }
   });
