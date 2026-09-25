@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #3354: the one reader of the stored NZD -> club-currency rate, exercised for a
-// NON-NZD club (the NZD short-circuit is pinned in a sibling suite below, by
-// re-importing the module with the real operational config).
+// NON-NZD club (the NZD short-circuit is pinned in a sibling suite).
+//
+// #3566: the club side is now the club's STORED currency, a required argument.
+// The environment's `APP_CURRENCY` is mocked to a DIFFERENT value here so that a
+// reader which went back to it would answer the wrong currency and fail.
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
-  currency: "AUD",
 }));
 
 vi.mock("@/config/operational", () => ({
-  get APP_CURRENCY() {
-    return mocks.currency;
-  },
+  APP_CURRENCY: "NZD",
   APP_TIME_ZONE: "Pacific/Auckland",
   APP_LOCALE: "en-NZ",
 }));
@@ -37,7 +37,7 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
       rateSetAt,
       rateSetByMemberId: "admin-1",
     });
-    const result = await loadAiSpendCurrency();
+    const result = await loadAiSpendCurrency("AUD");
     expect(result).toEqual({
       clubCurrency: "AUD",
       isNzd: false,
@@ -51,7 +51,7 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
 
   it("falls back to the identity rate, flagged unconfigured, when no row is stored", async () => {
     mocks.findUnique.mockResolvedValue(null);
-    const result = await loadAiSpendCurrency();
+    const result = await loadAiSpendCurrency("AUD");
     expect(result.isNzd).toBe(false);
     expect(result.isConfigured).toBe(false);
     expect(result.clubUnitsPerNzdMicros).toBe(1_000_000);
@@ -64,13 +64,13 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
       rateSetAt: new Date("2026-06-01T00:00:00.000Z"),
       rateSetByMemberId: null,
     });
-    const result = await loadAiSpendCurrency();
+    const result = await loadAiSpendCurrency("AUD");
     expect(result.isConfigured).toBe(false);
     expect(result.clubUnitsPerNzdMicros).toBe(1_000_000);
   });
 
   it("falls back to identity when the delegate is missing (old-colour client)", async () => {
-    const result = await loadAiSpendCurrency({});
+    const result = await loadAiSpendCurrency("AUD", {});
     expect(result.isConfigured).toBe(false);
     expect(result.clubUnitsPerNzdMicros).toBe(1_000_000);
     expect(mocks.findUnique).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
       rateSetAt: new Date("2026-06-01T00:00:00.000Z"),
       rateSetByMemberId: null,
     });
-    const result = await loadAiSpendCurrency({
+    const result = await loadAiSpendCurrency("AUD", {
       aiSpendCurrencySettings: { findUnique: txFind },
     });
     expect(result.clubUnitsPerNzdMicros).toBe(500_000);
@@ -91,6 +91,49 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
 
   it("PROPAGATES a database error — a rate we could not read is not a rate to price at", async () => {
     mocks.findUnique.mockRejectedValue(new Error("db down"));
-    await expect(loadAiSpendCurrency()).rejects.toThrow("db down");
+    await expect(loadAiSpendCurrency("AUD")).rejects.toThrow("db down");
+  });
+});
+
+describe("#3566: the club side is the club's STORED currency, not the environment's", () => {
+  it("a stored CHF club with no rate is non-NZD and unconfigured, whatever APP_CURRENCY says", async () => {
+    // The environment says NZD (mocked above). The live mismatch this fixes: a
+    // club that switched to CHF in the panel saw "Monthly cap (CHF)" beside a
+    // rate card claiming NZD and nothing to convert.
+    mocks.findUnique.mockResolvedValue(null);
+    const result = await loadAiSpendCurrency("CHF");
+    expect(result).toMatchObject({
+      clubCurrency: "CHF",
+      isNzd: false,
+      isConfigured: false,
+      clubUnitsPerNzdMicros: 1_000_000,
+    });
+    expect(mocks.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stored NZD club short-circuits to identity and never reads the table", async () => {
+    const result = await loadAiSpendCurrency("NZD");
+    expect(result).toEqual({
+      clubCurrency: "NZD",
+      isNzd: true,
+      clubUnitsPerNzdMicros: 1_000_000,
+      rateSetAt: null,
+      rateSetByMemberId: null,
+      isConfigured: false,
+    });
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("hands every caller its own identity object, so one caller cannot re-price another", async () => {
+    const first = await loadAiSpendCurrency("NZD");
+    first.clubUnitsPerNzdMicros = 5;
+    const second = await loadAiSpendCurrency("NZD");
+    expect(second.clubUnitsPerNzdMicros).toBe(1_000_000);
+  });
+
+  it("requires the currency at the type level", () => {
+    // @ts-expect-error — loadAiSpendCurrency() has no currency-less form (#3566)
+    const call = () => loadAiSpendCurrency();
+    expect(typeof call).toBe("function");
   });
 });

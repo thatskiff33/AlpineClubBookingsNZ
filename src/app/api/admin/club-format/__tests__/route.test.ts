@@ -29,6 +29,7 @@ const h = vi.hoisted(() => {
   const delegates = [
     "clubFormatSettings",
     "auditLog",
+    "aiSpendCurrencySettings",
     "member",
     "booking",
     "payment",
@@ -527,15 +528,25 @@ describe("PUT /api/admin/club-format — the write", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("touches EXACTLY two tables, so no stored amount can be rewritten", async () => {
+  it("touches EXACTLY the three tables it names, so no stored amount can be rewritten", async () => {
     /*
       THE CONTRACT THIS ROUTE MAKES. Changing the club's currency re-denominates
       nothing: every amount stays the integer cents it was. A write here
       reaching a payment, a booking or a member would be that promise broken,
       so the assertion is over the whole recorded delegate set rather than over
-      a hand-picked list of things not to call.
+      a hand-picked list of things not to call. The third table is the AI spend
+      rate, which a currency change CLEARS (#3566) — a clear, not a conversion.
     */
     await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(txDelegatesTouched()).toEqual([
+      "aiSpendCurrencySettings",
+      "auditLog",
+      "clubFormatSettings",
+    ]);
+  });
+
+  it("a locale-only change touches only the two tables, and leaves the AI rate", async () => {
+    await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true });
     expect(txDelegatesTouched()).toEqual(["auditLog", "clubFormatSettings"]);
   });
 
@@ -603,5 +614,79 @@ describe("PUT /api/admin/club-format — the write", () => {
     await expect(
       put({ currencyCode: "CHF", locale: "de-CH", confirmed: true }),
     ).rejects.toThrow(/relation does not exist/);
+  });
+});
+
+/*
+  #3566, owner decision 4: a stored AI spend rate is "how many of the club's
+  currency one NZ dollar buys" and records no currency, so a currency change
+  clears it in this same transaction and records that it did.
+*/
+describe("PUT /api/admin/club-format — a currency change clears the AI spend rate", () => {
+  const STORED_RATE = { clubUnitsPerNzdMicros: 920_000 };
+
+  function auditRows(): Array<Record<string, unknown>> {
+    const create = h.tx.client.auditLog.create as ReturnType<typeof vi.fn>;
+    return create.mock.calls.map(
+      (call) => (call[0] as { data: Record<string, unknown> }).data,
+    );
+  }
+
+  it("deletes the stored rate and audits the clear beside the currency change", async () => {
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(response.status).toBe(200);
+    const deleteMany = h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<
+      typeof vi.fn
+    >;
+    expect(deleteMany).toHaveBeenCalledWith({ where: { id: "default" } });
+    const rows = auditRows();
+    expect(rows.map((row) => row.action)).toEqual([
+      "AI_SPEND_CURRENCY_RATE_CLEARED",
+      "CLUB_FORMAT_UPDATED",
+    ]);
+    expect(rows[0]).toMatchObject({
+      category: "admin",
+      entityType: "AiSpendCurrencySettings",
+      entityId: "default",
+      actorMemberId: ACTOR,
+    });
+    expect(rows[0].metadata).toEqual({
+      previousCurrency: "NZD",
+      newCurrency: "CHF",
+      previousClubUnitsPerNzdMicros: 920_000,
+    });
+  });
+
+  it("writes no clear and no extra audit row when no rate was stored", async () => {
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+    expect(auditRows().map((row) => row.action)).toEqual(["CLUB_FORMAT_UPDATED"]);
+  });
+
+  it("leaves the rate alone on a locale-only change", async () => {
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("judges the change against the ENVIRONMENT seed when nothing was persisted", async () => {
+    // The seed is AUD (pinned in beforeEach). Recording AUD for the first time
+    // is not a currency change, so a rate set against it survives.
+    setPersisted(null);
+    h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
+    await put({ currencyCode: "AUD", locale: "en-AU", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
+    // And a first save of a DIFFERENT currency does clear it.
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(
+      h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
+    ).toHaveBeenCalledTimes(1);
   });
 });

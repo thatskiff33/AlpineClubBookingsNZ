@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { captureHostTimeZone, withTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * Email dates are the CLUB's civil time (CT-5, #2869; epic #2988).
@@ -26,11 +27,18 @@ import { captureHostTimeZone, withTimeZone } from "@/lib/__tests__/helpers/timez
 
 const mocks = vi.hoisted(() => ({
   readPersistedClubTimeZoneOutsideRequest: vi.fn(),
+  loadPersistedClubFormatSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readPersistedClubTimeZoneOutsideRequest:
     mocks.readPersistedClubTimeZoneOutsideRequest,
+}));
+
+// #3566: the club's date FORMAT rides in the same cache, read through the
+// persisted-row loader (null = absent, unreadable or unusable).
+vi.mock("@/lib/club-format-settings", () => ({
+  loadPersistedClubFormatSettings: mocks.loadPersistedClubFormatSettings,
 }));
 
 vi.mock("@/lib/club-theme", () => ({
@@ -58,6 +66,8 @@ const hostTimeZone = captureHostTimeZone();
 
 beforeEach(async () => {
   mocks.readPersistedClubTimeZoneOutsideRequest.mockReset();
+  mocks.loadPersistedClubFormatSettings.mockReset();
+  mocks.loadPersistedClubFormatSettings.mockResolvedValue(null);
   const { __resetEmailClubTimeZoneForTests } = await import(
     "@/lib/email-templates-club-time"
   );
@@ -213,7 +223,9 @@ describe("before it is primed", () => {
     const coldZone = clubTime.emailClubTimeZoneForTests();
     expect(coldZone).toBe(APP_TIME_ZONE);
     expect(clubTime.emailClubDate(DIVERGENT)).toBe(
-      bindClubTime(requireClubTimeZone(coldZone)).instantDate(DIVERGENT),
+      bindClubTime(requireClubTimeZone(coldZone), CLUB_FORMAT_TEST).instantDate(
+        DIVERGENT,
+      ),
     );
 
     resolveRead(PERSISTED_ZONE);
@@ -442,5 +454,98 @@ describe("emailCalendarDayOrUnknown", () => {
     expect(() =>
       clubTime.emailCalendarDayOrUnknown(new Date("2026-04-16T09:30:00.000Z")),
     ).toThrow(RangeError);
+  });
+});
+
+/**
+ * #3566, owner decision 2: emails learn the club's DATE FORMAT from the same
+ * boot-primed, TTL-refreshed cache that gives them its zone, so none of the
+ * email date calls changed and an email's zone and locale always come from the
+ * same place. The stated cost (dates can lag a locale change by one TTL) is the
+ * module doc's; these pin the behaviour.
+ */
+describe("#3566: the club's date format, from the same cache as the zone", () => {
+  const DE_CH_ROW = { currencyCode: "CHF", locale: "de-CH" };
+
+  it("is the shipped default while cold, so New Zealand emails are unchanged", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "en-NZ" });
+    expect(clubTime.emailCalendarDay(new Date("2026-04-16T00:00:00.000Z"))).toBe(
+      "16 Apr 2026",
+    );
+  });
+
+  it("follows a stored de-CH locale once primed — dates and the chore roster", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    const { formatChoreRosterDate } = await import("@/lib/email-templates/chores");
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue("Pacific/Auckland");
+    mocks.loadPersistedClubFormatSettings.mockResolvedValue(DE_CH_ROW);
+    const nzRoster = formatChoreRosterDate("2026-04-16");
+    await clubTime.primeEmailClubTimeZone();
+
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
+    const stay = new Date("2026-03-16T00:00:00.000Z");
+    expect(clubTime.emailCalendarDay(stay)).toBe(
+      new Intl.DateTimeFormat("de-CH", { timeZone: "UTC", dateStyle: "medium" }).format(
+        stay,
+      ),
+    );
+    expect(clubTime.emailCalendarDay(stay)).not.toBe("16 Mar 2026");
+    // The chore roster wrote every club's date the New Zealand way until #3566.
+    expect(nzRoster).toBe("Thursday, 16 April 2026");
+    expect(formatChoreRosterDate("2026-04-16")).toBe("Donnerstag, 16. April 2026");
+    // An instant stamp follows too, in the club's zone.
+    expect(clubTime.emailClubDateTime(DIVERGENT)).toBe(
+      new Intl.DateTimeFormat("de-CH", {
+        timeZone: "Pacific/Auckland",
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(DIVERGENT),
+    );
+  });
+
+  it("the STORED locale wins over the environment's LOCALE", async () => {
+    // A fresh module with LOCALE pinned, because the seed is frozen at load.
+    const previous = process.env.LOCALE;
+    try {
+      vi.resetModules();
+      process.env.LOCALE = "en-US";
+      const fresh = await import("@/lib/email-templates-club-time");
+      // The premise: cold, the environment really is what answers — otherwise
+      // the next assertion could not tell the two sources apart.
+      expect(fresh.emailClubDateFormatForTests()).toEqual({ locale: "en-US" });
+
+      mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(null);
+      mocks.loadPersistedClubFormatSettings.mockResolvedValue({
+        currencyCode: "NZD",
+        locale: "en-NZ",
+      });
+      await fresh.primeEmailClubTimeZone();
+      expect(fresh.emailClubDateFormatForTests()).toEqual({ locale: "en-NZ" });
+    } finally {
+      if (previous === undefined) delete process.env.LOCALE;
+      else process.env.LOCALE = previous;
+      vi.resetModules();
+    }
+  });
+
+  it("commits each half on its own: a locale with no zone keeps the seed zone", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    const coldZone = clubTime.emailClubTimeZoneForTests();
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(null);
+    mocks.loadPersistedClubFormatSettings.mockResolvedValue(DE_CH_ROW);
+    await clubTime.primeEmailClubTimeZone();
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(coldZone);
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
+
+    // And a later read that finds a zone but no usable locale keeps de-CH.
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(PERSISTED_ZONE);
+    mocks.loadPersistedClubFormatSettings.mockResolvedValue({
+      currencyCode: "CHF",
+      locale: "not a tag",
+    });
+    await clubTime.primeEmailClubTimeZone();
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(PERSISTED_ZONE);
+    expect(clubTime.emailClubDateFormatForTests()).toEqual({ locale: "de-CH" });
   });
 });
