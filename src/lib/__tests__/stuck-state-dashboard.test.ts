@@ -3,6 +3,7 @@ import type { FeatureFlags } from "@/config/schema";
 import {
   MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
   MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
+  SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
 } from "@/lib/manual-settlement-reversal-event";
 import {
   getStuckStateDashboard,
@@ -708,6 +709,8 @@ describe("getStuckStateDashboard", () => {
                   notIn: [
                     MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
                     MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
+                    // #3638: the second-instrument conflict marker.
+                    SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
                   ],
                 },
               },

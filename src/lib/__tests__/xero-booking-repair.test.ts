@@ -6,6 +6,7 @@ import {
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -2504,6 +2505,64 @@ describe("runBookingXeroRepair", () => {
 
     const bookingReport = report.passes[0].bookings[0];
     expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+  });
+
+  it("still raises the late-capture finding when the only snapshot is a settlement marker (#3638)", async () => {
+    // A settlement-conflict marker is a CANCELLED event WITH a snapshot, but it
+    // records no refund decision, so it must not pass for one.
+    const booking = {
+      ...makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          transactions: [
+            {
+              id: "txn_primary",
+              paymentId: "payment_1",
+              kind: "PRIMARY",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_primary_captured",
+              amountCents: 10000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: "pm_123",
+              reason: null,
+              createdAt: new Date("2026-05-01T00:00:00Z"),
+              updatedAt: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+        },
+      }),
+      events: [
+        {
+          id: "evt_marker",
+          type: "CANCELLED",
+          snapshot: {
+            kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+            invoiceId: "inv_1",
+            invoiceNumber: "INV-1",
+            bookingStatus: "PAID",
+            settledBySource: "STRIPE",
+            settledByPaymentIntentId: "pi_primary_captured",
+          },
+          occurredAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    };
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
       "LATE_CAPTURE_AFTER_CANCELLATION"
     );
   });
