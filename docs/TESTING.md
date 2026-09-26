@@ -14,6 +14,32 @@ an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
 
+## CI shards and the required check
+
+Pull-request and `main` CI run the complete unit suite in four independent
+Vitest file shards (`npm test -- --shard=1/4` through `4/4`). Each shard checks
+out the whole tree and full Git history: a disk-scanning census still sees all
+source files, and every test file, including each census and frozen-clock test,
+is assigned to exactly one shard. All shards use the same `vitest.config.mts`
+and its ordered setup files. The clock-rollover canary still runs the unsharded
+suite on `main` and nightly; it is not a pull-request check.
+
+`verify` remains the single required status context. It runs lint, typecheck,
+knip, the production build and its proofs without a `needs:` edge or job-level
+condition, then `scripts/ci/require-test-shards.mjs` checks that all four shard
+jobs from the **same Actions run attempt** completed successfully. Missing,
+duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
+bounded wait all fail `verify`; a job that never reported cannot silently pass.
+Re-run the whole workflow rather than only a failed job if a partial re-run
+leaves successful shards absent from the new attempt. This does not add a
+branch-protection context. Coverage collection and thresholds were absent
+before sharding and remain absent; adding them is a separate project.
+
+`scripts/ci/require-test-shards.test.mjs` checks the gate and exercises Vitest
+5's actual run sequencer against the discovered file set. `vitest list --shard`
+does **not** apply sharding in this version, so comparing four `list` outputs
+would falsely suggest every file runs four times.
+
 ## Shared setup
 
 `vitest.config.mts` points every test file at three setup files, in order —

@@ -459,6 +459,57 @@ jobs:
           GITLEAKS_SCAN_LABEL: the checked-out tree
         run: bash scripts/ci/gitleaks-scan.sh dir
 
+  # The unit suite runs in independent jobs. They are NOT required contexts:
+  # `verify` below polls this exact run attempt and fails unless all four
+  # succeed. No `needs:` or job-level `if:` may be added to `verify`, because
+  # GitHub treats a skipped required job as satisfying branch protection.
+  test-shard:
+    name: Test shard (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+          - 4
+    env:
+      AUTH_SECRET: ci-auth-secret
+      NEXTAUTH_SECRET: ci-auth-secret
+      NEXTAUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "false"
+      CRON_SECRET: ci-cron-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
+      STRIPE_SECRET_KEY: sk_test_fake
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
+    steps:
+      # The disk-scanning and git-history suites need the entire source tree
+      # and history on whichever shard Vitest assigns them to (#2909).
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Test assigned suite files
+        run: npm test -- --shard=${{ matrix.shard }}/4
+
   verify:
     runs-on: ubuntu-latest
     # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
@@ -486,6 +537,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
+      actions: read # poll this run attempt's independent unit-test jobs
       # The concurrency-declaration gate fetches the CURRENT PR body from the
       # pulls API so a body edit can flip the check green on a plain re-run.
       pull-requests: read
@@ -684,9 +736,6 @@ jobs:
       - name: Dead-code check (knip)
         run: npx knip
 
-      - name: Test
-        run: npm test
-
       # #2352: the public website's render modes are load-bearing and nothing else
       # notices when one changes — a route that quietly stops being per-request
       # gets prerendered at build with no database and no CSP nonce, and a route
@@ -763,6 +812,15 @@ jobs:
             echo "::error::The server-only boundary self-test exited 0 without printing its success line, so it did not actually run. A silent exit 0 must never satisfy this gate (#2850, #3186)."
             exit 1
           fi
+
+      # This is a STEP in the existing required job, not a `needs:` edge. Run
+      # it after the build proofs so a slow or failed shard does not suppress
+      # their evidence. The script refuses absent/duplicate/bad conclusions
+      # and times out rather than making `verify` vacuously green.
+      - name: Require every unit-test shard to pass
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci/require-test-shards.mjs
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this
