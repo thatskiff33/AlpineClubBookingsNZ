@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   // reaper drains it after commit.
   enqueueOwnHostingCoverage: vi.fn(),
   settleHostingCoverage: vi.fn(),
+  // #3642: the combined Internet Banking invoice a released settlement retires.
+  abandonInvoice: vi.fn(),
 }));
 
 const txClient = {
@@ -55,6 +57,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntent,
+}));
+vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
+  abandonGroupSettlementInvoiceInTx: mocks.abandonInvoice,
 }));
 vi.mock("@/lib/group-cancel", () => ({
   settleGroupBookingOnOrganiserCancel:
@@ -162,6 +167,7 @@ beforeEach(() => {
   // Resume phase (#1236): default to no interrupted organiser-cancel cleanups.
   mocks.groupBookingFindMany.mockResolvedValue([]);
   mocks.settleGroupBookingOnOrganiserCancel.mockResolvedValue(undefined);
+  mocks.abandonInvoice.mockResolvedValue(undefined);
 });
 
 describe("groupSettlementReapDeadline", () => {
@@ -301,6 +307,65 @@ describe("reapStaleGroupSettlements", () => {
       data: { status: PaymentStatus.FAILED },
     });
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
+  });
+
+  // #3642 (INV-PAY-106): before this the reaper cancelled only a Stripe intent,
+  // and the emailed invoice stayed AUTHORISED in receivables for a bill nobody
+  // owed. It is retired in the SAME transaction that releases the settlement.
+  it("retires the combined invoice of an Internet Banking settlement it releases (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "xinv_1",
+      updatedAt,
+    });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    let abandonedInsideTheRelease = false;
+    mocks.abandonInvoice.mockImplementation(async (tx: unknown) => {
+      abandonedInsideTheRelease =
+        tx === txClient && mocks.settlementUpdateMany.mock.calls.length === 1;
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_1",
+    });
+    expect(abandonedInsideTheRelease).toBe(true);
+  });
+
+  it("retires an invoice an older FAILED settlement still carries, without restarting its clock (#3642)", async () => {
+    // Released before #3642 shipped: FAILED, children already reverted, and the
+    // invoice still live. The pass retires it but must not bump `updatedAt`,
+    // which the expiry phase measures its second window from.
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ status: PaymentStatus.FAILED, stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      xeroInvoiceId: "xinv_legacy",
+      updatedAt,
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_legacy",
+      preserveUpdatedAt: updatedAt,
+    });
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: PaymentStatus.FAILED } })
+    );
   });
 
   it("does not reap a settlement still inside the window", async () => {

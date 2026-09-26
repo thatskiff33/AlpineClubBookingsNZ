@@ -165,6 +165,7 @@ import { prisma } from "@/lib/prisma";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import {
   createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
 } from "@/lib/xero-group-settlement-invoices";
 
@@ -806,5 +807,180 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
         }),
       })
     );
+  });
+});
+
+// #3642 (INV-PAY-106): only a settlement still BOUND to an Internet Banking
+// invoice gets one, a released settlement never points at (or emails) an
+// invoice that arrives after the release, and a replacement invoice is never
+// answered with Xero's replay of the one it replaces.
+describe("the bound-invoice rule in the create worker (#3642)", () => {
+  function organiserFenceRead(overrides: Record<string, unknown> = {}) {
+    return {
+      groupBooking: {
+        status: GroupBookingStatus.OPEN,
+        organiserBookingId: "organiser-booking-1",
+        organiserBooking: {
+          noEmails: false,
+          member: { email: "organiser@example.test" },
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.tx.$executeRaw.mockResolvedValue(undefined);
+    mocks.transaction.mockImplementation(async (callback) => callback(mocks.tx));
+    mocks.settlementUpdate.mockResolvedValue({});
+    mocks.persisted.current = {};
+    mocks.linkCount.mockResolvedValue(0);
+    mocks.enqueueAbandonVoid.mockResolvedValue({ queueOperationId: "void-op-9" });
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      {
+        id: "child-1",
+        status: BookingStatus.CONFIRMED,
+        lodgeId: "lodge-1",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-02"),
+        guests: [],
+      } as never,
+    ]);
+    mocks.accountingApi.createInvoices.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv-1", invoiceNumber: "INV-1" }] },
+    });
+    mocks.accountingApi.emailInvoice.mockResolvedValue({ body: { sent: true } });
+    mocks.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv-old", status: "VOIDED" }] },
+    });
+  });
+
+  it("raises nothing for a settlement the reaper released before the CREATE ran", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({
+      ...settlement(GroupBookingStatus.OPEN),
+      status: "FAILED",
+    });
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+    ).resolves.toBeNull();
+
+    expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledWith("op-1", {
+      status: "SUCCEEDED",
+      responsePayload: { settlementNoLongerAwaitingInvoice: true },
+    });
+  });
+
+  it("abandons an invoice that arrives after the settlement was released: VOID queued, link inactive, never pointed at or emailed", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+      .mockResolvedValueOnce({ status: "FAILED", groupBooking: { status: GroupBookingStatus.OPEN } });
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+    ).resolves.toBeNull();
+
+    expect(mocks.enqueueAbandonVoid).toHaveBeenCalledWith("settle-1", "inv-1", { store: mocks.tx });
+    expect(mocks.upsertLink).toHaveBeenCalledWith(
+      expect.objectContaining({ xeroObjectId: "inv-1", role: "GROUP_SETTLEMENT_INVOICE", active: false }),
+      { store: mocks.tx }
+    );
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "op-1",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({ abandonedAfterInvoiceCreation: true }),
+      })
+    );
+  });
+
+  it("does not email an invoice the settlement stopped pointing at before the email gate", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+      .mockResolvedValueOnce(organiserFenceRead())
+      // The reaper released the settlement between the two fences.
+      .mockResolvedValueOnce(organiserFenceRead({ status: "FAILED" }));
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+    ).resolves.toBeNull();
+
+    expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "op-1",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({ abandonedBeforeInvoiceEmail: true }),
+        extraLinks: [expect.objectContaining({ xeroObjectId: "inv-1", active: false })],
+      })
+    );
+  });
+
+  it("keys a replacement invoice by the invoices already linked, so Xero cannot replay the abandoned one", async () => {
+    mocks.linkCount.mockResolvedValue(1);
+    mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
+
+    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" });
+
+    expect(mocks.accountingApi.createInvoices).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.anything(),
+      undefined,
+      undefined,
+      "group-settlement:settle-1:invoice:after-1:v1"
+    );
+  });
+
+  it("keeps the original key for a settlement's first invoice", async () => {
+    mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
+
+    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" });
+
+    expect(mocks.accountingApi.createInvoices).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.anything(),
+      undefined,
+      undefined,
+      "group-settlement:settle-1:invoice:v1"
+    );
+  });
+
+  it("voids an abandoned invoice under its own invoice-specific key", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+
+    await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
+      syncOperationId: "void-op-9",
+    });
+
+    expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledWith(
+      "tenant-1",
+      "inv-old",
+      { invoices: [{ invoiceID: "inv-old", status: "VOIDED" }] },
+      undefined,
+      "group-settlement:settle-1:invoice-void-after-abandon:inv-old:v1"
+    );
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "void-op-9",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({ abandonedBySettlement: true }),
+      })
+    );
+  });
+
+  it("never voids the invoice a settlement still points at", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: "inv-old" });
+
+    await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
+      syncOperationId: "void-op-9",
+    });
+
+    expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeSync).toHaveBeenCalledWith("void-op-9", {
+      status: "SUCCEEDED",
+      responsePayload: { skippedInvoiceStillLinkedToSettlement: true },
+    });
   });
 });
