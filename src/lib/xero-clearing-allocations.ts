@@ -26,6 +26,11 @@ import { callXeroApi } from "@/lib/xero-api-client";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { formatCents } from "@/lib/utils";
+import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  readModificationNoteWording,
+  type ModificationNoteWording,
+} from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 
 export interface ClearingAllocationTarget {
@@ -141,4 +146,60 @@ export function readRecordedClearingAllocations(
     targets.push({ invoiceId, amountCents });
   }
   return targets;
+}
+
+/**
+ * A FAILED booking-anchored clearing note (the hold-expiry release's, the
+ * never-captured cancel path's, the repair tool's re-queue) replays from what
+ * its own row recorded: the amount, and the wording through the one reader, so
+ * a replay still says the invoice was cleared. Both the queued shape and the
+ * builder's execution shape keep `refundAmountCents`; the builder re-plans the
+ * allocations, since a FAILED row created no note to allocate.
+ */
+export function readBookingClearingNoteRetryInput(operation: {
+  localModel: string | null;
+  localId: string | null;
+  requestPayload: unknown;
+  queueType?: string | null;
+}): { amountCents: number; wording: ModificationNoteWording } | null {
+  if (operation.localModel !== "Booking" || !operation.localId) return null;
+  const payload = asRecord(operation.requestPayload);
+  const amountCents = readNumber(payload?.refundAmountCents);
+  const isClearingNoteRow =
+    payload?.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
+    operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
+    readString(payload?.invoiceId) !== null;
+  if (!isClearingNoteRow || amountCents === null || amountCents <= 0) return null;
+  return { amountCents, wording: readModificationNoteWording(payload) };
+}
+
+/**
+ * The planned targets a PARTIAL note has not yet allocated: one whose
+ * allocation link already exists is skipped, since re-allocating it would
+ * exceed what that invoice now owes.
+ */
+export async function unallocatedClearingTargets(input: {
+  creditNoteId: string;
+  targets: ClearingAllocationTarget[];
+  allocationRole: string;
+  localModel: string;
+  localId: string;
+}): Promise<ClearingAllocationTarget[]> {
+  const links = await prisma.xeroObjectLink.findMany({
+    where: {
+      localModel: input.localModel,
+      localId: input.localId,
+      xeroObjectType: "ALLOCATION",
+      role: input.allocationRole,
+      active: true,
+    },
+    select: { metadata: true },
+  });
+  const allocated = new Set(
+    links
+      .map((link) => asRecord(link.metadata))
+      .filter((metadata) => readString(metadata?.creditNoteId) === input.creditNoteId)
+      .map((metadata) => readString(metadata?.invoiceId))
+  );
+  return input.targets.filter((target) => !allocated.has(target.invoiceId));
 }
