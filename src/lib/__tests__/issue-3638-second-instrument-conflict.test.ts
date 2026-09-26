@@ -127,9 +127,12 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { syncInternetBankingPaymentsForPaidInvoice } from "@/lib/xero-inbound/invoice-paid-effects";
+import * as settlementMarkerModule from "@/lib/manual-settlement-reversal-event";
 import {
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+  SETTLEMENT_MARKERS,
+  SETTLEMENT_MARKER_EVENT_REASONS,
   isManualSettlementMarkerEvent,
 } from "@/lib/manual-settlement-reversal-event";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -540,6 +543,37 @@ describe("the marker is admin-only (#3638)", () => {
         type: BookingEventType.CANCELLED,
         snapshot: { policySummary: "Full refund" },
       })
+    ).toBe(false);
+  });
+
+  // #3638 review (SSOT F3): the kind predicate and the DB reason filter were
+  // two hand-kept lists. Both now derive from SETTLEMENT_MARKERS; this walks
+  // the module's exports so a fourth marker kind declared without a registry
+  // entry fails here rather than leaking into the narrative as a cancellation.
+  it("derives the kind test and the reason filter from one registry that names every marker kind", () => {
+    const declaredKinds = Object.entries(settlementMarkerModule)
+      .filter(([name]) => name.endsWith("_EVENT_KIND"))
+      .map(([, value]) => value);
+    expect(declaredKinds.length).toBeGreaterThanOrEqual(3);
+    expect(SETTLEMENT_MARKERS.map((marker) => marker.kind).sort()).toEqual(
+      [...declaredKinds].sort(),
+    );
+    for (const marker of SETTLEMENT_MARKERS) {
+      expect(
+        isManualSettlementMarkerEvent({
+          type: BookingEventType.CANCELLED,
+          snapshot: { kind: marker.kind },
+        }),
+      ).toBe(true);
+      expect(SETTLEMENT_MARKER_EVENT_REASONS).toContain(marker.reason);
+    }
+    expect(SETTLEMENT_MARKER_EVENT_REASONS).toHaveLength(SETTLEMENT_MARKERS.length);
+    // Membership is a CANCELLED event's snapshot kind, never the kind alone.
+    expect(
+      isManualSettlementMarkerEvent({
+        type: BookingEventType.REFUNDED,
+        snapshot: { kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND },
+      }),
     ).toBe(false);
   });
 });

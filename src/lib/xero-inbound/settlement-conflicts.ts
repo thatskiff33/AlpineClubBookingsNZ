@@ -15,11 +15,15 @@ import {
   BookingEventType,
   BookingStatus,
   PaymentSource,
-  PaymentStatus,
   PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isPaidLikeBookingStatus } from "@/lib/booking-status";
+import {
+  CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST,
+  CAPTURED_TRANSACTION_STATUS_LIST,
+} from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -188,21 +192,6 @@ export async function recordManualSettlementConflict({
   );
 }
 
-/** The booking statuses that mean "already settled" for #3638's conflict. */
-const SECOND_INSTRUMENT_SETTLED_BOOKING_STATUSES = new Set<BookingStatus>([
-  BookingStatus.PAID,
-  // The post-stay cron flips PAID -> COMPLETED, so a late bank transfer against
-  // the emailed invoice lands on a completed booking (the #2262 fence's reason).
-  BookingStatus.COMPLETED,
-]);
-
-/** Every status a captured transaction can end in, refunds included. */
-const CAPTURED_STATUSES = [
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-];
-
 /**
  * #3638: the captured PRIMARY row of a DIFFERENT instrument — not Internet
  * Banking, so today a card payment — on a booking that instrument already
@@ -244,7 +233,7 @@ export async function findSecondInstrumentSettlement(
 ) {
   const cancelled =
     includeCancelled && bookingStatus === BookingStatus.CANCELLED;
-  if (!cancelled && !SECOND_INSTRUMENT_SETTLED_BOOKING_STATUSES.has(bookingStatus)) {
+  if (!cancelled && !isPaidLikeBookingStatus(bookingStatus)) {
     return null;
   }
   if (cancelled) {
@@ -253,7 +242,7 @@ export async function findSecondInstrumentSettlement(
         paymentId,
         kind: PaymentTransactionKind.PRIMARY,
         source: PaymentSource.INTERNET_BANKING,
-        status: { in: CAPTURED_STATUSES },
+        status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] },
       },
       select: { id: true },
     });
@@ -266,8 +255,8 @@ export async function findSecondInstrumentSettlement(
       source: { not: PaymentSource.INTERNET_BANKING },
       status: {
         in: cancelled
-          ? CAPTURED_STATUSES
-          : [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+          ? [...CAPTURED_TRANSACTION_STATUS_LIST]
+          : [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
       },
     },
     select: {

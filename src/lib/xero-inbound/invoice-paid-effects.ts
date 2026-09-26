@@ -23,7 +23,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { bookingHasCapacityOverride } from "@/lib/booking-status";
+import { bookingHasCapacityOverride, isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
@@ -594,8 +594,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // back to PAID and re-running the paid arm's side effects (the
       // confirmation email among them).
       if (
-        fresh.booking.status === BookingStatus.PAID ||
-        fresh.booking.status === BookingStatus.COMPLETED
+        isPaidLikeBookingStatus(fresh.booking.status)
       ) {
         return {
           type: "alreadyPaid" as const,
@@ -943,8 +942,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         };
       }
       if (
-        locked.booking.status === BookingStatus.PAID ||
-        locked.booking.status === BookingStatus.COMPLETED
+        isPaidLikeBookingStatus(locked.booking.status)
       ) {
         return {
           type: "alreadyPaid" as const,

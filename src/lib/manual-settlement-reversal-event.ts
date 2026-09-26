@@ -28,12 +28,11 @@ export const MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND =
   "manual_mark_paid_reversed" as const;
 
 /**
- * Honest, member-neutral copy stored on the event's `reason`. There is no
- * admin timeline that renders BookingEvent reasons today — the reversal's
- * operator-visible trail is its `AuditLog` entry
- * (`booking-payment.manual-payment.mark-unpaid`) — so this string exists as
- * durable, self-describing history on the event row itself. It never enters
- * the member/guest narrative (see `isManualSettlementMarkerEvent`).
+ * Honest, member-neutral copy stored on the event's `reason`. The staff
+ * booking timeline renders it (#3638, through `SETTLEMENT_MARKERS`), beside
+ * the reversal's `AuditLog` entry
+ * (`booking-payment.manual-payment.mark-unpaid`); it never enters the
+ * member/guest narrative (see `isManualSettlementMarkerEvent`).
  */
 export const MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON =
   "Manually recorded payment reversed — the booking is unpaid again and was not cancelled.";
@@ -146,32 +145,82 @@ export function asSecondInstrumentSettlementConflictSnapshot(
 }
 
 /**
- * The constant `reason` of every admin-only settlement marker above. The
- * DB-level twin of `isManualSettlementMarkerEvent` for relation filters that
- * cannot read the snapshot discriminator (the stuck-state crash detector), so
- * adding a marker here is the one edit both exclusions need.
+ * THE ONE LIST of admin-only settlement markers (#3638, `INV-SSOT`). Each is a
+ * CANCELLED BookingEvent that cancels nothing, so every consumer that
+ * pattern-matches CANCELLED events must exclude all of them, and the staff
+ * timeline shows them. Every exclusion and the timeline derive from this list:
+ * the snapshot `kind` is what `isManualSettlementMarkerEvent` tests, the
+ * `reason` is what relation filters that cannot read the snapshot test (the
+ * stuck-state crash detector), and the `adminTitle`/`tone` are what the staff
+ * timeline renders. Adding a marker is one entry here.
+ *
+ * A `reason` is matched against stored rows, so rewording one silently stops
+ * the DB-level exclusion matching every row written before the change: add
+ * the old string as a second entry rather than editing it in place.
  */
-export const SETTLEMENT_MARKER_EVENT_REASONS = [
-  MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-  SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
-] as const;
+export const SETTLEMENT_MARKERS = [
+  {
+    kind: MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND,
+    reason: MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
+    adminTitle: "Manual payment reversed",
+    tone: "warning",
+  },
+  {
+    kind: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
+    reason: MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
+    adminTitle: "Xero payment on a cash-settled booking",
+    tone: "danger",
+  },
+  {
+    kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+    reason: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+    adminTitle: "May have been paid twice (card and Xero)",
+    tone: "danger",
+  },
+] as const satisfies readonly {
+  kind: string;
+  reason: string;
+  adminTitle: string;
+  tone: "warning" | "danger";
+}[];
+
+export type SettlementMarker = (typeof SETTLEMENT_MARKERS)[number];
+
+/** Every marker's constant `reason`, for DB relation filters. */
+export const SETTLEMENT_MARKER_EVENT_REASONS: readonly string[] =
+  SETTLEMENT_MARKERS.map((marker) => marker.reason);
+
+const SETTLEMENT_MARKERS_BY_KIND = new Map<string, SettlementMarker>(
+  SETTLEMENT_MARKERS.map((marker) => [marker.kind, marker]),
+);
+
+/**
+ * The registry entry a durable event is, or null when it is not a settlement
+ * marker. The three `as*Snapshot` narrowers above are typed views of one
+ * marker's snapshot; membership is decided here.
+ */
+export function settlementMarkerOf(event: {
+  type: BookingEventType;
+  snapshot: unknown;
+}): SettlementMarker | null {
+  if (event.type !== BookingEventType.CANCELLED) return null;
+  const kind =
+    event.snapshot && typeof event.snapshot === "object"
+      ? (event.snapshot as { kind?: unknown }).kind
+      : undefined;
+  return typeof kind === "string"
+    ? (SETTLEMENT_MARKERS_BY_KIND.get(kind) ?? null)
+    : null;
+}
 
 /**
  * True when a durable CANCELLED event is one of the admin-only settlement
- * markers: the two #2262 markers (a manual mark-paid reversal, or the
- * reciprocal-fence conflict) or #3638's second-instrument conflict. NONE
- * cancels the booking, so every consumer that pattern-matches CANCELLED events
- * must exclude them.
+ * markers in `SETTLEMENT_MARKERS`. NONE cancels the booking, so every consumer
+ * that pattern-matches CANCELLED events must exclude them.
  */
 export function isManualSettlementMarkerEvent(event: {
   type: BookingEventType;
   snapshot: unknown;
 }): boolean {
-  return (
-    event.type === BookingEventType.CANCELLED &&
-    (asManualSettlementReversalSnapshot(event.snapshot) !== null ||
-      asManualSettlementConflictSnapshot(event.snapshot) !== null ||
-      asSecondInstrumentSettlementConflictSnapshot(event.snapshot) !== null)
-  );
+  return settlementMarkerOf(event) !== null;
 }
