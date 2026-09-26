@@ -22,9 +22,8 @@ import {
 } from "@/lib/stripe";
 import {
   reconcilePaymentAggregates,
-  recordStripeRefundLedgerEntry,
+  recordStripeRefundsAgainstTransaction,
   refundPaymentTransactions,
-  sumRecordedRefundsForTransaction,
   upsertPaymentIntentTransaction,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
@@ -167,12 +166,6 @@ function nextRetryDate(attempts: number) {
     );
   }
   return new Date(Date.now() + delayMinutes * 60 * 1000);
-}
-
-function refundStatusFor(amountCents: number, refundedAmountCents: number) {
-  return refundedAmountCents >= amountCents
-    ? PaymentStatus.REFUNDED
-    : PaymentStatus.PARTIALLY_REFUNDED;
 }
 
 export async function enqueuePaymentIntentCancellationRecovery({
@@ -1843,36 +1836,16 @@ async function processRefundSupersededPaymentOperation(
     idempotencyKey: operation.idempotencyKey,
   });
 
-  await recordStripeRefundLedgerEntry({
+  // Idempotent by the ledger (#3640, the one writer every card refund uses):
+  // a retry that Stripe answers with the same refund records nothing new and
+  // adds nothing. The ledger row and the transaction row now commit together;
+  // a row an older attempt left behind still lifts the mirror to at least the
+  // card refunds on record (the ledger floor).
+  await recordStripeRefundsAgainstTransaction({
     paymentId: operation.paymentId,
     paymentTransactionId: refreshedTransaction.id,
-    refund,
+    refunds: [refund],
     fallbackPaymentIntentId: operation.paymentIntentId,
-  });
-
-  // Idempotency-by-ledger: read the refunded total from the ledger
-  // (which is upserted on stripeRefundId) rather than incrementing the
-  // pre-read row. If a previous attempt wrote the ledger entry but
-  // failed before updating the transaction row, the ledger total is
-  // still the truth.
-  const ledgerRefundedTotal = await sumRecordedRefundsForTransaction(
-    prisma,
-    refreshedTransaction.id,
-  );
-  const nextRefundedAmountCents = Math.min(
-    refreshedTransaction.amountCents,
-    Math.max(refreshedTransaction.refundedAmountCents, ledgerRefundedTotal),
-  );
-
-  await prisma.paymentTransaction.update({
-    where: { id: refreshedTransaction.id },
-    data: {
-      refundedAmountCents: nextRefundedAmountCents,
-      status: refundStatusFor(
-        refreshedTransaction.amountCents,
-        nextRefundedAmountCents
-      ),
-    },
   });
 
   await reconcilePaymentAggregates({ paymentId: operation.paymentId });
@@ -1887,8 +1860,8 @@ async function processRefundSupersededPaymentOperation(
    * FENCED ON THE COMPLETION CLAIM (#3340 fix round), which is why it now runs
    * after it rather than before. The `outstandingCents <= 0` short-circuit above
    * is NOT an idempotence gate: it only becomes true once the transaction row's
-   * `refundedAmountCents` has been written, and a failure between the ledger
-   * entry and that write re-enters with the refund already made. Stripe answers
+   * `refundedAmountCents` has been written, and a failure between the Stripe
+   * refund and that write re-enters with the refund already made. Stripe answers
    * the replay with the same refund and the ledger dedupes on the refund id, so
    * the MONEY is safe - but the epilogue would run a second time, sending the
    * member a second "we have refunded you" email and the admins a second alert,

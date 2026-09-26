@@ -17,6 +17,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import {
   EXCLUDED_LEDGER_REFUND_STATUSES,
   isCapturedTransactionStatus,
+  isRecordedRefundStatus,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -94,13 +95,6 @@ function applyRefundStatus(
   }
 
   return baseStatus;
-}
-
-function boundedRefundedAmountCents(
-  amountCents: number,
-  ...candidates: number[]
-) {
-  return Math.min(amountCents, Math.max(0, ...candidates));
 }
 
 async function loadPaymentWithTransactions(store: PaymentStore, paymentId: string) {
@@ -466,29 +460,25 @@ export async function findPaymentTransactionByIntentId({
   return transaction;
 }
 
-export async function recordStripeRefundLedgerEntry({
+async function recordStripeRefundLedgerEntry({
   paymentId,
   paymentTransactionId,
   refund,
   fallbackChargeId,
   fallbackPaymentIntentId,
-  store = prisma,
+  store,
 }: {
   paymentId: string;
-  paymentTransactionId?: string | null;
+  paymentTransactionId: string;
   refund: StripeRefundLedgerInput;
   fallbackChargeId?: string | null;
   fallbackPaymentIntentId?: string | null;
-  store?: PaymentStore;
+  store: PaymentStore;
 }) {
   const stripeChargeId = stripeReferenceId(refund.charge) ?? fallbackChargeId ?? null;
   const stripePaymentIntentId =
     stripeReferenceId(refund.payment_intent) ?? fallbackPaymentIntentId ?? null;
   const stripeCreatedAt = stripeCreatedAtToDate(refund.created);
-  const existingRefund = await store.paymentRefund.findUnique({
-    where: { stripeRefundId: refund.id },
-    select: { id: true },
-  });
   const data = {
     paymentId,
     paymentTransactionId: paymentTransactionId ?? null,
@@ -501,22 +491,191 @@ export async function recordStripeRefundLedgerEntry({
     stripeCreatedAt,
   };
 
-  await store.paymentRefund.upsert({
-    where: { stripeRefundId: refund.id },
-    create: {
-      ...data,
-      stripeRefundId: refund.id,
-    },
-    update: data,
+  // #3640: `created` decides whether the refund is ADDED to the mirror, so the
+  // INSERT itself must answer it. The old read-then-upsert let two writers
+  // recording one refund at once - the inline refund and its own
+  // `charge.refunded` webhook - both see no row and both report `created`,
+  // which would add the refund twice. `ON CONFLICT DO NOTHING` inserts for
+  // exactly one of them; the other refreshes the row it lost to.
+  const inserted = await store.paymentRefund.createMany({
+    data: [{ ...data, stripeRefundId: refund.id }],
+    skipDuplicates: true,
   });
+  if (inserted.count === 0) {
+    await store.paymentRefund.update({
+      where: { stripeRefundId: refund.id },
+      data,
+    });
+  }
 
   return {
-    created: !existingRefund,
+    created: inserted.count > 0,
     amountCents: refund.amount,
+    status: data.status,
   };
 }
 
-export async function sumRecordedRefundsForTransaction(
+/**
+ * Run `fn` atomically: inside the caller's transaction when `store` is one,
+ * otherwise inside a transaction of its own. The root client is told apart by
+ * `$connect`, which an interactive transaction client does not carry;
+ * `$transaction` cannot tell them apart (measured on Prisma 7, see
+ * `edit-financial-review.ts`).
+ */
+function runAtomically<T>(
+  store: PaymentStore,
+  fn: (db: PaymentStore) => Promise<T>
+): Promise<T> {
+  if (typeof (store as { $connect?: unknown }).$connect === "function") {
+    return (store as typeof prisma).$transaction((tx) => fn(tx));
+  }
+  return fn(store);
+}
+
+/** Re-reads the refund mirror's compare-and-set allows before failing loud. */
+const REFUND_MIRROR_CAS_ATTEMPTS = 5;
+
+/**
+ * #3640 - THE one way a Stripe card refund reaches a transaction's
+ * `refundedAmountCents` mirror (`INV-SSOT`). The inline refund, the
+ * `charge.refunded` webhook sync and the superseded-payment refund recovery all
+ * write through here.
+ *
+ * ## The refund is ADDED, never maxed
+ *
+ * The mirror counts BOTH dispositions - card refunds and account-credit
+ * settlements (`applyLocalRefundAllocation`, which writes no `PaymentRefund`
+ * row; see `stripe-cash-refund-evidence.ts`). It used to be set to
+ * `max(stored, card refunds on record)`, so a card refund made AFTER a credit
+ * vanished: $100 credit then a $50 card refund read $100, not $150, and a later
+ * 100%-tier cancel paid $450 against $400 taken. Now only a refund this call
+ * NEWLY recorded, in a counted status (`isRecordedRefundStatus`), is added. A
+ * replay records nothing new and adds nothing.
+ *
+ * The card refunds on record - and, from the webhook, Stripe's own
+ * `amount_refunded` - remain a FLOOR, never the value: the mirror can never read
+ * below the cash the card has demonstrably returned, which is also what heals a
+ * row a pre-#3640 crash left between its ledger row and its mirror write.
+ * Capped at the transaction's captured amount, as before.
+ *
+ * ## Why it cannot lose or double an increment
+ *
+ * - `created` is answered by the INSERT (`recordStripeRefundLedgerEntry`), so
+ *   two writers recording one refund cannot both add it.
+ * - The mirror write is a compare-and-set on the value it was computed from,
+ *   re-read and retried on a miss - the #3032 discipline. It is never a stale
+ *   absolute write, and a concurrent credit allocation's own CAS refuses rather
+ *   than overwrite it.
+ * - The ledger rows and the mirror write commit TOGETHER (`runAtomically`): a
+ *   crash between them would otherwise leave a row whose replay reports "not
+ *   created" and never adds it.
+ * - Refunds are inserted in id order, so two writers inserting overlapping sets
+ *   take the unique-index locks in one order.
+ *
+ * Returns `appliedCents`, how far THIS call moved the mirror - the real delta
+ * the webhook queues a Xero credit note for.
+ */
+export async function recordStripeRefundsAgainstTransaction({
+  paymentId,
+  paymentTransactionId,
+  refunds,
+  fallbackChargeId,
+  fallbackPaymentIntentId,
+  stripeRefundedAmountCents = 0,
+  store = prisma,
+}: {
+  paymentId: string;
+  paymentTransactionId: string;
+  refunds: readonly StripeRefundLedgerInput[];
+  fallbackChargeId?: string | null;
+  fallbackPaymentIntentId?: string | null;
+  /** Stripe's cumulative `amount_refunded` for the charge, when known. */
+  stripeRefundedAmountCents?: number;
+  store?: PaymentStore;
+}) {
+  return runAtomically(store, async (db) => {
+    let createdRefundsCount = 0;
+    let createdRefundAmountCents = 0;
+    let newlyCountedCents = 0;
+    const ordered = [...refunds].sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    );
+    for (const refund of ordered) {
+      const recorded = await recordStripeRefundLedgerEntry({
+        paymentId,
+        paymentTransactionId,
+        refund,
+        fallbackChargeId,
+        fallbackPaymentIntentId,
+        store: db,
+      });
+      if (!recorded.created) {
+        continue;
+      }
+      createdRefundsCount += 1;
+      createdRefundAmountCents += recorded.amountCents;
+      if (isRecordedRefundStatus(recorded.status)) {
+        newlyCountedCents += recorded.amountCents;
+      }
+    }
+
+    const ledgerRefundedAmountCents = await sumRecordedRefundsForTransaction(
+      db,
+      paymentTransactionId
+    );
+
+    for (let attempt = 0; attempt < REFUND_MIRROR_CAS_ATTEMPTS; attempt += 1) {
+      const current = await db.paymentTransaction.findUnique({
+        where: { id: paymentTransactionId },
+        select: { amountCents: true, refundedAmountCents: true },
+      });
+      if (!current) {
+        throw new Error(`Payment transaction ${paymentTransactionId} not found`);
+      }
+      const nextRefundedAmountCents = Math.min(
+        current.amountCents,
+        Math.max(
+          current.refundedAmountCents + newlyCountedCents,
+          ledgerRefundedAmountCents,
+          stripeRefundedAmountCents,
+          0
+        )
+      );
+      const claimed = await db.paymentTransaction.updateMany({
+        where: {
+          id: paymentTransactionId,
+          refundedAmountCents: current.refundedAmountCents,
+        },
+        data: {
+          refundedAmountCents: nextRefundedAmountCents,
+          status: applyRefundStatus(
+            PaymentStatus.SUCCEEDED,
+            current.amountCents,
+            nextRefundedAmountCents
+          ),
+        },
+      });
+      if (claimed.count === 1) {
+        return {
+          createdRefundsCount,
+          createdRefundAmountCents,
+          ledgerRefundedAmountCents,
+          refundedAmountCents: nextRefundedAmountCents,
+          appliedCents: Math.max(
+            nextRefundedAmountCents - current.refundedAmountCents,
+            0
+          ),
+        };
+      }
+    }
+
+    throw new Error(
+      `Refund mirror for payment transaction ${paymentTransactionId} kept moving under ${REFUND_MIRROR_CAS_ATTEMPTS} compare-and-set attempts`
+    );
+  });
+}
+
+async function sumRecordedRefundsForTransaction(
   store: PaymentStore,
   paymentTransactionId: string
 ) {
@@ -721,50 +880,14 @@ export async function syncRefundsFromStripeCharge({
     return null;
   }
 
-  const paymentBeforeUpdate = await store.payment.findUnique({
-    where: { id: transaction.paymentId },
-    select: { refundedAmountCents: true },
-  });
-
-  let createdRefundsCount = 0;
-  let createdRefundAmountCents = 0;
-  for (const refund of refunds) {
-    const recordedRefund = await recordStripeRefundLedgerEntry({
-      paymentId: transaction.paymentId,
-      paymentTransactionId: transaction.id,
-      refund,
-      fallbackChargeId: stripeChargeId,
-      fallbackPaymentIntentId: paymentIntentId,
-      store,
-    });
-
-    if (recordedRefund.created) {
-      createdRefundsCount += 1;
-      createdRefundAmountCents += recordedRefund.amountCents;
-    }
-  }
-
-  const ledgerRefundedAmountCents = await sumRecordedRefundsForTransaction(
+  const recorded = await recordStripeRefundsAgainstTransaction({
+    paymentId: transaction.paymentId,
+    paymentTransactionId: transaction.id,
+    refunds,
+    fallbackChargeId: stripeChargeId,
+    fallbackPaymentIntentId: paymentIntentId,
+    stripeRefundedAmountCents: refundedAmountCents,
     store,
-    transaction.id
-  );
-  const nextRefundedAmountCents = boundedRefundedAmountCents(
-    transaction.amountCents,
-    transaction.refundedAmountCents,
-    refundedAmountCents,
-    ledgerRefundedAmountCents
-  );
-
-  await store.paymentTransaction.update({
-    where: { id: transaction.id },
-    data: {
-      refundedAmountCents: nextRefundedAmountCents,
-      status: applyRefundStatus(
-        PaymentStatus.SUCCEEDED,
-        transaction.amountCents,
-        nextRefundedAmountCents
-      ),
-    },
   });
 
   const payment = await reconcilePaymentAggregates({
@@ -774,16 +897,16 @@ export async function syncRefundsFromStripeCharge({
 
   return {
     payment,
-    refundDeltaCents: Math.max(
-      (payment?.refundedAmountCents ?? 0) -
-        (paymentBeforeUpdate?.refundedAmountCents ?? 0),
-      0
-    ),
+    // #3640: how far THIS sync moved the refunded total - a refund the club
+    // has not already recorded, including one made after an account-credit
+    // settlement, which the old max-based total swallowed and left to the
+    // daily Xero reconciliation to notice.
+    refundDeltaCents: recorded.appliedCents,
     paymentId: transaction.paymentId,
     transactionId: transaction.id,
-    createdRefundsCount,
-    createdRefundAmountCents,
-    ledgerRefundedAmountCents,
+    createdRefundsCount: recorded.createdRefundsCount,
+    createdRefundAmountCents: recorded.createdRefundAmountCents,
+    ledgerRefundedAmountCents: recorded.ledgerRefundedAmountCents,
   };
 }
 
@@ -1032,33 +1155,12 @@ export async function refundPaymentTransactions({
       });
     }
 
-    await recordStripeRefundLedgerEntry({
+    await recordStripeRefundsAgainstTransaction({
       paymentId,
       paymentTransactionId: transaction.id,
-      refund,
+      refunds: [refund],
       fallbackPaymentIntentId: transaction.stripePaymentIntentId,
       store,
-    });
-
-    const ledgerRefundedAmountCents = await sumRecordedRefundsForTransaction(
-      store,
-      transaction.id
-    );
-    const nextRefundedAmountCents = boundedRefundedAmountCents(
-      transaction.amountCents,
-      transaction.refundedAmountCents,
-      ledgerRefundedAmountCents
-    );
-    await store.paymentTransaction.update({
-      where: { id: transaction.id },
-      data: {
-        refundedAmountCents: nextRefundedAmountCents,
-        status: applyRefundStatus(
-          PaymentStatus.SUCCEEDED,
-          transaction.amountCents,
-          nextRefundedAmountCents
-        ),
-      },
     });
     await reconcilePaymentAggregates({ paymentId, store });
 

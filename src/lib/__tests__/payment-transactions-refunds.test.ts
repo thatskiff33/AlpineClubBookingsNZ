@@ -24,6 +24,8 @@ import {
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
+import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function createRefundStore() {
@@ -188,15 +190,32 @@ function createRefundStore() {
       }),
     },
     paymentRefund: {
-      findUnique: vi.fn(async ({ where }: any) => {
-        return refunds.get(where.stripeRefundId) ?? null;
+      // #3640: a FAITHFUL `INSERT ... ON CONFLICT DO NOTHING`. The count is
+      // how the writer learns it recorded the refund - the only case the
+      // mirror adds - so a double that always said 1 would prove nothing.
+      createMany: vi.fn(async ({ data, skipDuplicates }: any) => {
+        let count = 0;
+        for (const row of data) {
+          if (refunds.has(row.stripeRefundId)) {
+            if (!skipDuplicates) {
+              throw new Error("Unique constraint failed on stripeRefundId");
+            }
+            continue;
+          }
+          refunds.set(row.stripeRefundId, {
+            id: `payment_refund_${refunds.size + 1}`,
+            ...row,
+          });
+          count += 1;
+        }
+        return { count };
       }),
-      upsert: vi.fn(async ({ where, create, update }: any) => {
+      update: vi.fn(async ({ where, data }: any) => {
         const existing = refunds.get(where.stripeRefundId);
-        const nextRefund = {
-          id: existing?.id ?? `payment_refund_${refunds.size + 1}`,
-          ...(existing ? update : create),
-        };
+        if (!existing) {
+          throw new Error("Record to update not found");
+        }
+        const nextRefund = { ...existing, ...data };
         refunds.set(where.stripeRefundId, nextRefund);
         return nextRefund;
       }),
@@ -256,10 +275,10 @@ describe("payment refund ledger", () => {
         amountCents: 2500,
       },
     ]);
-    expect(store.paymentRefund.upsert).toHaveBeenCalledWith(
+    expect(store.paymentRefund.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { stripeRefundId: "re_direct_1" },
-        create: expect.objectContaining({
+        skipDuplicates: true,
+        data: [expect.objectContaining({
           paymentId: "payment_1",
           paymentTransactionId: "txn_1",
           stripeRefundId: "re_direct_1",
@@ -270,7 +289,7 @@ describe("payment refund ledger", () => {
           status: "succeeded",
           reason: "requested_by_customer",
           stripeCreatedAt: new Date("2026-02-02T02:40:00.000Z"),
-        }),
+        })],
       })
     );
   });
@@ -311,13 +330,16 @@ describe("payment refund ledger", () => {
       store: store as any,
     });
 
-    expect(store.paymentTransaction.update).toHaveBeenCalledWith({
-      where: { id: "txn_1" },
+    // #3640: the replay records nothing new, so it adds nothing - the mirror
+    // is written through its compare-and-set and stays at 2500.
+    expect(store.paymentTransaction.updateMany).toHaveBeenCalledWith({
+      where: { id: "txn_1", refundedAmountCents: 2500 },
       data: expect.objectContaining({
         refundedAmountCents: 2500,
         status: "PARTIALLY_REFUNDED",
       }),
     });
+    expect(transaction.refundedAmountCents).toBe(2500);
     expect(store.payment.update).toHaveBeenCalledWith({
       where: { id: "payment_1" },
       data: expect.objectContaining({
@@ -328,7 +350,7 @@ describe("payment refund ledger", () => {
   });
 
   it("upserts charge refund webhook rows by Stripe refund ID", async () => {
-    const { store } = createRefundStore();
+    const { store, refunds } = createRefundStore();
     const refund = {
       id: "re_webhook_1",
       amount: 2500,
@@ -375,11 +397,15 @@ describe("payment refund ledger", () => {
         ledgerRefundedAmountCents: 2500,
       })
     );
-    expect(store.paymentRefund.upsert).toHaveBeenCalledTimes(2);
-    expect(store.paymentRefund.upsert).toHaveBeenLastCalledWith(
+    // Inserted once; the replay loses the ON CONFLICT race and refreshes the
+    // row by its Stripe refund ID instead.
+    expect(store.paymentRefund.createMany).toHaveBeenCalledTimes(2);
+    expect(refunds.size).toBe(1);
+    expect(store.paymentRefund.update).toHaveBeenCalledTimes(1);
+    expect(store.paymentRefund.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
         where: { stripeRefundId: "re_webhook_1" },
-        update: expect.objectContaining({
+        data: expect.objectContaining({
           stripeChargeId: "ch_1",
           stripePaymentIntentId: "pi_1",
           amountCents: 2500,
@@ -1111,5 +1137,297 @@ describe("#3528 - reconcilePaymentAggregates reads past a WITHDRAWN ask (INV-ADD
       additionalPaymentStatus: "PENDING",
       additionalPaymentIntentId: "pi_ask_2",
     });
+  });
+});
+
+/*
+  #3640 - A CARD REFUND ADDS TO THE REFUNDED TOTAL.
+
+  The mirror counts account-credit settlements (no PaymentRefund row) AND card
+  refunds. It used to be set to max(stored, card refunds on record), so a card
+  refund made after a credit vanished: $100 credit then $50 card read $100, and
+  the member cancelling at 100% was paid $450 against $400 taken. Every card
+  writer now goes through `recordStripeRefundsAgainstTransaction`, which adds
+  exactly the refund it newly recorded, through a compare-and-set.
+*/
+describe("#3640 - a card refund adds to the refunded total", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const PAID_CENTS = 40000;
+  const CREDIT_CENTS = 10000;
+  const CARD_REFUND_CENTS = 5000;
+
+  function paidStore() {
+    const ctx = createRefundStore();
+    ctx.payment.amountCents = PAID_CENTS;
+    ctx.transaction.amountCents = PAID_CENTS;
+    return ctx;
+  }
+
+  function cardRefund(id: string, amount: number, status = "succeeded") {
+    return {
+      id,
+      amount,
+      currency: "nzd",
+      status,
+      reason: "requested_by_customer",
+      created: 1770000000,
+      charge: "ch_1",
+      payment_intent: "pi_1",
+    };
+  }
+
+  type Ctx = ReturnType<typeof paidStore>;
+  type Refund = ReturnType<typeof cardRefund>;
+
+  // The two writers a card refund reaches the mirror through: an officer's
+  // refund made inline, and a refund made in the Stripe dashboard arriving on
+  // `charge.refunded` (Stripe's cumulative `amount_refunded` alongside). Each
+  // returns the webhook's `refundDeltaCents`, or null where there is none.
+  async function inlineRefund(
+    ctx: Ctx,
+    refund: Refund = cardRefund("re_1", CARD_REFUND_CENTS),
+  ): Promise<number | null> {
+    mocks.processRefund.mockResolvedValueOnce(refund);
+    await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
+      paymentId: "payment_1",
+      amountCents: refund.amount,
+      idempotencyKeyPrefix: "refund_request_rq1",
+      store: ctx.store as never,
+    });
+    return null;
+  }
+
+  async function webhookSync(
+    ctx: Ctx,
+    refund: Refund = cardRefund("re_1", CARD_REFUND_CENTS),
+  ): Promise<number | null> {
+    // Stripe lists every refund on the charge, not just the new one.
+    const earlier = [...ctx.refunds.values()]
+      .filter((row) => row.stripeRefundId !== refund.id)
+      .map((row) =>
+        cardRefund(
+          row.stripeRefundId as string,
+          row.amountCents as number,
+          row.status as string,
+        ),
+      );
+    const listed = [...earlier, refund];
+    const result = await syncRefundsFromStripeCharge({
+      paymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      refundedAmountCents: listed
+        .filter((row) => row.status === "succeeded")
+        .reduce((sum, row) => sum + row.amount, 0),
+      refunds: listed,
+      store: ctx.store as never,
+    });
+    return result?.refundDeltaCents ?? null;
+  }
+
+  async function settleCredit(ctx: Ctx, amountCents = CREDIT_CENTS) {
+    await applyLocalRefundAllocation({
+      paymentId: "payment_1",
+      amountCents,
+      store: ctx.store as never,
+    });
+  }
+
+  describe.each([
+    ["the inline refund", inlineRefund],
+    ["the charge.refunded webhook sync", webhookSync],
+  ] as const)("through %s", (_name, writeCardRefund) => {
+    it("credit then card refund adds up: $100 + $50 = $150", async () => {
+      const ctx = paidStore();
+
+      await settleCredit(ctx);
+      const delta = await writeCardRefund(ctx);
+
+      expect(ctx.transaction.refundedAmountCents).toBe(15000);
+      expect(ctx.payment.refundedAmountCents).toBe(15000);
+      expect(ctx.transaction.status).toBe(PaymentStatus.PARTIALLY_REFUNDED);
+      // The webhook's delta is the real one, so the Xero credit note is
+      // queued at once instead of waiting for the daily reconciliation.
+      if (delta !== null) expect(delta).toBe(CARD_REFUND_CENTS);
+    });
+
+    it("card refund then credit stays correct: $50 + $100 = $150", async () => {
+      const ctx = paidStore();
+
+      await writeCardRefund(ctx);
+      await settleCredit(ctx);
+
+      expect(ctx.transaction.refundedAmountCents).toBe(15000);
+      expect(ctx.payment.refundedAmountCents).toBe(15000);
+    });
+
+    it("a replayed refund event changes nothing", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await writeCardRefund(ctx);
+
+      const replayDelta = await writeCardRefund(ctx);
+
+      expect(ctx.refunds.size).toBe(1);
+      expect(ctx.transaction.refundedAmountCents).toBe(15000);
+      expect(ctx.payment.refundedAmountCents).toBe(15000);
+      if (replayDelta !== null) expect(replayDelta).toBe(0);
+    });
+
+    it("a refund Stripe reports as failed adds nothing", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+
+      await writeCardRefund(
+        ctx,
+        cardRefund("re_failed", CARD_REFUND_CENTS, "failed"),
+      );
+
+      expect(ctx.refunds.size).toBe(1);
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+    });
+
+    // The worked scenario from the issue: $400 paid -> a $100 guest removal
+    // taken as account credit (price now $300) -> a $50 card refund -> the
+    // member cancels in a 100% tier. The cancel's base is
+    // min(amount - refunded, price) (`booking-cancel.ts`, the paid path) and
+    // the refund-request cap is `getRemainingRefundableCents`.
+    it("the $400 -> $100 credit -> $50 refund -> 100%-tier cancel pays out $400 in all, never $450", async () => {
+      const ctx = paidStore();
+      const finalPriceCents = PAID_CENTS - CREDIT_CENTS;
+      await settleCredit(ctx);
+      await writeCardRefund(ctx);
+
+      const remainingCents = getRemainingRefundableCents(ctx.payment);
+      const paidAmountCents =
+        ctx.payment.amountCents - ctx.payment.refundedAmountCents;
+      const refundableBaseCents = Math.min(paidAmountCents, finalPriceCents);
+      const { refundAmountCents: cancelRefundCents } = calculateRefundAmount(
+        refundableBaseCents,
+        30,
+        [{ daysBeforeStay: 0, refundPercentage: 100 }],
+      );
+
+      expect(remainingCents).toBe(25000);
+      expect(cancelRefundCents).toBe(25000);
+      expect(CREDIT_CENTS + CARD_REFUND_CENTS + cancelRefundCents).toBe(
+        PAID_CENTS,
+      );
+
+      // And the ledger itself refuses the old over-payment: the $300 the
+      // cancel used to pay is more than the card still holds for the member.
+      const plan = await planStripeRefundAllocation({
+        paymentId: "payment_1",
+        amountCents: 30000,
+        store: ctx.store as never,
+      });
+      expect(plan.plannedAmountCents).toBe(25000);
+      await expect(
+        refundPaymentTransactions({
+          format: CLUB_FORMAT_TEST,
+          paymentId: "payment_1",
+          amountCents: 30000,
+          store: ctx.store as never,
+        }),
+      ).rejects.toThrow(/exceeds captured Stripe payments/);
+    });
+  });
+
+  it("the inline refund and then its own webhook add the refund once", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+    const refund = cardRefund("re_1", CARD_REFUND_CENTS);
+
+    await inlineRefund(ctx, refund);
+    const webhookDelta = await webhookSync(ctx, refund);
+
+    expect(ctx.transaction.refundedAmountCents).toBe(15000);
+    // Recorded inline, which queues its own note: the webhook queues nothing.
+    expect(webhookDelta).toBe(0);
+  });
+
+  it("two writers recording the same refund at the same moment add it once", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+    const refund = cardRefund("re_1", CARD_REFUND_CENTS);
+
+    await Promise.all([inlineRefund(ctx, refund), webhookSync(ctx, refund)]);
+
+    expect(ctx.refunds.size).toBe(1);
+    expect(ctx.transaction.refundedAmountCents).toBe(15000);
+  });
+
+  it("an increment cannot be lost to a writer that moves the row between its read and its write", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+
+    // A concurrent $20 credit allocation commits between the card writer's
+    // read and its compare-and-set. Forced at the write itself, as #3032's
+    // test does, so the interleaving is guaranteed rather than raced for.
+    let interfered = false;
+    const guardedUpdateMany = ctx.store.paymentTransaction.updateMany;
+    ctx.store.paymentTransaction.updateMany = vi.fn(async (args: any) => {
+      if (!interfered) {
+        interfered = true;
+        ctx.transaction.refundedAmountCents += 2000;
+      }
+      return guardedUpdateMany(args);
+    }) as typeof ctx.store.paymentTransaction.updateMany;
+
+    await webhookSync(ctx);
+
+    // $100 credit + $20 credit + $50 card. A stale absolute write would have
+    // said $150 and handed the $20 back as phantom headroom.
+    expect(ctx.transaction.refundedAmountCents).toBe(17000);
+    expect(ctx.store.paymentTransaction.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("records the refund rows and the mirror in one transaction when given the root client", async () => {
+    const ctx = paidStore();
+    const transactionSpy = vi.fn(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(ctx.store),
+    );
+    const rootClient = Object.assign(ctx.store, {
+      $connect: vi.fn(),
+      $transaction: transactionSpy,
+    });
+
+    await syncRefundsFromStripeCharge({
+      paymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      refundedAmountCents: CARD_REFUND_CENTS,
+      refunds: [cardRefund("re_1", CARD_REFUND_CENTS)],
+      store: rootClient as never,
+    });
+
+    expect(transactionSpy).toHaveBeenCalledTimes(1);
+    const [txOrder] = transactionSpy.mock.invocationCallOrder;
+    const [insertOrder] =
+      ctx.store.paymentRefund.createMany.mock.invocationCallOrder;
+    const [casOrder] =
+      ctx.store.paymentTransaction.updateMany.mock.invocationCallOrder;
+    expect(txOrder).toBeLessThan(insertOrder);
+    expect(txOrder).toBeLessThan(casOrder);
+    expect(ctx.transaction.refundedAmountCents).toBe(CARD_REFUND_CENTS);
+  });
+
+  it("lifts a mirror left below the card refunds on record (a pre-#3640 crash between the two writes)", async () => {
+    const ctx = paidStore();
+    ctx.refunds.set("re_1", {
+      id: "payment_refund_1",
+      paymentId: "payment_1",
+      paymentTransactionId: "txn_1",
+      stripeRefundId: "re_1",
+      amountCents: CARD_REFUND_CENTS,
+      status: "succeeded",
+    });
+
+    const delta = await webhookSync(ctx);
+
+    expect(ctx.transaction.refundedAmountCents).toBe(CARD_REFUND_CENTS);
+    expect(delta).toBe(CARD_REFUND_CENTS);
   });
 });
