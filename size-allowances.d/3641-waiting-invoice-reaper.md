@@ -1,15 +1,14 @@
 # File-size allowances for #3641 — a waiting invoice outlives age and a decline while payable
 
-The stale WAITING_PAYMENT reaper now asks the member's pay door (and, where
-the door is open, Stripe, for a provider-cancelled intent) before it retires a
-supplementary invoice, and exports the lock namespace, status set,
-payload reader and retirement codes the new late-capture re-queue module reads.
-The re-queue itself lives in `src/lib/xero-supplementary-invoice-late-capture.ts`,
-inside its budget, so only the reaper change lands here.
+The waiting-invoice reaper and the late-capture release now live in their own
+modules (`xero-waiting-invoice-reaper.ts`, `xero-supplementary-invoice-late-capture.ts`),
+both inside budget, and `xero-operation-outbox.ts` is shorter than on the base
+ref. The one over-budget file that grows is the Stripe webhook service.
 
-file: src/lib/xero-operation-outbox.ts
-lines: 3397
-reason: the reaper's two arms and their F19 grace already live here and the
-  new survival test has to sit inside the same loop that decides a retirement;
-  moving the reaper out would split it from the WAITING_PAYMENT release and
-  the queue states it guards, which is the pairing this fix is about.
+file: src/lib/stripe-webhook-service.ts
+lines: 1796
+reason: the additional-payment handler's CANCELLED check now calls the one
+  exported refund predicate (`isLateCaptureRefundedBookingStatus`) that the
+  late-capture Xero release shares, which costs its import and a one-line
+  pointer; restating the status test inline is the two-spellings defect the
+  review round removed, and the handler cannot move for one line.

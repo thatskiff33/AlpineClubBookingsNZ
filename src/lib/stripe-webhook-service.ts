@@ -881,9 +881,7 @@ async function handleAdditionalModificationPaymentSucceeded(
     },
   });
 
-  // #3641: the one predicate for "this capture is refunded, not kept", which
-  // the late-capture Xero release also reads to decide a retired invoice stays
-  // unsent. Every other status keeps the money and gets its invoice or an alert.
+  // #3641: the one "refunded, not kept" predicate, shared with the late-capture Xero release.
   if (bookingRecord && isLateCaptureRefundedBookingStatus(bookingRecord.status)) {
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
