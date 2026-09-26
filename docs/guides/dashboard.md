@@ -78,7 +78,7 @@ Stat cards (each links to its detail area):
 | Members | Active members, with the total and inactive count |
 | Total Bookings | All-time bookings (excludes deleted) |
 | Active Bookings | Payment-pending, paid, confirmed, and hold statuses |
-| Revenue This Month | Sum of **succeeded** payments this calendar month (integer cents) |
+| Net Collected This Month | Payments **recorded** this calendar month, **less the refunds and account credits on them**. A payment counts in the month its record was created, even if the money arrived later: an Internet Banking payment is recorded, as pending, when the booking is made, and counts in that month once it is paid. Only payments that have taken money count, so one still pending or failed is left out. Cancelled bookings are **included**, so a cancellation fee the club kept counts here — unlike the Payments page's **Net Collected Cash** card, which leaves cancelled bookings out. When anything has been refunded or credited, the amount paid and the amount refunded or credited are shown beneath the headline, in exact cents, so the arithmetic is on the card |
 | Upcoming Check-ins | Active bookings checking in within the next 7 NZ days |
 
 ## Troubleshooting
@@ -86,7 +86,7 @@ Stat cards (each links to its detail area):
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An attention card vanished | Its queue is now empty | Nothing to do — the card only shows while work is pending |
-| Revenue looks low | It counts only **succeeded** payments in the current NZ month | Use [Reports](reports.md) or [Payments](payments.md) for full figures |
+| Net Collected looks wrong for the month | It is **net of refunds and credits**, and it groups payments by the month their record was **created**, not the month the money arrived. A bank transfer paid this month on a booking made last month counts in last month; a refund made this month on last month's payment reduces last month, not this one. It also includes cancelled bookings, which the Payments page's card does not | Use [Reports](reports.md) for a chosen date range, or [Payments](payments.md) for a filtered list |
 | A quick-action tile is missing | The related module is off (e.g. Chore Roster needs the `chores` module) | Enable it in [Modules](modules.md) |
 
 ## Related links

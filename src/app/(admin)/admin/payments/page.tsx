@@ -6,6 +6,10 @@ import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  formatPaidRefundedBreakdown,
+  getPaymentNetOfRefundsCents,
+} from "@/lib/booking-payment-state";
 import { requireInstant } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
@@ -310,16 +314,49 @@ function settlementKindLabel(kind: string) {
   }
 }
 
+/** The three summary figures `/api/admin/payments` returns beside the list. */
+type PaymentsSummary = {
+  netCollectedCents: number;
+  refundedCents: number;
+  count: number;
+};
+
+const EMPTY_PAYMENTS_SUMMARY: PaymentsSummary = {
+  netCollectedCents: 0,
+  refundedCents: 0,
+  count: 0,
+};
+
+/**
+ * #3372: read the API's summary, defaulting any missing or non-numeric field to
+ * 0. Across a deploy the page and the API can briefly be different builds — the
+ * previous API returned `totalRevenueCents` where this one returns
+ * `netCollectedCents` — and a tile must show $0.00 then, never `$NaN`.
+ */
+function readPaymentsSummary(raw: unknown): PaymentsSummary {
+  const fields = (raw ?? {}) as Partial<Record<keyof PaymentsSummary, unknown>>;
+  const cents = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return {
+    netCollectedCents: cents(fields.netCollectedCents),
+    refundedCents: cents(fields.refundedCents),
+    count: cents(fields.count),
+  };
+}
+
 function SummaryCard({
   title,
   icon: Icon,
   children,
   valueClassName,
+  hint,
 }: {
   title: string;
   icon: LucideIcon;
   children: ReactNode;
   valueClassName?: string;
+  /** What the figure covers, where the title alone would invite a wrong reading. */
+  hint?: string;
 }) {
   return (
     <Card>
@@ -338,6 +375,9 @@ function SummaryCard({
         >
           {children}
         </div>
+        {hint ? (
+          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -394,7 +434,7 @@ export default function PaymentsPage() {
   const [pageSize] = useState(25);
   const [data, setData] = useState<PaymentRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState({ totalRevenueCents: 0, refundedCents: 0, count: 0 });
+  const [summary, setSummary] = useState<PaymentsSummary>(EMPTY_PAYMENTS_SUMMARY);
   const [loading, setLoading] = useState(false);
   /*
     #2685 review — the query the API REFUSED.
@@ -561,7 +601,7 @@ export default function PaymentsPage() {
       const res = await fetch(`/api/admin/payments?${params}`);
       if (res.ok) {
         const json = await res.json();
-        setData(json.data); setTotal(json.total); setSummary(json.summary);
+        setData(json.data); setTotal(json.total); setSummary(readPaymentsSummary(json.summary));
         setFilterError(null);
       } else {
         // #2816 records WHY there is no list, so the page can say so rather than
@@ -574,7 +614,7 @@ export default function PaymentsPage() {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
         setData([]);
         setTotal(0);
-        setSummary({ totalRevenueCents: 0, refundedCents: 0, count: 0 });
+        setSummary(EMPTY_PAYMENTS_SUMMARY);
         setFilterError(
           await readAdminQueryErrorMessage(res, PAYMENTS_FILTER_FALLBACK_ERROR),
         );
@@ -1024,10 +1064,24 @@ export default function PaymentsPage() {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <SummaryCard title="Total Revenue" icon={DollarSign}>
-          {formatCents(summary.totalRevenueCents, format)}
+        {/* #3372: NET, so the title says so - it used to read "Total Revenue"
+            over a gross sum that also counted pending and failed payments. It
+            takes Reports' name for the same derivation. The two hints state the
+            asymmetry: this tile leaves cancelled bookings out (#773), the refund
+            tile counts every payment the filters match. */}
+        <SummaryCard
+          title="Net Collected Cash"
+          icon={DollarSign}
+          hint="Payments received, less refunds and credits. Excludes cancelled bookings."
+        >
+          {formatCents(summary.netCollectedCents, format)}
         </SummaryCard>
-        <SummaryCard title="Refunded / Credited" icon={CreditCard} valueClassName="text-danger">
+        <SummaryCard
+          title="Refunded / Credited"
+          icon={CreditCard}
+          valueClassName="text-danger"
+          hint="All payments matching the filters, cancelled bookings included."
+        >
           {formatCents(summary.refundedCents, format)}
         </SummaryCard>
         <SummaryCard title="Payments" icon={BarChart2}>
@@ -1106,6 +1160,12 @@ export default function PaymentsPage() {
               // #3369/#3480: an organisation owner has no member page; its name
               // renders as text rather than as a link to `/admin/members/undefined`.
               const owner = bookingOwner(p.booking).member;
+              const netAmountCents = getPaymentNetOfRefundsCents(p);
+              const paidRefundedBreakdown = formatPaidRefundedBreakdown(
+                p.amountCents,
+                p.refundedAmountCents,
+                (cents) => formatCents(cents, format),
+              );
 
               return (
                 <TableRow key={p.id}>
@@ -1140,18 +1200,20 @@ export default function PaymentsPage() {
                       View
                     </Link>
                   </TableCell>
-                  {/* #3340 (`INV-PAY-047`) - NET OF REFUNDS: the cash the club
-                      actually holds. Rendering GROSS beside a "Partially
-                      refunded" chip made a $130 capture with $65 refunded read as
-                      "paid $130", so an officer sized the balance at 430-130=$300
-                      when it was 430-65=$365 - the ask-sizing bug's own error,
-                      rendered rather than arithmetized. Gross and refund print
-                      underneath, so only the headline figure changed. */}
+                  {/* #3340 (`INV-PAY-047`) - NET OF REFUNDS AND CREDITS.
+                      Rendering GROSS beside a "Partially refunded" chip made a
+                      $130 capture with $65 refunded read as "paid $130", so an
+                      officer sized the balance at 430-130=$300 when it was
+                      430-65=$365 - the ask-sizing bug's own error, rendered
+                      rather than arithmetized. Gross and refund print
+                      underneath, so only the headline figure changed. #3372:
+                      the figure, the sort and the breakdown line each come from
+                      one helper in `booking-payment-state.ts`. */}
                   <TableCell className="text-right text-sm font-medium tabular-nums">
-                    {formatCents(p.amountCents - p.refundedAmountCents, format)}
-                    {p.refundedAmountCents > 0 && (
+                    {formatCents(netAmountCents, format)}
+                    {paidRefundedBreakdown && (
                       <div className="text-xs font-normal text-muted-foreground">
-                        {formatCents(p.amountCents, format)} paid, {formatCents(p.refundedAmountCents, format)} refunded
+                        {paidRefundedBreakdown}
                       </div>
                     )}
                   </TableCell>
@@ -1200,7 +1262,7 @@ export default function PaymentsPage() {
                           available to this admin. */}
                       <DiagnosticsRecordButton
                         recordId={p.id}
-                        subject={`the ${formatCents(p.amountCents - p.refundedAmountCents, format)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
+                        subject={`the ${formatCents(netAmountCents, format)} payment for ${bookingOwner(p.booking).member.firstName} ${bookingOwner(p.booking).member.lastName}`}
                       />
                     </div>
                   </TableCell>

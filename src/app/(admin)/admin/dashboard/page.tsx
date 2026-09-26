@@ -2,6 +2,10 @@ import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import {
+  formatPaidRefundedBreakdown,
+  summarizeCollectedCash,
+} from "@/lib/booking-payment-state";
+import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
 } from "@prisma/client";
@@ -112,7 +116,7 @@ async function getStats() {
     inactiveMembers,
     totalBookings,
     activeBookings,
-    revenueResult,
+    netCollectedResult,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -137,10 +141,20 @@ async function getStats() {
     prisma.booking.count({
       where: { deletedAt: null, status: { in: [...ACTIVE_BOOKING_STATUSES] } },
     }),
-    prisma.payment.aggregate({
-      _sum: { amountCents: true },
+    // #3372: every status, summed per status, so the net-collected-cash
+    // derivation (`summarizeCollectedCash`) decides which statuses count as
+    // captured. This used to sum `SUCCEEDED` alone: a partly-refunded payment
+    // left the figure entirely, and nothing subtracted a refund on the ones that
+    // stayed, so a card titled "Revenue" was neither net nor complete.
+    //
+    // Grouped by `createdAt`, the moment the payment RECORD was made - not when
+    // money arrived. A bank-transfer row is created PENDING with the booking and
+    // paid later, so it counts in the month it was recorded once it is paid.
+    // Cancelled bookings are included, so a kept cancellation fee counts.
+    prisma.payment.groupBy({
+      by: ["status"],
+      _sum: { amountCents: true, refundedAmountCents: true },
       where: {
-        status: "SUCCEEDED",
         createdAt: { gte: startOfMonth, lte: endOfMonth },
       },
     }),
@@ -266,7 +280,17 @@ async function getStats() {
     countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow }),
   ]);
 
-  const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
+  // Payments RECORDED this month, less every refund and credit on them -
+  // whenever it was made. A cohort, not a cash-flow statement: a refund this
+  // month on last month's payment does not reduce it, and the card's subline
+  // says what it covers.
+  const netCollectedThisMonth = summarizeCollectedCash(
+    netCollectedResult.map((group) => ({
+      status: group.status,
+      amountCents: group._sum.amountCents ?? 0,
+      refundedAmountCents: group._sum.refundedAmountCents ?? 0,
+    })),
+  );
   const unassignedNamesLodges = coverageNeedsLodgeContext({
     activeLodgeCount,
     rows: unassignedHutLeaderDates,
@@ -279,7 +303,7 @@ async function getStats() {
     inactiveMembers,
     totalBookings,
     activeBookings,
-    revenueThisMonth,
+    netCollectedThisMonth,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -339,6 +363,13 @@ export default async function AdminDashboardPage() {
     getPermissionMatrix(),
     clubFormat(),
   ]);
+  // #3372: exact cents, never `money.dollars` - a line of two rounded figures
+  // can disagree with the headline by a dollar.
+  const netCollectedBreakdown = formatPaidRefundedBreakdown(
+    stats.netCollectedThisMonth.capturedGrossCents,
+    stats.netCollectedThisMonth.refundedCents,
+    money.cents,
+  );
 
   const canViewBookings = canViewAdminHrefWithMatrix(
     permissionMatrix,
@@ -698,15 +729,25 @@ export default async function AdminDashboardPage() {
                 <CardContent className="flex items-center justify-between gap-3 py-4">
                   <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
-                    Revenue This Month
+                    Net Collected This Month
                   </div>
+                  {/* #3372: NET of refunds and credits, the shape #3364 gave
+                      the payments board - gross and refunded print beneath, in
+                      exact cents, so the arithmetic is on the card. The subline
+                      makes no claim about when money arrived: the month is the
+                      one each payment record was created in. */}
                   <div className="text-right">
                     <div className="text-xl font-semibold text-foreground">
-                      {money.dollars(stats.revenueThisMonth)}
+                      {money.dollars(stats.netCollectedThisMonth.netCollectedCents)}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      from succeeded payments
+                      payments recorded this month, less refunds and credits on them
                     </p>
+                    {netCollectedBreakdown && (
+                      <p className="text-xs text-muted-foreground">
+                        {netCollectedBreakdown}
+                      </p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

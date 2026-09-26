@@ -158,6 +158,125 @@ export function getRemainingRefundableCents(
 }
 
 /**
+ * #3372: ONE payment row's amount net of what has gone back out of it —
+ * `amountCents - refundedAmountCents`, with NO status gate and no floor. It is
+ * the figure the payments list's "Amount (net)" column shows for every row
+ * (`INV-PAY-047`), and the order that column sorts in, so a list whose headline
+ * is net cannot be sorted or described by a different sum.
+ *
+ * NOT `getRemainingRefundableCents` above, which asks a different question —
+ * "how much more could a refund take out?" — and so answers 0 whenever nothing
+ * was captured: a PENDING or FAILED row has nothing to refund, but its row still
+ * shows its amount. Routing the column through that helper would blank every
+ * unpaid row.
+ *
+ * `refundedAmountCents` counts cancellation credit to the member's account as
+ * well as money back to the card (`INV-PAY-050`), so "net of refunds and
+ * credits" is the honest reading, not "cash the club holds".
+ *
+ * Both fields are REQUIRED, not the optional `BookingPaymentState` shape: a row
+ * loaded without `refundedAmountCents` would otherwise read as unrefunded and
+ * print the gross — the #3340 misreading this helper exists to prevent.
+ */
+export function getPaymentNetOfRefundsCents(payment: {
+  amountCents: number;
+  refundedAmountCents: number;
+}): number {
+  return payment.amountCents - payment.refundedAmountCents;
+}
+
+/**
+ * #3372: the "{gross} paid, {refunded} refunded or credited" line printed
+ * beneath a net headline, so the arithmetic is on screen — the one wording for
+ * the payments list, the dashboard card and the change-requests panel.
+ *
+ * Returns `null` when nothing was refunded or credited, and every caller renders
+ * the line only when it is non-null, so the guard lives here once rather than
+ * at three sites. The caller supplies its own cents formatter (exact cents —
+ * never a rounded one, which could disagree with the headline by a dollar), so
+ * this leaf keeps no formatting import. It makes no net-versus-gross choice of
+ * its own: the caller decides which sums it passes.
+ */
+export function formatPaidRefundedBreakdown(
+  grossCents: number,
+  refundedCents: number,
+  formatCents: (cents: number) => string,
+): string | null {
+  if (refundedCents <= 0) return null;
+  return `${formatCents(grossCents)} paid, ${formatCents(refundedCents)} refunded or credited`;
+}
+
+/**
+ * Money collected on a set of payments: what was captured, what has gone back
+ * out as a refund or an account credit, and the difference.
+ */
+export interface CollectedCashSummary {
+  /** `Payment.amountCents` summed over captured payments only — before refunds. */
+  capturedGrossCents: number;
+  /**
+   * `Payment.refundedAmountCents` summed — card refunds and cancellation credit
+   * to the member's account alike (`INV-PAY-050`).
+   */
+  refundedCents: number;
+  /**
+   * `capturedGrossCents - refundedCents`, floored at zero: collected money net
+   * of refunds AND credits. Not "cash the club holds" — a credit is still owed
+   * to the member as a future booking, and it is subtracted here all the same.
+   */
+  netCollectedCents: number;
+}
+
+/**
+ * #3372: net collected cash over a set of payments, for the officer surfaces —
+ * the Reports summary, the dashboard's "Net Collected This Month" card and the
+ * payments board's "Net Collected Cash" tile all read it (`INV-SSOT-001`), so
+ * they cannot disagree about what "net of refunds and credits" means. Each
+ * surface still decides WHICH payments it hands in — a month's, a filter's, a
+ * report range's — and says so on screen. Rows may be whole payments or
+ * `groupBy` sums per status: the arithmetic is linear, so a status group is the
+ * same as its members.
+ *
+ * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
+ * EVERY row handed in, captured or not, and the net is floored at zero.
+ *
+ * Cash is payment-derived and deliberately NOT allocated over stay nights.
+ * `Payment.amountCents` already contains captured additions (#2408); rebuilding
+ * it from transaction rows would undercount legacy/group captures or double
+ * count a later addition.
+ *
+ * KNOWN SECOND COPY: `src/lib/finance-booking-metrics.ts` still sums
+ * `capturedGrossCents`, `refundedCents` and the floored net by hand for the
+ * finance dashboard, against its own `FINANCE_CAPTURED_PAYMENT_STATUSES`. It is
+ * being converged onto this function by a follow-up child of epic #3372; until
+ * then a change to the rule here must be made there too.
+ *
+ * `status` is `string | null`, not `PaymentStatus`: the payments service hands
+ * in a plain string, and a `null` (no payment) captures nothing.
+ */
+export function summarizeCollectedCash(
+  payments: ReadonlyArray<{
+    status: string | null;
+    amountCents: number;
+    refundedAmountCents: number;
+  } | null>,
+): CollectedCashSummary {
+  let capturedGrossCents = 0;
+  let refundedCents = 0;
+  for (const payment of payments) {
+    if (!payment) continue;
+    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
+      capturedGrossCents += payment.amountCents;
+    }
+    refundedCents += payment.refundedAmountCents;
+  }
+  return {
+    capturedGrossCents,
+    refundedCents,
+    netCollectedCents: Math.max(capturedGrossCents - refundedCents, 0),
+  };
+}
+
+/**
  * The payment shape the two accessors below need, spelled out so a caller cannot
  * hand them a payment row loaded without its id.
  */

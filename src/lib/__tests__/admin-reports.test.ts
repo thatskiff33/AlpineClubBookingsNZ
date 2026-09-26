@@ -12,6 +12,7 @@ import {
   summarizeOverlappingGuests,
   type RevenueBookingLike,
 } from "@/lib/admin-reports";
+import { summarizeCollectedCash } from "@/lib/booking-payment-state";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -258,6 +259,61 @@ describe("admin reports helpers", () => {
         },
       ]),
     ).toBe(11_100);
+  });
+
+  /*
+    #3372: the derivation of net collected cash (now in the
+    `booking-payment-state.ts` leaf, with Reports' `summarizeNetCollectedCash`
+    a wrapper over it) hands back its working — gross captured, refunded and
+    credited, net — so the dashboard card can print the breakdown beneath the
+    headline instead of re-deriving it. Which statuses are "captured" is `isCapturedPaymentStatus`'s
+    call, so a PENDING or FAILED amount never enters the gross, while its
+    (zero) refund column is still read.
+  */
+  it("breaks collected cash down into captured gross, refunded and net", () => {
+    expect(
+      summarizeCollectedCash([
+        // The #3340 booking: $130.00 captured, $65.00 refunded.
+        {
+          status: PaymentStatus.PARTIALLY_REFUNDED,
+          amountCents: 13_000,
+          refundedAmountCents: 6_500,
+        },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 5_000, refundedAmountCents: 0 },
+        { status: PaymentStatus.REFUNDED, amountCents: 2_000, refundedAmountCents: 2_000 },
+        // Uncaptured: never in the gross, whatever the amount.
+        { status: PaymentStatus.PENDING, amountCents: 9_000, refundedAmountCents: 0 },
+        { status: PaymentStatus.FAILED, amountCents: 4_000, refundedAmountCents: 0 },
+        // A booking with no payment at all.
+        null,
+        // A row with no status at all is uncaptured.
+        { status: null, amountCents: 1_000, refundedAmountCents: 0 },
+      ]),
+    ).toEqual({
+      capturedGrossCents: 20_000,
+      refundedCents: 8_500,
+      netCollectedCents: 11_500,
+    });
+  });
+
+  it("floors net collected cash at zero but reports the refund in full", () => {
+    // A refund larger than the capture cannot happen through the refund
+    // writers, but a floor is what the old function promised and Reports
+    // still reads through the wrapper.
+    expect(
+      summarizeCollectedCash([
+        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500 },
+      ]),
+    ).toEqual({
+      capturedGrossCents: 1_000,
+      refundedCents: 1_500,
+      netCollectedCents: 0,
+    });
+    expect(
+      summarizeNetCollectedCash([
+        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500 },
+      ]),
+    ).toBe(0);
   });
 });
 

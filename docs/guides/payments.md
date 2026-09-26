@@ -27,14 +27,17 @@ integer cents and shown as dollars.
 ### Open and read the ledger
 
 1. Go to **Admin → Finance → Payments**. The stat cards summarise the current
-   filter (Total Revenue, Refunded / Credited, Payments count, Success Rate),
+   filter (Net Collected Cash, Refunded / Credited, Payments count, Success
+   Rate),
    and the table lists each payment.
 
-   ![Payments page: the filter bar, summary stat cards (Total Revenue, Refunded/Credited, Payments, Success Rate), and the payments table with status and Xero columns](../images/admin/admin-payments.png)
+   ![Payments page: the filter bar, summary stat cards (Net Collected Cash, Refunded/Credited, Payments, Success Rate), and the payments table with status and Xero columns](../images/admin/admin-payments.png)
 
 2. Each row shows the last-updated date, check-in, member, a **View** link to
-   the booking, the amount, the status chip (with a Stripe or Internet Banking
-   sub-chip), the Stripe payment link, and the Xero invoice state.
+   the booking, the amount (net of refunds and credits, with "paid, refunded or
+   credited" beneath it when anything has gone back), the status chip (with a
+   Stripe or Internet Banking sub-chip), the Stripe payment link, and the Xero
+   invoice state.
 
 ### Find a payment
 
@@ -600,8 +603,24 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
-Page size is fixed at 25. **Total Revenue** and **Refunded / Credited** reflect
-the whole filtered set; **Success Rate** is computed from the visible page.
+Page size is fixed at 25. **Net Collected Cash** and **Refunded / Credited**
+reflect the whole filtered set; **Success Rate** is computed from the visible
+page.
+
+The two money cards are not a subtraction of one another, and each says on
+the card what it covers:
+
+- **Net Collected Cash** counts captured payments on bookings that are not
+  cancelled, less the refunds and account credits on them. A payment that is
+  still pending or failed does not count, and neither does a payment on a
+  **cancelled** booking, even though its row stays in the list. It is worked
+  out the same way as the Net Collected Cash card on [Reports](reports.md),
+  but over different payments: this card uses the payments matching your
+  filters, and Reports uses the bookings staying in its chosen dates, so the
+  two figures need not match.
+- **Refunded / Credited** covers every payment matching the filters,
+  cancelled bookings included: every card refund and every cancellation
+  credit on them.
 
 ## Troubleshooting
 

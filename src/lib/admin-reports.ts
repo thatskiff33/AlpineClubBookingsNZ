@@ -1,4 +1,4 @@
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingStatus } from "@prisma/client";
 import {
   addDays,
   addMonths,
@@ -23,6 +23,7 @@ import {
   getGuestStayStart,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
+import { summarizeCollectedCash } from "@/lib/booking-payment-state";
 import { formatDateOnly } from "@/lib/date-only";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
@@ -257,32 +258,14 @@ export function summarizeOverlappingGuests(
 }
 
 /**
- * Cash is payment-derived and deliberately NOT allocated over stay nights.
- * `Payment.amountCents` already contains captured additions (#2408); rebuilding
- * it from transaction rows would undercount legacy/group captures or double
- * count a later addition.
+ * The Reports route's net-collected-cash figure: the net half of
+ * `summarizeCollectedCash` in `booking-payment-state.ts`, which owns the
+ * derivation (#3372). Kept as a named wrapper so the route reads one number.
  */
 export function summarizeNetCollectedCash(
-  payments: Array<{
-    status: PaymentStatus | null;
-    amountCents: number;
-    refundedAmountCents: number;
-  } | null>,
+  payments: Parameters<typeof summarizeCollectedCash>[0],
 ): number {
-  let capturedGrossCents = 0;
-  let refundedCents = 0;
-  for (const payment of payments) {
-    if (!payment) continue;
-    if (
-      payment.status === PaymentStatus.SUCCEEDED ||
-      payment.status === PaymentStatus.PARTIALLY_REFUNDED ||
-      payment.status === PaymentStatus.REFUNDED
-    ) {
-      capturedGrossCents += payment.amountCents;
-    }
-    refundedCents += payment.refundedAmountCents;
-  }
-  return Math.max(capturedGrossCents - refundedCents, 0);
+  return summarizeCollectedCash(payments).netCollectedCents;
 }
 
 function initializeBuckets(

@@ -5,7 +5,18 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
-    payment: { findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn() },
+    payment: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      aggregate: vi.fn(),
+      // #3372: present only so the summary test can pin that a read of the
+      // ledger never reaches a write delegate; absent, a call would throw.
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      create: vi.fn(),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
     auditLog: { findMany: vi.fn(), count: vi.fn() },
@@ -368,11 +379,80 @@ describe("Admin Payments API", () => {
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(10);
-    expect(body.summary.totalRevenueCents).toBe(5000);
+    expect(body.summary.netCollectedCents).toBe(5000);
     expect(body.summary.refundedCents).toBe(0);
     expect(body.summary.count).toBe(1);
     expect(body.data[0].reference).toBeNull();
     expect(body.data[0].lastUpdatedAt).toBe("2026-04-03T11:00:00.000Z");
+  });
+
+  /*
+    #3372 — the "Net Collected Cash" tile (once "Total Revenue"). It used to add gross `amountCents` for every
+    row the filter matched: a refund never subtracted, and under the default
+    "all" status filter a PENDING or FAILED payment's amount counted as revenue.
+    The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
+    still leaving a cancelled booking's payment out (#773) — while the
+    "Refunded / Credited" tile beside it stays deliberately wider: every matched
+    row, cancelled bookings included. The two are not a subtraction of one
+    another, and this fixture is built so each exclusion moves the number.
+  */
+  it("sums Net Collected Cash over captured payments only, net of refunds, excluding cancelled bookings", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    const cancelledBooking = {
+      ...makePaymentCandidate().booking,
+      id: "b-cancelled",
+      status: "CANCELLED",
+    };
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        // The #3340 booking: $130.00 captured, $65.00 refunded → $65.00 net.
+        makePaymentCandidate({
+          id: "partly-refunded",
+          status: "PARTIALLY_REFUNDED",
+          amountCents: 13_000,
+          refundedAmountCents: 6_500,
+        }),
+        // Uncaptured money: neither counts, whatever its amount.
+        makePaymentCandidate({ id: "pending", status: "PENDING", amountCents: 9_000 }),
+        makePaymentCandidate({ id: "failed", status: "FAILED", amountCents: 4_000 }),
+        // Captured, then the booking was cancelled with part of it refunded.
+        // Its $150.00 net is NOT revenue (#773), but its $50.00 refund IS a
+        // refund the club made, so it counts in the refund tile.
+        makePaymentCandidate({
+          id: "cancelled",
+          bookingId: "b-cancelled",
+          status: "PARTIALLY_REFUNDED",
+          amountCents: 20_000,
+          refundedAmountCents: 5_000,
+          booking: cancelledBooking,
+        }),
+      ] as any)
+      .mockResolvedValueOnce([] as any);
+
+    const req = new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10");
+    const res = await getPayments(req);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.summary).toEqual({
+      // 13_000 - 6_500. Were the cancelled row counted it would read 21_500;
+      // were PENDING/FAILED gross added it would read 19_500; gross would be
+      // 13_000.
+      netCollectedCents: 6_500,
+      // 6_500 + 5_000: the cancelled booking's refund still counts here.
+      refundedCents: 11_500,
+      count: 4,
+    });
+    expect(body.summary).not.toHaveProperty("totalRevenueCents");
+    expect(body.summary).not.toHaveProperty("netRevenueCents");
+
+    // Display only (#3372 acceptance): a read of the ledger writes nothing.
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.payment.upsert).not.toHaveBeenCalled();
+    expect(prisma.payment.delete).not.toHaveBeenCalled();
   });
 
   it("filters by status", async () => {
