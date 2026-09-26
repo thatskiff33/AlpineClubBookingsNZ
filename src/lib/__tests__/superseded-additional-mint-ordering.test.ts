@@ -17,10 +17,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
   has risen reading the superseded figure with no live instrument behind it.
 
   `superseded-additional-intent-cancel.test.ts` is the sibling for what happens
-  INSIDE the cancel helper, and it mocks that helper's own collaborators; it
-  therefore cannot see this ordering at all. This file mocks the helper itself
-  and watches the two calls the MINTER makes, which is the only place the order
-  is decided.
+  INSIDE the cancel helper; it calls that helper directly and therefore cannot
+  see this ordering at all. This file watches the MINTER, which is the only
+  place the order is decided.
+
+  #3341: THE SUPERSEDE HELPER RUNS FOR REAL HERE. It used to be mocked, which
+  `INV-OPS-015` forbids in a suite that asserts the ask: the order is now read
+  off the helper's own ledger query and cancellation enqueue, over a ledger that
+  holds the $70 ask this mint retires.
 
   Frozen clock inherited; nothing here reads a date.
 */
@@ -29,7 +33,9 @@ const mocks = vi.hoisted(() => ({
   createPaymentIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
-  queueSuperseded: vi.fn(),
+  supersedeRead: vi.fn(),
+  enqueueCancel: vi.fn(),
+  cancelNow: vi.fn(),
   enqueueRecovery: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   enqueueRefundRecovery: vi.fn(),
@@ -45,10 +51,15 @@ vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   PartialRefundError: class PartialRefundError extends Error {},
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: mocks.queueSuperseded,
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { paymentTransaction: { findMany: mocks.supersedeRead } },
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  enqueuePaymentIntentCancellationRecovery: mocks.enqueueCancel,
+  runPaymentRecoveryOperationNow: mocks.cancelNow,
   enqueueAdditionalPaymentIntentRecovery: mocks.enqueueRecovery,
   enqueueBookingModificationRefundRecovery: mocks.enqueueRefundRecovery,
   processPaymentRecoveryOperations: mocks.processRecovery,
@@ -92,10 +103,16 @@ beforeEach(() => {
   mocks.upsertPaymentIntentTransaction.mockImplementation(async () => {
     order.push("upsertPaymentIntentTransaction");
   });
-  mocks.queueSuperseded.mockImplementation(async () => {
-    order.push("queueSuperseded");
-    return [];
+  // The ledger the real supersede helper reads: the first edit's unpaid $70.
+  mocks.supersedeRead.mockImplementation(async () => {
+    order.push("supersedeRead");
+    return [{ id: "txn_old", stripePaymentIntentId: "pi_old", amountCents: 7000 }];
   });
+  mocks.enqueueCancel.mockImplementation(async () => {
+    order.push("enqueueCancel");
+    return { id: "op_old" };
+  });
+  mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.enqueueRecovery.mockResolvedValue(undefined);
 });
 
@@ -114,7 +131,8 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       "createPaymentIntent",
       // The row the reconcile inside the cancel will read as "latest".
       "upsertPaymentIntentTransaction",
-      "queueSuperseded",
+      "supersedeRead",
+      "enqueueCancel",
     ]);
     expect(result.additionalPaymentIntentId).toBe("pi_new");
     expect(result.additionalPaymentClientSecret).toBe("pi_new_secret");
@@ -143,19 +161,30 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       reason: "guest_add_price_increase",
       stripeCustomerId: "cus_1",
     });
-    // …and the supersede is told which intent NOT to retire, so the row written
-    // a moment earlier cannot select itself.
-    expect(mocks.queueSuperseded).toHaveBeenCalledWith({
-      format: CLUB_FORMAT_TEST,
+    // …and the supersede excludes the NEW intent, so the row written a moment
+    // earlier cannot select itself, then retires the old ask it carried.
+    expect(mocks.supersedeRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentId: "payment_1",
+          kind: PaymentTransactionKind.ADDITIONAL,
+          stripePaymentIntentId: { not: "pi_new" },
+        }),
+      }),
+    );
+    expect(mocks.enqueueCancel).toHaveBeenCalledWith({
       bookingId: "booking_1",
       paymentId: "payment_1",
-      newPaymentIntentId: "pi_new",
+      paymentTransactionId: "txn_old",
+      paymentIntentId: "pi_old",
+      amountCents: 7000,
     });
+    expect(mocks.cancelNow).toHaveBeenCalledWith("op_old", CLUB_FORMAT_TEST);
   });
 
   it("still returns the secret when the supersede queue fails after the row exists", async () => {
-    mocks.queueSuperseded.mockImplementation(async () => {
-      order.push("queueSuperseded");
+    mocks.supersedeRead.mockImplementation(async () => {
+      order.push("supersedeRead");
       throw new Error("the queue is down");
     });
 
@@ -174,7 +203,7 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
     expect(order).toEqual([
       "createPaymentIntent",
       "upsertPaymentIntentTransaction",
-      "queueSuperseded",
+      "supersedeRead",
     ]);
     expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
   });

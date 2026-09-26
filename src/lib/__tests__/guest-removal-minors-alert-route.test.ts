@@ -35,7 +35,6 @@ const mocks = vi.hoisted(() => ({
   // route post-transaction side effects
   drainSupersededPrimaryIntents: vi.fn(),
   executeBookingModificationRefund: vi.fn(),
-  createModificationAdditionalPaymentIntent: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   queueXeroBookingEditSettlement: vi.fn(),
   logAudit: vi.fn(),
@@ -98,11 +97,13 @@ vi.mock("@/lib/membership-type-policy", () => ({
     status = 400;
   },
 }));
-vi.mock("@/lib/booking-modification-settlement", () => ({
+// #3341 (`INV-OPS-015`): the minter stays REAL. This file asserts the edit's ask
+// (`additionalAmountCents`) and a stubbed minter would pass whatever it is handed;
+// a removal asks for nothing, so the real one returns before minting.
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
   drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
   executeBookingModificationRefund: mocks.executeBookingModificationRefund,
-  createModificationAdditionalPaymentIntent:
-    mocks.createModificationAdditionalPaymentIntent,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBookingWithLodgeLockHeld:
@@ -417,10 +418,6 @@ beforeEach(() => {
   });
   mocks.drainSupersededPrimaryIntents.mockResolvedValue(undefined);
   mocks.executeBookingModificationRefund.mockResolvedValue(null);
-  mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-    additionalPaymentClientSecret: null,
-    additionalPaymentIntentId: null,
-  });
   mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
   mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
   mocks.sendBookingModifiedEmail.mockResolvedValue(undefined);

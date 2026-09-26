@@ -478,6 +478,8 @@ At the successful end of a meaningful piece of work:
      --jq '{checks: .required_status_checks.contexts,
             strict: .required_status_checks.strict,
             approvals: .required_pull_request_reviews.required_approving_review_count,
+            code_owners: .required_pull_request_reviews.require_code_owner_reviews,
+            dismiss_stale: .required_pull_request_reviews.dismiss_stale_reviews,
             enforce_admins: .enforce_admins.enabled}'
    ```
 
@@ -490,7 +492,8 @@ At the successful end of a meaningful piece of work:
    Measured 19 Aug 2026: the nine contexts above, `strict: false` (requiring
    up-to-date branches serialises the queue behind full re-runs),
    `required_approving_review_count: 0` (a pull request is required, a human
-   approval is not — #2713/#2948), `enforce_admins: false`.
+   approval is not — #2713/#2948), `enforce_admins: false`. Code-owner review
+   is decided (#3341), NOT yet applied: see the CODEOWNERS bullet below.
 
    **Advisory, and deliberately NOT required** — a finding is investigated, but
    it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
@@ -516,18 +519,19 @@ At the successful end of a meaningful piece of work:
    turns on. `needs:` does the same when an upstream job fails. Put the condition
    on the STEP instead, where a skip leaves the job a real pass or failure.
 
-   Because `enforce_admins` is off and no approval is required, an admin merge
-   can land `main` red; compare against `main`'s own latest CI before calling a
-   failure pre-existing. Require each required check present on the **exact
-   current head SHA**: a conflicted PR gets no `pull_request` runs, so
-   `gh pr checks` can read green off an older head, and an empty failure list is
-   not a passing run (#2641).
+   Because `enforce_admins` is off, an admin merge can land `main` red; compare
+   against `main`'s own latest CI before calling a failure pre-existing. Require
+   each required check present on the **exact current head SHA**: a conflicted
+   PR gets no `pull_request` runs, so `gh pr checks` can read green off an older
+   head, and an empty failure list is not a passing run (#2641).
 3. Apply the risk gate:
    - Eligible for autonomous merge: PRs whose changed areas stay within docs,
      agent workflow, admin or public UI copy, labels, and help text, and other
      Low/Medium-risk work that does not touch money movement, booking capacity,
      membership or family lifecycle, schema or migrations, auth/security/privacy,
-     or live-provider (Xero/Stripe/SES/Sentry) behavior.
+     or live-provider (Xero/Stripe/SES/Sentry) behavior. Once code-owner review
+     is applied, a PR touching a `.github/CODEOWNERS` path — docs and tests
+     included — also needs the owner's Approve.
    - Requires an explicit owner approval comment on the PR before merge: every
      Critical or High-risk change, including security/auth/privacy,
      payments/refunds/credits, booking/capacity, membership/family lifecycle,
@@ -615,8 +619,7 @@ At the successful end of a meaningful piece of work:
 - Gated areas (money movement, booking capacity, membership/family lifecycle,
   schema/migrations, auth/security/privacy, and live providers Xero, Stripe,
   SES, and Sentry) require an explicit owner approval comment on the PR before
-  merge. Branch protection enforces green CI, not human review, so this comment
-  is the human gate.
+  merge. This comment is the human gate agents check.
 - **That comment is self-authenticating by author, and only by author
   (#2713).** Automated sessions authenticate as **`thatskiff33-agents`**; the
   owner approves as **`thatskiff33`**. So an approval counts only when the
@@ -626,12 +629,14 @@ At the successful end of a meaningful piece of work:
   login; a pasted quotation reports nothing. Never write the approval phrase
   into any comment you post, quoted or illustrative, so the phrase never
   appears under an agent login at all.
-- Branch protection deliberately does **not** require a review (owner decision,
-  18 Aug 2026). It is all-or-nothing per branch, so requiring one would gate
-  every docs and CI PR as heavily as a schema change. The separation of logins
-  is the control; the risk it accepts is that an account with write access can
-  merge gated work without the comment, which the audit trail then shows
-  plainly rather than disguises.
+- **The code-owner rule — its one home.** Review is required only through
+  CODEOWNERS (owner decisions, 26 Sep 2026, #3341, narrowing 18 Aug's "no
+  review"). **Decided, not yet applied.** Once the owner applies it, a PR
+  touching a `.github/CODEOWNERS` path needs the owner's GitHub Approve, and a
+  push after it dismisses it; others merge as before. The Approve is the lock;
+  the comment stays the gate agents check, so a money PR's ready comment asks
+  for both. Until then, separate logins are the control. Owner checklist:
+  `CONTRIBUTING.md` → "Branch protection".
 
 ## Wave Orchestration Playbook
 

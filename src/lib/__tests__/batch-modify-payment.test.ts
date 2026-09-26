@@ -40,6 +40,15 @@ const mockApplyLocalRefundAllocation = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
+/**
+ * #3341: the ledger read `queueSupersededAdditionalIntentCancellations` makes
+ * for the live ADDITIONAL asks a mint retires. PR #543 added this double as a
+ * bare `[]`, which made the supersede a no-op in every case here; `[]` is honest
+ * only while the fixture carries no live ask, and the carry case below answers
+ * it with the row it retires.
+ */
+const mockSupersedeRead = vi.fn();
+const mockRunPaymentRecoveryOperationNow = vi.fn();
 const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
 const mockEnqueueAdditionalPaymentIntentRecovery = vi.fn();
@@ -106,7 +115,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       updateMany: mockPaymentTransactionUpdateMany,
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: (...args: unknown[]) => mockSupersedeRead(...args),
     },
     member: {
       findUnique: mockMemberFindUnique,
@@ -233,6 +242,10 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
     mockEnqueuePaymentIntentCancellationRecovery(...args),
+  // The supersede's immediate cancel. Omitted, vitest's missing-export throw
+  // fired inside the minter's try/catch and read as a failed mint (#3341).
+  runPaymentRecoveryOperationNow: (...args: unknown[]) =>
+    mockRunPaymentRecoveryOperationNow(...args),
   processPaymentRecoveryOperations: (...args: unknown[]) =>
     mockProcessPaymentRecoveryOperations(...args),
   enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
@@ -702,6 +715,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({
       id: "recovery_1",
     });
+    mockSupersedeRead.mockResolvedValue([]);
+    mockRunPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
     mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({
       id: "recovery_refund",
     });
@@ -1716,6 +1731,86 @@ describe("PUT /api/bookings/[id]/modify", () => {
       [2500, "EVEN_SPLIT"],
       [2500, "EVEN_SPLIT"],
     ]);
+  });
+
+  /**
+   * #3341 — THE MODIFY DOOR'S MINT -> SUPERSEDE -> ASK, OVER A LIVE ASK. The only
+   * case in this file where a price increase meets an earlier unpaid extra: the
+   * booking already owes $70 through `pi_old`, and adding a guest raises $100
+   * more. The member owes $170, the new intent asks for all of it and records
+   * the $70 it carried, and the real supersede queues `pi_old`'s cancellation.
+   */
+  it("carries an earlier unpaid ask into the new intent and retires the old one", async () => {
+    const base = makeBooking();
+    const booking = makeBooking({
+      payment: {
+        ...base.payment,
+        additionalAmountCents: 7000,
+        additionalPaymentStatus: "PENDING",
+        additionalPaymentIntentId: "pi_old",
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    mockSupersedeRead.mockResolvedValue([
+      { id: "txn_old", stripePaymentIntentId: "pi_old", amountCents: 7000 },
+    ]);
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const response = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+        }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.additionalAmountCents).toBe(17000);
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 17000,
+        metadata: expect.objectContaining({ type: "modification_additional" }),
+      }),
+    );
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_batch",
+        amountCents: 17000,
+        carriedAskCents: 7000,
+      }),
+    );
+    expect(mockSupersedeRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentId: "pay_1", stripePaymentIntentId: { not: "pi_batch" } }),
+      }),
+    );
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "pay_1",
+      paymentTransactionId: "txn_old",
+      paymentIntentId: "pi_old",
+      amountCents: 7000,
+    });
   });
 
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {
