@@ -16,13 +16,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * reads the club's timezone" forbids. So every site here took a REQUIRED
  * `today` parameter and every caller resolves it before opening its
  * transaction. No defaults were added: a default is what produced this whole
- * class (`getTodayDateOnly(timeZone = APP_TIME_ZONE)`), and a required
+ * class (a `getTodayDateOnly` zone parameter defaulting to the environment), and a required
  * parameter is what makes the compiler enumerate the callers.
  *
  * ## DISCRIMINATION
  *
- * `APP_TIME_ZONE` — the container's zone, and the only thing the replaced
- * helper ever read — is pinned to `Pacific/Auckland`. That is both the answer
+ * The container's zone — the only thing the replaced helper ever read — is
+ * modelled as `Pacific/Auckland` (it used to be pinned with a
+ * `@/config/operational` mock; #3567 deleted that module and nothing reads the
+ * environment's zone any more). That is both the answer
  * the old code gave AND this codebase's own documented fallback, so it is the
  * one value a wrong fix (a lost read, a hard-coded default, a fail-soft
  * degradation) could still pass under. The persisted club zone is
@@ -50,12 +52,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inlined literals: `vi.mock` factories hoist above every const in this file.
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   /** Ordered record of "who ran when", for the lock-ordering assertions. */
@@ -115,7 +111,6 @@ vi.mock("@/lib/lodge-capacity", () => ({
   getLodgePartnerSharedCapacityStatus: vi.fn(),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { updateBedAllocationBed } from "@/lib/bed-allocation-beds";
 import { updateBedAllocationRoom } from "@/lib/bed-allocation-rooms";
@@ -175,7 +170,6 @@ describe("the lock-bound bed-inventory writers take today from the club (#3123)"
   it("PREMISE: the persisted zone and the container's give different days", () => {
     // Without this leg the suite passes just as well when the two agree, which
     // is the false green #3123's execution contract names by hand.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

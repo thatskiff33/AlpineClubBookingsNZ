@@ -3157,7 +3157,9 @@ model PaymentRefund {
   stripeChargeId         String?
   stripePaymentIntentId  String?
   amountCents            Int
-  currency               String    @default("nzd")
+  /// The currency Stripe refunded in (the charge's own), lower-case. No
+  /// default since #3567: the writer always supplies Stripe's value.
+  currency               String
   status                 String    @default("succeeded")
   reason                 String?
   xeroRefundCreditNoteId String?

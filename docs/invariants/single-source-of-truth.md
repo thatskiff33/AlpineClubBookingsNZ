@@ -198,9 +198,9 @@ are permanent: never renumbered, never reused.
   locale are `ClubFormatSettings` (`INV-CONFIG-006`). `APP_LOCALE` was listed
   _ahead of_ its second source, on the grounds that listing a club-facing
   authority with no live defaults costs nothing and saves a migration; that bet
-  paid. Still unfixed, and #3567's: fifteen non-test files hardcode `"en-NZ"`,
-  two `"NZD"`, and `normalizeRefundCurrency` falls back to
-  `APP_STRIPE_CURRENCY` through a `??` this arm cannot see.
+  paid. **Currency is now single-sourced** (#3567): cards are charged in the
+  stored currency, and both former offenders are fixed — the `"nzd"`
+  `PaymentRefund.currency` default and `normalizeRefundCurrency`'s fallback.
 - **The exclusions are judged, the two kinds of reason are not interchangeable,
   and one of them has now expired.**
   - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` **used to be** excluded on
@@ -266,7 +266,7 @@ are permanent: never renumbered, never reused.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not
-  this defect, population zero — note this is a narrower statement than
+  this defect — note this is a narrower statement than
   "resolver calls are fine", which the bullet above refutes; an import alias
   (`import { APP_TIME_ZONE as ZONE }`) or a named local, which a selector cannot
   resolve and which the census closes instead; and a `??` fallback in a function **body**
@@ -274,8 +274,7 @@ are permanent: never renumbered, never reused.
   differently and is a known limit, not a permitted shape. The census beside the
   arm is the second instrument, and per `INV-SSOT-004` it is deliberately
   **broader** than the arm — it cannot tell a parameter default from a
-  module-level binding, so it names `src/config/operational.ts` as its one
-  expected hit. Broader is the safe direction of error for a second instrument.
+  module-level binding; since #3567 deleted the one it found, it expects none. Broader is the safe direction of error for a second instrument.
 - Why the guard exists at all when `INV-SSOT-001` prefers the structural remedy:
   the structural remedy IS the fix, and this arm's job is to stop the default
   being written back in once it has been deleted.

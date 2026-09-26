@@ -1,25 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /*
-  `APP_TIME_ZONE` IS PINNED BEHIND GREENWICH, AND NOT TO THE CLUB ZONE BELOW.
+  THE ENVIRONMENT ZONE IS MODELLED BEHIND GREENWICH, NOT AS THE CLUB ZONE BELOW.
 
-  This block is what makes the #3123 case at the bottom of this file mean
-  something. Before that migration these stamps went through `formatNZInstantOrRaw`,
-  whose zone IS `APP_TIME_ZONE` — the container's `TZ`. Pinning it to
-  `America/Denver` while the provider carries `Pacific/Auckland` makes the two
-  disagree about the day of the fixture instant, so the assertion cannot pass by
-  coincidence and could not have passed before the migration. A suite that
-  persisted `Pacific/Auckland` could not tell the persisted zone from the
-  environment's, because that is exactly what `APP_TIME_ZONE` falls back to
-  (#3123 execution contract).
+  Before #3123 these stamps went through `formatNZInstantOrRaw`, whose zone was
+  `APP_TIME_ZONE` — the container's `TZ`. This file used to pin that constant to
+  `America/Denver`; the constant was deleted in #3567 and nothing reads the
+  environment's zone any more, so the pin is gone. `ENVIRONMENT_ZONE` below keeps
+  Denver as the model, disagreeing with the provider's `Pacific/Auckland` about
+  the fixture instant's day, so the assertion cannot pass by coincidence.
 */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import {
   EnvironmentXeroContainment,
@@ -30,7 +21,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** The club's persisted zone under test. Deliberately NOT the environment's. */
 const CLUB_ZONE = "Pacific/Auckland";
-/** What `APP_TIME_ZONE` claims above, held apart from it on purpose. */
+/** The modelled environment zone, held apart from the club's on purpose. */
 const ENVIRONMENT_ZONE = "America/Denver";
 
 /**
@@ -223,7 +214,7 @@ describe("EnvironmentXeroContainment", () => {
   #3123 — these stamps are the CLUB's, not the container's.
 
   Every instant this block prints was going through `formatNZInstantOrRaw`,
-  whose zone is `APP_TIME_ZONE`. For a club behind Greenwich that named the
+  whose zone was `APP_TIME_ZONE`. For a club behind Greenwich that named the
   previous day for a destructive edit to the club's accounting records, on the
   screen an operator opens precisely because something has already gone wrong.
 */

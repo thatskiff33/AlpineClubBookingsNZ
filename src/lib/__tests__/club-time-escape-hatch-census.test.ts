@@ -46,9 +46,9 @@ const ROOT = path.resolve(__dirname, "../../..");
 export { stripComments };
 
 /**
- * The six `@/lib/date-only` helpers whose `timeZone` parameter defaults to
- * `APP_TIME_ZONE`. Called with the zone, they are correct; called without it,
- * the ENVIRONMENT decides a club-facing answer.
+ * The six `@/lib/date-only` helpers whose `timeZone` parameter used to default
+ * to the environment zone. Called with the zone, they are correct; called
+ * without it, the ENVIRONMENT decided a club-facing answer.
  */
 const ZONE_DEFAULTING_HELPERS = [
   "startOfDateOnlyForTimeZone",
@@ -316,7 +316,7 @@ describe("the scanner counts what it claims to count", () => {
   it("does not count the helper's own definition", () => {
     expect(
       findDefaultedZoneCalls(
-        "export function getTodayDateOnly(timeZone = APP_TIME_ZONE): Date {",
+        "export function getTodayDateOnly(timeZone = DEFAULT_ZONE): Date {",
       ),
     ).toEqual([]);
   });
@@ -427,7 +427,7 @@ describe("the scanner counts what it claims to count", () => {
  */
 const CENSUS_CEILING = {
   /**
-   * Call sites that left a club-facing zone to `APP_TIME_ZONE`. **NOW ZERO, AND
+   * Call sites that left a club-facing zone to the environment. **NOW ZERO, AND
    * STRUCTURALLY SO — this counter is no longer the thing holding the line.**
    *
    * History, because the shape of the fix is the lesson. CT-6 first measured
@@ -710,25 +710,24 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("only the ratcheted modules name the environment zone, in ANY spelling", () => {
-    // Everything else is either structurally allowed to (the config module and
-    // the seed reader, both excluded above as kernel siblings) or on the lint
-    // ratchet. This asserts that membership from the TREE rather than from the
+  it("no production file outside the kernel names the environment zone, in ANY spelling", () => {
+    // Only the seed reader, excluded above as a kernel sibling, is structurally
+    // allowed to. This asserts that from the TREE rather than from the lint
     // config, so the two would have to be wrong together.
     //
     // EVERY SPELLING, and that is a correction rather than thoroughness. This
-    // read used to be `/\bAPP_TIME_ZONE\b/` alone, which does not match
+    // read used to be the config constant's name alone, which does not match
     // `process.env["TZ"]` — so for that one spelling the "two instruments"
     // claim this file makes was NOT true and the lint arm was the only thing
     // looking. The arm now closes the computed and destructured forms too; this
     // closes them here, so the pair is a pair for every spelling rather than
     // for most of them.
     const naming = PRODUCTION_FILES.filter((file) =>
-      /\bAPP_TIME_ZONE\b|process\s*\.\s*env\s*(?:\.\s*(?:TZ|NEXT_PUBLIC_TZ)\b|\[\s*["'](?:TZ|NEXT_PUBLIC_TZ)["']\s*\])/.test(
+      /process\s*\.\s*env\s*(?:\.\s*(?:TZ|NEXT_PUBLIC_TZ)\b|\[\s*["'](?:TZ|NEXT_PUBLIC_TZ)["']\s*\])/.test(
         read(file),
       ),
     );
-    // NINE WHEN CT-6 MEASURED IT, FOUR NOW. #3123 took four: `date-only.ts`
+    // NINE WHEN CT-6 MEASURED IT, ZERO NOW. #3123 took four: `date-only.ts`
     // stopped naming it the moment its six `= APP_TIME_ZONE` defaults were
     // deleted — the adapter had been the single largest reason the environment
     // was reachable at all — and `member-guest-consent-labels.ts` came off when
@@ -745,11 +744,11 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     // #3566 took the sixth, `induction-display.ts`: its module-level formatter
     // was frozen to `APP_TIME_ZONE` and now takes the caller's club binding.
     //
-    // The three left are structural rather than deferred: the config module that
-    // defines the value, and the two AI budget ledgers' month keys, which
-    // describe the ENVIRONMENT rather than the club. Lowering this further needs
-    // a reason beyond tidiness; read each one before assuming it is a leftover.
-    expect(naming, naming.join("\n")).toHaveLength(3);
+    // #3567 took the last three: it deleted the config module that defined the
+    // value, and the two AI budget ledgers' month keys now take the club's
+    // stored zone as an argument. Nothing outside the kernel names the
+    // environment zone now, so any file this finds is a new leak.
+    expect(naming, naming.join("\n")).toHaveLength(0);
   });
 
   it("counts the local-midnight constructions no selector can reach", () => {

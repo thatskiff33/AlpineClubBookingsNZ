@@ -21,12 +21,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
@@ -55,7 +49,6 @@ vi.mock("@/lib/lodge-access", () => ({
 }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn() }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { resolveKioskLodgeId } from "@/lib/lodge-auth";
 
@@ -90,7 +83,6 @@ beforeEach(() => {
 
 describe("kiosk lodge resolution uses the club's day (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's give different days", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

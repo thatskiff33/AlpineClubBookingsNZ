@@ -196,7 +196,7 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
         "which reads ClubTimeSettings. INV-CONFIG-002.",
     ).toBe(true);
     expect(
-      /APP_TIME_ZONE|process\.env|resolvedOptions/.test(source),
+      /process\.env|resolvedOptions/.test(source),
       "app-providers.tsx must not reach the environment or the viewer's clock " +
         "for the club's zone (INV-CONFIG-002).",
     ).toBe(false);
@@ -239,7 +239,7 @@ describe("club-time provider mount census (CT-4, #2870)", () => {
     this tree reaches `useClubTime()`" — and until this test existed the census
     verified only WHICH pages lacked a provider, never that claim. `/display` is
     the case that makes the difference concrete: its shell renders a live clock
-    and two header stamps off `APP_TIME_ZONE` and its own row says that shell
+    and two header stamps off `APP_TIME_ZONE` (since deleted, #3567) and its own row said that shell
     belongs to a sibling group's migration. On the day that group converts it,
     the lobby television throws — and the old census passed, because the page was
     still on the list and still had no provider.

@@ -145,12 +145,24 @@ follows:
 
 A club on the shipped New Zealand defaults sees byte-identical output on every
 surface, including email bodies and the text written to Xero, which
-`club-format-kernel.test.ts` proves against the retired module constants and the
-email and Xero suites prove on their rendered output. `APP_CURRENCY` /
-`APP_LOCALE` remain only as the seed-only environment reading `resolveClubFormat`
-falls back to when nothing is persisted; since #3566 no module outside
-`src/config/operational.ts` reads either (the seed reader, `club-format-env.ts`,
-aside), and #3567 retires them.
+`club-format-kernel.test.ts` proves against fixed `NZD` / `en-NZ` values with
+literal expected strings, and the email and Xero suites prove on their rendered
+output. The environment is only the seed `resolveClubFormat` falls back to
+while nothing is persisted (`club-format-env.ts`, reading `CURRENCY` / `LOCALE`
+alone). #3567 deleted `src/config/operational.ts` and its `APP_CURRENCY` /
+`APP_LOCALE` / `APP_STRIPE_CURRENCY` / `APP_TIME_ZONE` constants.
+
+## Card charges take the same format (#3567)
+
+`createPaymentIntent` and `chargePaymentMethod` in `stripe.ts` have no
+`currency` argument: `stripeChargeCurrency(format)` works the charge currency
+out from the club format both already require, so what a member is shown and
+what their card is charged cannot come from two places. It refuses a currency
+that does not count in hundredths (`club-currency-minor-unit.ts`, the one home
+of that rule, which the save route and the currency selector use too), because
+every amount here is an integer of hundredths and Stripe reads `amount` in the
+currency's own smallest unit. A refund row records Stripe's own currency;
+`PaymentRefund.currency` has had no default since migration 20261012010000.
 
 ## Dates take the same format (#3566)
 

@@ -177,7 +177,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     mockPrisma.booking.findUnique.mockResolvedValue(makeCardBooking());
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_1641",
-      client_secret: "cs_1641",
+      client_secret: "cs_1641", currency: "nzd",
       amount: EFFECTIVE_CENTS,
     });
 
@@ -213,7 +213,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
     mockPrisma.booking.findUnique.mockResolvedValue(makeCardBooking());
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_full",
-      client_secret: "cs_full",
+      client_secret: "cs_full", currency: "nzd",
       amount: FINAL_PRICE_CENTS,
     });
 
@@ -267,7 +267,7 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
       id: "pi_existing",
       status: "requires_payment_method",
       amount: EFFECTIVE_CENTS,
-      client_secret: "cs_existing",
+      client_secret: "cs_existing", currency: "nzd",
     });
 
     const res = await createPaymentIntentRoute(makeRequest());
@@ -295,11 +295,11 @@ describe("issue #1641: card booking with applied credit pays the effective amoun
       id: "pi_legacy_full",
       status: "requires_payment_method",
       amount: FINAL_PRICE_CENTS,
-      client_secret: "cs_legacy_full",
+      client_secret: "cs_legacy_full", currency: "nzd",
     });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "cs_new",
+      client_secret: "cs_new", currency: "nzd",
       amount: EFFECTIVE_CENTS,
     });
 

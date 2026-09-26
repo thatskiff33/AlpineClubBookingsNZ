@@ -201,7 +201,7 @@ describe("club-format provider mount census (#3564)", () => {
           "second time in a pass that also calls clubFormat() (#3565).",
       ).toBe(true);
       expect(
-        /APP_CURRENCY|APP_LOCALE|process\.env/.test(source),
+        /process\.env/.test(source),
         `${file} must not reach the environment for the club's currency or ` +
           "locale: NEXT_PUBLIC_* is inlined at BUILD time into an image that " +
           "serves every club, which is the defect #3205 exists to remove.",
@@ -230,8 +230,8 @@ describe("club-format provider mount census (#3564)", () => {
           "PERSISTED_READER_IMPORT for why the raw reader is not interchangeable.",
       ).toBe(true);
       expect(
-        /APP_CURRENCY|APP_LOCALE/.test(source),
-        `${surface} must not read the build-time constants.`,
+        /process\.env/.test(source),
+        `${surface} must not read the environment for the club's currency or locale.`,
       ).toBe(false);
     }
   });

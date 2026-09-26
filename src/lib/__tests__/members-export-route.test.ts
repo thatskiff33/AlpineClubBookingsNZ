@@ -35,7 +35,7 @@ vi.mock("@/lib/age-tier", () => ({
   getAgeTierSettings: vi.fn().mockResolvedValue([]),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { prisma } from "@/lib/prisma";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import {
@@ -139,8 +139,8 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
     expect(value).not.toContain("T");
     // 2020-06-30T14:30Z is 2020-07-01 in NZ winter (+12): the NZ calendar date
     // is one day ahead of the naive UTC slice, which is the bug this fixes.
-    // The zone is named rather than defaulted: the helper's default is
-    // `APP_TIME_ZONE`, the ENVIRONMENT's opinion, which is no longer the
+    // The zone is named: the helper's old default was the ENVIRONMENT's
+    // opinion (the `APP_TIME_ZONE` constant #3567 deleted), which is not the
     // authority the route obeys. Comparing the route's answer against it would
     // be comparing two different authorities and calling agreement a pass.
     expect(value).toBe(
@@ -231,9 +231,9 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
   that the codebase used to treat them the same.
 
   THIS IS WHERE THE PERSISTED ZONE IS OBSERVABLE, which the lodge-night tests in
-  `admin-bookings-calendar-route.test.ts` deliberately are not. `APP_TIME_ZONE` —
-  what `formatDateOnlyForTimeZone` and every other legacy helper still read — is
-  `Pacific/Auckland` here, because CI sets no `TZ` and that is the documented
+  `admin-bookings-calendar-route.test.ts` deliberately are not. The environment's
+  zone (`ENVIRONMENT_CLUB_ZONE`; the `APP_TIME_ZONE` constant the legacy helpers
+  used to read was deleted in #3567) is `Pacific/Auckland` here, because CI sets no `TZ` and that is the documented
   fallback. Persisting `America/Denver` therefore makes the two authorities
   DISAGREE, and each assertion below is the Denver answer. Restore the legacy
   helper and every one of them fails with the Auckland answer instead, which is
@@ -257,19 +257,18 @@ describe("members export — the persisted club timezone, not the environment (C
   it("renders an instant in the persisted zone and a calendar day untouched", async () => {
     // THE PREMISE, ASSERTED AS AN ANSWER RATHER THAN AN IDENTIFIER. What has to
     // be true for the cell below to discriminate is that the ENVIRONMENT
-    // authority — which is what `formatDateOnlyForTimeZone` reads, and what this
-    // route used to call — names a different day from the persisted one. Naming
+    // authority — which is what this route used to consult — names a different day from the persisted one. Naming
     // the two zone IDENTIFIERS and asserting they differ does NOT establish
     // that: measured, `TZ=America/Chicago` gives Denver's answer for every
     // fixture in this file, so the identifier check passes while the assertion
     // goes vacuous.
     //
-    // `APP_TIME_ZONE` IS PASSED ON PURPOSE (#3123): the environment authority
+    // `ENVIRONMENT_CLUB_ZONE` IS PASSED ON PURPOSE (#3123): the environment authority
     // is this premise's whole subject, and naming any other zone would make the
     // disagreement a coincidence between two literals instead of a measurement
     // of the authority the route must NOT be obeying.
     expect(
-      formatDateOnlyForTimeZone(CANCELLED_AT, APP_TIME_ZONE),
+      formatDateOnlyForTimeZone(CANCELLED_AT, ENVIRONMENT_CLUB_ZONE),
       "INV-CONFIG-002: the environment authority now agrees with the persisted " +
         "club zone about this instant, so this cell can no longer tell which of " +
         "the two the route obeyed. Pick a fixture where they disagree.",
@@ -299,10 +298,10 @@ describe("members export — the persisted club timezone, not the environment (C
 
   it("stamps the download filename with the club's calendar day, not the host's", async () => {
     // Same premise, same reason: the environment's "today" must not already be
-    // the club's, or the filename below proves nothing. `APP_TIME_ZONE` is
-    // passed on purpose, for the reason given in the case above (#3123).
+    // the club's, or the filename below proves nothing. `ENVIRONMENT_CLUB_ZONE`
+    // is passed on purpose, for the reason given in the case above (#3123).
     expect(
-      todayDateOnlyForTimeZone(APP_TIME_ZONE),
+      todayDateOnlyForTimeZone(ENVIRONMENT_CLUB_ZONE),
       "INV-CONFIG-002: the environment authority already names the club's day, " +
         "so this filename cannot tell the two apart.",
     ).not.toBe("2026-06-30");

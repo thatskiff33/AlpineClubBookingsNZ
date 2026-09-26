@@ -86,6 +86,15 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach
+// below) is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
@@ -121,6 +130,7 @@ import {
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -178,6 +188,10 @@ beforeAll(() => {
 
 afterAll(() => {
   vi.useRealTimers();
+});
+
+beforeEach(() => {
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
 });
 
 function baseBooking(overrides: Partial<Record<string, unknown>> = {}) {
@@ -903,7 +917,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "requires_payment_method",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: null,
     } as never);
@@ -929,7 +943,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_stale",
       status: "requires_payment_method",
-      client_secret: "secret_stale",
+      client_secret: "secret_stale", currency: "nzd",
       amount: 10000,
       payment_method: null,
     } as never);
@@ -939,7 +953,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -966,6 +980,99 @@ describe("createPaymentIntentForPaymentLink", () => {
     );
   });
 
+  it("supersedes a same-amount intent minted in another currency and mints a fresh one (#3567)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // The right amount, but minted in AUD before the club moved to NZD.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "requires_payment_method",
+      client_secret: "secret_aud", currency: "aud",
+      amount: 12000,
+      payment_method: null,
+    } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+      baseBooking({ guests: [{ id: "guest-1" }] }) as never
+    );
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_nzd",
+      client_secret: "secret_nzd", currency: "nzd",
+      amount: 12000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    expect(result).toEqual({
+      type: "clientSecret",
+      clientSecret: "secret_nzd",
+      paymentIntentId: "pi_nzd",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        bookingId: "booking-1",
+        paymentId: "pay-1",
+        newFinalPriceCents: 12000,
+        wrongCurrencyPaymentIntentId: "pi_aud",
+      },
+    );
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 12000 }),
+    );
+  });
+
+  it("answers 409 for an old-currency intent still processing, and neither supersedes it nor mints (#3567 final check)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // A bank debit in AUD, submitted before the club moved to NZD, not yet settled.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "processing",
+      client_secret: "secret_aud", currency: "aud",
+      amount: 12000,
+      payment_method: null,
+    } as never);
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      name: "PaymentLinkError",
+      status: 409,
+      code: "PAYMENT_PROCESSING",
+      message: "This payment is being processed. Refresh the page in a minute to see it confirmed.",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("refuses a club currency without two decimal places with a 409 before resolving the link (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      status: 409,
+      message: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+    });
+    expect(mockedFindUnique).not.toHaveBeenCalled();
+    expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("reports alreadyPaid and reconciles when the existing PaymentIntent already succeeded", async () => {
     mockedFindUnique.mockResolvedValue(
       baseLink({
@@ -977,7 +1084,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "succeeded",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: "pm_123",
     } as never);
@@ -1014,7 +1121,7 @@ describe("createPaymentIntentForPaymentLink", () => {
         // Stripe retains the client secret after success/refund. Keeping this
         // production-shaped is the mutation proof: removing the explicit repay
         // bypass would return this old secret before the fresh mint below.
-        client_secret: "secret_refunded_must_not_be_reused",
+        client_secret: "secret_refunded_must_not_be_reused", currency: "nzd",
         amount: 12000,
         payment_method: "pm_old",
       } as never);
@@ -1027,7 +1134,7 @@ describe("createPaymentIntentForPaymentLink", () => {
       mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
       mockedCreatePaymentIntent.mockResolvedValue({
         id: "pi_repay",
-        client_secret: "secret_repay",
+        client_secret: "secret_repay", currency: "nzd",
       } as never);
       vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1194,7 +1301,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1241,7 +1348,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1276,7 +1383,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1307,7 +1414,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1334,7 +1441,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: null,
+      client_secret: null, currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);

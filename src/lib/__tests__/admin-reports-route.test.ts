@@ -540,24 +540,26 @@ describe("admin reports route — the report window comes from the persisted clu
   it("bounds instants by the club's civil day and calendar columns by the plain days", async () => {
     // THE PREMISE, MEASURED AS AN ANSWER RATHER THAN AN IDENTIFIER. What has to
     // hold for the instant assertions below to discriminate is that the
-    // ENVIRONMENT authority — `APP_TIME_ZONE`, which is what every legacy helper
-    // reads and what this route used to call — puts the club day somewhere else.
+    // ENVIRONMENT authority — `ENVIRONMENT_CLUB_ZONE`, the zone the deleted
+    // `APP_TIME_ZONE` constant resolved to and what this route used to call —
+    // puts the club day somewhere else.
     // Comparing the two zone NAMES does not establish that: measured,
     // `TZ=America/Chicago` produces Denver's answer for every fixture in this
     // file, so a name check passes while the assertion quietly goes vacuous.
-    // `APP_TIME_ZONE` is also frozen at module load, so the `process.env.TZ` pin
+    // That value is also frozen at module load, so the `process.env.TZ` pin
     // above cannot move it once anything has imported it — one more reason to
     // assert the answer instead of the label.
     //
-    // `APP_TIME_ZONE` IS PASSED ON PURPOSE (#3123). The helper's default is
-    // going away, and this premise's subject IS the environment authority: it
-    // has to read the frozen module value rather than a literal, because a
-    // literal would only ever restate the `process.env.TZ` pin above and could
-    // not notice the two coming apart.
+    // `ENVIRONMENT_CLUB_ZONE` IS PASSED ON PURPOSE (#3123). This premise's
+    // subject IS the environment authority: it has to read the frozen module
+    // value rather than a literal, because a literal would only ever restate
+    // the `process.env.TZ` pin above and could not notice the two coming apart.
     const { startOfDateOnlyForTimeZone } = await import("@/lib/date-only");
-    const { APP_TIME_ZONE } = await import("@/config/operational");
+    const { ENVIRONMENT_CLUB_ZONE } = await import(
+      "@/lib/__tests__/helpers/environment-club-zone"
+    );
     expect(
-      startOfDateOnlyForTimeZone("2026-04-08", APP_TIME_ZONE).toISOString(),
+      startOfDateOnlyForTimeZone("2026-04-08", ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now opens the club day at the " +
         "same instant the persisted zone does, so the bounds below can no longer " +
         "tell which of the two the route obeyed, and would pass over a reverted " +

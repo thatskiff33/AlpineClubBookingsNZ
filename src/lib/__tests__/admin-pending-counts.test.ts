@@ -3,21 +3,17 @@ import { BookingRequestStatus } from "@prisma/client";
 
 /*
   The three date-bounded queues below are bounded on the CLUB's day, from its
-  persisted timezone, never on the container's (#3123). `APP_TIME_ZONE` is pinned
-  to `Pacific/Auckland` — what the replaced `getTodayDateOnly()` answered here,
-  and this codebase's own fallback — while the persisted club zone is
-  `America/Denver`. Under the frozen clock that is 1 July against 30 June, so a
+  persisted timezone, never on the container's (#3123). The environment's default
+  is `Pacific/Auckland` — what the replaced `getTodayDateOnly()` answered here —
+  while the persisted club zone is `America/Denver`. (The `APP_TIME_ZONE` pin
+  that used to sit here went with the constant in #3567; nothing reads the
+  environment's zone any more.) Under the frozen clock that is 1 July against 30 June, so a
   bound taken from the environment fails these assertions instead of matching
   them. Before #3123 this file compared against `getTodayDateOnly()` itself,
   which agreed with the subject however wrong both were.
 */
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
+
 
 const mocks = vi.hoisted(() => ({
   familyGroupJoinRequestCount: vi.fn(),

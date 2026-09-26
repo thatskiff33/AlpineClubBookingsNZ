@@ -107,7 +107,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/force-confirm/route";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 /**
@@ -491,7 +491,7 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
       // The premise, as an answer rather than a zone identifier: two different
       // zone names can still name the same day, and then this proves nothing.
       expect(
-        getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+        getTodayDateOnly(ENVIRONMENT_CLUB_ZONE).toISOString(),
         "INV-CONFIG-002: the environment authority now names the same day as " +
           "the persisted club zone, so this flag cannot tell the two apart.",
       ).not.toBe("2026-06-30T00:00:00.000Z");

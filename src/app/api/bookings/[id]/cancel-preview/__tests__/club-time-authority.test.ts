@@ -27,9 +27,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ## What makes this file discriminating
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — both the answer the replaced
- * code gave AND this codebase's own fallback, so it is the one value a wrong fix
- * could still pass under. The PERSISTED club zone is `America/Denver`. Under the
+ * `ENVIRONMENT_ZONE` is `Pacific/Auckland` — both the answer the replaced code
+ * gave AND this codebase's own fallback, so it is the one value a wrong fix
+ * could still pass under. (It used to be pinned with a mock of the environment
+ * constant; #3567 deleted the constant, so the pin went with it.) The PERSISTED club zone is `America/Denver`. Under the
  * repository's frozen clock (`2026-07-01T00:00:00.000Z`) the club's day is
  * 30 June while the environment says 1 July, so nothing here can agree by
  * coincidence and no `vi.setSystemTime` is needed.
@@ -39,14 +40,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * row — and each degrades silently to the environment, so a mock without it
  * would pass for exactly the reason this file exists to rule out.
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 const PERSISTED_ZONE = "America/Denver";
@@ -82,7 +75,6 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { GET } from "@/app/api/bookings/[id]/cancel-preview/route";
 
@@ -155,7 +147,6 @@ beforeEach(() => {
 
 describe("the cancellation refund tier is decided on the club's day (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's disagree about today", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
   });

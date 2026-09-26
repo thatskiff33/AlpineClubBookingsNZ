@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import {
   addCalendarDays,
   calendarDateParts,
@@ -48,7 +48,7 @@ const RULE_ZONE = requireClubTimeZone("Pacific/Auckland");
  * server) or the viewer's (in the "Repeat" picker).
  *
  * The suite is deliberately built so that two wrong implementations FAIL it:
- * one that formats through `APP_TIME_ZONE` (the environment's claim) and one
+ * one that formats through the environment's zone and one
  * that reads the host's own `Date` getters. `divergentClubZone` picks a club zone
  * that diverges from both, so a projection assertion cannot pass by accident;
  * the DST block below pins its zone instead, because "this zone's clocks change
@@ -85,7 +85,7 @@ describe("generateOccurrenceStarts — the club's calendar, not the host's", () 
     An anchor whose CLUB calendar day differs from the day both wrong
     implementations would read. The 10:30 UTC hour is what makes that possible at
     all: three calendar days exist on earth at once only while the UTC hour is
-    10, so at any other hour `APP_TIME_ZONE`'s day and the host's can be the only
+    10, so at any other hour the environment zone's day and the host's can be the only
     two there are. `divergentClubZone`'s docblock carries the measurement.
   */
   const anchor = requireInstant("2026-07-21T10:30:00.000Z");
@@ -307,7 +307,7 @@ describe("generateOccurrenceStarts — day-of-month clamping", () => {
  * zone's own clock change", which needs a zone whose transition dates are known —
  * so `America/Denver` is named, and the premise that makes the assertion
  * meaningful is asserted rather than assumed: the club zone must not be the
- * environment's claim (which would let an `APP_TIME_ZONE` implementation pass),
+ * environment's claim (which would let an environment-reading implementation pass),
  * and the HOST's offset must be constant across the window (otherwise a
  * host-local implementation would shift in step with the club and also pass).
  *
@@ -321,8 +321,8 @@ describe("generateOccurrenceStarts — DST in the club's zone", () => {
 
   beforeEach(() => {
     expect(
-      APP_TIME_ZONE,
-      `This block proves the CLUB's zone drives the series, so the club zone must not be the one APP_TIME_ZONE already claims. APP_TIME_ZONE is ${APP_TIME_ZONE} — set TZ to something other than ${CLUB_ZONE} (or unset it). See docs/TESTING.md rule 6.`,
+      ENVIRONMENT_CLUB_ZONE,
+      `This block proves the CLUB's zone drives the series, so the club zone must not be the one the environment already claims. The environment zone is ${ENVIRONMENT_CLUB_ZONE} — set TZ to something other than ${CLUB_ZONE} (or unset it). See docs/TESTING.md rule 6.`,
     ).not.toBe(CLUB_ZONE);
     const hostBefore = anchor.getTimezoneOffset();
     const hostAfter = new Date(
@@ -377,22 +377,24 @@ describe("generateOccurrenceStarts — DST in the club's zone", () => {
  *
  * A calendar-date formatter is built at MODULE LOAD, pinned to `"UTC"` because
  * that is an identity over the UTC-midnight encoding rather than a projection.
- * Nothing in a normal run can tell that pin from `APP_TIME_ZONE`: this repository
- * resolves `Pacific/Auckland` for `APP_TIME_ZONE`, and reading a UTC-midnight
+ * Nothing in a normal run can tell that pin from the environment's zone: this
+ * repository resolves `Pacific/Auckland` for it, and reading a UTC-midnight
  * encoding anywhere east of Greenwich gives back the same day. Owner decision 3
  * on #2870 recorded that class as uncatchable by running the suite once.
  *
  * A review lens then measured the consequence precisely: swapping this file's
- * pin to `APP_TIME_ZONE` killed 0 of 124, while the identical swap in
+ * pin to the environment's zone killed 0 of 124, while the identical swap in
  * `calendar-client.ts` killed 1 — because that file had the re-imported-graph
  * block below and this one did not. `LONG_WEEKDAY` is also the bare long-weekday
  * shape reported as MISSING from `HOUSE_SHAPES`, so it is the newest formatter in
  * the subsystem and was the only one with nothing guarding it.
  *
- * `vi.resetModules()` plus a dynamic import re-evaluates `@/config/operational`,
- * so `APP_TIME_ZONE` really becomes a behind-UTC zone for that copy of the
- * module. A `"UTC"` pin is unmoved by that; an `APP_TIME_ZONE` pin renders the
- * day BEFORE the one it was handed, which turns Tuesday into Monday.
+ * `vi.resetModules()` plus a dynamic import re-evaluates the module graph under
+ * a behind-UTC `TZ`; the premise re-reads `ENVIRONMENT_CLUB_ZONE` to prove the
+ * environment's claim moved (the `@/config/operational` constant it used to
+ * read was deleted in #3567). A `"UTC"` pin is unmoved by that; a pin on the
+ * environment's zone renders the day BEFORE the one it was handed, which turns
+ * Tuesday into Monday.
  *
  * This is not the whole of CT-6's hostile-zone proof (#2991) — it covers this
  * module's one shape — but it is the shape that proof will take.
@@ -406,13 +408,13 @@ describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
   });
 
   async function labelsUnderEnvironmentZone(environmentZone: string): Promise<{
-    appTimeZone: string;
+    environmentClubZone: string;
     weekly: string | undefined;
     described: string;
   }> {
     process.env.TZ = environmentZone;
     vi.resetModules();
-    const operational = await import("@/config/operational");
+    const environment = await import("@/lib/__tests__/helpers/environment-club-zone");
     const recurrence = await import("@/lib/calendar-recurrence");
     const kernel = await import("@/lib/club-time");
     // 21 Jul 2026 is a Tuesday. Both entry points read the same formatter, so
@@ -420,7 +422,7 @@ describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
     // rendered beside a stored series.
     const date = kernel.requireCalendarDate("2026-07-21");
     return {
-      appTimeZone: operational.APP_TIME_ZONE,
+      environmentClubZone: environment.ENVIRONMENT_CLUB_ZONE,
       weekly: recurrence
         .recurrenceOptionsForDate(date, CLUB_FORMAT_TEST)
         .find((o) => o.value === "WEEKLY")?.label,
@@ -438,7 +440,7 @@ describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
     // The premise: the re-import really moved the environment's zone. Without
     // this the assertions below would be proving nothing.
     expect(
-      behind.appTimeZone,
+      behind.environmentClubZone,
       "the re-imported module graph did not pick up the pinned TZ, so this assertion proves nothing",
     ).toBe("America/Denver");
     expect(behind.weekly).toBe("Weekly on Tuesday");
@@ -447,7 +449,7 @@ describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
 
   it("names Tuesday for an environment zone far ahead of UTC too", async () => {
     const ahead = await labelsUnderEnvironmentZone("Pacific/Kiritimati");
-    expect(ahead.appTimeZone).toBe("Pacific/Kiritimati");
+    expect(ahead.environmentClubZone).toBe("Pacific/Kiritimati");
     expect(ahead.weekly).toBe("Weekly on Tuesday");
     expect(ahead.described).toBe("Monthly on the 3rd Tuesday");
   });

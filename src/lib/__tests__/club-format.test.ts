@@ -177,6 +177,37 @@ describe("resolveClubFormat", () => {
     ).toEqual({
       currencyCode: CLUB_CURRENCY_FALLBACK,
       locale: CLUB_LOCALE_FALLBACK,
+      // #3567 re-review: a STORED currency that cannot be used refuses charges.
+      unusableStoredCurrency: "NOPE",
+    });
+  });
+
+  it("displays a fallback for a stored JPY but names it, so charges are refused (#3567 re-review, D3)", () => {
+    // Display keeps rendering — in the environment seed, then NZD — while the
+    // stored code travels on the format for stripeChargeCurrency to refuse.
+    expect(resolveClubFormat({ currencyCode: "JPY", locale: "ja-JP" }, environment)).toEqual({
+      currencyCode: "AUD",
+      locale: "ja-JP",
+      unusableStoredCurrency: "JPY",
+    });
+    expect(resolveClubFormat({ currencyCode: "jpy", locale: "ja-JP" }, null)).toEqual({
+      currencyCode: CLUB_CURRENCY_FALLBACK,
+      locale: "ja-JP",
+      unusableStoredCurrency: "JPY",
+    });
+    // A row whose currency is BLANK or missing refuses charges too (#3567 final
+    // check): the admin panel calls it "Not usable", so charges must agree.
+    for (const blank of ["", "   ", null, undefined]) {
+      expect(resolveClubFormat({ currencyCode: blank, locale: "en-NZ" }, environment)).toEqual({
+        currencyCode: "AUD",
+        locale: "en-NZ",
+        unusableStoredCurrency: "(blank)",
+      });
+    }
+    // The environment seed alone never refuses charges: no row, nothing stored.
+    expect(resolveClubFormat(null, { currencyCode: "JPY", locale: "ja-JP" })).toEqual({
+      currencyCode: CLUB_CURRENCY_FALLBACK,
+      locale: "ja-JP",
     });
   });
 
@@ -188,7 +219,7 @@ describe("resolveClubFormat", () => {
     ).toEqual({ currencyCode: "CHF", locale: "en-AU" });
     expect(
       resolveClubFormat({ currencyCode: "!!", locale: "de-CH" }, environment),
-    ).toEqual({ currencyCode: "AUD", locale: "de-CH" });
+    ).toEqual({ currencyCode: "AUD", locale: "de-CH", unusableStoredCurrency: "!!" });
   });
 
   it("canonicalises whichever leg answers", () => {
