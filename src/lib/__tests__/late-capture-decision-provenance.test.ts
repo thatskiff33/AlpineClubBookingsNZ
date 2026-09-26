@@ -84,6 +84,8 @@ function read(relativePath: string): string {
  * "explicit" does not mean "allowed to fall behind".
  */
 const PROVENANCE_SCANNED_FILES = [
+  // #3639: cites #2774's fence; its own owner decision is #3639's, dated.
+  "src/lib/late-capture-refund-approval.ts",
   "docs/invariants/additional-payment-chasing.md",
   "docs/DOMAIN_INVARIANTS.md",
   "docs/END_TO_END_TEST_MATRIX.md",

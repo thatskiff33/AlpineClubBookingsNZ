@@ -2815,6 +2815,15 @@ and the create, joins no capacity or member-credit tier, and every Stripe call
 on that path is made by its caller outside the transaction — so it composes with
 nothing and reverses no order.
 
+**#3639 adds its sibling on the webhook side.** `holdLateCaptureForTreasurerIfRequired`
+(`src/lib/late-capture-refund-approval.ts`) raises the treasurer-approval
+`ManualRefundTask` for a late capture when the club has chosen approval over an
+automatic refund (owner decision 26 Sep 2026). Same shape, same reason: a
+find-then-create keyed on the payment intent, which must also see the #2700 raise's
+OPEN task for that intent. It takes `lock(1)` and nothing else, makes no provider
+call inside, and the #2700 raise now also matches this task's `occurrenceKey`, so
+whichever writer is second finds the first's row.
+
 The middle read is a **refund fence**, and it is why the read must be inside
 this lock rather than beside it. The transaction row for this intent is re-read
 under the key and the raise is skipped when Stripe has already refunded the

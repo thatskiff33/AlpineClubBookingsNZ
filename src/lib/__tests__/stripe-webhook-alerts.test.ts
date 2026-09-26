@@ -307,6 +307,10 @@ vi.mock("@/lib/webhook-log", () => ({
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
 }));
+// #3639: the late-capture Xero correction reads the token store directly.
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
+}));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>

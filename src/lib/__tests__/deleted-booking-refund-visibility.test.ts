@@ -96,6 +96,8 @@ interface StoredTask {
   status: string;
   note: string | null;
   completedByMemberId: string | null;
+  /** #3639: only a treasurer-approval task carries one; none here does. */
+  occurrenceKey?: string | null;
 }
 
 const tx = {
@@ -319,9 +321,14 @@ describe("which rows the operator surface shows (#2750)", () => {
 interface TaskWhere {
   bookingId: string;
   paymentId: string;
-  reason: string | { in: string[] };
+  reason?: string | { in: string[] };
+  /** #3639: the raise also matches the webhook's approval task by its key. */
+  OR?: Array<{ reason?: { in: string[] }; occurrenceKey?: string }>;
   status?: string;
 }
+
+const reasonMatches = (row: StoredTask, reason: string | { in: string[] }) =>
+  typeof reason === "string" ? row.reason === reason : reason.in.includes(row.reason);
 
 function installTaskStore() {
   const rows: StoredTask[] = [];
@@ -330,9 +337,13 @@ function installTaskStore() {
   const matches = (row: StoredTask, where: TaskWhere) =>
     row.bookingId === where.bookingId &&
     row.paymentId === where.paymentId &&
-    (typeof where.reason === "string"
-      ? row.reason === where.reason
-      : where.reason.in.includes(row.reason)) &&
+    (where.reason === undefined || reasonMatches(row, where.reason)) &&
+    (where.OR === undefined ||
+      where.OR.some((clause) =>
+        clause.reason
+          ? reasonMatches(row, clause.reason)
+          : row.occurrenceKey === clause.occurrenceKey,
+      )) &&
     (where.status === undefined || row.status === where.status);
 
   mocks.manualRefundTaskFindFirst.mockImplementation(

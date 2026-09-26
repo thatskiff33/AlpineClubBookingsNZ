@@ -1,4 +1,7 @@
-import { isXeroConnected } from "@/lib/xero";
+// The token store, not the `@/lib/xero` facade: this module sits in the
+// payment-recovery cron's import graph, and the facade drags the whole Xero SDK
+// into every route that imports that cron.
+import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   enqueueXeroRefundCreditNoteOperation,
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,

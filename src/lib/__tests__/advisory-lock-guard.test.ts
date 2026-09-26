@@ -571,6 +571,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Settlement, refunds and money side effects ────────────────────────────
   {
+    site: "holdLateCaptureForTreasurerIfRequired#1",
+    tier: "GLOBAL",
+    reason:
+      "#3639 (owner decision 26 Sep 2026): raising the treasurer-approval ManualRefundTask for a late capture is a find-then-create keyed on the payment INTENT, and it must also see the confirm route's #2700 OPEN question for the same capture — which that raise creates under this same key. Two webhook deliveries, or a delivery and a confirm, would otherwise put two tasks on one capture and a treasurer could refund it twice. Same cohort as raiseDeletedBookingModificationRefundTask; takes nothing else and makes no provider call inside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "raiseDeletedBookingModificationRefundTask#1",
     tier: "GLOBAL",
     reason:
