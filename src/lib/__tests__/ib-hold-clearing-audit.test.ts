@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   auditCardAppliedCreditDoublePays,
-  auditIbHoldClearingUnderclears,
   deriveCardAppliedCreditDoublePayFinding,
   deriveIbAppliedCreditStrandFinding,
+  type CardAppliedCreditDoublePayRow,
+  type IbAppliedCreditStrandRow,
+} from "@/lib/ib-hold-clearing-audit";
+import {
+  auditIbHoldClearingUnderclears,
   deriveIbHoldClearingFinding,
   formatIbHoldClearingAuditReport,
   resolveIbHoldClearingNotes,
-  type CardAppliedCreditDoublePayRow,
-  type IbAppliedCreditStrandRow,
   type IbHoldClearingRow,
-} from "@/lib/ib-hold-clearing-audit";
+} from "@/lib/ib-hold-clearing-underclear-audit";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeRow(overrides: Partial<IbHoldClearingRow> = {}): IbHoldClearingRow {
