@@ -49,6 +49,19 @@ body:
     validations:
       required: true
   - type: textarea
+    id: money_impact
+    attributes:
+      label: What happens to the money?
+      description: >-
+        If this finding touches a payment instrument, invoice, refund or credit,
+        say what happens to the MONEY, not just to the row: who is owed what
+        before and after, and whether any debt is retired or re-homed. #486
+        described a stale intent as a row stuck in PENDING; the fix it asked
+        for (#543) retired the instrument without re-homing its debt, which is
+        how #3340 under-charged members. Otherwise write "No money path".
+    validations:
+      required: true
+  - type: textarea
     id: recommended_fix
     attributes:
       label: Recommended fix

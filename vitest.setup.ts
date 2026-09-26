@@ -27,6 +27,16 @@ process.env.EMAIL_FROM ??= SAFE_DEFAULT_CONFIG.supportEmail;
 process.env.AWS_SES_ACCESS_KEY_ID ??= "test-ses-access-key-id";
 process.env.AWS_SES_SECRET_ACCESS_KEY ??= "test-ses-secret-access-key";
 
+// Keep dotenv silent under Vitest. Scripts a suite imports (for example
+// `scripts/config-self-heal.ts`, via `import "dotenv/config"`) print dotenv's
+// "injected env (N) from .env" banner unless told not to. dotenv 18 prints it
+// with console.error, so it lands in the stderr a CLI test asserts is empty
+// (config-self-heal-cli.test.ts). Both names are set on purpose: dotenv 18
+// reads DOTENV_QUIET and falls back to DOTENV_CONFIG_QUIET, while dotenv 17
+// reads only DOTENV_CONFIG_QUIET. `??=` so a run can still opt back in.
+process.env.DOTENV_QUIET ??= "true";
+process.env.DOTENV_CONFIG_QUIET ??= "true";
+
 // The frozen test clock (#2481) is installed by `vitest.clock-setup.ts`, which
 // `vitest.config.mts` lists BEFORE this file so that "today" is already pinned
 // when this module's own imports evaluate. See that file and
