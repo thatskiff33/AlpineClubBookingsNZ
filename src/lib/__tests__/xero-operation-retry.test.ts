@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   createUnappliedXeroCreditNote: vi.fn(),
   createUnappliedXeroCreditNoteForModification: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
+  findManyXeroObjectLink: vi.fn().mockResolvedValue([]),
   createXeroRefundPaymentForInvoice: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
@@ -57,6 +58,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
+    },
+    // #3535: a PARTIAL clearing note's repair skips targets already allocated.
+    xeroObjectLink: {
+      findMany: mocks.findManyXeroObjectLink,
     },
   },
 }));
@@ -377,6 +382,80 @@ describe("getXeroOperationRetryMeta", () => {
         }),
       ),
     ).toEqual({ supported: true, reason: null });
+  });
+});
+
+// #3535: a FAILED booking-anchored invoice-clearing note (hold expiry, the
+// never-captured cancel, the repair re-queue) was refused by the retry screen,
+// leaving the unpaid invoice open with no way back.
+describe("booking-anchored clearing note retries (#3535)", () => {
+  const clearingOperation = (requestPayload: Record<string, unknown>, queueType: string | null = "MODIFICATION_CREDIT_NOTE") =>
+    makeOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      queueType,
+      requestPayload,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("marks a failed clearing note retryable from its queued or its executed payload", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation({
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_7",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        })
+      )
+    ).toEqual({ supported: true, reason: null });
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation(
+          { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+          null
+        )
+      )
+    ).toEqual({ supported: true, reason: null });
+  });
+
+  it("refuses a booking-anchored row with no recorded amount", () => {
+    expect(
+      getXeroOperationRetryMeta(clearingOperation({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_7" }))
+        .supported
+    ).toBe(false);
+  });
+
+  it("replays the recorded amount and keeps the clearing wording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      clearingOperation(
+        { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        null
+      )
+    );
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn_7");
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero invoice-clearing credit note creation." });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "booking_7",
+      refundAmountCents: 15000,
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      clearsUnpaidInvoice: true,
+      format: CLUB_FORMAT_TEST,
+    });
+    const [params] = mocks.createXeroCreditNoteForModification.mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
   });
 });
 
@@ -1905,6 +1984,47 @@ describe("retryXeroSyncOperation", () => {
         createdByMemberId: "admin_1",
       }
     );
+  });
+
+  // #3535: a clearing note planned across the primary and a supplementary
+  // invoice replays exactly that plan, skipping the target already allocated.
+  it("repairs a partial clearing note across its recorded invoices, skipping one already allocated", async () => {
+    mocks.findManyXeroObjectLink.mockResolvedValueOnce([
+      { metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 30000 } },
+      // A different note's allocation to the same invoice does not count.
+      { metadata: { creditNoteId: "cn_other", invoiceId: "inv_supp", amountCents: 11000 } },
+    ]);
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Booking",
+        localId: "booking_7",
+        xeroObjectId: "cn_clear",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 41000,
+          clearsUnpaidInvoice: true,
+          allocations: [
+            { invoiceId: "inv_primary", amountCents: 30000 },
+            { invoiceId: "inv_supp", amountCents: 11000 },
+          ],
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Repaired Xero modification credit note allocation." });
+
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith("cn_clear", "inv_supp", 11000, {
+      localModel: "Booking",
+      localId: "booking_7",
+      role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+      createdByMemberId: "admin_1",
+    });
   });
 
   it("replays membership cancellation credit note creation using the stored request payload", async () => {

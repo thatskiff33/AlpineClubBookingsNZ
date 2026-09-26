@@ -2655,6 +2655,38 @@ describe("processStoredXeroInboundEvents", () => {
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
 
+  // #3535: a hold released since then carries the booking-anchored clearing
+  // note, never `payment.xeroRefundCreditNoteId`. The alert must still say a
+  // clearing note was already issued, and a still-pending one is retired.
+  it("keeps the clearing-note warning for a hold released on the booking-anchored path, and retires a pending note (#3535)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+    });
+    mocks.txLinkFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.localModel === "Booking" && where.role === "MODIFICATION_CREDIT_NOTE"
+        ? { id: "link_clearing_note" }
+        : null
+    );
+
+    await processStoredXeroInboundEvents();
+
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localModel: "Booking",
+        localId: "booking_ib_cancelled",
+        status: "PENDING",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+      }),
+      data: { status: "CANCELLED" },
+    });
+    const alerts = (sendAdminPaymentFailureAlert as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => (call[0] as { errorMessage: string }).errorMessage
+    );
+    expect(alerts.some((message) => message.includes("invoice-clearing credit note was ALREADY issued"))).toBe(true);
+    expect(alerts.some((message) => message.includes("remove the clearing note's allocation or void the clearing note"))).toBe(true);
+  });
+
   it("stays silent on a webhook replay for an already-credited cancelled booking (#1357)", async () => {
     mockAlreadyCancelledInboundEvent({
       paymentStatus: "SUCCEEDED",

@@ -24,6 +24,12 @@ import {
   parseRefundMethod,
 } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
+import {
+  readBookingClearingNoteRetryInput,
+  readRecordedClearingAllocations,
+  unallocatedClearingTargets,
+  type ClearingAllocationTarget,
+} from "@/lib/xero-clearing-allocations";
 import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -648,7 +654,11 @@ async function repairRefundCreditNoteFollowUpActions(
 
 function parseModificationCreditNoteRepairInput(
   operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "xeroObjectId">
-): { creditNoteId: string; invoiceId: string; amountCents: number; allocationRole: string } | null {
+): {
+  creditNoteId: string;
+  targets: ClearingAllocationTarget[];
+  allocationRole: string;
+} | null {
   if (
     (!operation.localModel || (operation.localModel !== "Booking" && operation.localModel !== "BookingModification")) ||
     !operation.localId ||
@@ -658,16 +668,18 @@ function parseModificationCreditNoteRepairInput(
   }
 
   const payload = asRecord(operation.requestPayload);
+  // #3535: a clearing note records the invoices it was planned across; replay
+  // exactly those. An edit's note (and any row from before) has one target.
+  const recorded = readRecordedClearingAllocations(payload);
   const invoiceId = readString(payload?.invoiceId);
   const amountCents = readNumber(payload?.refundAmountCents);
-  if (!invoiceId || amountCents === null) {
+  if (!recorded && (!invoiceId || amountCents === null)) {
     return null;
   }
 
   return {
     creditNoteId: operation.xeroObjectId,
-    invoiceId,
-    amountCents,
+    targets: recorded ?? [{ invoiceId: invoiceId!, amountCents: amountCents! }],
     allocationRole: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
   };
 }
@@ -876,6 +888,10 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.localModel === "BookingModification" && operation.localId) {
+      return { supported: true, reason: null };
+    }
+
+    if (readBookingClearingNoteRetryInput(operation)) {
       return { supported: true, reason: null };
     }
 
@@ -1105,17 +1121,23 @@ export async function retryXeroSyncOperation(
       operation.localModel &&
       operation.localId
     ) {
-      await xero.allocateCreditNoteToInvoice(
-        modificationCreditNoteRepair.creditNoteId,
-        modificationCreditNoteRepair.invoiceId,
-        modificationCreditNoteRepair.amountCents,
-        {
-          localModel: operation.localModel,
-          localId: operation.localId,
-          role: modificationCreditNoteRepair.allocationRole,
-          createdByMemberId,
-        }
-      );
+      for (const target of await unallocatedClearingTargets({
+        ...modificationCreditNoteRepair,
+        localModel: operation.localModel,
+        localId: operation.localId,
+      })) {
+        await xero.allocateCreditNoteToInvoice(
+          modificationCreditNoteRepair.creditNoteId,
+          target.invoiceId,
+          target.amountCents,
+          {
+            localModel: operation.localModel,
+            localId: operation.localId,
+            role: modificationCreditNoteRepair.allocationRole,
+            createdByMemberId,
+          }
+        );
+      }
 
       return { message: "Repaired Xero modification credit note allocation." };
     }
@@ -1395,6 +1417,24 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
       });
       return { message: "Retried Xero account-credit note creation." };
+    }
+
+    if (operation.localModel === "Booking") {
+      const clearingRetry = readBookingClearingNoteRetryInput(operation);
+      if (!clearingRetry) {
+        throw new XeroOperationRetryError(
+          "Stored invoice-clearing credit note payload is incomplete."
+        );
+      }
+      await xero.createXeroCreditNoteForModification({
+        bookingId: operation.localId!,
+        refundAmountCents: clearingRetry.amountCents,
+        createdByMemberId,
+        repairExistingLink: true,
+        ...clearingRetry.wording,
+        format,
+      });
+      return { message: "Retried Xero invoice-clearing credit note creation." };
     }
 
     if (operation.localModel === "BookingModification") {

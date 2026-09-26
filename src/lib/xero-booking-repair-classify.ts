@@ -6,6 +6,7 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingClassificationContext,
@@ -1280,7 +1281,10 @@ export function classifyBookingContext(
     capturedPaymentTransactions.length === 0 &&
     primaryInvoice
   ) {
-    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
+    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
+      booking,
+      context.xeroAllocatedAppliedCreditCents
+    );
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
@@ -1325,6 +1329,8 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               refundAmountCents: clearingAmountCents,
+              // #3535 (`INV-PAY-017`): the note clears an unpaid invoice.
+              clearsUnpaidInvoice: true,
             },
           });
           addFinding(findings, {
@@ -1340,8 +1346,43 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else {
+          // #3535: a live or failed clearing operation the retry helper cannot
+          // replay must still be SEEN - silence here left an unpaid invoice open
+          // with nothing in the report (the #1356 third-arm rule).
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+              ? "A Xero invoice-clearing credit note operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero invoice-clearing credit note operation looks stuck."
+                : "A Xero invoice-clearing credit note operation is already pending or running.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              retryUnsupportedReason: blockingOperation.retryMeta.reason,
+            },
+            actionKeys: [],
+          });
         }
       } else {
+        // #3535: a note whose own operation went PARTIAL did not finish its
+        // allocations. Its row records the plan (one invoice, or the primary
+        // and supplementary invoices a clearing note is spread across), so the
+        // retry replays exactly that - a fresh allocation sized here would be
+        // the note's whole amount against the primary invoice alone.
+        const partialNoteOperation = bookingOperations.find(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "PARTIAL" &&
+            operation.xeroObjectId === cancellationCreditNote.objectId
+        );
+        const partialNoteRetryMeta = partialNoteOperation
+          ? getXeroOperationRetryMeta(partialNoteOperation)
+          : null;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,
@@ -1350,7 +1391,25 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (!allocation) {
+        if (partialNoteOperation && partialNoteRetryMeta?.supported) {
+          const action = addAction(
+            actionMap,
+            buildRetryAction(booking.id, partialNoteOperation, partialNoteRetryMeta)
+          );
+          addFinding(findings, {
+            code: "MISSING_CREDIT_NOTE_ALLOCATION",
+            severity: "critical",
+            summary:
+              "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
+            safeToAutoApply: true,
+            details: {
+              bookingId: booking.id,
+              creditNoteId: cancellationCreditNote.objectId,
+              operationId: partialNoteOperation.id,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!allocation) {
           const blockingOperation = getBlockingOperation(
             bookingOperations,
             "ALLOCATION",

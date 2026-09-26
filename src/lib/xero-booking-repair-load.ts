@@ -274,6 +274,7 @@ export async function loadAuditData(
     cancellationRefundRecoveryOperations,
     editReviewChargeShares,
     editReviewChargeIntentRecoveries,
+    appliedCreditAllocations,
   ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
@@ -355,7 +356,24 @@ export async function loadAuditData(
           select: { bookingId: true, idempotencyKey: true },
         })
       : Promise.resolve([] as EditReviewChargeIntentRecoveryRecord[]),
+    // #3535: INV-PAY-017's allocation term, per booking, for the
+    // cancelled-open-invoice arm's clearing-note size.
+    bookingIds.length > 0
+      ? deps.prisma.memberCreditNoteAllocation.groupBy({
+          by: ["appliedToBookingId"],
+          where: { appliedToBookingId: { in: bookingIds } },
+          _sum: { amountCents: true },
+        })
+      : Promise.resolve(
+          [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
+        ),
   ]);
+  const allocatedAppliedCreditByBookingId = new Map(
+    appliedCreditAllocations.map((row) => [
+      row.appliedToBookingId,
+      row._sum.amountCents ?? 0,
+    ])
+  );
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
   for (const link of links) {
@@ -462,6 +480,8 @@ export async function loadAuditData(
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),
+    xeroAllocatedAppliedCreditCents:
+      allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
       editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
       new Set<string>(),

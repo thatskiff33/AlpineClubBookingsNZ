@@ -1,6 +1,11 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
-import { parseRefundMethod, type RefundMethod } from "@/lib/xero-refund-method";
+import {
+  parseRefundMethod,
+  readModificationNoteWording,
+  type ModificationNoteWording,
+  type RefundMethod,
+} from "@/lib/xero-refund-method";
 
 export const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 export const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
@@ -125,15 +130,15 @@ interface QueuedSupplementaryInvoiceOutboxPayload {
   shortfallReviewTaskId?: string;
 }
 
-interface QueuedModificationCreditNoteOutboxPayload {
+// `INV-PAY-101`: the wording on the note (`refundMethod`, absent on rows queued
+// before #3529, which the builder renders as the card refund they always were),
+// or `INV-PAY-017`'s unpaid-invoice clearing (#3535) — never both.
+type QueuedModificationCreditNoteOutboxPayload = {
   queueType: typeof XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE;
   bookingId: string;
   refundAmountCents: number;
   bookingModificationId?: string;
-  // `INV-PAY-101`: the wording on the note. Absent on rows queued before #3529,
-  // which the builder renders as the card refund they always were.
-  refundMethod?: RefundMethod;
-}
+} & ModificationNoteWording;
 
 interface QueuedModificationAccountCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE;
@@ -353,7 +358,7 @@ export function readQueuedOutboxPayload(
       refundAmountCents,
       bookingModificationId:
         readString(payload.bookingModificationId) ?? undefined,
-      refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined,
+      ...readModificationNoteWording(payload),
     };
   }
 

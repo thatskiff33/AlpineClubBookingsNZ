@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
+  bookingModificationFindMany: vi.fn(),
+  getInvoice: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
@@ -45,7 +47,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
-    bookingModification: { findUnique: mocks.bookingModificationFindUnique },
+    bookingModification: {
+      findUnique: mocks.bookingModificationFindUnique,
+      findMany: mocks.bookingModificationFindMany,
+    },
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
@@ -189,6 +194,7 @@ beforeEach(() => {
       accountingApi: {
         createPayments: mocks.createPayments,
         createCreditNoteAllocation: mocks.createCreditNoteAllocation,
+        getInvoice: mocks.getInvoice,
       },
     },
     tenantId: "tenant_1",
@@ -222,7 +228,22 @@ beforeEach(() => {
   mocks.createPayments.mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
   mocks.createCreditNoteAllocation.mockResolvedValue({ body: {} });
   mocks.bookingFindUnique.mockResolvedValue(bookingRow());
+  // #3535: a booking-anchored clearing note reads each invoice's amount due.
+  // By default the booking has no edits and its one invoice owes $150.00.
+  mocks.bookingModificationFindMany.mockResolvedValue([]);
+  configureInvoicesDue({ invoice_1: 150 });
 });
+
+/** Each invoice's live AUTHORISED amount due, in dollars, as Xero returns it. */
+function configureInvoicesDue(dueByInvoiceId: Record<string, number>) {
+  mocks.getInvoice.mockImplementation(async (_tenant: string, invoiceId: string) => ({
+    body: {
+      invoices: [
+        { invoiceID: invoiceId, status: "AUTHORISED", amountDue: dueByInvoiceId[invoiceId] ?? 0 },
+      ],
+    },
+  }));
+}
 
 describe("the cash refund note (createXeroCreditNote)", () => {
   it("a card refund says so and settles from the Stripe account", async () => {
@@ -394,6 +415,161 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
     expect(builtCreditNote().reference).toBe(
       "Refund against original credit card - Booking cmbookin",
     );
+  });
+
+  // #3535 (`INV-PAY-017`): a released internet-banking hold clears an invoice
+  // nobody paid. The note closes it by ALLOCATION, records no payment, and
+  // says why the invoice was cleared rather than naming a refund.
+  it("clears an unpaid invoice by allocation, records no payment, and names no refund", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.[0]?.description).toBe(
+      "Invoice cleared - booking not paid - Booking cmbookin",
+    );
+    expect(note.reference).toBe("Invoice cleared - booking not paid - Booking cmbookin");
+    expect(note.lineItems?.[0]?.unitAmount).toBe(150);
+    expect(`${note.reference} ${note.lineItems?.[0]?.description}`).not.toMatch(/refund/i);
+
+    // Allocated against the booking's own invoice for the full amount…
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    const allocation = mocks.createCreditNoteAllocation.mock.calls[0]![2] as {
+      allocations: Array<{ invoice: { invoiceID: string }; amount: number }>;
+    };
+    expect(allocation.allocations).toEqual([
+      expect.objectContaining({ invoice: { invoiceID: "invoice_1" }, amount: 150 }),
+    ]);
+    // …and no credit-note payment: no money is recorded as leaving any account.
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    expect(settlingPayment()).toBeUndefined();
+
+    // The choice is recorded on the operation, and no refund method with it.
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      localModel: string;
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.localModel).toBe("Booking");
+    expect(recorded.requestPayload).toEqual(
+      expect.objectContaining({ clearsUnpaidInvoice: true, invoiceId: "invoice_1" }),
+    );
+    expect(recorded.requestPayload).not.toHaveProperty("refundMethod");
+    expect(completion()).toEqual(
+      expect.objectContaining({
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_1",
+        extraLinks: expect.arrayContaining([
+          expect.objectContaining({ role: "MODIFICATION_CREDIT_NOTE_ALLOCATION" }),
+        ]),
+      }),
+    );
+  });
+});
+
+/**
+ * #3535 (`INV-PAY-017`): a clearing note is sized over the booking's whole
+ * invoicing, so it is allocated across the primary and any supplementary
+ * invoice, each up to what it owes — and not created at all when they owe
+ * less than it.
+ */
+describe("clearing-note allocation across the booking's invoices (#3535)", () => {
+  it("spreads an upward-edited booking's note over the primary and the supplementary invoice", async () => {
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "mod_up" }]);
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([{ xeroObjectId: "inv_supp" }]);
+    configureInvoicesDue({ invoice_1: 300, inv_supp: 110 });
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 41000,
+      clearsUnpaidInvoice: true,
+    });
+
+    const allocations = mocks.createCreditNoteAllocation.mock.calls.map((call) => ({
+      body: (call[2] as { allocations: Array<{ invoice: { invoiceID: string }; amount: number }> })
+        .allocations[0],
+      key: call[4] as string,
+    }));
+    expect(allocations.map((entry) => [entry.body.invoice.invoiceID, entry.body.amount])).toEqual([
+      ["invoice_1", 300],
+      ["inv_supp", 110],
+    ]);
+    // Each allocation carries its own idempotency key.
+    expect(new Set(allocations.map((entry) => entry.key)).size).toBe(2);
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    expect(completion()).not.toHaveProperty("status");
+    const links = (completion().extraLinks as Array<{ role: string; metadata?: { invoiceId: string } }>)
+      .filter((link) => link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION")
+      .map((link) => link.metadata?.invoiceId);
+    expect(links).toEqual(["invoice_1", "inv_supp"]);
+    // The plan is recorded, so a PARTIAL repair replays exactly it.
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload.allocations).toEqual([
+      { invoiceId: "invoice_1", amountCents: 30000 },
+      { invoiceId: "inv_supp", amountCents: 11000 },
+    ]);
+  });
+
+  it("creates nothing and fails the operation when the invoices owe less than the note", async () => {
+    configureInvoicesDue({ invoice_1: 100 });
+
+    await expect(
+      createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        refundAmountCents: 15000,
+        clearsUnpaidInvoice: true,
+        syncOperationId: "op_queued",
+      }),
+    ).rejects.toThrow(/owe \$100\.00, less than this \$150\.00 invoice-clearing credit note/);
+
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_queued", expect.any(Error));
+  });
+
+  it("goes PARTIAL with the allocations that landed when a later one is refused", async () => {
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "mod_up" }]);
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([{ xeroObjectId: "inv_supp" }]);
+    configureInvoicesDue({ invoice_1: 300, inv_supp: 110 });
+    mocks.createCreditNoteAllocation
+      .mockResolvedValueOnce({ body: { ok: 1 } })
+      .mockRejectedValueOnce(new Error("allocation refused"));
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 41000,
+      clearsUnpaidInvoice: true,
+    });
+
+    expect(completion()).toEqual(expect.objectContaining({ status: "PARTIAL" }));
+    const links = (completion().extraLinks as Array<{ role: string; metadata?: { invoiceId: string } }>)
+      .filter((link) => link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION")
+      .map((link) => link.metadata?.invoiceId);
+    expect(links).toEqual(["invoice_1"]);
+  });
+
+  it("leaves an edit's reduction note on the original invoice without reading any invoice", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload).not.toHaveProperty("allocations");
   });
 });
 

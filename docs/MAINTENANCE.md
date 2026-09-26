@@ -1599,27 +1599,34 @@ exactly the applied-credit slice. #1597 fixed the sizing going forward (it now
 clears `max(0, finalPrice + changeFee − Xero-allocated applied credit)` and skips
 entirely when the payment has no issued invoice).
 
-The script scans every released IB hold, mirrors the corrected #1597 formula, and
-lists each booking whose clearing note was under-sized: booking id, invoice ref,
-expected clearing, actual (enqueued) clearing, and the open delta. It reads only
-local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
-hold released, which is exactly what the pre-fix release enqueued.
+The script scans every released IB hold, sizes what its invoicing should have
+been cleared by with the one INV-PAY-017 helper (`unpaidInvoiceClearingAmountCents`,
+reading applied credit from the same allocation ledger the release reads), and
+lists each booking whose notes ALLOCATED less than that: booking id, invoice
+ref, the notes raised, expected clearing, what was allocated, and the open
+delta. It reads only local rows (no Xero calls). Only allocations count — the
+allocation links the builder and the inbound reconcile write — so a FAILED
+clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
+(never allocated by the system) all show as not clearing. A refund note someone
+allocated by hand in Xero counts as far as it was allocated. Each note's line
+says which shape it is and whether it was created and allocated.
 
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json
 ```
 
-**The existing `xero-booking-repair.ts` CLI cannot express this repair.** Its
-`CANCELLED_BOOKING_OPEN_INVOICE` finding sizes a FULL clearing note
-(`getUnpaidCancellationClearingAmountCents` → `max(amountCents − refunded,
-finalPrice + changeFee)`) and recognizes only a `MODIFICATION_CREDIT_NOTE`, not
-the `REFUND_CREDIT_NOTE` the release already issued — so `--apply` would queue a
-full-finalPrice note on top of the partly-cleared invoice and OVER-allocate
-(Xero rejects over-allocation, poisoning the op). Repair each finding by hand
-instead: issue a supplementary credit note for exactly the reported open delta
-against the named invoice, then confirm the invoice reaches a zero balance in
-Xero. Do **not** run `xero-booking-repair.ts --apply` on these bookings.
+**Holds released before #3535 are not the repair CLI's to fix yet.** Its
+`CANCELLED_BOOKING_OPEN_INVOICE` arm sizes a clearing note with the same
+INV-PAY-017 helper (#3535), but it recognizes only a booking-anchored
+`MODIFICATION_CREDIT_NOTE`, not the `REFUND_CREDIT_NOTE` an older release
+issued — so `--apply` would raise a second clearing note beside that refund
+note (#3639 makes it stand down). Repair those findings by hand instead:
+allocate the existing refund note to the invoice where it is unallocated, or
+issue a credit note for exactly the reported open delta, then confirm the
+invoice reaches a zero balance in Xero. A FAILED or PARTIAL clearing note on a
+hold released since #3535 is retried from the Xero operations screen (or by the
+repair CLI), which replays its recorded amount, wording and allocation plan.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either

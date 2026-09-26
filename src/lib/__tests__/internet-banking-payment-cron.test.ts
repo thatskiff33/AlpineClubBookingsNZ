@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   lockMemberCreditLedger: vi.fn(),
   revokePaymentLinksForBooking: vi.fn(),
   processWaitlistForDates: vi.fn(),
+  enqueueXeroModificationCreditNoteOperation: vi.fn(),
+  // #3535: still mocked so a regression back onto the cash-refund path is
+  // visible (it is asserted never called), not a TypeError on an absent export.
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   findUnconvergedAppliedCreditDeallocation: vi.fn(),
@@ -84,6 +87,8 @@ vi.mock("@/lib/waitlist", () => ({
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroModificationCreditNoteOperation:
+    mocks.enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation: mocks.enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected:
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
@@ -102,6 +107,19 @@ vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
 import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
 
 const NOW = new Date("2026-07-06T08:00:00Z");
+
+/**
+ * #3535: the note a released hold enqueues — the never-captured cancel path's
+ * invoice-applied clearing note, anchored on the booking, told to say the
+ * invoice was cleared because nobody paid it.
+ */
+function clearingNote(refundAmountCents: number) {
+  return {
+    bookingId: "booking_ib_1",
+    refundAmountCents,
+    clearsUnpaidInvoice: true,
+  };
+}
 
 function makeExpiredPayment(overrides: Record<string, unknown> = {}) {
   return {
@@ -189,7 +207,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     // #1597: default = no captured ledger row (never-captured hold).
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
-    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op_refund_note_1",
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
@@ -211,9 +229,8 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(txRef.current).not.toBeNull();
     // #1597: sized off the invoice's FULL finalPrice (15000), NOT the
     // credit-reduced payment amount (12345) that under-cleared the invoice.
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "pay_ib_1",
-      15000,
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(15000),
       { store: txRef.current },
     );
     // The Xero-connected kick stays OUTSIDE the transaction (provider calls
@@ -240,7 +257,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     // The poisoned candidate's enqueue rejects INSIDE its transaction: that
     // release rolls back whole (hold not marked released, so the next run
     // retries it) while the loop continues to the next hold.
-    mocks.enqueueXeroRefundCreditNoteOperation
+    mocks.enqueueXeroModificationCreditNoteOperation
       .mockRejectedValueOnce(new Error("enqueue exploded"))
       .mockResolvedValueOnce({ queueOperationId: "op_refund_note_2" });
 
@@ -263,7 +280,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
 
     expect(result.released).toBe(0);
     expect(result.skipped).toBe(1);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
     // #1547: a skipped hold never touches the credit ledger.
     expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
@@ -282,7 +299,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
     expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
     expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("restores applied credit inside the release transaction and threads it through the narrative (#1547)", async () => {
@@ -321,15 +338,115 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
   });
 
   it("skips the kick when the enqueue deduped to no new operation", async () => {
-    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: null,
-      message: "Xero refund credit note already linked for this payment.",
+      message: "Xero modification credit note already linked for this change.",
     });
 
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result.released).toBe(1);
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+  });
+
+  // #3535 (`INV-PAY-017`): an invoice nobody paid is CLEARED by the allocated
+  // note the never-captured cancel path raises — never the cash-refund note,
+  // which is not allocated and names a refund for money that never moved.
+  it("clears the unpaid invoice with the allocated clearing note, never the cash-refund note (#3535)", async () => {
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
+    const [params, options] =
+      mocks.enqueueXeroModificationCreditNoteOperation.mock.calls[0]!;
+    // Anchored on the BOOKING with no edit behind it (the cancel path's
+    // anchor), told it clears an unpaid invoice, and naming no refund method.
+    expect(params).toEqual(clearingNote(15000));
+    expect(params).not.toHaveProperty("bookingModificationId");
+    expect(params).not.toHaveProperty("refundMethod");
+    expect(options).toEqual({ store: txRef.current });
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("enqueues before the release transaction returns, so the note commits with the release (#3535)", async () => {
+    // The enqueue runs INSIDE the callback handed to $transaction: it has been
+    // called by the time the callback resolves, and never after.
+    let enqueuedInsideCallback = false;
+    mocks.transaction.mockImplementationOnce(
+      async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $executeRaw: mocks.txExecuteRaw,
+          payment: {
+            findUnique: mocks.txPaymentFindUnique,
+            update: mocks.txPaymentUpdate,
+          },
+          booking: { update: mocks.txBookingUpdate },
+          memberCreditNoteAllocation: {
+            aggregate: mocks.txMemberCreditAggregate,
+          },
+          paymentTransaction: { findMany: mocks.txPaymentTransactionFindMany },
+        };
+        txRef.current = tx;
+        const out = await callback(tx);
+        enqueuedInsideCallback =
+          mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.length === 1;
+        return out;
+      },
+    );
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(enqueuedInsideCallback).toBe(true);
+    // And the hold is marked released in that same transaction, so the two
+    // commit or roll back together.
+    expect(mocks.txPaymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_ib_1" },
+      data: { status: "FAILED", internetBankingHoldReleasedAt: NOW },
+    });
+  });
+
+  it("enqueues nothing new on a re-run once the hold is released (#3535)", async () => {
+    // Run 1 releases the hold and enqueues the clearing note.
+    await releaseExpiredInternetBankingHolds(NOW);
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
+
+    // Run 2 re-reads the same payment under the lock: released, FAILED — the
+    // guard set skips it before any write, so no second note is enqueued.
+    const released = makeExpiredPayment({
+      status: "FAILED",
+      internetBankingHoldReleasedAt: NOW,
+      booking: { ...makeExpiredPayment().booking, status: "CANCELLED" },
+    });
+    mocks.txPaymentFindUnique.mockResolvedValue(released);
+
+    const rerun = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(rerun.released).toBe(0);
+    expect(rerun.skipped).toBe(1);
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("asks only for pending holds with no release stamp, which every released hold lacks (#3535)", async () => {
+    // A query-shape pin, and all it can be: a hold released before #3535 got
+    // its refund note in the SAME transaction that set
+    // internetBankingHoldReleasedAt and flipped the payment FAILED, so this
+    // filter keeps the CRON from raising a clearing note beside it. The repair
+    // tool is another matter (#3639).
+    mocks.paymentFindMany.mockResolvedValue([]);
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.paymentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          source: "INTERNET_BANKING",
+          status: "PENDING",
+          internetBankingHoldReleasedAt: null,
+        }),
+      }),
+    );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 });
 
@@ -379,7 +496,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     // #1597: default = no captured ledger row (never-captured hold).
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
-    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op_refund_note_1",
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
@@ -401,9 +518,8 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result.released).toBe(1);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "pay_ib_1",
-      15000,
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(15000),
       { store: txRef.current },
     );
   });
@@ -420,9 +536,8 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result.released).toBe(1);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "pay_ib_1",
-      10000,
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(10000),
       { store: txRef.current },
     );
     expect(
@@ -455,9 +570,8 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
 
     expect(result.released).toBe(1);
     expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "pay_ib_1",
-      10000,
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(10000),
       { store: txRef.current },
     );
   });
@@ -483,7 +597,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
     // ...but no clearing credit note is enqueued and no allocation is even read.
     expect(mocks.txMemberCreditAggregate).not.toHaveBeenCalled();
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
   });
 
@@ -497,7 +611,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result.released).toBe(1);
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
   });
 
@@ -515,7 +629,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
 
     expect(result.released).toBe(1);
     expect(mocks.txMemberCreditAggregate).not.toHaveBeenCalled();
-    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
   });
 });
@@ -562,7 +676,7 @@ describe("releaseExpiredInternetBankingHolds adult-member hosting (#3209)", () =
     mocks.txMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
-    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op_refund_note_1",
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
