@@ -18,7 +18,18 @@
  * A leaf: it imports only Prisma's types, so both `member-credit.ts` and the
  * ledger modules it calls can import it without a cycle.
  */
-import type { Prisma } from "@prisma/client";
+import type { CreditType, Prisma } from "@prisma/client";
+
+/**
+ * The credit types minted FROM a booking - the one list (#3640, `INV-SSOT`).
+ * `bookingIssuedCreditWhere` below, the cash-refund evidence's account-credit
+ * dispositions and the credit reconciliation's Xero count all read it, so a new
+ * booking-issued type is one edit.
+ */
+export const BOOKING_ISSUED_CREDIT_TYPES = [
+  "CANCELLATION_REFUND",
+  "BOOKING_MODIFICATION_REFUND",
+] as const satisfies readonly CreditType[];
 
 export function bookingAppliedCreditWhere(bookingId: string) {
   return { appliedToBookingId: bookingId, type: "BOOKING_APPLIED" } satisfies Prisma.MemberCreditWhereInput;
@@ -27,6 +38,6 @@ export function bookingAppliedCreditWhere(bookingId: string) {
 export function bookingIssuedCreditWhere(bookingId: string) {
   return {
     sourceBookingId: bookingId,
-    type: { in: ["CANCELLATION_REFUND", "BOOKING_MODIFICATION_REFUND"] },
+    type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
   } satisfies Prisma.MemberCreditWhereInput;
 }

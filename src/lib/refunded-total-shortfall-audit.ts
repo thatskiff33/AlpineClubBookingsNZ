@@ -25,6 +25,15 @@
  * payment whose refundable headroom is overstated by that amount - the money a
  * later cancel or refund could pay out a second time.
  *
+ * ATTRIBUTION. The old `max` could lose money only where a card refund met a
+ * credit, and at most the smaller of the two. So only
+ * `min(card refunds, account credit, shortfall)`, and only with a card refund,
+ * is attributed to it. Anything more is reported apart, as short for ANOTHER
+ * reason: the credit rows are chosen by type, and some were never folded into
+ * the mirror at all - a credit minted with no payment, or internet-banking cash
+ * that landed on an already-cancelled booking and became credit. Those need a
+ * person's reading, not the #3640 repair.
+ *
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. It issues typed SELECTs
  * through Prisma (`INV-OPS-001`), and calls no provider.
  */
@@ -57,12 +66,17 @@ export interface RefundedTotalShortfallRow {
 export interface RefundedTotalShortfallFinding extends RefundedTotalShortfallRow {
   expectedFloorCents: number;
   shortfallCents: number;
+  /** The part the old refund arithmetic can account for (see ATTRIBUTION). */
+  attributableCents: number;
+  /** The rest: short for another reason. */
+  unattributedCents: number;
 }
 
 export interface RefundedTotalShortfallAuditResult {
   scannedPayments: number;
   findings: RefundedTotalShortfallFinding[];
-  totalShortfallCents: number;
+  totalAttributableCents: number;
+  totalUnattributedCents: number;
 }
 
 export function deriveRefundedTotalShortfall(
@@ -76,7 +90,17 @@ export function deriveRefundedTotalShortfall(
   if (shortfallCents <= 0) {
     return null;
   }
-  return { ...row, expectedFloorCents, shortfallCents };
+  const attributableCents =
+    row.cardRefundCents > 0
+      ? Math.min(row.cardRefundCents, row.accountCreditCents, shortfallCents)
+      : 0;
+  return {
+    ...row,
+    expectedFloorCents,
+    shortfallCents,
+    attributableCents,
+    unattributedCents: shortfallCents - attributableCents,
+  };
 }
 
 export async function auditRefundedTotalShortfalls(options?: {
@@ -129,7 +153,8 @@ export async function auditRefundedTotalShortfalls(options?: {
   const result: RefundedTotalShortfallAuditResult = {
     scannedPayments: payments.length,
     findings: [],
-    totalShortfallCents: 0,
+    totalAttributableCents: 0,
+    totalUnattributedCents: 0,
   };
   for (const payment of payments) {
     const finding = deriveRefundedTotalShortfall({
@@ -142,11 +167,15 @@ export async function auditRefundedTotalShortfalls(options?: {
     });
     if (finding) {
       result.findings.push(finding);
-      result.totalShortfallCents += finding.shortfallCents;
+      result.totalAttributableCents += finding.attributableCents;
+      result.totalUnattributedCents += finding.unattributedCents;
     }
   }
   result.findings.sort(
-    (a, b) => b.shortfallCents - a.shortfallCents || a.paymentId.localeCompare(b.paymentId)
+    (a, b) =>
+      b.attributableCents - a.attributableCents ||
+      b.shortfallCents - a.shortfallCents ||
+      a.paymentId.localeCompare(b.paymentId)
   );
   return result;
 }
@@ -155,25 +184,45 @@ export function formatRefundedTotalShortfallReport(
   result: RefundedTotalShortfallAuditResult,
   format: ClubFormat
 ): string {
+  const attributed = result.findings.filter((finding) => finding.attributableCents > 0);
+  const other = result.findings.filter((finding) => finding.unattributedCents > 0);
+  const describe = (finding: RefundedTotalShortfallFinding) =>
+    `(captured ${formatCents(finding.amountCents, format)}, stored refunded ${formatCents(finding.refundedAmountCents, format)},` +
+    ` card refunds ${formatCents(finding.cardRefundCents, format)}, account credit ${formatCents(finding.accountCreditCents, format)})`;
+
   const lines = [
     "Refunded-total shortfall audit (#3640, INV-PAY-104) - read only",
     "",
-    `${result.scannedPayments} captured payment(s) scanned; ${result.findings.length} store a refunded total below card refunds + account credit, ${formatCents(result.totalShortfallCents, format)} in all.`,
+    `${result.scannedPayments} captured payment(s) scanned.`,
+    `${attributed.length} short because a card refund met an account credit under the old refund arithmetic, ${formatCents(result.totalAttributableCents, format)} in all.`,
+    `${other.length} short for another reason, ${formatCents(result.totalUnattributedCents, format)} in all - not caused by the old arithmetic.`,
   ];
-  if (result.findings.length === 0) {
-    return lines.join("\n");
+  if (attributed.length > 0) {
+    lines.push("", "## Short because of the old refund arithmetic (#3640)");
+    for (const finding of attributed) {
+      lines.push(
+        `  ${finding.paymentId}  booking ${finding.bookingId}  short ${formatCents(finding.attributableCents, format)}  ${describe(finding)}`
+      );
+    }
   }
-  lines.push("");
-  for (const finding of result.findings) {
+  if (other.length > 0) {
     lines.push(
-      `  ${finding.paymentId}  booking ${finding.bookingId}  short ${formatCents(finding.shortfallCents, format)}` +
-        `  (captured ${formatCents(finding.amountCents, format)}, stored refunded ${formatCents(finding.refundedAmountCents, format)},` +
-        ` card refunds ${formatCents(finding.cardRefundCents, format)}, account credit ${formatCents(finding.accountCreditCents, format)})`
+      "",
+      "## Short for another reason - read before acting",
+      "  The credit on these was never folded into the refunded total (for example a credit minted",
+      "  with no payment, or internet-banking cash that became credit on a cancelled booking)."
+    );
+    for (const finding of other) {
+      lines.push(
+        `  ${finding.paymentId}  booking ${finding.bookingId}  short ${formatCents(finding.unattributedCents, format)}  ${describe(finding)}`
+      );
+    }
+  }
+  if (result.findings.length > 0) {
+    lines.push(
+      "",
+      "Each shortfall is refundable headroom that may not really be there. Nothing here is repaired; a person decides."
     );
   }
-  lines.push(
-    "",
-    "Each shortfall is refundable headroom that is not really there. Nothing here is repaired; a person decides."
-  );
   return lines.join("\n");
 }

@@ -28,7 +28,25 @@ describe("deriveRefundedTotalShortfall (#3640)", () => {
     expect(deriveRefundedTotalShortfall(row())).toMatchObject({
       expectedFloorCents: 15000,
       shortfallCents: 5000,
+      attributableCents: 5000,
+      unattributedCents: 0,
     });
+  });
+
+  it("does NOT attribute a credit with no card refund to the old arithmetic (e.g. IB cash that became credit on a cancelled booking)", () => {
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ amountCents: 30000, refundedAmountCents: 0, cardRefundCents: 0, accountCreditCents: 30000 }),
+      ),
+    ).toMatchObject({ shortfallCents: 30000, attributableCents: 0, unattributedCents: 30000 });
+  });
+
+  it("attributes at most the smaller of card refund and credit; the rest is another reason", () => {
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ refundedAmountCents: 0, cardRefundCents: 5000, accountCreditCents: 10000 }),
+      ),
+    ).toMatchObject({ shortfallCents: 15000, attributableCents: 5000, unattributedCents: 10000 });
   });
 
   it("reports nothing when the stored total already covers both", () => {
@@ -44,7 +62,7 @@ describe("deriveRefundedTotalShortfall (#3640)", () => {
       deriveRefundedTotalShortfall(
         row({ refundedAmountCents: 35000, cardRefundCents: 35000, accountCreditCents: 10000 }),
       ),
-    ).toMatchObject({ expectedFloorCents: 40000, shortfallCents: 5000 });
+    ).toMatchObject({ expectedFloorCents: 40000, shortfallCents: 5000, attributableCents: 5000 });
   });
 });
 
@@ -58,6 +76,9 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
           { id: "pay_short", bookingId: "booking_short", amountCents: 40000, refundedAmountCents: 10000 },
           { id: "pay_ok", bookingId: "booking_ok", amountCents: 40000, refundedAmountCents: 15000 },
           { id: "pay_card_only", bookingId: "booking_card_only", amountCents: 20000, refundedAmountCents: 5000 },
+          // IB cash paid after the booking was cancelled, held as credit: the
+          // mirror was never touched, and the old arithmetic had no part in it.
+          { id: "pay_ib_after_cancel", bookingId: "booking_ib", amountCents: 30000, refundedAmountCents: 0 },
         ]),
       },
       paymentRefund: {
@@ -73,6 +94,7 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
         groupBy: vi.fn(async () => [
           { sourceBookingId: "booking_short", _sum: { amountCents: 10000 } },
           { sourceBookingId: "booking_ok", _sum: { amountCents: 10000 } },
+          { sourceBookingId: "booking_ib", _sum: { amountCents: 30000 } },
         ]),
       },
     };
@@ -83,17 +105,24 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
 
     const result = await auditRefundedTotalShortfalls({ db: db as never });
 
-    expect(result.scannedPayments).toBe(3);
+    expect(result.scannedPayments).toBe(4);
     expect(result.findings).toEqual([
       expect.objectContaining({
         paymentId: "pay_short",
         cardRefundCents: 5000,
         accountCreditCents: 10000,
         expectedFloorCents: 15000,
-        shortfallCents: 5000,
+        attributableCents: 5000,
+        unattributedCents: 0,
+      }),
+      expect.objectContaining({
+        paymentId: "pay_ib_after_cancel",
+        attributableCents: 0,
+        unattributedCents: 30000,
       }),
     ]);
-    expect(result.totalShortfallCents).toBe(5000);
+    expect(result.totalAttributableCents).toBe(5000);
+    expect(result.totalUnattributedCents).toBe(30000);
   });
 
   it("counts account credit with the one definition the cash-evidence module reads", async () => {
@@ -113,9 +142,14 @@ describe("auditRefundedTotalShortfalls (#3640) - read only", () => {
 
     const report = formatRefundedTotalShortfallReport(result, CLUB_FORMAT_TEST);
 
-    expect(report).toContain("pay_short");
     expect(report).toContain("read only");
     expect(report).toContain("Nothing here is repaired");
     expect(report).not.toContain("pay_ok");
+    // The two causes are reported apart, so the #3640 repair question is asked
+    // only about the payments it can explain.
+    const [attributed, other] = report.split("## Short for another reason");
+    expect(attributed).toContain("pay_short");
+    expect(attributed).not.toContain("pay_ib_after_cancel");
+    expect(other).toContain("pay_ib_after_cancel");
   });
 });

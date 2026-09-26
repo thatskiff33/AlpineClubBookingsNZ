@@ -1,7 +1,8 @@
 /**
  * Read-only audit of payments whose stored refunded total is below their card
- * refunds plus account-credit settlements (#3640, `INV-PAY-104`) - the payments
- * the old max-based arithmetic left with overstated refundable headroom.
+ * refunds plus account-credit settlements (#3640, `INV-PAY-104`). It reports
+ * apart the part the old max-based arithmetic can account for (a card refund
+ * that met a credit) and a shortfall with another cause.
  *
  * REPORT ONLY - this script never writes, never repairs and never calls a live
  * provider. The repair question goes to the owner with this report as the

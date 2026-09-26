@@ -1604,7 +1604,12 @@ DATABASE_URL=<non-prod copy> npm run payments:audit-refunded-total -- --json
 
 The expected figure is a floor, not an identity: a stored total above it is
 normal (pre-ledger card refunds and folded modification credit notes have no
-row), and only a shortfall is reported. The arithmetic and its caveats are in
+row), and only a shortfall is reported. The report keeps two sections apart:
+the part the old arithmetic can explain (at most the smaller of a payment's card
+refunds and its credit, and only with a card refund), and a shortfall with
+another cause - typically a credit that was never folded into the total, such as
+internet-banking cash that became credit on an already-cancelled booking. Only
+the first is the #3640 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
 ### Audit IB hold-expiry invoice under-clears (#1597)
