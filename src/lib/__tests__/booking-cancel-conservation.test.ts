@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
+  // #3639: the paid path writes its CANCELLED event inside the claim.
+  txBookingEventCreate: vi.fn().mockResolvedValue({}),
   daysUntilDate: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
@@ -278,6 +280,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             mocks.bookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: vi.fn().mockResolvedValue(undefined),
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

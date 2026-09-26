@@ -1628,8 +1628,13 @@ async function performBookingCancellation(
     // MATH is unchanged — refundMethod is already coerced to "credit" for an
     // internet-banking payment above, which is the owner-decided tier (28 Jul).
     const manualDisposition = Boolean(payment.manuallyMarkedPaidAt);
+    const branch = paidCancellationBranch({
+      manualDisposition,
+      refundMethod,
+      refundAmountCents,
+    });
     let manualRefundTaskId: string | null = null;
-    if (manualDisposition && refundAmountCents > 0) {
+    if (branch === "manual") {
       const task = await tx.manualRefundTask.create({
         data: {
           bookingId,
@@ -1649,7 +1654,7 @@ async function performBookingCancellation(
         select: { id: true },
       });
       manualRefundTaskId = task.id;
-    } else if (refundMethod === "credit" && refundAmountCents > 0) {
+    } else if (branch === "credit") {
       await applyLocalRefundAllocation({
         paymentId: payment.id,
         amountCents: refundAmountCents,
@@ -1729,6 +1734,22 @@ async function performBookingCancellation(
       }),
     });
 
+    // #3639: the CANCELLED event and its policy snapshot commit WITH the claim.
+    // The snapshot is the decision record the Stripe webhook reads before it
+    // refunds a late notice (`INV-PAY-102`); written after commit, a notice
+    // landing in the gap — or after a failed write — found no decision and
+    // refunded money a 0%-tier cancel had kept. See `writePaidCancellationEvent`.
+    await writePaidCancellationEvent(tx, {
+      bookingId,
+      actorMemberId: sessionUserId,
+      branch,
+      days,
+      refundPercentage,
+      refundAmountCents,
+      paidAmountCents,
+      changeFeeCents: payment.changeFeeCents,
+    });
+
     return {
       claimed: true as const,
       fresh,
@@ -1737,13 +1758,12 @@ async function performBookingCancellation(
       refundAmountCents,
       refundPercentage,
       refundableBaseCents,
-      paidAmountCents,
       days,
       shouldFailAdditionalPayment,
       cardRefundPlan,
       plannedCardRefundCents,
-      manualDisposition,
       manualRefundTaskId,
+      branch,
     };
   });
 
@@ -1764,13 +1784,12 @@ async function performBookingCancellation(
     refundAmountCents,
     refundPercentage,
     refundableBaseCents,
-    paidAmountCents,
     days,
     shouldFailAdditionalPayment,
     cardRefundPlan,
     plannedCardRefundCents,
-    manualDisposition,
     manualRefundTaskId,
+    branch,
   } = claim;
   const paymentId = payment.id;
 
@@ -1816,7 +1835,7 @@ async function performBookingCancellation(
   // The durable ManualRefundTask committed in tx1. Nothing here touches Xero
   // (this feature never does), nothing mints member credit, and no Stripe
   // refund is planned — a cash settlement has no card slice to plan against.
-  if (manualDisposition && refundAmountCents > 0) {
+  if (branch === "manual") {
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
@@ -1838,17 +1857,6 @@ async function performBookingCancellation(
         manualRefundTaskId,
         ...notifyAuditFields,
       },
-    });
-
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% refund under the policy in effect at the time, to be paid back by the club by hand (cash / off-Xero settlement).`,
-      refundMethod: "manual",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
     });
 
     // Deliberately NO BookingEventType.REFUNDED here: nothing has been refunded
@@ -1905,7 +1913,7 @@ async function performBookingCancellation(
   }
 
   // ── Credit branch: ledger writes already happened in tx1 ──────────
-  if (refundMethod === "credit" && refundAmountCents > 0) {
+  if (branch === "credit") {
     try {
       const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
         paymentId,
@@ -1951,19 +1959,6 @@ async function performBookingCancellation(
       },
     });
 
-    // CANCELLED (post-payment) — the CREDITED settlement event is written by
-    // createCancellationCredit (member-credit.ts) inside tx1.
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% credit refund under the policy in effect at the time.`,
-      refundMethod: "credit",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
-    });
-
     if (notifyMember) {
       sendBookingCancelledEmail(
         { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
@@ -1998,7 +1993,7 @@ async function performBookingCancellation(
   }
 
   // ── Card branch: Stripe refund ────────────────────────────────────
-  if (refundAmountCents > 0) {
+  if (branch === "card") {
     let stripeRefundId: string | undefined;
 
     // The refund debt was persisted INSIDE the claim transaction (F2, #1349):
@@ -2119,16 +2114,6 @@ async function performBookingCancellation(
       },
     });
 
-    await recordCancellationEvent({
-      bookingId,
-      actorMemberId: sessionUserId,
-      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% card refund under the policy in effect at the time.`,
-      refundMethod: "card",
-      refundPercentage,
-      paidAmountCents,
-      settledAmountCents: refundAmountCents,
-      changeFeeCents: payment.changeFeeCents,
-    });
     await recordBookingEvent({
       bookingId,
       type: BookingEventType.REFUNDED,
@@ -2189,17 +2174,6 @@ async function performBookingCancellation(
       failedOutstandingAdditionalPayment: shouldFailAdditionalPayment,
       ...notifyAuditFields,
     },
-  });
-
-  await recordCancellationEvent({
-    bookingId,
-    actorMemberId: sessionUserId,
-    policySummary: `Cancelled ${days} day(s) before check-in: no refund was due under the policy in effect at the time.`,
-    refundMethod: "card",
-    refundPercentage,
-    paidAmountCents,
-    settledAmountCents: 0,
-    changeFeeCents: payment.changeFeeCents,
   });
 
   if (notifyMember) {
@@ -2338,39 +2312,101 @@ function logBookingCancellationAudit({
 }
 
 /**
- * Write the durable CANCELLED BookingEvent (issue #740). For a cancellation
- * after a captured payment, the policy snapshot + settled/retained amounts are
- * frozen here so the narrative can be rebuilt exactly later, even after the
- * AuditLog has been retention-pruned. Pre-payment cancellations carry no
- * snapshot. Call after the cancellation has committed.
+ * Which paid-path branch a cancellation takes — decided ONCE, inside the claim,
+ * and read by the claim's ledger writes, its CANCELLED event and the
+ * post-commit branch selection alike (#3639), so the event can never describe
+ * a different branch from the one that moved the money.
  */
-async function recordCancellationEvent(params: {
-  bookingId: string;
-  actorMemberId: string;
-  policySummary: string;
-  refundMethod: "card" | "credit" | "manual";
-  refundPercentage: number;
-  paidAmountCents: number;
-  settledAmountCents: number;
-  changeFeeCents: number;
-}): Promise<void> {
-  const retainedAmountCents = Math.max(
-    params.paidAmountCents - params.settledAmountCents,
-    0
-  );
-  await recordBookingEvent({
-    bookingId: params.bookingId,
-    type: BookingEventType.CANCELLED,
-    actorMemberId: params.actorMemberId,
-    amountCents: params.paidAmountCents,
-    snapshot: {
-      policySummary: params.policySummary,
-      refundMethod: params.refundMethod,
-      refundPercentage: params.refundPercentage,
-      paidAmountCents: params.paidAmountCents,
-      settledAmountCents: params.settledAmountCents,
-      retainedAmountCents,
-      changeFeeCents: params.changeFeeCents,
+type PaidCancellationBranch = "manual" | "credit" | "card" | "none";
+
+function paidCancellationBranch(params: {
+  manualDisposition: boolean;
+  refundMethod: "card" | "credit";
+  refundAmountCents: number;
+}): PaidCancellationBranch {
+  if (params.refundAmountCents <= 0) return "none";
+  if (params.manualDisposition) return "manual";
+  return params.refundMethod === "credit" ? "credit" : "card";
+}
+
+/**
+ * Write the durable CANCELLED BookingEvent (issue #740) for a PAID-path
+ * cancellation. The policy snapshot + settled/retained amounts are frozen here
+ * so the narrative can be rebuilt exactly later, even after the AuditLog has
+ * been retention-pruned. Pre-payment cancellations carry no snapshot and do not
+ * come here.
+ *
+ * INSIDE THE CLAIM TRANSACTION, since #3639 — not `recordBookingEvent` after
+ * commit. The snapshot is the decision record `isCancellationRefundDecisionRecorded`
+ * reads (`INV-PAY-102`), and on a 0%-tier cancel it is the ONLY one. Written
+ * after commit, a Stripe notice landing in the gap, or arriving after a failed
+ * write, found no decision and refunded money the cancel had kept.
+ *
+ * SO IT THROWS rather than swallowing, unlike `recordBookingEvent`. A failed
+ * INSERT aborts the Postgres transaction anyway (the reason `recordBookingEvent`
+ * says never to call it inside one), so a swallowed failure could not keep the
+ * claim; throwing rolls the cancel back cleanly and the member retries, where
+ * the old order committed a cancellation with no record of what it decided.
+ *
+ * The content is exactly what the four post-commit writes produced, one
+ * sentence per branch. `occurredAt` is left to the database default, which
+ * inside a transaction is its start: the event now precedes the credit path's
+ * CREDITED event (written on the base client) rather than following it. The
+ * narrative finds each by type, never by order.
+ */
+async function writePaidCancellationEvent(
+  tx: Prisma.TransactionClient,
+  params: {
+    bookingId: string;
+    actorMemberId: string;
+    branch: PaidCancellationBranch;
+    days: number;
+    refundPercentage: number;
+    refundAmountCents: number;
+    paidAmountCents: number;
+    changeFeeCents: number;
+  }
+): Promise<void> {
+  const { days, refundPercentage } = params;
+  const terms = {
+    manual: {
+      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% refund under the policy in effect at the time, to be paid back by the club by hand (cash / off-Xero settlement).`,
+      refundMethod: "manual",
+    },
+    credit: {
+      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% credit refund under the policy in effect at the time.`,
+      refundMethod: "credit",
+    },
+    card: {
+      policySummary: `Cancelled ${days} day(s) before check-in: ${refundPercentage}% card refund under the policy in effect at the time.`,
+      refundMethod: "card",
+    },
+    none: {
+      policySummary: `Cancelled ${days} day(s) before check-in: no refund was due under the policy in effect at the time.`,
+      refundMethod: "card",
+    },
+  }[params.branch];
+  const settledAmountCents =
+    params.branch === "none" ? 0 : params.refundAmountCents;
+  await tx.bookingEvent.create({
+    data: {
+      bookingId: params.bookingId,
+      type: BookingEventType.CANCELLED,
+      actorMemberId: params.actorMemberId,
+      amountCents: params.paidAmountCents,
+      reason: null,
+      snapshot: {
+        policySummary: terms.policySummary,
+        refundMethod: terms.refundMethod,
+        refundPercentage,
+        paidAmountCents: params.paidAmountCents,
+        settledAmountCents,
+        retainedAmountCents: Math.max(
+          params.paidAmountCents - settledAmountCents,
+          0
+        ),
+        changeFeeCents: params.changeFeeCents,
+      },
     },
   });
 }
