@@ -1613,13 +1613,16 @@ DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json
 **The existing `xero-booking-repair.ts` CLI cannot express this repair.** Its
 `CANCELLED_BOOKING_OPEN_INVOICE` finding sizes a FULL clearing note
 (`getUnpaidCancellationClearingAmountCents` → `max(amountCents − refunded,
-finalPrice + changeFee)`) and recognizes only a `MODIFICATION_CREDIT_NOTE`, not
-the `REFUND_CREDIT_NOTE` the release already issued — so `--apply` would queue a
-full-finalPrice note on top of the partly-cleared invoice and OVER-allocate
-(Xero rejects over-allocation, poisoning the op). Repair each finding by hand
-instead: issue a supplementary credit note for exactly the reported open delta
-against the named invoice, then confirm the invoice reaches a zero balance in
-Xero. Do **not** run `xero-booking-repair.ts --apply` on these bookings.
+finalPrice + changeFee)`). Before #3639 it also recognized only a booking-level
+`MODIFICATION_CREDIT_NOTE`, not the `REFUND_CREDIT_NOTE` the release had issued
+on the payment, so `--apply` queued a full-finalPrice note on top of the
+partly-cleared invoice and OVER-allocated (Xero rejects over-allocation,
+poisoning the op). Since #3639 the arm skips any cancelled booking whose payment
+already carries a refund or account-credit note (`INV-PAY-018`), so these
+bookings get no finding from it at all — which also means the tool will not
+point at the open delta. Repair each audit finding by hand: issue a
+supplementary credit note for exactly the reported open delta against the named
+invoice, then confirm the invoice reaches a zero balance in Xero.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either
