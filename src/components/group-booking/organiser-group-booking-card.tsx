@@ -29,6 +29,7 @@ import {
   type BookingMoneyReconciliationView,
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
+import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -61,6 +62,12 @@ interface SettlementState {
    * again; the settle route refuses a re-size or card switch meanwhile.
    */
   internetBankingReference: string | null;
+  /**
+   * #3642: where that invoice has got to — being prepared, failed, raised, or
+   * actually emailed — so the card never says "emailed" before it is. Null
+   * when no invoice is outstanding.
+   */
+  invoiceDisplay: GroupSettlementInvoiceDisplay | null;
 }
 
 export interface OrganiserGroupState {
@@ -238,10 +245,11 @@ export function OrganiserGroupBookingCard({
     }
   }
 
-  async function startSettle() {
+  async function startSettle(methodOverride?: SettlePaymentMethod) {
     if (!group) return;
     const usingInternetBanking =
-      internetBankingEnabled && settleMethod === "internet_banking";
+      methodOverride === "internet_banking" ||
+      (internetBankingEnabled && settleMethod === "internet_banking");
     setSettleBusy(true);
     setSettleError("");
     setSettleMessage("");
@@ -362,7 +370,7 @@ export function OrganiserGroupBookingCard({
   );
   const settledAlready =
     settleComplete || group.settlement?.status === "SUCCEEDED";
-  // #3642: the pending invoice this session just raised, or the one the
+  // #3642: the pending invoice this session just asked for, or the one the
   // server says is still outstanding — never forgotten on a reload.
   const pendingReference =
     settleReference ?? group.settlement?.internetBankingReference ?? null;
@@ -371,6 +379,25 @@ export function OrganiserGroupBookingCard({
     (group.settlement?.internetBankingReference
       ? group.settlement.amountCents
       : null);
+  // An invoice this session just asked for is being prepared; otherwise the
+  // server says where the outstanding one has got to.
+  const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
+    ? "preparing"
+    : (group.settlement?.invoiceDisplay ?? "preparing");
+  // #3642: joiners the organiser has not paid for. While an invoice is
+  // outstanding these are the joiners not on it; after payment, the ones who
+  // joined afterwards. Never hidden behind "everyone is confirmed".
+  const unsettledJoiners = activeJoiners.filter(
+    (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
+  );
+  const notOnInvoice = activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  const invoiceTotalChanged =
+    !settleReference &&
+    pendingInvoiceCents != null &&
+    activeJoiners
+      .filter((j) => j.status === "CONFIRMED")
+      .reduce((sum, j) => sum + (j.priceCents ?? 0), 0) !== pendingInvoiceCents;
+  const joinerNames = (rows: JoinerRow[]) => rows.map((j) => j.name).join(", ");
   const outstandingCents = activeJoiners
     .filter((j) => j.status === "CONFIRMED" || j.status === "PAYMENT_PENDING")
     .reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
@@ -513,28 +540,91 @@ export function OrganiserGroupBookingCard({
           <div className="space-y-3 rounded-md border border-border p-3">
             <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (
-              <div className="flex items-start gap-2 text-success-11">
-                <Check className="h-5 w-5 shrink-0" />
-                <p className="text-sm font-medium">
-                  Paid in full
-                  {group.settlement
-                    ? ` — ${formatCents(group.settlement.amountCents, format)}`
-                    : ""}
-                  . Everyone in your group is confirmed.
-                </p>
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 text-success-11">
+                  <Check className="h-5 w-5 shrink-0" />
+                  <p className="text-sm font-medium">
+                    Paid
+                    {group.settlement
+                      ? ` — ${formatCents(group.settlement.amountCents, format)}`
+                      : ""}
+                    .
+                    {settleComplete || unsettledJoiners.length === 0
+                      ? " Everyone in your group is confirmed."
+                      : ""}
+                  </p>
+                </div>
+                {!settleComplete && unsettledJoiners.length > 0 ? (
+                  <p className="text-sm text-warning-11">
+                    Not paid for yet: {joinerNames(unsettledJoiners)}. They joined after your
+                    payment, so their places are not confirmed. Contact the club to pay for them.
+                  </p>
+                ) : null}
               </div>
             ) : pendingReference ? (
               <div className="space-y-3">
                 <div className="flex items-start gap-2 text-success-11">
                   <Check className="h-5 w-5 shrink-0" />
                   <p className="text-sm font-medium">
-                    Invoice emailed
+                    {invoiceDisplay === "emailed"
+                      ? "Invoice emailed"
+                      : invoiceDisplay === "raised"
+                        ? "Invoice raised"
+                        : invoiceDisplay === "failed"
+                          ? "Your invoice hasn't been sent yet"
+                          : "Your invoice is being prepared"}
                     {pendingInvoiceCents != null
                       ? ` — ${formatCents(pendingInvoiceCents, format)}`
                       : ""}
                     .
                   </p>
                 </div>
+                {invoiceDisplay === "preparing" ? (
+                  <p className="text-sm text-muted-foreground">
+                    It will be emailed to you shortly.
+                  </p>
+                ) : null}
+                {invoiceDisplay === "raised" ? (
+                  <p className="text-sm text-muted-foreground">
+                    If it hasn&apos;t reached your inbox, pay using the reference below or contact
+                    the club.
+                  </p>
+                ) : null}
+                {notOnInvoice.length > 0 || invoiceTotalChanged || invoiceDisplay === "failed" ? (
+                  <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
+                    {notOnInvoice.length > 0 ? (
+                      <p>
+                        Not on this invoice: {joinerNames(notOnInvoice)}. They joined after it was
+                        sent, so their places are not confirmed yet.
+                      </p>
+                    ) : null}
+                    {invoiceTotalChanged ? (
+                      <p>Your group&apos;s total has changed since this invoice was prepared.</p>
+                    ) : null}
+                    {invoiceDisplay === "failed" && notOnInvoice.length === 0 && !invoiceTotalChanged ? (
+                      <p>Something went wrong preparing it. You can try again.</p>
+                    ) : null}
+                    {notOnInvoice.length > 0 || invoiceTotalChanged ? (
+                      <p>
+                        Send an updated invoice for everyone. The current one will be cancelled, so
+                        don&apos;t pay it.
+                      </p>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => startSettle("internet_banking")}
+                      disabled={settleBusy}
+                    >
+                      {settleBusy
+                        ? "Preparing..."
+                        : notOnInvoice.length > 0 || invoiceTotalChanged
+                          ? "Send an updated invoice"
+                          : "Try again"}
+                    </Button>
+                  </div>
+                ) : null}
+                {invoiceDisplay === "emailed" || invoiceDisplay === "raised" ? (
                 <p className="text-sm text-muted-foreground">
                   {/* #2919 review: every token this body may carry, not just the
                       payment reference, and this booking's own lodge. */}
@@ -548,6 +638,7 @@ export function OrganiserGroupBookingCard({
                     data: { paymentReference: pendingReference },
                   })}
                 </p>
+                ) : null}
                 <div className="rounded-md border border-border p-3 text-sm">
                   <p className="font-medium text-foreground">Payment reference</p>
                   <p className="mt-1 font-mono text-foreground">{pendingReference}</p>
@@ -639,7 +730,7 @@ export function OrganiserGroupBookingCard({
                   </div>
                 ) : null}
 
-                <Button onClick={startSettle} disabled={settleBusy}>
+                <Button onClick={() => startSettle()} disabled={settleBusy}>
                   {settleBusy
                     ? "Preparing..."
                     : internetBankingEnabled && settleMethod === "internet_banking"
@@ -652,7 +743,10 @@ export function OrganiserGroupBookingCard({
               </>
             )}
             {settleError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div
+                role="alert"
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
                 {settleError}
               </div>
             ) : null}

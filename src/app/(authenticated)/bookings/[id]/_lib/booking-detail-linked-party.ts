@@ -1,7 +1,10 @@
 import type { FeatureFlags } from "@/config/schema";
 import { formatDateOnly } from "@/lib/date-only";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
-import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
+import {
+  groupSettlementInvoiceDisplay,
+  isGroupSettlementBoundToInvoice,
+} from "@/lib/group-settlement-invoice-binding";
 import { buildGroupSettlementPaymentReference } from "@/lib/booking-payment-methods";
 import type { NonMemberGuestChild } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import type { OrganiserGroupState } from "@/components/group-booking/organiser-group-booking-card";
@@ -119,6 +122,14 @@ export function resolveBookingDetailLinkedParty({
                 organiserGroup.settlement
               )
                 ? buildGroupSettlementPaymentReference(organiserGroup.id)
+                : null,
+              invoiceDisplay: isGroupSettlementBoundToInvoice(
+                organiserGroup.settlement
+              )
+                ? groupSettlementInvoiceDisplay(
+                    organiserGroup.settlement,
+                    booking.groupSettlementInvoiceCreate ?? null
+                  )
                 : null,
             }
           : null,

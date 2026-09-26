@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import {
   BOOKING_MONEY_RECONCILIATION_SELECT,
   reconcileStoredBookingMoney,
@@ -182,10 +183,13 @@ export async function loadBookingDetail(id: string) {
           maxJoiners: true,
           settlement: {
             select: {
+              id: true,
               status: true,
               amountCents: true,
               paidAt: true,
               source: true,
+              // #3642: whether the bound invoice has been raised yet.
+              xeroInvoiceId: true,
             },
           },
           joins: {
@@ -216,9 +220,30 @@ export async function loadBookingDetail(id: string) {
       },
     },
   });
-  return booking
-    ? { ...booking, moneyReconciliation: reconcileStoredBookingMoney(booking) }
-    : null;
+  if (!booking) return null;
+  // #3642: the latest CREATE row of the organiser's outstanding group invoice,
+  // so the organiser card can say whether it is being prepared, failed, or was
+  // actually emailed. Read only while the settlement is bound to that invoice.
+  const settlement = booking.groupBookingAsOrganiser?.settlement ?? null;
+  const groupSettlementInvoiceCreate =
+    settlement && isGroupSettlementBoundToInvoice(settlement)
+      ? await prisma.xeroSyncOperation.findFirst({
+          where: {
+            direction: "OUTBOUND",
+            entityType: "INVOICE",
+            operationType: "CREATE",
+            localModel: "GroupBookingSettlement",
+            localId: settlement.id,
+          },
+          orderBy: { createdAt: "desc" },
+          select: { status: true, responsePayload: true },
+        })
+      : null;
+  return {
+    ...booking,
+    moneyReconciliation: reconcileStoredBookingMoney(booking),
+    groupSettlementInvoiceCreate,
+  };
 }
 
 /** The loaded booking, once `notFound()` has ruled out `null`. */
