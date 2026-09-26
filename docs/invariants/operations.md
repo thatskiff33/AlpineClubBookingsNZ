@@ -690,3 +690,22 @@ behaviourally.
 
 - Production data, production backups, live provider accounts, and live webhooks
   are not valid exploratory test inputs.
+
+## INV-OPS-015
+
+- **A test never mocks a named money seam away while asserting a money figure
+  that seam decides.** The seams, and the figures each decides, are listed once:
+  `MONEY_SEAMS` in `src/lib/__tests__/money-seam-mock-census.test.ts`. A suite may
+  stub a seam to isolate something else, but then asserts none of its money; the
+  fix for an offender is to unmock the seam or move the assertion to a suite where
+  it runs, never an allowlist.
+- Every seam also runs unmocked in at least one suite that asserts its money. For
+  the supersede pair that is `superseded-additional-ask-integration.test.ts`:
+  mint, supersede and resulting ask over one ledger.
+- Why: #3340 under-charged two members $135 because every suite that touched
+  `queueSupersededAdditionalIntentCancellations` mocked it, so the ask sizing and
+  the retirement never ran together (#486 → #543 → #3340; process record #3341).
+- Enforced by that census, which fails naming this ID. Its limits are in its
+  docblock — chiefly that stubbing the seam's own collaborators (a ledger read
+  answering `[]`) leaves the seam "real" and inert, which is why the witness
+  suite exists.

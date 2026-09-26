@@ -880,6 +880,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-011` | The dropped column's stored values were meaningless rather than frozen |
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
+| `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 
 ## Product Configuration
 
