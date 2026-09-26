@@ -26,11 +26,11 @@ function productionSourceFiles(directory = SOURCE_ROOT): SourceFile[] {
  * aggregate predicate. The canonical transaction definition is exempt.
  */
 function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[]): string[] {
-  const namedEnumArray = /(?:export\s+)?const\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*\[([\s\S]{0,500}?)\]/g;
+  const namedArray = /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*\[([\s\S]{0,500}?)\]/g;
   const copiedListReceivers = [
     /status\s*:\s*\{\s*in\s*:\s*\[([\s\S]{0,500}?)\]\s*\}/g,
     /new\s+Set(?:<\s*PaymentStatus\s*>)?\s*\(\s*\[([\s\S]{0,500}?)\]\s*\)/g,
-    namedEnumArray,
+    namedArray,
   ];
   return files.flatMap(({ file, source }) => {
     if (file.replaceAll("\\", "/") === "src/lib/payment-transaction-status.ts") return [];
@@ -39,12 +39,17 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
     const code = stripComments(source);
     for (const receiver of copiedListReceivers) {
       for (const match of code.matchAll(receiver)) {
-        const values = match[1];
-        if (receiver === namedEnumArray) {
-          // Status vocabularies and Xero aggregate strings are different lists.
-          // The copied transaction-list form uses exactly these enum members.
-          const enumMembers = values.match(/\bPaymentStatus\.[A-Z_]+\b/g) ?? [];
-          if (enumMembers.length !== CAPTURED_STATUS_NAMES.length) continue;
+        const values = receiver === namedArray ? match[2] : match[1];
+        if (receiver === namedArray) {
+          // Full status vocabularies contain other members. This exact legacy
+          // Xero eligibility list asks a different question and is not a
+          // captured-payment list.
+          const statusNames = values.match(/\b(?:PaymentStatus\.)?(?:PENDING|PROCESSING|SUCCEEDED|FAILED|REFUNDED|PARTIALLY_REFUNDED)\b/g) ?? [];
+          if (statusNames.length !== CAPTURED_STATUS_NAMES.length) continue;
+          const knownXeroEligibility =
+            file.replaceAll("\\", "/") === "src/lib/admin-operational-state.ts" &&
+            match[1] === "XERO_INVOICE_EXPECTED_PAYMENT_STATUSES";
+          if (knownXeroEligibility) continue;
         }
         const declaration = code.slice(Math.max(0, match.index - 64), match.index);
         const knownAggregateFinanceSet =
@@ -86,11 +91,17 @@ describe("INV-SSOT: captured PaymentTransaction status-list guard (#3606)", () =
           source:
             "const CAPTURED = [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED]; const where = { status: { in: [...CAPTURED] } };",
         },
+        {
+          file: "src/lib/mutated-payment-transaction-string-array.ts",
+          source:
+            "const CAPTURED = [\"SUCCEEDED\", \"PARTIALLY_REFUNDED\", \"REFUNDED\"] as const; const where = { status: { in: [...CAPTURED] } };",
+        },
       ]),
     ).toEqual([
       "src/lib/mutated-payment-transaction-reader.ts",
       "src/lib/mutated-payment-transaction-set.ts",
       "src/lib/mutated-payment-transaction-array.ts",
+      "src/lib/mutated-payment-transaction-string-array.ts",
     ]);
   });
 });
