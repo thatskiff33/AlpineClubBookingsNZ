@@ -457,11 +457,17 @@ const PRODUCTION_SOURCES: ReadonlyMap<string, string> = new Map(
  * parameters include a function-typed one returns exactly these two. Re-run that
  * scan whenever a transaction helper is added — a wrapper this list has not heard
  * of is a span this file cannot see into.
+ *
+ * `runAtomically(` is the third (#3640): `payment-transactions.ts` commits a
+ * card refund's ledger rows and its mirror compare-and-set together, inside the
+ * caller's transaction or one of its own. The scan below named it the day it was
+ * written, which is the point of deriving the set.
  */
 const TRANSACTION_OPENERS = [
   "$transaction(",
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
+  "runAtomically(",
 ] as const;
 
 /**
