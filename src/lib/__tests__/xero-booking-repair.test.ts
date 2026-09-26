@@ -517,6 +517,191 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  /**
+   * #3639: the cancelled-open-invoice arm clears an invoice NOBODY PAID, with a
+   * full-price credit note it marks safe to auto-apply. Before it does, it asks
+   * what the cancellation already settled: whether money was captured from ANY
+   * source, and whether the cancellation already answered the invoice with a
+   * credit note on the PAYMENT. The first test above is the control: a genuinely
+   * never-paid cancelled booking is still repaired.
+   */
+  describe("cancelled-open-invoice arm asks what the cancellation settled (#3639)", () => {
+    function internetBankingTransaction(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "txn_ib_primary",
+        paymentId: "payment_1",
+        kind: "PRIMARY",
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        paymentMethodId: null,
+        reason: null,
+        withdrawnAt: null,
+        createdAt: new Date("2026-05-01T00:00:00Z"),
+        updatedAt: new Date("2026-05-01T00:00:00Z"),
+        ...overrides,
+      };
+    }
+
+    function cancelledInternetBankingBooking(
+      paymentOverrides: Record<string, unknown>
+    ) {
+      return makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          stripePaymentIntentId: null,
+          stripePaymentMethodId: null,
+          stripeCustomerId: null,
+          ...paymentOverrides,
+        },
+      });
+    }
+
+    async function clearingWork(booking: any, extra: Record<string, unknown> = {}) {
+      const deps = createDependencies({ bookings: [booking], ...extra });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+      });
+      const bookingReport = report.passes[0].bookings[0];
+      return {
+        actions: bookingReport.actions.filter(
+          (action) =>
+            action.type === "QUEUE_MODIFICATION_CREDIT_NOTE" ||
+            action.key.startsWith("queue:cancelled-allocation:")
+        ),
+        findings: bookingReport.findings.filter((finding) =>
+          finding.summary.includes("cancelled before payment succeeded")
+        ),
+      };
+    }
+
+    it("raises no clearing note for a cancelled booking paid by internet banking", async () => {
+      // Paid by bank transfer, then cancelled on the credit path: half came back
+      // as account credit. No Stripe capture exists, which used to read as
+      // "never paid" and queue a full clearing note against the paid invoice.
+      const booking = cancelledInternetBankingBooking({
+        status: "PARTIALLY_REFUNDED",
+        refundedAmountCents: 5000,
+        transactions: [
+          internetBankingTransaction({
+            status: "PARTIALLY_REFUNDED",
+            refundedAmountCents: 5000,
+          }),
+        ],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("reads the ledger too, so a captured bank-transfer row under a flattened aggregate still counts as paid", async () => {
+      // The pre-#1473 cancel flattened captured aggregates to FAILED
+      // (`INV-PAY-018`); the ledger row still says the money arrived.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction()],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note when a refund note on the payment already answered the invoice — an internet-banking hold released before #3535", async () => {
+      // Never paid: the hold expired and the release answered the unpaid invoice
+      // with a refund credit note recorded against the PAYMENT. Applying the
+      // repair would clear the same invoice a second time.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        xeroRefundCreditNoteId: "cn_hold_release",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note when an account-credit note is linked on the payment", async () => {
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking, {
+        links: [
+          {
+            id: "link_account_credit_note",
+            localModel: "Payment",
+            localId: "payment_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_account_credit",
+            xeroObjectNumber: "CN-ACCOUNT",
+            xeroObjectUrl: null,
+            role: "ACCOUNT_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      });
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note while the payment's own credit-note operation is still queued", async () => {
+      // The note has not reached Xero yet, but it will when the worker runs; a
+      // second clearing note queued now would land beside it.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking, {
+        operations: [
+          makeOperation({
+            id: "operation_payment_refund_note",
+            localModel: "Payment",
+            localId: "payment_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PENDING",
+            xeroObjectType: null,
+            xeroObjectId: null,
+            completedAt: null,
+          }),
+        ],
+      });
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("still repairs a never-paid cancelled internet-banking booking with nothing on its payment", async () => {
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions.map((action) => action.type)).toEqual([
+        "QUEUE_MODIFICATION_CREDIT_NOTE",
+      ]);
+      expect(findings).toHaveLength(1);
+    });
+  });
+
   it("classifies missing supplementary invoices for positive booking modifications", async () => {
     const booking = makeBooking({
       modifications: [

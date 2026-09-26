@@ -11,6 +11,8 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type { ClubFormat } from "@/lib/club-format";
+import type { CancellationRefundDecisionEvidence } from "@/lib/cancellation-settled-money";
+import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 /**
  * The shared epilogue of BOTH late-capture handlers on a cancelled booking
@@ -58,6 +60,53 @@ import type { ClubFormat } from "@/lib/club-format";
  * and `announceAutomaticLateCaptureRefund` is fire-and-forget, in that order,
  * because WHICH alert goes out depends on what the record writer found.
  */
+
+/**
+ * #3639: the #1491 decision artefacts for ONE booking, read by the late-capture
+ * handler before it refunds, so it can ask `hasCancellationSettledCapture` the
+ * question the repair tool has asked since #1491.
+ *
+ * The same three sources the repair tool loads in bulk
+ * (`xero-booking-repair-load.ts` and `bookingRepairSelect`): the booking's
+ * `CANCELLED` events, the credits it is the source of, and its booking-cancel
+ * refund recovery operation by exact key. Only the loading is per caller; which
+ * of them counts as a decision is decided once, in
+ * `isCancellationRefundDecisionRecorded`.
+ *
+ * NOT CAUGHT, like the #2774 fence read: a read that cannot answer answers
+ * neither way. Guessing "no decision" would refund money a cancellation kept,
+ * and guessing "decided" would keep a genuine late capture, so the webhook
+ * answers 500 and Stripe redelivers.
+ */
+export async function loadCancellationRefundDecisionEvidence(
+  bookingId: string
+): Promise<CancellationRefundDecisionEvidence> {
+  const [cancelledEvents, creditsFromCancellation, recoveryOperation] =
+    await Promise.all([
+      prisma.bookingEvent.findMany({
+        where: { bookingId, type: "CANCELLED" },
+        select: { snapshot: true },
+      }),
+      prisma.memberCredit.findMany({
+        where: { sourceBookingId: bookingId },
+        select: { type: true, description: true, amountCents: true },
+      }),
+      prisma.paymentRecoveryOperation.findUnique({
+        where: {
+          idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+        },
+        select: { status: true },
+      }),
+    ]);
+  return {
+    bookingId,
+    cancelledEvents,
+    creditsFromCancellation,
+    cancellationRefundRecoveryOperations: recoveryOperation
+      ? [recoveryOperation]
+      : [],
+  };
+}
 
 /**
  * Everything the record, the audit rows and the alert all need about one late

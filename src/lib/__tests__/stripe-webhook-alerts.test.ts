@@ -50,7 +50,15 @@ const {
   mockPaymentTransactionUpdateMany,
   mockPaymentTransactionDeleteMany,
   mockReconcilePaymentAggregates,
+  mockBookingEventFindMany,
+  mockMemberCreditFindMany,
+  mockPaymentRecoveryOperationFindUnique,
 } = vi.hoisted(() => ({
+  // #3639: the #1491 decision artefacts the late-capture handler reads before
+  // it refunds (`loadCancellationRefundDecisionEvidence`, left REAL).
+  mockBookingEventFindMany: vi.fn().mockResolvedValue([]),
+  mockMemberCreditFindMany: vi.fn().mockResolvedValue([]),
+  mockPaymentRecoveryOperationFindUnique: vi.fn().mockResolvedValue(null),
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
   mockProcessedWebhookDeleteMany: vi.fn(),
@@ -244,6 +252,14 @@ vi.mock("@/lib/prisma", () => ({
     // the captured amount is not the full price; these fixtures apply none.
     memberCredit: {
       aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
+      findMany: (...args: unknown[]) => mockMemberCreditFindMany(...args),
+    },
+    bookingEvent: {
+      findMany: (...args: unknown[]) => mockBookingEventFindMany(...args),
+    },
+    paymentRecoveryOperation: {
+      findUnique: (...args: unknown[]) =>
+        mockPaymentRecoveryOperationFindUnique(...args),
     },
     groupBooking: {
       findUnique: (...args: unknown[]) => mockGroupBookingFindUnique(...args),
@@ -331,6 +347,9 @@ describe("Stripe webhook Xero alerting", () => {
     mockPaymentUpdate.mockResolvedValue({});
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
+    mockBookingEventFindMany.mockResolvedValue([]);
+    mockMemberCreditFindMany.mockResolvedValue([]);
+    mockPaymentRecoveryOperationFindUnique.mockResolvedValue(null);
     mockMarkPaymentIntentTransactionFailed.mockResolvedValue(undefined);
     mockMarkPaymentIntentTransactionSucceeded.mockResolvedValue(undefined);
     mockRefundPaymentTransactions.mockResolvedValue({
@@ -2402,6 +2421,205 @@ describe("Stripe webhook Xero alerting", () => {
         "payment-7",
         12000,
       );
+    });
+
+    // -------------------------------------------------------------------------
+    // #3639: a success notice reaching a cancelled booking is not always a late
+    // capture. The in-app confirm settles the booking when Stripe's notice is
+    // slow; the member then cancels; Stripe's notice arrives days later (it
+    // retries failed deliveries, and an operator can resend one). The handler
+    // asks what the cancellation already settled BEFORE it refunds.
+    // -------------------------------------------------------------------------
+    function armCaptureRow(status: string, reason: string | null = null) {
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-7",
+        paymentId: "payment-7",
+        kind: "PRIMARY",
+        amountCents: 12000,
+        status,
+        reason,
+      });
+    }
+
+    function expectAcknowledgedWithoutMovingMoney(response: Response) {
+      expect(response.status).toBe(200);
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(
+        mockRecordAutomaticCancelledBookingRefundTask,
+      ).not.toHaveBeenCalled();
+      expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+      expect(mockLogAudit).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking.payment.refunded_after_cancellation",
+        }),
+      );
+    }
+
+    it("acknowledges a delayed notice for money a 0%-tier cancellation kept: no refund, no note, no status write (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_paid_then_cancelled_zero_tier"),
+      );
+      armCancelledBooking("xero-inv-7", null);
+      // The in-app confirm recorded the capture (no late-capture reason), and the
+      // 0%-tier cancel froze its decision in the CANCELLED event's snapshot.
+      armCaptureRow("SUCCEEDED");
+      mockBookingEventFindMany.mockResolvedValue([
+        { snapshot: { refundPercentage: 0, retainedAmountCents: 12000 } },
+      ]);
+
+      const response = await POST(makeRequest());
+
+      expectAcknowledgedWithoutMovingMoney(response);
+      // The evidence was read for THIS booking, and the recovery lookup used
+      // the booking-cancel key, never a modification refund's.
+      expect(mockBookingEventFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { bookingId: "booking-7", type: "CANCELLED" },
+        }),
+      );
+      expect(mockPaymentRecoveryOperationFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            idempotencyKey: "booking_cancel_refund_recovery_booking-7",
+          },
+        }),
+      );
+    });
+
+    it("leaves a partially refunded payment as it is when a partial-tier card cancel already refunded its share (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_paid_then_cancelled_partial_tier"),
+      );
+      armCancelledBooking("xero-inv-7", null);
+      armCaptureRow("PARTIALLY_REFUNDED");
+      // No snapshot yet (it is written after the claim commits): the card
+      // path's recovery operation, frozen inside the claim, is the decision.
+      mockPaymentRecoveryOperationFindUnique.mockResolvedValue({
+        status: "SUCCEEDED",
+      });
+
+      const response = await POST(makeRequest());
+
+      // The upsert is what used to rewrite PARTIALLY_REFUNDED back to SUCCEEDED.
+      expectAcknowledgedWithoutMovingMoney(response);
+    });
+
+    it("acknowledges a notice for a credit-path cancel, whose cancellation credit is the decision (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_paid_then_cancelled_credit"),
+      );
+      armCancelledBooking(null, null);
+      armCaptureRow("SUCCEEDED");
+      mockMemberCreditFindMany.mockResolvedValue([
+        {
+          type: "CANCELLATION_REFUND",
+          description: "Cancellation refund for booking booking-",
+          amountCents: 6000,
+        },
+      ]);
+
+      const response = await POST(makeRequest());
+
+      expectAcknowledgedWithoutMovingMoney(response);
+      expect(mockMemberCreditFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { sourceBookingId: "booking-7" } }),
+      );
+    });
+
+    it("still refunds a genuine late capture on retry after a crash, even though its own first attempt wrote SUCCEEDED (#3639)", async () => {
+      /*
+        The first delivery recorded the capture and died before refunding. The
+        row is SUCCEEDED, but it carries THIS handler's reason, so it is the
+        handler's own write and not money the cancellation settled. The booking
+        carries a paid-path snapshot as well — the #1491 residual, a late capture
+        of a second intent on a booking already cancelled on the paid path — so
+        only the row's provenance can tell the two apart.
+      */
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_late_capture_retry"),
+      );
+      armCancelledBooking("xero-inv-7", null);
+      armCaptureRow("SUCCEEDED", "cancelled_booking_late_capture");
+      mockBookingEventFindMany.mockResolvedValue([
+        { snapshot: { refundPercentage: 0 } },
+      ]);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 12000,
+          idempotencyKeyPrefix: "late_cancel_refund_booking-7_pi_primary_late",
+        }),
+      );
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment-7",
+        12000,
+      );
+    });
+
+    it("still refunds a saved-card charge that captured after an unpaid cancel: a captured row, but no decision (#3639)", async () => {
+      /*
+        The auto-charge records its own row SUCCEEDED before the booking's
+        settlement refuses the cancelled booking, so the row alone looks like a
+        capture recorded before the cancel. The cancel took the unpaid branch and
+        decided nothing about money, which is what keeps this a late capture.
+      */
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_saved_card_after_cancel"),
+      );
+      armCancelledBooking(null, null);
+      armCaptureRow("SUCCEEDED", "confirm_pending_saved_card");
+      mockBookingEventFindMany.mockResolvedValue([{ snapshot: null }]);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          reason: "cancelled_booking_late_capture",
+        }),
+      );
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 12000 }),
+      );
+      expect(mockSendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads no decision evidence for an ordinary late capture, whose row never captured (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_ordinary_late_capture"),
+      );
+      armCancelledBooking();
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRefundPaymentTransactions).toHaveBeenCalled();
+      expect(mockBookingEventFindMany).not.toHaveBeenCalled();
+      expect(mockMemberCreditFindMany).not.toHaveBeenCalled();
+      expect(mockPaymentRecoveryOperationFindUnique).not.toHaveBeenCalled();
+    });
+
+    it("answers 500 rather than guessing when the decision evidence cannot be read (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_evidence_unreadable"),
+      );
+      armCancelledBooking("xero-inv-7", null);
+      armCaptureRow("SUCCEEDED");
+      mockBookingEventFindMany.mockRejectedValueOnce(
+        new Error("connection terminated"),
+      );
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     });
   });
 

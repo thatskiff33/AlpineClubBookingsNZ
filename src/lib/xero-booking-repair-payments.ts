@@ -9,6 +9,7 @@ import {
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
+import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
 interface RepairPaymentTransaction {
   kind: PaymentTransactionKind;
@@ -192,6 +193,32 @@ export function getCapturedRepairTransactions(
   return buildRepairPaymentTransactions(payment)
     .filter(isStripeRepairPaymentTransaction)
     .filter((transaction) => isCapturedTransactionStatus(transaction.status));
+}
+
+/**
+ * #3639: "was money ever captured on this payment?" — asked of EVERY source.
+ *
+ * `getCapturedRepairTransactions` above keeps its Stripe-only filter because
+ * its rows feed Stripe cancel and refund calls, which an internet-banking row
+ * (no intent id) must never reach (#668). But "was this booking ever paid?" is
+ * a different question, and answering it from that list made a cancelled
+ * booking paid by bank transfer look never-paid, so the cancelled-open-invoice
+ * arm queued a full clearing note against an invoice the member had paid.
+ *
+ * The same two-part test the modification arm uses (the aggregate status OR the
+ * ledger), with the ledger half unfiltered by source: the aggregate covers a
+ * pre-ledger payment with no rows, and the ledger covers a capture row sitting
+ * under a still-PENDING aggregate.
+ */
+export function hasCapturedRepairPayment(
+  payment: BookingPaymentRecord | null | undefined
+): boolean {
+  return (
+    hasCapturedPayment(payment) ||
+    buildRepairPaymentTransactions(payment).some((transaction) =>
+      isCapturedTransactionStatus(transaction.status)
+    )
+  );
 }
 
 export function getOutstandingCapturedRefundAmountCents(

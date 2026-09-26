@@ -24,10 +24,16 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { findCompletedHandBackForLateCapture } from "@/lib/deleted-booking-modification-payment";
 import {
   announceAutomaticLateCaptureRefund,
+  loadCancellationRefundDecisionEvidence,
   recordAutomaticLateCaptureRefund,
   reportWithheldLateCaptureRefund,
   type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
+import {
+  CANCELLED_BOOKING_LATE_CAPTURE_REASON,
+  hasCancellationSettledCapture,
+} from "@/lib/cancellation-settled-money";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
@@ -1641,6 +1647,16 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * A refund failure is deliberately NOT swallowed, as in the sibling handler: the
  * webhook returns 500, the processed-event marker is cleared, and Stripe's retry
  * replays the same idempotent refund keys.
+ *
+ * #3639 — IT FIRST ASKS WHAT THE CANCELLATION ALREADY SETTLED. A success notice
+ * reaching a cancelled booking is not always a late capture: the in-app confirm
+ * settles the booking when Stripe's notice is slow, the member can then cancel,
+ * and Stripe retries a failed delivery for about three days (an operator can
+ * resend one too). Refunding that notice handed back money a 0%-tier cancel had
+ * kept, and on the other tiers rewrote a refunded payment back to SUCCEEDED.
+ * `hasCancellationSettledCapture` is the one test; when it holds, the event is
+ * acknowledged — 200, so Stripe stops retrying — with no refund, no Xero note,
+ * no record, no alert and no status write.
  */
 async function handleCancelledBookingPaymentSucceeded(
   booking: {
@@ -1676,6 +1692,36 @@ async function handleCancelledBookingPaymentSucceeded(
     return;
   }
 
+  // #3639: the capture row is READ AGAIN here rather than taken from the
+  // dispatch, which read it BEFORE it saw the booking cancelled — a settlement
+  // and a cancel committing between those two reads would leave a stale
+  // "not captured" row in hand. Read after the booking is known CANCELLED, it
+  // carries every capture recorded before the cancel. The decision evidence is
+  // read only when there is a capture it could be about, so a genuine late
+  // capture (its row still PENDING) costs no extra query.
+  const captureRow = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
+  });
+  if (
+    captureRow &&
+    isCapturedTransactionStatus(captureRow.status) &&
+    hasCancellationSettledCapture(
+      captureRow,
+      await loadCancellationRefundDecisionEvidence(booking.id)
+    )
+  ) {
+    logger.info(
+      {
+        bookingId: booking.id,
+        paymentId: booking.payment.id,
+        paymentIntentId: paymentIntent.id,
+        transactionStatus: captureRow.status,
+      },
+      "Stripe success notice for a capture the cancellation already settled; acknowledged without refunding (#3639)"
+    );
+    return;
+  }
+
   const paymentMethodId =
     typeof paymentIntent.payment_method === "string"
       ? paymentIntent.payment_method
@@ -1688,7 +1734,9 @@ async function handleCancelledBookingPaymentSucceeded(
     amountCents: paymentIntent.amount,
     status: PaymentStatus.SUCCEEDED,
     paymentMethodId,
-    reason: "cancelled_booking_late_capture",
+    // #3639: the provenance `hasCancellationSettledCapture` reads, so a crash
+    // and retry of THIS write is still refunded.
+    reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
   });
 
   // #2773: the same shape the sibling handler builds, so the record, the audit
