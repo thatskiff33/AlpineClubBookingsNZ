@@ -14,8 +14,11 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
-import { summarizeCollectedCash } from "@/lib/admin-reports";
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  getPaymentNetOfRefundsCents,
+  summarizeCollectedCash,
+} from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
@@ -305,8 +308,9 @@ function sortValue(payment: EnrichedPaymentCandidate, sortBy: z.infer<typeof sor
       // can see is wrong wherever a refund exists - the "Amount (net)" header and
       // this expression are one decision. The Amount FILTER stays gross: it is a
       // `where` on a database column, which a net expression cannot be, and the
-      // boxes say "Gross amount" for exactly that reason.
-      return payment.amountCents - payment.refundedAmountCents;
+      // boxes say "Gross amount" for exactly that reason. #3372: the column and
+      // this sort read the same per-payment helper, so they cannot drift apart.
+      return getPaymentNetOfRefundsCents(payment);
     case "status":
       return payment.status;
     case "stripe":
@@ -635,12 +639,12 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: the revenue tile is NET of refunds over CAPTURED payments, through
-    // the one net-collected-cash derivation the dashboard and Reports also use.
-    // It used to add gross `amountCents` for every row the filter matched - a
-    // PENDING or FAILED payment's amount included under the default "all" status
-    // filter, and a refund never subtracted - while this comment already said
-    // "retained revenue only".
+    // #3372: the "Net Collected Cash" tile is NET of refunds and credits over
+    // CAPTURED payments, through `summarizeCollectedCash` - the derivation the
+    // dashboard and Reports also use. It used to be "Total Revenue": gross
+    // `amountCents` for every row the filter matched, so a PENDING or FAILED
+    // payment's amount counted under the default "all" status filter, and a
+    // refund was never subtracted.
     //
     // A cancelled booking's payment still does not count toward it (#773), even
     // though the row appears in the list. `refundedCents` is deliberately wider:
@@ -657,7 +661,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         }))
     );
     const summary = {
-      netRevenueCents: retained.netCollectedCents,
+      netCollectedCents: retained.netCollectedCents,
       refundedCents: filteredCandidates.reduce(
         (sum, payment) => sum + payment.refundedAmountCents,
         0

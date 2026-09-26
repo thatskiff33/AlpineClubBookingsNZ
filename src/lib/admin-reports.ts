@@ -23,7 +23,7 @@ import {
   getGuestStayStart,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
-import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { summarizeCollectedCash } from "@/lib/booking-payment-state";
 import { formatDateOnly } from "@/lib/date-only";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
@@ -258,55 +258,10 @@ export function summarizeOverlappingGuests(
 }
 
 /**
- * Money the club collected on a set of payments: what was captured, what has
- * gone back out, and the difference.
+ * The Reports route's net-collected-cash figure: the net half of
+ * `summarizeCollectedCash` in `booking-payment-state.ts`, which owns the
+ * derivation (#3372). Kept as a named wrapper so the route reads one number.
  */
-export interface CollectedCashSummary {
-  /** `Payment.amountCents` summed over captured payments only — before refunds. */
-  capturedGrossCents: number;
-  /** `Payment.refundedAmountCents` summed — cash refunds and cancellation credit alike. */
-  refundedCents: number;
-  /** `capturedGrossCents - refundedCents`, floored at zero: the cash the club holds. */
-  netCollectedCents: number;
-}
-
-/**
- * Cash is payment-derived and deliberately NOT allocated over stay nights.
- * `Payment.amountCents` already contains captured additions (#2408); rebuilding
- * it from transaction rows would undercount legacy/group captures or double
- * count a later addition.
- *
- * THE ONE derivation of net collected cash for the officer surfaces
- * (`INV-SSOT-001`, #3372): the Reports summary, the dashboard's "Revenue This
- * Month" card and the payments board's revenue tile all read it, so the three
- * cannot disagree about what "net of refunds" means. Each surface still decides
- * WHICH payments it hands in — a month's, a filter's, a report range's — and
- * says so on screen. Rows may be whole payments or `groupBy` sums per status:
- * the arithmetic is linear, so a status group is the same as its members.
- */
-export function summarizeCollectedCash(
-  payments: ReadonlyArray<{
-    status: string | null;
-    amountCents: number;
-    refundedAmountCents: number;
-  } | null>,
-): CollectedCashSummary {
-  let capturedGrossCents = 0;
-  let refundedCents = 0;
-  for (const payment of payments) {
-    if (!payment) continue;
-    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
-      capturedGrossCents += payment.amountCents;
-    }
-    refundedCents += payment.refundedAmountCents;
-  }
-  return {
-    capturedGrossCents,
-    refundedCents,
-    netCollectedCents: Math.max(capturedGrossCents - refundedCents, 0),
-  };
-}
-
 export function summarizeNetCollectedCash(
   payments: Parameters<typeof summarizeCollectedCash>[0],
 ): number {

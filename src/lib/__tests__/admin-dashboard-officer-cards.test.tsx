@@ -165,7 +165,7 @@ function mockStats() {
   // #3372: the month's payments, summed per status, as `groupBy` returns them.
   // The default fixture is the partly-refunded booking behind the #3340
   // misreading: $130.00 captured, $65.00 refunded. The card's headline must be
-  // the $65.00 the club holds, never the $130.00 it took. A PENDING group rides
+  // the $65.00 net, never the $130.00 it took. A PENDING group rides
   // along so the card is seen to leave uncaptured money out.
   vi.mocked(prisma.payment.groupBy).mockResolvedValue([
     {
@@ -244,34 +244,39 @@ describe("admin dashboard officer key cards", () => {
     expect(html).toContain(">4</div>"); // roster days needing chores (#2631)
     expect(html).toContain(">3</div>"); // guests awaiting a bed
 
-    // Slim secondary row keeps Members + Revenue.
-    expect(html).toContain("Revenue This Month");
+    // Slim secondary row keeps Members + Net Collected.
+    expect(html).toContain("Net Collected This Month");
     expect(html).toContain("active of 50 total");
   });
 
   /*
     #3372 — the rendered half of #3340. In the live incident the officer read a
     partly-refunded booking as "paid $130, $300 to pay" because a screen showed
-    the gross figure under a label that meant net. This card is titled "Revenue",
-    so its headline is what the club HOLDS: captured less refunded, through the
-    one `summarizeCollectedCash` derivation the payments board and Reports also
-    read. The gross and the refund print beneath so the arithmetic is on the card.
+    the gross figure under a label that meant net. This card is titled "Net
+    Collected", so its headline is captured less refunded and credited, through
+    the `summarizeCollectedCash` derivation the payments board and Reports also
+    read. The gross and the refund print beneath, in exact cents, so the
+    arithmetic is on the card.
   */
-  it("headlines Revenue This Month NET of refunds, with gross and refunded beneath", async () => {
+  it("headlines Net Collected This Month NET of refunds, with gross and refunded beneath", async () => {
     mockActorMatrix({ overview: "edit", finance: "edit" });
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    // $130.00 captured, $65.00 refunded → the club holds $65. The card renders
-    // whole dollars (`money.dollars`), so `$65` is the headline and `$130` may
-    // appear only in the breakdown line, never as the headline.
+    // $130.00 captured, $65.00 refunded → $65 net. The headline renders whole
+    // dollars (`money.dollars`), so `$65` is the headline and `$130` may appear
+    // only in the breakdown line, never as the headline.
     expect(html).toContain(">$65</div>");
     expect(html).not.toContain(">$130</div>");
-    expect(html).toContain("$130 paid, $65 refunded");
-    // The subline says what the figure is, and no longer claims "succeeded
-    // payments" — the status set that dropped a partly-refunded payment.
-    expect(html).toContain("payments taken this month, less refunds on them");
+    // The breakdown is EXACT cents, never two rounded figures that could
+    // disagree with the headline by a dollar.
+    expect(html).toContain(">$130.00 paid, $65.00 refunded or credited</p>");
+    // The subline says what the figure is, makes no claim about when the money
+    // arrived, and no longer claims "succeeded payments" — the status set that
+    // dropped a partly-refunded payment.
+    expect(html).toContain("payments recorded this month, less refunds and credits on them");
     expect(html).not.toContain("from succeeded payments");
+    expect(html).not.toContain("Revenue This Month");
     // The $900.00 PENDING group is uncaptured money and never reaches the card.
     expect(html).not.toContain("$900");
     expect(html).not.toContain("$965");
@@ -303,8 +308,8 @@ describe("admin dashboard officer key cards", () => {
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
     expect(html).toContain(">$1,234</div>");
-    expect(html).not.toContain("$1,234 paid");
-    expect(html).not.toContain("$0 refunded");
+    expect(html).not.toContain(" paid, ");
+    expect(html).not.toContain("refunded or credited");
   });
 
   it("hides officer cards whose target page the actor cannot open", async () => {
@@ -323,7 +328,7 @@ describe("admin dashboard officer key cards", () => {
     expect(html).not.toContain('href="/admin/bookings?upcoming=7"');
     expect(html).not.toContain("checking in within 7 days");
     // Secondary row is entirely hidden.
-    expect(html).not.toContain("Revenue This Month");
+    expect(html).not.toContain("Net Collected This Month");
   });
 
   it("renders with no officer or secondary cards when the actor has no area access", async () => {
@@ -337,7 +342,7 @@ describe("admin dashboard officer key cards", () => {
     expect(html).not.toContain("Roster Assignment");
     expect(html).not.toContain("Bed Allocation");
     expect(html).not.toContain("checking in within 7 days");
-    expect(html).not.toContain("Revenue This Month");
+    expect(html).not.toContain("Net Collected This Month");
   });
 });
 

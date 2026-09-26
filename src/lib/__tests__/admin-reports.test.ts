@@ -8,11 +8,11 @@ import {
   buildRevenueSeries,
   getBookingRevenueByNight,
   getRevenueGranularity,
-  summarizeCollectedCash,
   summarizeNetCollectedCash,
   summarizeOverlappingGuests,
   type RevenueBookingLike,
 } from "@/lib/admin-reports";
+import { summarizeCollectedCash } from "@/lib/booking-payment-state";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -262,10 +262,11 @@ describe("admin reports helpers", () => {
   });
 
   /*
-    #3372: the one derivation of net collected cash now hands back its working
-    — gross captured, refunded, net — so the dashboard card and the payments
-    tile can print the breakdown beneath the headline instead of each
-    re-deriving it. Which statuses are "captured" is `isCapturedPaymentStatus`'s
+    #3372: the derivation of net collected cash (now in the
+    `booking-payment-state.ts` leaf, with Reports' `summarizeNetCollectedCash`
+    a wrapper over it) hands back its working — gross captured, refunded and
+    credited, net — so the dashboard card can print the breakdown beneath the
+    headline instead of re-deriving it. Which statuses are "captured" is `isCapturedPaymentStatus`'s
     call, so a PENDING or FAILED amount never enters the gross, while its
     (zero) refund column is still read.
   */

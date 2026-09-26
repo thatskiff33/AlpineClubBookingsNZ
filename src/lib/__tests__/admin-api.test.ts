@@ -379,7 +379,7 @@ describe("Admin Payments API", () => {
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(10);
-    expect(body.summary.netRevenueCents).toBe(5000);
+    expect(body.summary.netCollectedCents).toBe(5000);
     expect(body.summary.refundedCents).toBe(0);
     expect(body.summary.count).toBe(1);
     expect(body.data[0].reference).toBeNull();
@@ -387,7 +387,7 @@ describe("Admin Payments API", () => {
   });
 
   /*
-    #3372 — the "Net Revenue" tile. It used to add gross `amountCents` for every
+    #3372 — the "Net Collected Cash" tile (once "Total Revenue"). It used to add gross `amountCents` for every
     row the filter matched: a refund never subtracted, and under the default
     "all" status filter a PENDING or FAILED payment's amount counted as revenue.
     The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
@@ -396,7 +396,7 @@ describe("Admin Payments API", () => {
     row, cancelled bookings included. The two are not a subtraction of one
     another, and this fixture is built so each exclusion moves the number.
   */
-  it("sums Net Revenue over captured payments only, net of refunds, excluding cancelled bookings", async () => {
+  it("sums Net Collected Cash over captured payments only, net of refunds, excluding cancelled bookings", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const cancelledBooking = {
@@ -406,7 +406,7 @@ describe("Admin Payments API", () => {
     };
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce([
-        // The #3340 booking: $130.00 captured, $65.00 refunded → $65.00 held.
+        // The #3340 booking: $130.00 captured, $65.00 refunded → $65.00 net.
         makePaymentCandidate({
           id: "partly-refunded",
           status: "PARTIALLY_REFUNDED",
@@ -439,12 +439,13 @@ describe("Admin Payments API", () => {
       // 13_000 - 6_500. Were the cancelled row counted it would read 21_500;
       // were PENDING/FAILED gross added it would read 19_500; gross would be
       // 13_000.
-      netRevenueCents: 6_500,
+      netCollectedCents: 6_500,
       // 6_500 + 5_000: the cancelled booking's refund still counts here.
       refundedCents: 11_500,
       count: 4,
     });
     expect(body.summary).not.toHaveProperty("totalRevenueCents");
+    expect(body.summary).not.toHaveProperty("netRevenueCents");
 
     // Display only (#3372 acceptance): a read of the ledger writes nothing.
     expect(prisma.payment.update).not.toHaveBeenCalled();

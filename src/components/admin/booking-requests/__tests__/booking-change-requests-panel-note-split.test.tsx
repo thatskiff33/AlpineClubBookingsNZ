@@ -440,7 +440,7 @@ describe("the Payment line is net of refunds", () => {
     xeroInvoiceNumber: null,
   };
 
-  it("headlines what the club holds, with gross paid and refunded beneath", async () => {
+  it("headlines the net of refunds and credits, with gross paid and refunded beneath", async () => {
     listResponse = () =>
       jsonResponse({
         data: [
@@ -454,11 +454,14 @@ describe("the Payment line is net of refunds", () => {
       });
     render(<BookingChangeRequestsPanel />);
 
-    // $130.00 captured, $65.00 refunded → the club holds $65.00, and the
-    // headline says it is net so it cannot be read as the capture.
+    // $130.00 captured, $65.00 refunded → $65.00 net, and the headline says it
+    // is net so it cannot be read as the capture. The breakdown is pinned whole
+    // — a substring match would pass without "or credited".
     const paymentLine = (await screen.findByText("Payment:")).parentElement;
     expect(paymentLine).toHaveTextContent("Payment: PARTIALLY_REFUNDED ($65.00 net)");
-    expect(paymentLine).toHaveTextContent("$130.00 paid, $65.00 refunded");
+    expect(
+      screen.getByText("$130.00 paid, $65.00 refunded or credited", { exact: true }),
+    ).toBeInTheDocument();
     expect(paymentLine).not.toHaveTextContent("($130.00)");
 
     // Display only (#3372 acceptance): rendering the panel sends nothing but
@@ -491,6 +494,7 @@ describe("the Payment line is net of refunds", () => {
     expect(paymentLine).toHaveTextContent("Payment: SUCCEEDED ($130.00)");
     expect(paymentLine).not.toHaveTextContent("net");
     expect(paymentLine).not.toHaveTextContent("refunded");
+    expect(paymentLine).not.toHaveTextContent("credited");
   });
 });
 
