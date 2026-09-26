@@ -59,10 +59,6 @@ export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
   BookingStatus.PENDING,
 ] as const;
 
-export function isImmediatePaymentBookingStatus(status: BookingStatus | string): boolean {
-  return (IMMEDIATE_PAYMENT_BOOKING_STATUSES as readonly string[]).includes(status);
-}
-
 // #3245 DELETED `MEMBER_MODIFIABLE_BOOKING_STATUSES`, and the deletion is the
 // point rather than tidying. It was marked "test seam", had NO production
 // reader, and answered "which bookings may a member modify?" — the question

@@ -29,7 +29,7 @@ export function isPaidLikeStatus(status: BookingStatus): boolean {
 }
 
 /** Booking statuses a payment link can still pay for. */
-const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
+export const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,

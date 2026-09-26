@@ -24,6 +24,7 @@ import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-qu
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
   NOT_PAYABLE_MESSAGE,
+  PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
   PaymentLinkError,
   REVOKED_LINK_MESSAGE,
   USED_LINK_MESSAGE,
@@ -415,7 +416,7 @@ export async function createPaymentIntentForPaymentLink(
   const attached = await attachMintedCardIntent({
     bookingId: booking.id,
     paymentIntentId: paymentIntent.id,
-    isPayableStatus: isPayableByLink,
+    payableStatuses: PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
     paymentCreate: {
       amountCents: booking.finalPriceCents,
       stripeCustomerId: customer.id,

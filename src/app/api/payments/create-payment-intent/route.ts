@@ -24,7 +24,7 @@ import {
 } from "@/lib/capacity";
 import {
   bookingHasCapacityOverride,
-  isImmediatePaymentBookingStatus,
+  IMMEDIATE_PAYMENT_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -720,7 +720,7 @@ export async function POST(request: NextRequest) {
     const attached = await attachMintedCardIntent({
       bookingId: booking.id,
       paymentIntentId: paymentIntent.id,
-      isPayableStatus: isImmediatePaymentBookingStatus,
+      payableStatuses: IMMEDIATE_PAYMENT_BOOKING_STATUSES,
       paymentCreate: {
         amountCents: effectivePriceCents,
         creditAppliedCents: appliedCreditCents,

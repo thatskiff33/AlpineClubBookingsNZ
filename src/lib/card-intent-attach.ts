@@ -42,15 +42,19 @@ export type CardIntentAttachOutcome =
 export async function attachMintedCardIntent({
   bookingId,
   paymentIntentId,
-  isPayableStatus,
+  payableStatuses,
   paymentCreate,
   paymentUpdate,
   transaction,
 }: {
   bookingId: string;
   paymentIntentId: string;
-  /** The door's own payable-status rule, applied to the post-lock re-read. */
-  isPayableStatus: (status: BookingStatus) => boolean;
+  /**
+   * The door's own payable statuses, applied to the post-lock re-read. A list,
+   * not a predicate: no caller-supplied code runs inside the lock(1)
+   * transaction (the #3123 outside-the-transaction census).
+   */
+  payableStatuses: readonly BookingStatus[];
   /** The Payment row to create when the booking has none yet. */
   paymentCreate: Omit<Prisma.PaymentUncheckedCreateInput, "bookingId" | "status">;
   /** The fields to refresh on an existing Payment row. */
@@ -71,7 +75,7 @@ export async function attachMintedCardIntent({
         where: { id: bookingId },
         select: { status: true },
       });
-      if (!booking || !isPayableStatus(booking.status)) {
+      if (!booking || !payableStatuses.includes(booking.status)) {
         return "notPayable";
       }
 

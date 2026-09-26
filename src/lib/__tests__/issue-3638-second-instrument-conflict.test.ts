@@ -559,6 +559,31 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
   });
 
+  it("still raises NEW bank cash on a cancelled booking whose card row is #1765 refund history", async () => {
+    // Repay-after-refund booking switched to Internet Banking and cancelled
+    // BEFORE it was repaid; the member then pays the stale invoice. The card
+    // was refunded before the switch, but this bank cash is new and has
+    // nowhere to go (the credit-mint arm mints only for a payment that never
+    // settled), so it must still be raised rather than excluded as history.
+    const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindFirst.mockImplementation(
+      async ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy ? { createdAt: switchedAt } : null
+    );
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+    ]);
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "card-row" }]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(1);
+    expect(mocks.paymentRefundFindMany).not.toHaveBeenCalled();
+  });
+
   it("does not raise a bank-first replay whose card row is #1765 refund history", async () => {
     // A repay-after-refund booking: card paid and refunded, switched to
     // Internet Banking, repaid by bank (PAID), then cancelled. Its bank cash is
