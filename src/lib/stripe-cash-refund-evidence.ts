@@ -93,6 +93,22 @@ export interface StripeCashRefundEvidence {
 }
 
 /**
+ * The `MemberCredit` rows that record value taken OUT of a booking's captured
+ * payment as account credit - the dispositions `applyLocalRefundAllocation`
+ * folds into `refundedAmountCents`. One definition, read by the legacy cash
+ * fallback below and by the refunded-total shortfall audit (#3640).
+ */
+export const ACCOUNT_CREDIT_DISPOSITION_WHERE = {
+  type: {
+    in: [CreditType.CANCELLATION_REFUND, CreditType.BOOKING_MODIFICATION_REFUND],
+  },
+  amountCents: { gt: 0 },
+  // Restores of previously applied credit never ran
+  // applyLocalRefundAllocation, so they are not part of the mirror.
+  restoredFromBookingId: null,
+} satisfies Prisma.MemberCreditWhereInput;
+
+/**
  * Resolve the cash-refund evidence for one Stripe-source payment. Accepts an
  * optional transaction client so tx-scoped callers see their own uncommitted
  * writes (mirroring `sumCoveredRefundCreditNoteCents`, #1357).
@@ -138,16 +154,7 @@ export async function resolveStripeCashRefundEvidence(
   const credit = await db.memberCredit.aggregate({
     where: {
       sourceBookingId: payment.bookingId,
-      type: {
-        in: [
-          CreditType.CANCELLATION_REFUND,
-          CreditType.BOOKING_MODIFICATION_REFUND,
-        ],
-      },
-      amountCents: { gt: 0 },
-      // Restores of previously applied credit never ran
-      // applyLocalRefundAllocation, so they are not part of the mirror.
-      restoredFromBookingId: null,
+      ...ACCOUNT_CREDIT_DISPOSITION_WHERE,
     },
     _sum: { amountCents: true },
   });
