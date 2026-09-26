@@ -83,6 +83,18 @@ describe("#3566: APP_LOCALE and APP_CURRENCY are not imported outside operationa
       'export { APP_CURRENCY } from "@/config/operational";',
       'export * from "@/config/operational";',
       'export const x = () => import("@/config/operational");',
+      // Round 2 of the #3628 review: the path however spelled, and the
+      // dynamic forms.
+      'import { APP_LOCALE } from "@/config/./operational";\nexport const x = APP_LOCALE;',
+      'import { APP_LOCALE } from "@/config//operational";\nexport const x = APP_LOCALE;',
+      'import { APP_CURRENCY } from "@/config/operational.js";\nexport const x = APP_CURRENCY;',
+      'import { APP_CURRENCY } from "../../config/./operational.ts";\nexport const x = APP_CURRENCY;',
+      "export const x = () => import(`@/config/operational`);",
+      'const name = "operational";\nexport const x = () => import(`@/config/${name}`);',
+      'export const x = () => require("@/config/operational");',
+      'export const x = () => require("@/config/./operational.js");',
+      "export const x = () => require(`@/config/operational`);",
+      'import operational = require("@/config/operational");\nexport const x = operational;',
     ];
     for (const file of [
       "src/lib/season-label.ts",
@@ -93,6 +105,17 @@ describe("#3566: APP_LOCALE and APP_CURRENCY are not imported outside operationa
       for (const code of spellings) {
         expect(await hits(code, file), `${file}: ${code}`).toBe(1);
       }
+    }
+  });
+
+  it("leaves other modules, and a local require, alone", async () => {
+    for (const code of [
+      'import { APP_TIME_ZONE } from "@/config/operational-hours";\nexport const x = APP_TIME_ZONE;',
+      'import { thing } from "@/config/modules";\nexport const x = thing;',
+      'export const x = () => import(`@/lib/${"club-format"}`);',
+      'function require(ok: boolean, field: string) { return ok ? field : ""; }\nexport const x = require(true, "lodgeId");',
+    ]) {
+      expect(await hits(code, "src/lib/season-label.ts"), code).toBe(0);
     }
   });
 
@@ -119,5 +142,33 @@ describe("#3567 exception: APP_STRIPE_CURRENCY reaches exactly the seven card-ch
       importers,
       "APP_STRIPE_CURRENCY is the card-charge currency, still derived from the server's CURRENCY until #3567 decides where it comes from. A new importer is a new card path charging in a currency the club's setting does not control; add it to this list only with that decision in hand.",
     ).toEqual([...APP_STRIPE_CURRENCY_IMPORTERS].sort());
+  });
+});
+
+/** `APP_LOCALE` / `APP_CURRENCY` as a whole word — never `APP_STRIPE_CURRENCY`. */
+export function findRetiredFormatConstantTokens(source: string): string[] {
+  return [...stripComments(source).matchAll(/\bAPP_(?:LOCALE|CURRENCY)\b/g)].map((match) => match[0]);
+}
+
+describe("#3566 backstop: no APP_LOCALE / APP_CURRENCY token in src code outside operational.ts", () => {
+  it("counts the tokens it looks for", () => {
+    expect(findRetiredFormatConstantTokens("const x = mod.APP_LOCALE;")).toHaveLength(1);
+    expect(findRetiredFormatConstantTokens('const x = mod["APP_CURRENCY"];')).toHaveLength(1);
+    expect(findRetiredFormatConstantTokens("const { APP_LOCALE: l, APP_CURRENCY: c } = req(p);")).toHaveLength(2);
+    expect(findRetiredFormatConstantTokens("const x = APP_STRIPE_CURRENCY;")).toHaveLength(0);
+    expect(findRetiredFormatConstantTokens("const x = MY_APP_LOCALE_X;")).toHaveLength(0);
+    expect(findRetiredFormatConstantTokens("// was APP_LOCALE\n/* and APP_CURRENCY */")).toHaveLength(0);
+  });
+
+  it("finds none — a spelling no lint selector follows still names the constant", () => {
+    const offenders = walk(path.join(ROOT, "src"))
+      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
+      .filter((file) => file !== "src/config/operational.ts")
+      .filter((file) => findRetiredFormatConstantTokens(readFileSync(path.join(ROOT, file), "utf8")).length > 0)
+      .sort();
+    expect(
+      offenders,
+      "APP_LOCALE / APP_CURRENCY are retired from reading (#3566): take the club's locale and currency from clubFormatValues() / clubFormat() on the server or useClubFormat() in the browser.",
+    ).toEqual([]);
   });
 });

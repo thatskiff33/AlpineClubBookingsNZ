@@ -536,7 +536,18 @@ export const CLUB_FORMAT_GUARD_ARMS = {
 // `APP_STRIPE_CURRENCY`, the card-charge currency derived from `APP_CURRENCY`,
 // is NOT covered here: its seven importers are the named #3567 exception, pinned
 // by `app-currency-import-census.test.ts` so an eighth fails there.
-const OPERATIONAL_MODULE = "/(?:^|\\/)config\\/operational$/";
+// The module path, however spelled: `@/config/operational`,
+// `../config/operational`, `@/config/./operational`, `@/config//operational`,
+// `@/config/operational.js` (round 2 of the #3628 review). A template literal
+// (`import(`@/config/${name}`)`) or a `require` cannot always be read to its
+// value, so any template mentioning `config` or `operational` in a dynamic
+// import or `require` is refused outright. What no selector can follow — a
+// computed module name, a `createRequire` alias — is backstopped by the
+// word-level census in `app-currency-import-census.test.ts`: no
+// `APP_LOCALE` / `APP_CURRENCY` token anywhere in non-test `src/` code outside
+// `operational.ts`, comments stripped.
+const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?$/";
+const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/]";
 const RETIRED_FORMAT_CONSTANT_MESSAGE =
   "INV-CONFIG-006 / #3566: do not import APP_LOCALE or APP_CURRENCY. The club's locale and currency are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma, and a date's locale through the club-time binding's .format. The environment is a seed only (club-format-env.ts); #3567 retires these constants.";
 const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
@@ -545,6 +556,10 @@ const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
   `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}] ExportSpecifier[local.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
   `ExportAllDeclaration[source.value=${OPERATIONAL_MODULE}]`,
   `ImportExpression[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `CallExpression[callee.name="require"][arguments.0.value=${OPERATIONAL_MODULE}]`,
+  `CallExpression[callee.name="require"][arguments.0.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `TSExternalModuleReference[expression.value=${OPERATIONAL_MODULE}]`,
 ].map((selector) => ({ selector, message: RETIRED_FORMAT_CONSTANT_MESSAGE }));
 
 /** The #3566 retired-constant arm as bare selectors, read by its guard test. */
