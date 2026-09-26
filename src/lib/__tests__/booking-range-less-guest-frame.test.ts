@@ -34,23 +34,15 @@
  * pinned below, because it is the shape this epic keeps finding and the shape a
  * later edit is most likely to reintroduce.
  *
- * ## Why the environment zone is mocked rather than set through `TZ`
+ * ## The environment zone is no longer pinned
  *
- * `TZ` is not a usable lever on this repository's documented shell, and it moves
- * `APP_TIME_ZONE` and the host together — so a suite using it could not tell a
- * projection through the configured zone from one through the host's. The config
- * mock moves the environment zone alone, which is the leak this file is about.
+ * This file used to mock `@/config/operational` to move the environment zone
+ * alone. #3567 deleted that module and nothing reads the environment's zone any
+ * more, so the pin is gone; the premise below still measures that a projection
+ * through a zone behind Greenwich moves a stored day.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import {
   normalizeGuestStayRange,
@@ -68,10 +60,12 @@ const CHECK_IN = "2026-07-04";
 const CHECK_OUT = "2026-07-07";
 const booking = { checkIn: day(CHECK_IN), checkOut: day(CHECK_OUT) };
 
+/** The zone the replaced projection read through — behind Greenwich. */
+const LEGACY_PROJECTION_ZONE = "America/Denver";
+
 describe("a range-less guest is defaulted from the STORED envelope", () => {
-  it("PREMISE: the mocked environment zone really does move a stored day", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnlyForTimeZone(booking.checkIn, APP_TIME_ZONE)).toBe(
+  it("PREMISE: a projection through a zone behind Greenwich really does move a stored day", () => {
+    expect(formatDateOnlyForTimeZone(booking.checkIn, LEGACY_PROJECTION_ZONE)).toBe(
       "2026-07-03",
     );
   });

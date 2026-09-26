@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * #3123 — the two admin query builders whose date filters used to be derived
@@ -14,9 +14,10 @@ import { describe, expect, it, vi } from "vitest";
  *  - `Booking.checkIn` is `DateTime @db.Date`, so its bound IS the UTC-midnight
  *    encoding, and no zone appears in it at all.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer
- * the replaced `date-only` adapters gave, AND this codebase's own fallback, so
- * it is the one value a half-done fix could still pass under. The zone the
+ * DISCRIMINATION. `Pacific/Auckland` is the answer the replaced `date-only`
+ * adapters gave, AND this codebase's own fallback, so it is the one value a
+ * half-done fix could still pass under. (The environment constant once pinned
+ * to it here was deleted in #3567; nothing reads the environment's zone.) The zone the
  * builders are HANDED is `America/Denver`, which disagrees with it by 18 hours,
  * so no bound below can be right by coincidence. Both subjects are pure and take
  * the zone as data, so there is no persisted row to mock here; that the value
@@ -27,14 +28,6 @@ import { describe, expect, it, vi } from "vitest";
  * cannot tell 1 August at UTC midnight from 1 August at Denver midnight, and
  * those two are precisely the pair this migration is about.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   adminBookingsQuerySchema,
   appliedBookingViewFilters,
@@ -73,8 +66,7 @@ function auditWindow(
 }
 
 describe("PREMISE: the container and the supplied zone disagree", () => {
-  it("pins the environment to the value a half-done fix would still pass under", () => {
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+  it("the value a half-done fix would still pass under (Pacific/Auckland) is 18 hours from Denver", () => {
     // 18 hours apart, so every boundary below differs by 18 hours between them.
     expect(
       new Intl.DateTimeFormat("en-CA", {

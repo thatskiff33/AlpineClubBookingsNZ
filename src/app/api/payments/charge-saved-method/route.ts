@@ -45,6 +45,7 @@ import {
 import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -170,6 +171,9 @@ export async function POST(request: NextRequest) {
     // (read-key -> lock -> re-read, docs/CONCURRENCY_AND_LOCKING.md).
     const lodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
     const previousRange = { checkIn: booking.checkIn, checkOut: booking.checkOut };
+
+    // #3567: refused before the claim, the attempt row or any Stripe call.
+    if (chargeCurrencyRefusal(format)) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
 
     // Claim-first (#1418, the cron's `resolveHoldWindowUnderLock` and the admin
     // route's charge branch): claim PENDING -> CONFIRMED under both locks

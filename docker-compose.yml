@@ -211,10 +211,10 @@ x-app-environment: &app-environment
   XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: ${XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH:-false}
   XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: ${XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS:-false}
   XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: ${XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS:-false}
-  # Operational defaults — src/config/operational.ts falls back to NZD / en-NZ.
-  # Only the server-side spellings: the NEXT_PUBLIC_* twins are inlined into the
-  # browser bundle at BUILD time, so delivering those at runtime would make the
-  # server and the browser disagree. Club time zone is TZ, above.
+  # First-boot seed for the club's currency and locale (src/lib/club-format-env.ts):
+  # copied once into the recorded setting, then never read again; unset falls back
+  # to NZD / en-NZ. The NEXT_PUBLIC_* twins are not read at all (#3567). Club time
+  # zone is TZ, above.
   CURRENCY: ${CURRENCY:-}
   LOCALE: ${LOCALE:-}
   # Optional separate archive database for AuditLogArchive rows —

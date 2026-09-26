@@ -48,13 +48,6 @@ import RosterSetupWizard from "../page";
  * work survives and the PIN box appears here rather than a bare "Forbidden".
  */
 
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
-
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useParams: () => ({ date: "2026-07-01" }),

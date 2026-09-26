@@ -11,6 +11,7 @@ import {
   classifyEnvironmentClubTimeZoneSeed,
   type EnvironmentClubTimeZoneSeed,
 } from "@/lib/club-time-zone-env";
+import { usableClubCurrencyCode } from "@/lib/club-format";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -108,6 +109,7 @@ export interface SetupDatabaseSnapshot {
   // secret changed). Optional/undefined for older callers or when no DB snapshot
   // was taken — the Stripe check then reports "not checked".
   stripeSecretKeySet?: boolean;
+  clubFormatCurrencyCode?: string | null; // stored, raw; an unchargeable one blocks Stripe (#3567)
   stripePublishableKeySet?: boolean;
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
@@ -1674,6 +1676,11 @@ function buildStripeCheck(
     );
   }
 
+  const stored = db.clubFormatCurrencyCode ?? null;
+  if (stored !== null && usableClubCurrencyCode(stored) === null) {
+    const message = `The club's recorded currency, "${stored}", is not usable, so no card can be charged (card payments follow it, #3567). Set a three-letter currency with two decimal places at /admin/club-format.`;
+    return applyProgress({ ...base, status: "blocked", message, details: legacyDetails }, progress);
+  }
   const secretSet = Boolean(db.stripeSecretKeySet);
   const publishableSet = Boolean(db.stripePublishableKeySet);
   const webhookSet = Boolean(db.stripeWebhookSecretSet);

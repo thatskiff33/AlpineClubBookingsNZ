@@ -2,15 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * #3123 — the modules that ask "what day is it at the club" answer from the
- * PERSISTED `ClubTimeSettings.timeZone`, never from `APP_TIME_ZONE`.
+ * PERSISTED `ClubTimeSettings.timeZone`, never from the environment's zone.
  *
  * One file rather than five, because the discrimination is identical for every
  * subject and the two dials it moves — the mocked container zone and the
  * persisted club row — are file-scoped. Each subject gets its own block, so a
  * failure still names one module.
  *
- * DISCRIMINATION. `APP_TIME_ZONE`, the container's zone and the only thing
- * `getTodayDateOnly()` ever read, is pinned to `Pacific/Auckland`. That is both
+ * DISCRIMINATION. The environment's zone — the only thing `getTodayDateOnly()`
+ * ever read — is modelled as `Pacific/Auckland`. (It used to be pinned with a
+ * `@/config/operational` mock; #3567 deleted that module and nothing reads the
+ * environment's zone any more.) That is both
  * the answer the replaced helper gave here AND this codebase's documented
  * fallback, so it is the one value a wrong fix — a hard-coded default, a lost
  * read — could still pass under. The persisted club zone is `America/Denver`,
@@ -29,12 +31,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inlined literals: `vi.mock` factories hoist above every const in this file.
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
@@ -57,7 +53,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
@@ -98,7 +93,6 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
   it("PREMISE: the persisted zone and the environment's give different days", () => {
     // The ANSWERS have to differ, not merely the identifiers — two zones with
     // different names and the same offset would make every case below vacuous.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

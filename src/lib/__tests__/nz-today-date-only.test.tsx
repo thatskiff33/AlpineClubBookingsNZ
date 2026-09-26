@@ -67,11 +67,11 @@ import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/schoo
   CT-4 (#2870) MOVED WHERE THESE TWO FORMS GET THE CLUB'S DAY FROM, and this
   suite's fixture is unchanged by it.
 
-  Both used to call `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE`:
-  the container's `TZ`. They now read the club's PERSISTED zone from
+  Both used to call `todayDateOnlyForTimeZone()`, which then read `APP_TIME_ZONE`
+  (the container's `TZ`; the constant was deleted in #3567). They now read the club's PERSISTED zone from
   `ClubTimeProvider`, so each render below has to say which club it is rendering
-  for. It says `Pacific/Auckland`, which is the same answer `APP_TIME_ZONE`
-  gives here, so every expected string in this file is the one #2682 pinned and
+  for. It says `Pacific/Auckland`, which is the same answer the environment's
+  zone gives here, so every expected string in this file is the one #2682 pinned and
   the suite still means exactly what it meant.
 
   It is named at the call site rather than taken from the shared default in
@@ -95,7 +95,7 @@ const STUB_CLUB = {
 import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
 import { GET as getLegacyDashboardBookings } from "@/app/api/finance/legacy-dashboard/bookings/route";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 
 function mockPublicSettingsFetch() {
   global.fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -127,13 +127,14 @@ afterEach(() => {
 describe("#2682 the fixture really is inside the UTC/NZ divergence window", () => {
   it("runs with the club time zone actually set to New Zealand", () => {
     // docs/TESTING.md rule 6: setting TZ=UTC to imitate the CI runner ALSO
-    // moves APP_TIME_ZONE, because it is `process.env.TZ || NEXT_PUBLIC_TZ ||
-    // "Pacific/Auckland"`. This suite's entire premise is that the club day and
+    // moves the environment's zone (`ENVIRONMENT_CLUB_ZONE`), because it is
+    // `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` — and the finance
+    // paths below, whose Prisma mock has no `clubTimeSettings`, fall back to it. This suite's entire premise is that the club day and
     // the UTC day differ, so under TZ=UTC every assertion below goes red and
     // reads like a product bug. Say what happened instead.
     expect(
-      APP_TIME_ZONE,
-      "This suite exists to prove the club day and the UTC day differ, so it needs the club zone to be New Zealand. TZ (or NEXT_PUBLIC_TZ) is overriding APP_TIME_ZONE — see docs/TESTING.md rule 6.",
+      ENVIRONMENT_CLUB_ZONE,
+      "This suite exists to prove the club day and the UTC day differ, so it needs the club zone to be New Zealand. TZ (or NEXT_PUBLIC_TZ) is overriding the environment's zone — see docs/TESTING.md rule 6.",
     ).toBe("Pacific/Auckland");
   });
 
@@ -291,7 +292,7 @@ describe("#2682 no surface derives today from UTC any more", () => {
       /*
         AND IT TAKES "TODAY" FROM THE ONE CANONICAL PLACE, which CT-4 (#2870)
         moved. It used to be `todayDateOnlyForTimeZone` from `@/lib/date-only`,
-        which reads `APP_TIME_ZONE`; it is now `useClubTime()` from
+        which then read `APP_TIME_ZONE` (deleted in #3567); it is now `useClubTime()` from
         `@/components/club-time-provider`, whose zone is the persisted
         `ClubTimeSettings.timeZone` delivered to the browser as data
         (INV-CONFIG-002). The point of the assertion is unchanged, so the import
@@ -310,7 +311,7 @@ describe("#2682 no surface derives today from UTC any more", () => {
       ).toBe(true);
       expect(
         /\btodayDateOnlyForTimeZone\s*\(/.test(source),
-        `${page} must not also call todayDateOnlyForTimeZone(): that reads APP_TIME_ZONE, the container's TZ, so the file would carry two temporal authorities that agree on every deployment today and therefore nothing would catch the difference (CT-4, #2870).`,
+        `${page} must not also call todayDateOnlyForTimeZone(): that is the legacy zone-by-argument helper, so the file would carry two temporal authorities that agree on every deployment today and therefore nothing would catch the difference (CT-4, #2870).`,
       ).toBe(false);
     }
   });

@@ -39,19 +39,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ## What makes this file discriminating
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — both the answer the replaced
- * default gave AND this codebase's own fallback, so it is the one value a wrong
- * fix could still pass under. Every club day below is stated explicitly, which
- * is the point: the day is the caller's answer now, not this module's.
+ * `Pacific/Auckland` is both the answer the replaced default gave AND this
+ * codebase's own fallback, so it is the one value a wrong fix could still pass
+ * under. (The environment constant once pinned to it here was deleted in #3567;
+ * nothing reads the environment's zone any more.) Every club day below is stated
+ * explicitly, which is the point: the day is the caller's answer now, not this
+ * module's.
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const globalPrisma = vi.hoisted(() => ({
   promoRedemptionAllocation: {
@@ -70,7 +64,6 @@ const globalPrisma = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: globalPrisma }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   validateAndCalculatePromoDiscount,
@@ -157,12 +150,6 @@ beforeEach(() => {
 });
 
 describe("the validity window is judged on the day the caller supplies (#3123)", () => {
-  it("PREMISE: the container's zone is the one a wrong fix would fall back to", () => {
-    // Named so a later reader can see that this file's negative result is not
-    // an accident of the two zones agreeing.
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
-  });
-
   it("the promotion's FIRST valid day is in, and the day before it is out", () => {
     const promo: PromoRuleSubject = {
       ...BASE_RULE_SUBJECT,

@@ -26,10 +26,12 @@
  * and reading the same column differently — the "corrected producer feeding an
  * uncorrected consumer" shape this epic keeps finding.
  *
- * The `America/Denver` mock below is now here for ONE purpose only: the PREMISE
- * case, which proves the environment's zone still projects a different day, so
- * that every other case demonstrates the club's day winning over it rather than
- * agreeing with it by luck.
+ * `America/Denver` is here for ONE purpose only: the PREMISE case, which proves
+ * a projection through a zone behind Greenwich lands on a different day, so
+ * that every other case demonstrates the stored day winning over it rather
+ * than agreeing with it by luck. (It used to be pinned as the environment zone
+ * via a `@/config/operational` mock; #3567 deleted that module and nothing
+ * reads the environment's zone any more.)
  *
  * The frozen clock is `2026-07-01T00:00:00.000Z`. The club's day under test is
  * held at `2026-06-30` — the same day the fixtures were always built against —
@@ -38,16 +40,8 @@
  * `2026-07-01` read as itself is AFTER today, and read through Denver is
  * `2026-06-30`, which is not. One day decides whether the member is refused.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   formatDateOnly,
   formatDateOnlyForTimeZone,
@@ -66,12 +60,15 @@ function day(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+/** The zone the replaced projection read through — behind Greenwich. */
+const LEGACY_PROJECTION_ZONE = "America/Denver";
+
 /**
  * The CLUB's day for this suite (#3123), supplied as a value rather than
- * projected from the process clock. Deliberately the day the mocked
- * `APP_TIME_ZONE` also produces at the frozen instant, so the fixtures keep the
- * geometry the docblock describes — the PREMISE case is what proves the two are
- * separate dials, and every other case now takes the club's.
+ * projected from the process clock. Deliberately the day Denver also produces
+ * at the frozen instant, so the fixtures keep the geometry the docblock
+ * describes — the PREMISE case is what proves the stored day and the Denver
+ * projection are separate dials.
  */
 const CLUB_TODAY = new Date("2026-06-30T00:00:00.000Z");
 
@@ -127,23 +124,19 @@ function previewRefusesInProgressExtension(
 }
 
 describe("preview and apply validate the same date window", () => {
-  it("PREMISE: the mocked zone puts the club's today a day behind the stored day", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
+  it("PREMISE: a Denver projection puts today a day behind the stored day", () => {
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE, and this is the one place in this file
+     * The zone is PASSED ON PURPOSE, and this is the one place in this file
      * where that is right (#3123). Everywhere else the club's day arrives as
-     * `CLUB_TODAY`, a value; here the SUBJECT of the assertion is the
-     * environment's own projection, because the premise's whole job is to show
-     * that the environment still answers differently from the club. Naming a
-     * zone literal instead would assert something about `America/Denver` rather
-     * than about the environment, and the case would stop discriminating the
-     * moment the mock above changed.
+     * `CLUB_TODAY`, a value; here the SUBJECT of the assertion is the replaced
+     * projection, because the premise's whole job is to show that it answers
+     * differently from the stored day.
      */
     // The frozen clock instant, read in Denver, is still 30 June.
-    expect(formatDateOnly(getTodayDateOnly(APP_TIME_ZONE))).toBe("2026-06-30");
+    expect(formatDateOnly(getTodayDateOnly(LEGACY_PROJECTION_ZONE))).toBe("2026-06-30");
     // And a stored 1 July projected through Denver becomes 30 June, which is
     // the single day that decides every case below.
-    expect(formatDateOnlyForTimeZone(day("2026-07-01"), APP_TIME_ZONE)).toBe(
+    expect(formatDateOnlyForTimeZone(day("2026-07-01"), LEGACY_PROJECTION_ZONE)).toBe(
       "2026-06-30",
     );
   });

@@ -15,15 +15,15 @@
  * ## What this census claims, and what it deliberately does not
  *
  * It claims exactly one thing: no file under `src/app/api/**` reaches a
- * zone-bearing legacy helper — the ones that default their zone to
- * `APP_TIME_ZONE`, which is the container's `TZ`. That is a property of the
+ * zone-bearing legacy helper — the ones that defaulted their zone to
+ * `APP_TIME_ZONE`, the container's `TZ` (deleted in #3567). That is a property of the
  * FILES THEMSELVES, and it is what stops a route added next month copying its
  * neighbour's environment read.
  *
  * IT IS NOT the claim that this layer no longer touches the environment zone at
  * all, and an earlier draft of this docblock said that it was. Measured by
  * transitive import closure over the admin half: **186 of those 297** files
- * still reach a module that imports `APP_TIME_ZONE` from `@/config/operational`,
+ * then reached a module that imported `APP_TIME_ZONE` from `@/config/operational`,
  * overwhelmingly through `src/lib/date-only.ts` (144 of them) and
  * `src/lib/nzst-date.ts` (22).
  *
@@ -50,8 +50,8 @@
  * `@/lib/club-time` (CT-2, #2990) — the last one, since #3123 deleted the
  * rendering adapter beside it — and its helpers split cleanly in two:
  *
- * - **Zone-bearing.** Every helper in {@link ENVIRONMENT_ZONE_HELPERS} defaults
- *   its zone to `APP_TIME_ZONE`, which is `process.env.TZ` / `NEXT_PUBLIC_TZ`.
+ * - **Zone-bearing.** Every helper in {@link ENVIRONMENT_ZONE_HELPERS} defaulted
+ *   its zone to `APP_TIME_ZONE` (`process.env.TZ` / `NEXT_PUBLIC_TZ`, deleted in #3567).
  *   That is the environment's opinion, not the club's, and `INV-CONFIG-002` says
  *   the persisted `ClubTimeSettings.timeZone` is the only authority. Banned in
  *   this tree.
@@ -292,8 +292,8 @@ describe("API temporal convergence (CT-4, #2870)", () => {
     expect(
       offenders,
       "INV-CONFIG-002 (docs/invariants/product-configuration.md): an API route " +
-        "resolved the club's timezone from `APP_TIME_ZONE`, which is the " +
-        "CONTAINER's `TZ`. The club's civil time is the persisted " +
+        "resolved the club's timezone through a legacy environment-zone helper, " +
+        "i.e. the CONTAINER's `TZ`. The club's civil time is the persisted " +
         "`ClubTimeSettings.timeZone`, and the two agree on every deployment " +
         "today — which is exactly why nothing catches this at runtime. Resolve " +
         "the zone with `clubTime()` or `clubTimeZone()` from " +

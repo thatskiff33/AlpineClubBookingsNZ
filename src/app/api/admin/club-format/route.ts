@@ -2,24 +2,21 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  buildStructuredAuditLogCreateArgs,
-  getAuditRequestContext,
-} from "@/lib/audit";
-import { clearAiSpendRateOnCurrencyChange } from "@/lib/ai-spend-currency-clear";
-import {
   normaliseClubCurrencyCode,
   normaliseClubLocale,
 } from "@/lib/club-format";
 import { stateFromResolved, stateFromRow } from "@/lib/club-format-admin-state";
+import { countInFlightCardPayments } from "@/lib/club-format-in-flight";
 import {
-  CLUB_FORMAT_SETTINGS_ID,
-  CLUB_FORMAT_SETTINGS_SELECT,
-  resolveClubFormatWithSource,
-} from "@/lib/club-format-settings";
+  currencyHasTwoDecimalPlaces,
+  twoDecimalPlacesRequiredMessage,
+} from "@/lib/club-currency-minor-unit";
+import { resolveClubFormatWithSource } from "@/lib/club-format-settings";
+import { writeClubFormat } from "@/lib/club-format-write";
 import logger from "@/lib/logger";
 import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { isFullAdmin } from "@/lib/access-roles";
 
 /**
  * The club currency and locale maintenance API (stage 1 of programme #3205,
@@ -42,24 +39,9 @@ import { requireAdmin } from "@/lib/session-guards";
  * THE CONFIRMATION IS ENFORCED HERE, not only in the panel. A checkbox in a
  * browser is a courtesy to the operator, and the panel is not the only caller.
  *
- * THE TRANSACTION TOUCHES EXACTLY THREE TABLES — `ClubFormatSettings`, `AuditLog`
- * and, on a CURRENCY change only, `AiSpendCurrencySettings`, whose rate it clears
- * (#3566; `ai-spend-currency-clear.ts` says why) — a contract, not a detail. No
- * stored amount is rewritten: every `Int` column of cents holds what it held,
- * and no payment, invoice or credit is re-denominated. A write here reaching a
- * booking, a payment or a member would be that promise broken, so the route's
- * test enumerates the delegates and fails if any other one is called.
- *
- * SERIALIZABLE, AND NO ADVISORY LOCK. A single-row configuration upsert
- * composes no capacity claim, no settlement money and no lifecycle transition,
- * which is what `docs/CONCURRENCY_AND_LOCKING.md` reserves the lock tiers for —
- * but it does need its recorded BEFORE value to be true. At Prisma's default
- * READ COMMITTED a `findUnique` takes no row lock, so two administrators saving
- * at once could each read NZD, both write, and leave a trail claiming two
- * changes FROM NZD: the intermediate value the trail exists to show is simply
- * lost, and the dirty gate can miss a re-save that had already happened.
- * Serializable aborts the loser instead, which writes nothing at all and is
- * answered a retryable 503. The same shape `/api/admin/club-time-zone` carries.
+ * THE WRITE ITSELF is `writeClubFormat` (`@/lib/club-format-write.ts`): the
+ * three tables it touches, its Serializable isolation and why it takes no
+ * advisory lock are stated there, beside the code they describe.
  */
 
 /**
@@ -86,8 +68,15 @@ export async function GET() {
   const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
 
-  const resolved = await resolveClubFormatWithSource();
-  return NextResponse.json({ state: await stateFromResolved(resolved) });
+  const [resolved, inFlight] = await Promise.all([
+    resolveClubFormatWithSource(),
+    // What a currency change would catch mid-flight (#3567 D2). Advice for the
+    // confirmation, read outside any transaction; null when it cannot be read.
+    // FULL ADMIN ONLY (#3567 review): only a Full Admin can change the currency,
+    // and payment counts are not part of the view-only payload other admins get.
+    isFullAdmin(guard.session.user) ? countInFlightCardPayments() : Promise.resolve(null),
+  ]);
+  return NextResponse.json({ state: await stateFromResolved(resolved), inFlight });
 }
 
 /**
@@ -103,8 +92,16 @@ const changeSchema = z
     currencyCode: z.string().max(200),
     locale: z.string().max(200),
     confirmed: z.boolean().optional(),
+    // The second acknowledgement a CURRENCY change needs (#3567 D2, D8): the
+    // Stripe account and Xero base currency match, and cards follow at once.
+    currencyChangeConfirmed: z.boolean().optional(),
   })
   .strict();
+
+const UNCONFIRMED_CURRENCY_CHANGE_MESSAGE =
+  "Changing the club's currency changes what cards are charged in, so it has " +
+  "to be confirmed separately: tick that the Stripe account and the Xero base " +
+  "currency match the new currency.";
 
 const INVALID_CURRENCY_MESSAGE =
   "Enter a three-letter currency code such as NZD, AUD or CHF. That is the " +
@@ -154,80 +151,33 @@ export async function PUT(request: Request) {
       { status: 400 },
     );
   }
+  // Card charges follow this currency (#3567 D1), so one that does not count
+  // in hundredths would be charged 100x or a tenth of what is shown (D3).
+  if (!currencyHasTwoDecimalPlaces(currencyCode)) {
+    return NextResponse.json(
+      { error: twoDecimalPlacesRequiredMessage(currencyCode) },
+      { status: 400 },
+    );
+  }
   const locale = normaliseClubLocale(parsed.data.locale);
   if (!locale) {
     return NextResponse.json({ error: INVALID_LOCALE_MESSAGE }, { status: 400 });
   }
 
   try {
-    const outcome = await prisma.$transaction(
-      async (tx) => {
-        const before = await tx.clubFormatSettings.findUnique({
-          where: { id: CLUB_FORMAT_SETTINGS_ID },
-          select: CLUB_FORMAT_SETTINGS_SELECT,
-        });
-
-        /*
-          DIRTY GATING (docs/ARCHITECTURE.md -> "Admin/member layer"). Re-saving the
-          pair already stored writes nothing: no row, no `updatedAt` bump and no
-          audit row. A trail recording changes that never happened is worse than
-          no trail, because the next reader cannot tell the difference. The
-          isolation level above — not this read sitting inside the transaction —
-          keeps `before` true at commit time, so a concurrent save can neither slip
-          past this gate nor make the audit row name a currency already left.
-        */
-        if (
-          before &&
-          before.currencyCode === currencyCode &&
-          before.locale === locale
-        ) {
-          return { changed: false as const, row: before };
-        }
-
-        const row = await tx.clubFormatSettings.upsert({
-          where: { id: CLUB_FORMAT_SETTINGS_ID },
-          update: { currencyCode, locale, updatedByMemberId: actingMemberId },
-          create: {
-            id: CLUB_FORMAT_SETTINGS_ID,
-            currencyCode,
-            locale,
-            updatedByMemberId: actingMemberId,
-          },
-          select: CLUB_FORMAT_SETTINGS_SELECT,
-        });
-        await clearAiSpendRateOnCurrencyChange(tx, { before, currencyCode, actingMemberId, request });
-
-        await tx.auditLog.create(
-          buildStructuredAuditLogCreateArgs({
-            action: "CLUB_FORMAT_UPDATED",
-            actor: { memberId: actingMemberId },
-            entity: { type: "ClubFormatSettings", id: CLUB_FORMAT_SETTINGS_ID },
-            // Installation configuration, like CLUB_TIME_ZONE_UPDATED and
-            // CLUB_IDENTITY_SETTINGS_UPDATED.
-            category: "admin",
-            severity: "important",
-            outcome: "success",
-            summary: "Club currency and locale updated",
-            /*
-              THE BEFORE AND AFTER PAIR, AND NOTHING ELSE. A `before` of null
-              means nothing was persisted yet. No request echo, no settings
-              blob, and nothing about the actor beyond the id the row already
-              carries.
-            */
-            metadata: {
-              before: before
-                ? { currencyCode: before.currencyCode, locale: before.locale }
-                : null,
-              after: { currencyCode, locale },
-            },
-            request: getAuditRequestContext(request),
-          }),
-        );
-
-        return { changed: true as const, row };
-      },
-      { isolationLevel: "Serializable" },
-    );
+    const outcome = await writeClubFormat({
+      currencyCode,
+      locale,
+      currencyChangeConfirmed: parsed.data.currencyChangeConfirmed === true,
+      actingMemberId,
+      request,
+    });
+    if ("refused" in outcome) {
+      return NextResponse.json(
+        { error: UNCONFIRMED_CURRENCY_CHANGE_MESSAGE },
+        { status: 400 },
+      );
+    }
     // Emails' cached locale re-reads NOW, after commit, not on its next TTL (#3566).
     if (outcome.changed) await primeEmailClubTimeZone();
     return NextResponse.json({

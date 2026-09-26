@@ -8,7 +8,7 @@ import { NextRequest } from "next/server";
  * again under the config-import singleton and the per-lodge capacity key on the
  * row the transaction re-read. Both asks bound `Booking.checkOut` and
  * `HutLeaderAssignment.endDate` — two `@db.Date` columns — on "today", and both
- * used to take it from `APP_TIME_ZONE`. For a club behind Greenwich that is a
+ * used to take it from the environment zone. For a club behind Greenwich that is a
  * day early: a stay or a hut-leader term ending today stops counting as a live
  * dependency, and the lodge is deactivated out from under it.
  *
@@ -25,7 +25,9 @@ import { NextRequest } from "next/server";
  *
  * ## DISCRIMINATION
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer the replaced
+ * The environment zone is modelled as `Pacific/Auckland` (it used to be pinned
+ * with a `@/config/operational` mock; #3567 deleted that module and nothing
+ * reads the environment's zone any more) — the answer the replaced
  * helper gave here, and this codebase's own fallback, so it is the one value a
  * fail-soft degradation could still pass under. The persisted club zone is
  * `America/Denver`. Under the frozen clock (`2026-07-01T00:00:00.000Z`) that is
@@ -40,12 +42,6 @@ import { NextRequest } from "next/server";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   timeline: [] as string[],
@@ -123,7 +119,6 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { PATCH } from "@/app/api/admin/lodges/[id]/route";
 
@@ -231,7 +226,6 @@ beforeEach(() => {
 
 describe("a lodge's live dependencies are counted on the club's day (#3123)", () => {
   it("PREMISE: the persisted zone and the container's give different days", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

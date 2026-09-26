@@ -295,6 +295,21 @@ export function raiseReviewChargeAsk({
 }
 
 /**
+ * An ask that already exists, re-issued unchanged on a new instrument because
+ * the club's currency changed since it was minted (#3567). The figure and its
+ * carried part come back off the row: nothing new is asked for or absorbed.
+ */
+export function restateAdditionalAsk(request: {
+  amountCents: number;
+  carriedAskCents: number;
+}): AdditionalAsk {
+  return buildAdditionalAsk({
+    ownCents: request.amountCents - request.carriedAskCents,
+    carriedCents: request.carriedAskCents,
+  });
+}
+
+/**
  * One row of a settled booking's money, as `INV-PAY-047` reads it. The field
  * names are the Prisma models' own, so a `Booking` + `Payment` pair passes
  * through with no renaming and no chance of two call sites mapping it

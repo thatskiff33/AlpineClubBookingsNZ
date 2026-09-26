@@ -5,7 +5,6 @@ import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import logger from "@/lib/logger";
 import {
   enqueueAdditionalPaymentIntentRecovery,
@@ -26,6 +25,7 @@ import {
   findOrCreateCustomer,
 } from "@/lib/stripe";
 import type { ClubFormat } from "@/lib/club-format";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
@@ -261,6 +261,38 @@ export async function createModificationAdditionalPaymentIntent({
     };
   }
 
+  // Durable retry (#1096): a price increase with no instrument to collect it
+  // must never be lost. One spelling for both ways a mint can fail below.
+  const paymentId = result.paymentId;
+  const keepTheDebt = () =>
+    enqueueAdditionalPaymentIntentRecovery({
+      bookingId,
+      paymentId,
+      idempotencyKey:
+        recoveryIdempotencyKey ??
+        buildAdditionalIntentRecoveryIdempotencyKey(result.bookingModificationId),
+      amountCents: result.additionalAsk.amountCents,
+      stripeIdempotencyKey: idempotencyKey,
+      // #3181: the EDIT's answer, frozen here because this is the last moment it
+      // is known. The replay reads it back rather than re-deriving one.
+      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    }).catch((enqueueErr) =>
+      logger.error({ err: enqueueErr, bookingId }, "Failed to enqueue additional PaymentIntent recovery"),
+    );
+
+  // #3567: refused before the customer lookup and the mint, but the DEBT is kept
+  // (re-review): the recovery row is written, and the recovery runner leaves it
+  // unclaimed until an administrator sets a currency cards can be charged in.
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  if (chargeRefusal) {
+    logger.error({ bookingId, currencyCode: chargeRefusal.currencyCode }, `${failureMessage}: ${chargeRefusal.message}`);
+    await keepTheDebt();
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+
   try {
     let customerId = result.paymentCustomerId ?? undefined;
     if (!customerId) {
@@ -275,7 +307,6 @@ export async function createModificationAdditionalPaymentIntent({
     const pi = await createPaymentIntent({
       format,
       amountCents: result.additionalAsk.amountCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId,
       metadata: {
         bookingId,
@@ -336,29 +367,9 @@ export async function createModificationAdditionalPaymentIntent({
     };
   } catch (piErr) {
     logger.error({ err: piErr, bookingId }, failureMessage);
-    // Durable retry (#1096): a transient Stripe failure must not leave the
-    // recorded price increase with no instrument to collect it. The recovery
-    // cron re-creates the intent with this same modification-scoped Stripe
-    // idempotency key, so route retry and cron retry can never double-mint.
-    await enqueueAdditionalPaymentIntentRecovery({
-      bookingId,
-      paymentId: result.paymentId,
-      idempotencyKey:
-        recoveryIdempotencyKey ??
-        buildAdditionalIntentRecoveryIdempotencyKey(
-          result.bookingModificationId,
-        ),
-      amountCents: result.additionalAsk.amountCents,
-      stripeIdempotencyKey: idempotencyKey,
-      // #3181: the EDIT's answer, frozen here because this is the last moment it
-      // is known. The replay reads it back rather than re-deriving one.
-      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-    }).catch((enqueueErr) =>
-      logger.error(
-        { err: enqueueErr, bookingId },
-        "Failed to enqueue additional PaymentIntent recovery",
-      ),
-    );
+    // The recovery cron re-creates the intent with this same modification-scoped
+    // Stripe idempotency key, so route retry and cron retry never double-mint.
+    await keepTheDebt();
     return {
       additionalPaymentClientSecret: undefined,
       additionalPaymentIntentId: undefined,

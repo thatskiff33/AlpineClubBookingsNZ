@@ -35,17 +35,10 @@ import { NextRequest } from "next/server";
  * ever be approved (`INV-EXCEPT`). Both sides had been wrong in the SAME
  * direction before, which is why the equality held while both were wrong.
  *
- * The zone is pinned in the mock rather than read from the host, so this says the
- * same thing on any machine and on CI, where `TZ` is unset.
+ * The zone is named explicitly rather than read from the host, so this says the
+ * same thing on any machine and on CI, where `TZ` is unset. (It used to be pinned
+ * with a mock of the environment constant; #3567 deleted the constant.)
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -122,7 +115,6 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
   };
 });
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import {
@@ -284,7 +276,7 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
     // The LEGACY answer, measured rather than assumed. If `America/Denver` ever
     // stopped shifting a UTC-midnight day, every assertion below would hold for
     // the wrong reason.
-    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN), APP_TIME_ZONE)).toBe(
+    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN), "America/Denver")).toBe(
       "2026-07-03",
     );
   });
@@ -319,8 +311,8 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
       A guest whose range the delta reset has no explicit night set, so the
       proposal expands their envelope with `envelopeNights` -> `getStayNights` ->
       `normalizeBookingDate` in `src/lib/policies/pricing.ts`, which projected
-      every date through `APP_TIME_ZONE` (mocked to `America/Denver` at the top of
-      this file). For a club behind Greenwich that is one day early, so the
+      every date through `APP_TIME_ZONE` (which this file mocked to
+      `America/Denver` until #3567 deleted the constant). For a club behind Greenwich that is one day early, so the
       officer reviewed — and `recheckCapacity` asserted beds for, and
       `proposalGuestToCreateInput` executed — a party starting the night before
       the stay did. It did not deadlock approval only because the freeze and the

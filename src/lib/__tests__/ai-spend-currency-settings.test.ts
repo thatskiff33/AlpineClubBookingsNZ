@@ -4,20 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // NON-NZD club (the NZD short-circuit is pinned in a sibling suite).
 //
 // #3566: the club side is now the club's STORED currency, read by the reader
-// itself through the same client as the rate. The environment's `APP_CURRENCY`
-// is mocked to a DIFFERENT value here so that a reader which went back to it
-// would answer the wrong currency and fail.
+// itself through the same client as the rate. The environment's currency
+// constant used to be mocked to NZD here; it was deleted in #3567 and nothing
+// reads the environment's currency any more, so the mock is gone. The stored
+// CHF club below still has to answer CHF.
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   formatFindUnique: vi.fn(),
 }));
 
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -105,8 +101,8 @@ describe("loadAiSpendCurrency for a non-NZD club", () => {
 });
 
 describe("#3566: the club side is the club's STORED currency, not the environment's", () => {
-  it("a stored CHF club with no rate is non-NZD and unconfigured, whatever APP_CURRENCY says", async () => {
-    // The environment says NZD (mocked above). The live mismatch this fixes: a
+  it("a stored CHF club with no rate is non-NZD and unconfigured, whatever the environment says", async () => {
+    // The live mismatch this fixes: a
     // club that switched to CHF in the panel saw "Monthly cap (CHF)" beside a
     // rate card claiming NZD and nothing to convert.
     mocks.formatFindUnique.mockResolvedValue({ currencyCode: "CHF", locale: "de-CH" });

@@ -20,9 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * import on that graph — it would kill the job as it loaded rather than fail a
  * test.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — what the
- * replaced adapters answered, and this codebase's own fallback, so it is the one
- * value a half-done fix could still pass under. The persisted club zone is
+ * DISCRIMINATION. `Pacific/Auckland` is what the replaced adapters answered,
+ * and this codebase's own fallback, so it is the one value a half-done fix
+ * could still pass under. (The environment constant once pinned to it here was
+ * deleted in #3567; nothing reads the environment's zone any more.) The persisted club zone is
  * `America/Denver`. Under the default frozen clock (`2026-07-01T00:00:00.000Z`)
  * Auckland reads 1 July and Denver reads 30 June, so the two never agree and no
  * assertion here can pass by coincidence. No `vi.setSystemTime` is needed.
@@ -32,13 +33,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * every one degrades silently to the environment — so a prisma mock without it
  * would pass for exactly the reason this file exists to rule out.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
 const {
   mockClubTimeSettingsFindUnique,
   mockBookingRequestCount,
@@ -63,7 +57,6 @@ vi.mock("@/lib/booking-request", () => ({
   getBookingRequestSettings: () => mockGetBookingRequestSettings(),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { enqueueActiveHostingIncidentPolicyReconciliation } from "@/lib/adult-member-hosting-policy-reconciliation";
 import { countBookingsWithUnnamedPlaceholderGuests } from "@/lib/placeholder-guest-name-reminders";
 import { countUnconfirmedSchoolAttendeeLists } from "@/lib/school-attendee-confirmation";
@@ -93,8 +86,7 @@ beforeEach(() => {
 });
 
 describe("PREMISE: the container and the club disagree about today", () => {
-  it("pins the environment to the replaced adapter's own answer", () => {
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+  it("the replaced adapter's own answer (Pacific/Auckland) is a day ahead of the club", () => {
     const now = new Date();
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland" }).format(

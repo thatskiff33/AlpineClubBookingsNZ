@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -206,7 +206,8 @@ describe("todayDateOnlyForTimeZone", () => {
   it("derives a valid date-only string for the environment's configured zone", () => {
     // This case used to exercise the helper's DEFAULT argument. #3123 deletes
     // that default so an unnamed zone becomes a compile error, and
-    // `APP_TIME_ZONE` is what the default resolved to — so it is named here.
+    // the environment zone is what the default resolved to — so it is named
+    // here, as `ENVIRONMENT_CLUB_ZONE` since #3567 deleted the config constant.
     // It still resolves from the ambient TZ env, so the assertion is on the
     // SHAPE rather than on a specific zone, to stay robust across CI clock
     // configurations. The club-zone answers are pinned by the three cases
@@ -214,7 +215,7 @@ describe("todayDateOnlyForTimeZone", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-07T13:00:00.000Z"));
 
-    expect(todayDateOnlyForTimeZone(APP_TIME_ZONE)).toMatch(
+    expect(todayDateOnlyForTimeZone(ENVIRONMENT_CLUB_ZONE)).toMatch(
       /^\d{4}-\d{2}-\d{2}$/
     );
   });
