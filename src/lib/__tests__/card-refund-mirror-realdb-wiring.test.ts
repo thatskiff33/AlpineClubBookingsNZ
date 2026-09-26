@@ -27,5 +27,8 @@ describe("the card-refund writer's race proof stays wired into CI (#3640)", () =
     expect(suite).toContain("two writers recording DIFFERENT refunds at once lose neither");
     expect(suite).toContain("a member's credit settlement racing a dashboard refund's webhook keeps both, without refusing");
     expect(suite).toContain("FOR NO KEY UPDATE");
+    // #3640 (delta review, D1): the lock-order proofs.
+    expect(suite).toContain("a cancel failing an unpaid top-up, racing a card refund's webhook, does not deadlock");
+    expect(suite).toContain("nor when the claim's #1491 fold took the transaction row before the top-up write");
   });
 });
