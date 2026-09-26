@@ -498,6 +498,7 @@ describe("payment intent routes", () => {
 
     expect(res.status).toBe(409);
     expect(data.error).toBe("This payment is being processed. Refresh the page in a minute to see it confirmed.");
+    expect(data.code).toBe("PAYMENT_PROCESSING");
     expect(JSON.stringify(data)).not.toContain("cs_aud");
     expect(mocks.queueSupersededPrimaryIntentCancellations).not.toHaveBeenCalled();
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();

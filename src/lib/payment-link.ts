@@ -43,11 +43,14 @@ export function isPayableByLink(status: BookingStatus): boolean {
 
 export class PaymentLinkError extends Error {
   status: number;
+  /** A machine-readable reason the page can branch on (#3567), when there is one. */
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "PaymentLinkError";
     this.status = status;
+    if (code) this.code = code;
   }
 }
 

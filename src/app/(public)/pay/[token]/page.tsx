@@ -21,6 +21,7 @@ import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -173,6 +174,10 @@ export default function PayByLinkPage() {
             heading: "Card transaction found - check payment status",
             message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
           });
+          return;
+        }
+        if (res.status === 409 && isPaymentProcessing(data)) {
+          setPaymentRecovery({ heading: "Payment being processed", message: data.error });
           return;
         }
         throw new Error(data.error || "Unable to start payment");

@@ -1054,6 +1054,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
       name: "PaymentLinkError",
       status: 409,
+      code: "PAYMENT_PROCESSING",
       message: "This payment is being processed. Refresh the page in a minute to see it confirmed.",
     });
     expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).not.toHaveBeenCalled();

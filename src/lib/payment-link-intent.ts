@@ -41,7 +41,8 @@ import {
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
-import { intentCurrencyDiffers, PAYMENT_BEING_PROCESSED_MESSAGE, staleIntentAction } from "@/lib/additional-intent-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
+import { PAYMENT_PROCESSING_CODE, PAYMENT_PROCESSING_MESSAGE } from "@/lib/payment-recovery-contract";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -214,7 +215,7 @@ export async function createPaymentIntentForPaymentLink(
     // #3567: an old-currency intent still `processing` is never superseded — its
     // cancellation fails and a fresh intent would charge the member twice.
     if (repaySupersededIntentId === null && intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
-      throw new PaymentLinkError(PAYMENT_BEING_PROCESSED_MESSAGE, 409);
+      throw new PaymentLinkError(PAYMENT_PROCESSING_MESSAGE, 409, PAYMENT_PROCESSING_CODE);
     }
     if (
       repaySupersededIntentId === null &&

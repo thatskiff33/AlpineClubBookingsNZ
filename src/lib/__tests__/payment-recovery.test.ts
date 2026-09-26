@@ -260,11 +260,18 @@ vi.mock("@/lib/logger", () => ({
 // file-level beforeEach below) is the house fixture, so every other case reads
 // the format it always did.
 const clubFormatMock = vi.hoisted(() => vi.fn());
+// #3567: when the club format last changed, for the stale-queue alert.
+const mockLoadPersistedClubFormat = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-settings")),
+  loadPersistedClubFormatSettings: (...a: unknown[]) => mockLoadPersistedClubFormat(...a),
+}));
 vi.mock("@/lib/club-format-server", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
   clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
 }));
 
+import logger from "@/lib/logger";
 import {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -1967,20 +1974,24 @@ describe("payment recovery worker", () => {
     // A queue that honours the worker's own `where` and `take`, so a filter
     // dropped from the query (and moved back into the loop) shows up as the
     // batch filling with charges it then skips.
+    type TypeWhere = { where?: { type?: string | { not?: string } } };
     function queueOf(rows: ReturnType<typeof makeOperation>[]) {
-      const matches = (row: ReturnType<typeof makeOperation>, where?: { type?: { not?: string } }) =>
-        where?.type?.not === undefined || row.type !== where.type.not;
+      const matches = (row: ReturnType<typeof makeOperation>, where?: TypeWhere["where"]) =>
+        where?.type === undefined ||
+        (typeof where.type === "string" ? row.type === where.type : row.type !== where.type.not);
       mockPaymentRecoveryFindMany.mockImplementation(
-        (args?: { take?: number; where?: { type?: { not?: string } } }) =>
+        (args?: { take?: number } & TypeWhere) =>
           Promise.resolve(
             isStaleWorkerSweep(args) ? [] : rows.filter((r) => matches(r, args?.where)).slice(0, args?.take ?? rows.length),
           ),
       );
-      mockPaymentRecoveryFindFirst.mockImplementation(
-        (args?: { where?: { type?: { not?: string } } }) =>
-          Promise.resolve(rows.find((r) => matches(r, args?.where)) ?? null),
+      mockPaymentRecoveryFindFirst.mockImplementation((args?: TypeWhere) =>
+        Promise.resolve(rows.find((r) => matches(r, args?.where)) ?? null),
       );
     }
+    const stalledAlerts = () =>
+      mockSendAdminPaymentFailureAlert.mock.calls.filter(([a]) => /queue is stalled/.test((a as { errorMessage?: string })?.errorMessage ?? ""));
+    const WAITING_LOG = expect.stringContaining("leaving card charges unclaimed");
     const charges = Array.from({ length: 12 }, (_, n) =>
       makeOperation({
         id: `recovery-charge-${n}`,
@@ -2029,17 +2040,38 @@ describe("payment recovery worker", () => {
           where: expect.objectContaining({ type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } }),
         }),
       );
-      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalledWith(
-        expect.objectContaining({ errorMessage: expect.stringContaining("queue is stalled") }),
-      );
+      expect(stalledAlerts()).toHaveLength(0);
     });
 
-    it("claims charges again, and alerts on them if stalled, once the currency can be charged in", async () => {
+    it("claims charges again once the currency is fixed, without calling the wait a stalled cron", async () => {
+      // The admin fixed the currency ten minutes ago; these charges waited for months.
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 10 * 60 * 1000) });
       queueOf([charges[0]]);
       await processPaymentRecoveryOperations({ limit: 10 });
       const queueRead = mockPaymentRecoveryFindMany.mock.calls.find(([a]) => !isStaleWorkerSweep(a));
       expect(queueRead?.[0]?.where).not.toHaveProperty("type");
-      expect(mockPaymentRecoveryFindFirst.mock.calls[0]?.[0]?.where).not.toHaveProperty("type");
+      expect(stalledAlerts()).toHaveLength(0);
+    });
+
+    it("does alert on a charge still waiting once the club format has been unchanged past the stale window", async () => {
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) });
+      queueOf([charges[0]]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(null);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(stalledAlerts()).toHaveLength(1);
+    });
+
+    it("says charges are waiting once per run, at warn, and only while one is actually waiting", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf([refund]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(refund);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(logger.warn).not.toHaveBeenCalledWith(WAITING_LOG);
+      expect(logger.error).not.toHaveBeenCalledWith(WAITING_LOG);
+
+      queueOf([...charges, refund]);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(vi.mocked(logger.warn).mock.calls.filter(([m]) => typeof m === "string" && m.includes("leaving card charges unclaimed"))).toHaveLength(1);
     });
   });
 

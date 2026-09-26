@@ -45,11 +45,11 @@ import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
-  PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
+  PAYMENT_PROCESSING_BODY, PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
-import { intentCurrencyDiffers, PAYMENT_BEING_PROCESSED_MESSAGE, staleIntentAction } from "@/lib/additional-intent-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -640,7 +640,7 @@ export async function POST(request: NextRequest) {
         });
       } else if (intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
         // #3567: an old-currency intent still processing is never superseded (no double charge).
-        return NextResponse.json({ error: PAYMENT_BEING_PROCESSED_MESSAGE, creditElection }, { status: 409 });
+        return NextResponse.json({ ...PAYMENT_PROCESSING_BODY, creditElection }, { status: 409 });
       } else if (
         existingIntent.status !== "canceled" &&
         // #3567: an intent minted in another currency is superseded like a stale amount.

@@ -12,6 +12,7 @@ import type Stripe from "stripe";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import {
@@ -2930,18 +2931,21 @@ const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 // the whole fleet, not once per process.
 const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
 
-// `waitingCharges` (#3567): charges left unclaimed while card payments are off are
-// not a stalled cron, so never raise this alert; the admin banner says so instead.
-async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat, waitingCharges: { type?: { not: PaymentRecoveryOperationType } }) {
+// #3567: card charges are not a stalled cron while card payments are off (the
+// admin banner says so), nor within this window of the club format last changing:
+// charges that waited out a refusal are old, and the next run claims them.
+async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat, chargesRefused: boolean) {
   const now = new Date();
   const staleThreshold = new Date(
     now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
   );
+  const formatChangedAt = chargesRefused ? null : (await loadPersistedClubFormatSettings())?.updatedAt;
+  const quietCharges = chargesRefused || (formatChangedAt != null && formatChangedAt > staleThreshold);
   const oldest = await prisma.paymentRecoveryOperation.findFirst({
     where: {
       status: PaymentRecoveryOperationStatus.PENDING,
       createdAt: { lt: staleThreshold },
-      ...waitingCharges,
+      ...(quietCharges ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {}),
     },
     orderBy: { createdAt: "asc" },
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
@@ -3072,7 +3076,7 @@ export async function processPaymentRecoveryOperations(options?: {
   const chargeRefusal = chargeCurrencyRefusal(format);
   const waitingCharges = chargeRefusal ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {};
   await resetStaleProcessingOperations(format);
-  await alertStalePaymentRecoveryQueueIfNeeded(format, waitingCharges);
+  await alertStalePaymentRecoveryQueueIfNeeded(format, chargeRefusal !== null);
 
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
@@ -3095,7 +3099,10 @@ export async function processPaymentRecoveryOperations(options?: {
     skipped: 0,
   };
 
-  if (chargeRefusal) logger.error(`Payment recovery is leaving card charges unclaimed: ${chargeRefusal.message}`);
+  // Said only while a refused charge is actually waiting, not on every run.
+  if (chargeRefusal && (await prisma.paymentRecoveryOperation.findFirst({ where: { status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] }, type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT }, select: { id: true } }))) {
+    logger.warn(`Payment recovery is leaving card charges unclaimed: ${chargeRefusal.message}`);
+  }
   for (const queuedOperation of queuedOperations) {
     const operation = await claimPaymentRecoveryOperation(queuedOperation.id);
     if (!operation) {

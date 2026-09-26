@@ -14,6 +14,12 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/payment-link", () => ({
   PaymentLinkError: class PaymentLinkError extends Error {
     status = 400;
+    code?: string;
+    constructor(message?: string, status = 400, code?: string) {
+      super(message);
+      this.status = status;
+      if (code) this.code = code;
+    }
   },
 }));
 vi.mock("@/lib/payment-link-intent", () => ({
@@ -32,11 +38,31 @@ vi.mock("@/lib/adult-member-hosting-queue-participants", () => ({
 }));
 
 import { POST } from "@/app/api/pay/[token]/payment-intent/route";
+import { PaymentLinkError } from "@/lib/payment-link";
 
 describe("POST /api/pay/[token]/payment-intent repayment response", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.applyRateLimit.mockResolvedValue(null);
+  });
+
+  it("carries a refusal's code to the page, so it can say a payment is processing (#3567)", async () => {
+    h.createPaymentIntentForPaymentLink.mockRejectedValue(
+      new PaymentLinkError("This payment is being processed.", 409, "PAYMENT_PROCESSING"),
+    );
+    const response = await POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", { method: "POST" }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "This payment is being processed.", code: "PAYMENT_PROCESSING" });
+
+    h.createPaymentIntentForPaymentLink.mockRejectedValue(new PaymentLinkError("Link used.", 410));
+    const plain = await POST(
+      new NextRequest("http://localhost/api/pay/public-token/payment-intent", { method: "POST" }),
+      { params: Promise.resolve({ token: "public-token" }) },
+    );
+    expect(await plain.json()).toEqual({ error: "Link used." });
   });
 
   it("returns only the fresh repayment secret selected by the service", async () => {

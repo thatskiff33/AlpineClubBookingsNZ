@@ -45,10 +45,6 @@ export function intentCurrencyDiffers(
  */
 export type StaleIntentAction = "reissue" | "in_flight" | "gone";
 
-/** What a member is told while an intent in the old currency is `in_flight`. */
-export const PAYMENT_BEING_PROCESSED_MESSAGE =
-  "This payment is being processed. Refresh the page in a minute to see it confirmed.";
-
 const REISSUABLE_STATUSES: ReadonlySet<string> = new Set([
   "requires_payment_method",
   "requires_confirmation",

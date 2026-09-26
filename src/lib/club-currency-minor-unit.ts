@@ -85,13 +85,13 @@ export function currencyHasTwoDecimalPlaces(currencyCode: string): boolean {
   return !CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES.has(canonicalCurrencyCode(currencyCode));
 }
 
+/** How a stored row with a BLANK currency is named on the format (#3567). */
+export const NO_STORED_CURRENCY = "(blank)";
+
 /**
  * The refusal an operator or a log reader sees, one spelling for the save route
  * and the charge guard.
  */
-/** How a stored row with a BLANK currency is named on the format (#3567). */
-export const NO_STORED_CURRENCY = "(blank)";
-
 export function twoDecimalPlacesRequiredMessage(currencyCode: string): string {
   if (currencyCode === NO_STORED_CURRENCY) {
     return (

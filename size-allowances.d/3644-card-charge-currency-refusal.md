@@ -39,10 +39,11 @@ reason: the refusal must precede this function's own CONFIRMED commit, and
   the reuse condition gains one term; both are inside one existing function.
 
 file: src/lib/payment-recovery.ts
-lines: 3192
+lines: 3199
 reason: charge operations are kept out of this module's own queue query (and
-  its stale-queue alert) while card payments are off, so they cannot fill the
-  batch and starve refunds; the filter belongs beside the query it narrows.
+  its stale-queue alert, also for the stale window after the club format
+  changes) while card payments are off, so they cannot fill the batch and
+  starve refunds; the filter belongs beside the query it narrows.
 
 file: src/lib/setup-readiness.ts
 lines: 2188
