@@ -1,6 +1,8 @@
 import type { FeatureFlags } from "@/config/schema";
 import { formatDateOnly } from "@/lib/date-only";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
+import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
+import { buildGroupSettlementPaymentReference } from "@/lib/booking-payment-methods";
 import type { NonMemberGuestChild } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import type { OrganiserGroupState } from "@/components/group-booking/organiser-group-booking-card";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -111,6 +113,13 @@ export function resolveBookingDetailLinkedParty({
               status: organiserGroup.settlement.status,
               amountCents: organiserGroup.settlement.amountCents,
               paidAt: organiserGroup.settlement.paidAt?.toISOString() ?? null,
+              // #3642: a settlement waiting on its emailed Internet Banking
+              // invoice renders as that, from the server, on every load.
+              internetBankingReference: isGroupSettlementBoundToInvoice(
+                organiserGroup.settlement
+              )
+                ? buildGroupSettlementPaymentReference(organiserGroup.id)
+                : null,
             }
           : null,
         // A `flatMap` rather than `filter().map()` so the joiner's booking

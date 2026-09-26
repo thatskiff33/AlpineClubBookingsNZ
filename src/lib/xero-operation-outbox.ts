@@ -51,6 +51,7 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoice
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
 } from "@/lib/xero-group-settlement-invoices";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
@@ -3012,10 +3013,19 @@ export async function processQueuedXeroOutboxOperations(options?: {
       } else if (
         payload?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
       ) {
-        await voidXeroInvoiceForCancelledGroupSettlement(
-          payload.settlementId,
-          { syncOperationId: queuedOperation.id }
-        );
+        if (payload.xeroInvoiceId) {
+          // #3642: the invoice a live group's settlement abandoned.
+          await voidXeroInvoiceForAbandonedGroupSettlement(
+            payload.settlementId,
+            payload.xeroInvoiceId,
+            { syncOperationId: queuedOperation.id }
+          );
+        } else {
+          await voidXeroInvoiceForCancelledGroupSettlement(
+            payload.settlementId,
+            { syncOperationId: queuedOperation.id }
+          );
+        }
       } else if (
         payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
       ) {

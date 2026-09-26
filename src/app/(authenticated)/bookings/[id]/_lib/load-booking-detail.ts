@@ -174,13 +174,19 @@ export async function loadBookingDetail(id: string) {
       // ORGANISER_PAYS) the combined settlement.
       groupBookingAsOrganiser: {
         select: {
+          id: true,
           joinCode: true,
           status: true,
           paymentMode: true,
           joinDeadline: true,
           maxJoiners: true,
           settlement: {
-            select: { status: true, amountCents: true, paidAt: true },
+            select: {
+              status: true,
+              amountCents: true,
+              paidAt: true,
+              source: true,
+            },
           },
           joins: {
             select: {

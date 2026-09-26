@@ -54,6 +54,13 @@ interface SettlementState {
   status: string;
   amountCents: number;
   paidAt: string | null;
+  /**
+   * #3642: the bank-transfer reference while the settlement waits on its
+   * emailed Internet Banking invoice, else null. Supplied by the server so a
+   * reload shows the pending invoice instead of offering the method picker
+   * again; the settle route refuses a re-size or card switch meanwhile.
+   */
+  internetBankingReference: string | null;
 }
 
 export interface OrganiserGroupState {
@@ -355,6 +362,15 @@ export function OrganiserGroupBookingCard({
   );
   const settledAlready =
     settleComplete || group.settlement?.status === "SUCCEEDED";
+  // #3642: the pending invoice this session just raised, or the one the
+  // server says is still outstanding — never forgotten on a reload.
+  const pendingReference =
+    settleReference ?? group.settlement?.internetBankingReference ?? null;
+  const pendingInvoiceCents =
+    settleAmountCents ??
+    (group.settlement?.internetBankingReference
+      ? group.settlement.amountCents
+      : null);
   const outstandingCents = activeJoiners
     .filter((j) => j.status === "CONFIRMED" || j.status === "PAYMENT_PENDING")
     .reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
@@ -507,14 +523,14 @@ export function OrganiserGroupBookingCard({
                   . Everyone in your group is confirmed.
                 </p>
               </div>
-            ) : settleReference ? (
+            ) : pendingReference ? (
               <div className="space-y-3">
                 <div className="flex items-start gap-2 text-success-11">
                   <Check className="h-5 w-5 shrink-0" />
                   <p className="text-sm font-medium">
                     Invoice emailed
-                    {settleAmountCents != null
-                      ? ` — ${formatCents(settleAmountCents, format)}`
+                    {pendingInvoiceCents != null
+                      ? ` — ${formatCents(pendingInvoiceCents, format)}`
                       : ""}
                     .
                   </p>
@@ -529,12 +545,12 @@ export function OrganiserGroupBookingCard({
                       "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
                     clubTokens: messageTokens,
                     lodgeName,
-                    data: { paymentReference: settleReference },
+                    data: { paymentReference: pendingReference },
                   })}
                 </p>
                 <div className="rounded-md border border-border p-3 text-sm">
                   <p className="font-medium text-foreground">Payment reference</p>
-                  <p className="mt-1 font-mono text-foreground">{settleReference}</p>
+                  <p className="mt-1 font-mono text-foreground">{pendingReference}</p>
                 </div>
               </div>
             ) : settleClientSecret && settleAmountCents != null ? (

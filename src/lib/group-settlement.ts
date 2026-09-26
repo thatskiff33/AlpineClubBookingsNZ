@@ -70,6 +70,8 @@ import {
   sendGroupSettlementReceiptEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
+import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -112,6 +114,63 @@ interface SettleableChild {
   finalPriceCents: number;
   status: BookingStatus;
 }
+
+/**
+ * What a settle attempt would do to the settlement: switch it to card, or
+ * (re-)commit it to one Internet Banking invoice for `amountCents`.
+ */
+type SettlementChange =
+  | { method: "stripe" }
+  | { method: "internet_banking"; amountCents: number };
+
+/**
+ * #3642 (`INV-PAY-106`): refuse any change to a settlement that is bound to its
+ * emailed Internet Banking invoice. The one change allowed is the no-op — the
+ * organiser asking for the same invoice again (a reload, a second click) at the
+ * same total. Anything else leaves the emailed invoice saying one thing and the
+ * settlement another: a re-size lets the organiser pay the old total and settle
+ * everyone on the new one, and a card payment leaves a payable invoice behind a
+ * paid settlement.
+ *
+ * Called on the settlement row re-read under `lock(1)` by every writer that
+ * re-sizes or re-methods a settlement; a throw inside the commit transaction
+ * rolls back the children it claimed.
+ */
+function refuseChangeToBoundSettlement(
+  settlement:
+    | { source: PaymentSource; status: PaymentStatus; amountCents: number }
+    | null
+    | undefined,
+  change: SettlementChange
+): void {
+  if (!isGroupSettlementBoundToInvoice(settlement)) return;
+  const invoicedCents = settlement!.amountCents;
+  if (
+    change.method === "internet_banking" &&
+    change.amountCents === invoicedCents
+  ) {
+    return;
+  }
+  throw new GroupBookingError(
+    change.method === "stripe"
+      ? "An Internet Banking invoice has already been emailed for this group. Pay it by bank transfer using the reference on the invoice; it can't be switched to card while it is outstanding."
+      : "An Internet Banking invoice has already been emailed for this group, and the group's total has changed since it was sent. The invoice can't be changed while it is outstanding: pay it as sent, or, if it lapses unpaid, settle the new total then.",
+    409,
+    {
+      code: "GROUP_SETTLEMENT_INVOICE_OUTSTANDING",
+      details: { invoicedCents },
+    }
+  );
+}
+
+/** The settlement fields the binding rule reads, re-read under `lock(1)`. */
+const SETTLEMENT_BINDING_SELECT = {
+  id: true,
+  source: true,
+  status: true,
+  amountCents: true,
+  xeroInvoiceId: true,
+} as const;
 
 /** Load the group with the fields settlement needs, asserting organiser ownership. */
 async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string) {
@@ -211,6 +270,11 @@ export async function createGroupSettlementIntent(
     );
   }
 
+  // #3642: a card attempt on a settlement bound to its emailed invoice is
+  // refused before any bed is claimed or intent minted. Re-checked under the
+  // lock in the commit and attach transactions below.
+  refuseChangeToBoundSettlement(group.settlement, { method: "stripe" });
+
   const settlementHasRefundHistory =
     group.settlement?.status === PaymentStatus.REFUNDED ||
     group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
@@ -251,7 +315,7 @@ export async function createGroupSettlementIntent(
   // Lock, re-read and claim before deriving provider amount. Repricing writers
   // share lock(1), so this returned snapshot is authoritative for this attempt.
   const { children: committedChildren, hostingCoverageQueued } =
-    await commitChildrenToConfirmed(group.id, children);
+    await commitChildrenToConfirmed(group.id, children, "stripe");
   if (hostingCoverageQueued) {
     await settleHostingCoverageAfterCommit({ limit: 25 });
   }
@@ -347,7 +411,28 @@ export async function createGroupSettlementIntent(
       select: { status: true },
     });
     if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
-      return false;
+      return { attached: false as const, refusal: null };
+    }
+    // #3642: an Internet Banking invoice may have been bound while this intent
+    // was being minted. Refuse; the fresh intent was never handed out, so it is
+    // cancelled below exactly like the cancellation fence. A settlement that
+    // still points at an invoice it is no longer bound to (one the reaper
+    // released before this change shipped) has that invoice retired here,
+    // before the card takes over.
+    const current = await tx.groupBookingSettlement.findUnique({
+      where: { groupBookingId: group.id },
+      select: SETTLEMENT_BINDING_SELECT,
+    });
+    try {
+      refuseChangeToBoundSettlement(current, { method: "stripe" });
+    } catch (refusal) {
+      return { attached: false as const, refusal };
+    }
+    if (current?.xeroInvoiceId) {
+      await abandonGroupSettlementInvoiceInTx(tx, {
+        settlementId: current.id,
+        xeroInvoiceId: current.xeroInvoiceId,
+      });
     }
     await tx.groupBookingSettlement.upsert({
       where: { groupBookingId: group.id },
@@ -359,22 +444,28 @@ export async function createGroupSettlementIntent(
         status: PaymentStatus.PENDING,
       },
       update: {
+        // #3642: a card settlement never keeps the Internet Banking source of
+        // an attempt it replaced.
+        source: PaymentSource.STRIPE,
         stripePaymentIntentId: paymentIntent.id,
         stripeCustomerId: customer.id,
         amountCents,
         status: PaymentStatus.PENDING,
       },
     });
-    return true;
+    return { attached: true as const, refusal: null };
   });
-  if (!attached) {
+  if (!attached.attached) {
     await cancelPaymentIntentIfCancellable(paymentIntent.id).catch((err) =>
       logger.error(
         { err, groupBookingId: group.id, paymentIntentId: paymentIntent.id },
         "Failed to cancel a group settlement intent fenced during creation"
       )
     );
-    throw new GroupBookingError("This group booking has been cancelled", 409);
+    throw (
+      attached.refusal ??
+      new GroupBookingError("This group booking has been cancelled", 409)
+    );
   }
 
   // The new intent supersedes any prior card attempt (e.g. the total changed).
@@ -443,7 +534,7 @@ async function createGroupSettlementInvoice(
   }
 
   const { children: committedChildren, hostingCoverageQueued } =
-    await commitChildrenToConfirmed(groupBookingId, children);
+    await commitChildrenToConfirmed(groupBookingId, children, "internet_banking");
   if (hostingCoverageQueued) {
     await settleHostingCoverageAfterCommit({ limit: 25 });
   }
@@ -463,6 +554,26 @@ async function createGroupSettlementInvoice(
     });
     if (!currentGroup || currentGroup.status === GroupBookingStatus.CANCELLED) {
       throw new GroupBookingError("This group booking has been cancelled", 409);
+    }
+    // #3642 (`INV-PAY-106`): the commit transaction above already refused a
+    // re-size of a bound settlement; this re-check closes the gap between the
+    // two transactions. A settlement that still points at an invoice it is not
+    // bound to (released by the reaper, or replaced by a card attempt) retires
+    // that invoice first, so the one raised below is a fresh invoice for this
+    // total rather than the old one re-linked.
+    const current = await tx.groupBookingSettlement.findUnique({
+      where: { groupBookingId },
+      select: SETTLEMENT_BINDING_SELECT,
+    });
+    refuseChangeToBoundSettlement(current, {
+      method: "internet_banking",
+      amountCents,
+    });
+    if (current?.xeroInvoiceId && !isGroupSettlementBoundToInvoice(current)) {
+      await abandonGroupSettlementInvoiceInTx(tx, {
+        settlementId: current.id,
+        xeroInvoiceId: current.xeroInvoiceId,
+      });
     }
     const settlement = await tx.groupBookingSettlement.upsert({
       where: { groupBookingId },
@@ -550,7 +661,12 @@ async function cancelSupersededSettlementIntent(
  */
 async function commitChildrenToConfirmed(
   groupBookingId: string,
-  children: SettleableChild[]
+  children: SettleableChild[],
+  /**
+   * #3642: the method this commit is for. Required, so no caller can commit
+   * children without the bound-invoice check below deciding whether it may.
+   */
+  method: SettlementChange["method"]
 ): Promise<{
   children: SettleableChild[];
   hostingCoverageQueued: boolean;
@@ -711,6 +827,28 @@ async function commitChildrenToConfirmed(
         status: BookingStatus.CONFIRMED,
       });
     }
+
+    // #3642 (`INV-PAY-106`): a settlement bound to its emailed invoice may not
+    // be re-sized or switched to card. Decided on the total these claims just
+    // produced, and THROWN so the whole claim rolls back: a joiner added after
+    // the invoice went out must not end up holding a bed that is on no bill.
+    const bindingSettlement = await tx.groupBookingSettlement.findUnique({
+      where: { groupBookingId },
+      select: SETTLEMENT_BINDING_SELECT,
+    });
+    refuseChangeToBoundSettlement(
+      bindingSettlement,
+      method === "stripe"
+        ? { method }
+        : {
+            method,
+            amountCents: committed.reduce(
+              (sum, child) => sum + child.finalPriceCents,
+              0
+            ),
+          }
+    );
+
     return {
       children: committed,
       hostingCoverageQueued,
@@ -729,6 +867,27 @@ export interface GroupSettlementAppliedResult {
     // intent's money was handed back, so it must never settle the children.
     | "refunded";
   settledBookingIds: string[];
+  /**
+   * Present when outcome === "amount_mismatch" and the decision was made under
+   * the settle lock: which comparison failed, and the figures, so the caller's
+   * operator alert can say what to reconcile.
+   */
+  mismatch?: GroupSettlementMismatch;
+}
+
+/**
+ * Why a payment was refused under the settle lock (#1033, #3642):
+ * - `children_total`: a child booking changed while the bill was open;
+ * - `collected`: the money that arrived is not the settlement's total (an
+ *   invoice raised or paid at a different figure);
+ * - `invoice_superseded`: the settlement is no longer bound to the invoice
+ *   that was paid.
+ */
+export interface GroupSettlementMismatch {
+  reason: "children_total" | "collected" | "invoice_superseded";
+  recordedCents: number;
+  collectedCents: number;
+  childrenCents: number | null;
 }
 
 /** The settlement shape the shared settle/notify routine needs. */
@@ -778,6 +937,17 @@ async function settleConfirmedChildrenAndNotify(
     enqueueChildInvoices: boolean;
     /** The club's format (#3565), resolved by the webhook or job. */
     format: ClubFormat;
+    /**
+     * #3642: the cents that actually arrived — the captured intent's amount,
+     * or the paid invoice's cash. Compared under the lock with the settlement's
+     * total as it stands then, never the caller's pre-lock copy.
+     */
+    collectedCents: number;
+    /**
+     * #3642: for an invoice payment, the invoice that was paid. The settle is
+     * refused unless the settlement is still bound to exactly this invoice.
+     */
+    paidInvoiceId?: string;
   }
 ): Promise<GroupSettlementAppliedResult> {
   const { format } = options;
@@ -811,6 +981,9 @@ async function settleConfirmedChildrenAndNotify(
       where: { id: settlement.id },
       select: {
         status: true,
+        amountCents: true,
+        source: true,
+        xeroInvoiceId: true,
         groupBooking: { select: { status: true } },
       },
     });
@@ -828,6 +1001,44 @@ async function settleConfirmedChildrenAndNotify(
       current?.status === PaymentStatus.PARTIALLY_REFUNDED
     ) {
       return "refunded" as const;
+    }
+
+    // #3642 (`INV-PAY-106`): the figures this settle is judged against are the
+    // ones under the lock. `recordedCents` is the settlement's total NOW; the
+    // caller's copy was read before the lock and a writer may have moved it.
+    const recordedCents = current?.amountCents ?? settlement.amountCents;
+    if (
+      options.paidInvoiceId !== undefined &&
+      (current?.source !== PaymentSource.INTERNET_BANKING ||
+        current.xeroInvoiceId !== options.paidInvoiceId)
+    ) {
+      return {
+        reason: "invoice_superseded",
+        recordedCents,
+        collectedCents: options.collectedCents,
+        childrenCents: null,
+      } satisfies GroupSettlementMismatch;
+    }
+    // The money that arrived must be the settlement's total. Before #3642 only
+    // the children were compared, against a total an Internet Banking re-click
+    // could re-size underneath an invoice already emailed at the old figure —
+    // so paying the old invoice settled everyone on the new one.
+    if (options.collectedCents !== recordedCents) {
+      logger.error(
+        {
+          groupBookingId: settlement.groupBookingId,
+          settlementId: settlement.id,
+          recordedCents,
+          collectedCents: options.collectedCents,
+        },
+        "Group settlement payment does not match the settlement total - refusing to auto-apply payment"
+      );
+      return {
+        reason: "collected",
+        recordedCents,
+        collectedCents: options.collectedCents,
+        childrenCents: null,
+      } satisfies GroupSettlementMismatch;
     }
 
     const candidateChildren = await tx.booking.findMany({
@@ -882,18 +1093,23 @@ async function settleConfirmedChildrenAndNotify(
       (sum, child) => sum + child.finalPriceCents,
       0
     );
-    if (currentTotalCents !== settlement.amountCents) {
+    if (currentTotalCents !== recordedCents) {
       logger.error(
         {
           groupBookingId: settlement.groupBookingId,
           settlementId: settlement.id,
-          recordedCents: settlement.amountCents,
+          recordedCents,
           currentChildrenCents: currentTotalCents,
           childCount: children.length,
         },
         "Group settlement total no longer matches its children - refusing to auto-apply payment"
       );
-      return null;
+      return {
+        reason: "children_total",
+        recordedCents,
+        collectedCents: options.collectedCents,
+        childrenCents: currentTotalCents,
+      } satisfies GroupSettlementMismatch;
     }
 
     const settledIds: string[] = [];
@@ -981,8 +1197,8 @@ async function settleConfirmedChildrenAndNotify(
     return { outcome: "cancelled", settledBookingIds: [] };
   }
 
-  if (settled === null) {
-    return { outcome: "amount_mismatch", settledBookingIds: [] };
+  if (!Array.isArray(settled)) {
+    return { outcome: "amount_mismatch", settledBookingIds: [], mismatch: settled };
   }
 
   // Side effects after commit: a durable "paid" booking event and (Stripe only)
@@ -1159,6 +1375,7 @@ export async function applyGroupSettlementSucceeded(
     stripeCustomerId: settlement.stripeCustomerId,
     enqueueChildInvoices: true,
     format,
+    collectedCents: paymentIntent.amount,
   });
 }
 
@@ -1172,6 +1389,11 @@ export async function applyGroupSettlementSucceededFromInvoice(
   xeroInvoiceId: string,
   /** The club's format (#3565), resolved once by the inbound Xero job. */
   format: ClubFormat,
+  /**
+   * #3642: the paid invoice's cash, in cents. Required: an invoice payment is
+   * never applied without comparing what arrived with the settlement's total.
+   */
+  payment: { collectedCents: number },
 ): Promise<GroupSettlementAppliedResult> {
   const settlement = await prisma.groupBookingSettlement.findFirst({
     where: { xeroInvoiceId },
@@ -1196,6 +1418,8 @@ export async function applyGroupSettlementSucceededFromInvoice(
     stripeCustomerId: null,
     enqueueChildInvoices: false,
     format,
+    collectedCents: payment.collectedCents,
+    paidInvoiceId: xeroInvoiceId,
   });
 }
 

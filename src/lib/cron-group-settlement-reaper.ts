@@ -10,7 +10,8 @@
  * This cron releases them: a settlement still unpaid (PENDING or FAILED) past
  * its deadline reverts its CONFIRMED unpaid children to PAYMENT_PENDING (their
  * pre-commit, non-capacity-holding state), voids any open Stripe intent so a
- * stale tab cannot capture, notifies the organiser and joiners, records
+ * stale tab cannot capture, retires any combined Internet Banking invoice
+ * through the outbox VOID (#3642), notifies the organiser and joiners, records
  * booking events, and triggers waitlist processing for the freed nights.
  *
  * Deadline: `updatedAt + GROUP_SETTLEMENT_REAP_HOURS` (default 48h), clamped
@@ -66,6 +67,7 @@ import {
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
+import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -388,7 +390,7 @@ async function releaseSettlementChildren(
 
     const current = await tx.groupBookingSettlement.findUnique({
       where: { id: settlementId },
-      select: { status: true },
+      select: { status: true, xeroInvoiceId: true, updatedAt: true },
     });
     if (
       !current ||
@@ -500,7 +502,9 @@ async function releaseSettlementChildren(
     // window from, so re-writing it on every no-op pass over an already
     // FAILED settlement would keep reverted children in PAYMENT_PENDING
     // forever.
-    if (claimedChildren.length > 0 || current.status !== PaymentStatus.FAILED) {
+    const recordsAbandonment =
+      claimedChildren.length > 0 || current.status !== PaymentStatus.FAILED;
+    if (recordsAbandonment) {
       // Status-guarded FAILED claim (#1881): never overwrite a settlement a
       // concurrent settle already moved to SUCCEEDED/REFUNDED under lock(1).
       await tx.groupBookingSettlement.updateMany({
@@ -515,6 +519,21 @@ async function releaseSettlementChildren(
           },
         },
         data: { status: PaymentStatus.FAILED },
+      });
+    }
+
+    // #3642 (`INV-PAY-106`): a released settlement is no longer bound to its
+    // combined Internet Banking invoice, so that invoice is retired in the same
+    // commit — its VOID queued through the outbox, the settlement's pointer
+    // dropped. Before this the reaper cancelled only a Stripe intent, and the
+    // emailed invoice stayed AUTHORISED in receivables for a bill nobody owed.
+    // A pass that finds an older FAILED row still carrying one (released before
+    // this shipped) retires it too, without restarting the expiry clock.
+    if (current.xeroInvoiceId) {
+      await abandonGroupSettlementInvoiceInTx(tx, {
+        settlementId,
+        xeroInvoiceId: current.xeroInvoiceId,
+        ...(recordsAbandonment ? {} : { preserveUpdatedAt: current.updatedAt }),
       });
     }
 
