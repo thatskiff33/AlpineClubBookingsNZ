@@ -613,9 +613,11 @@ the card what it covers:
 - **Net Collected Cash** counts captured payments on bookings that are not
   cancelled, less the refunds and account credits on them. A payment that is
   still pending or failed does not count, and neither does a payment on a
-  **cancelled** booking, even though its row stays in the list. It is the same
-  calculation, and the same name, as the Net Collected Cash card on
-  [Reports](reports.md).
+  **cancelled** booking, even though its row stays in the list. It is worked
+  out the same way as the Net Collected Cash card on [Reports](reports.md),
+  but over different payments: this card uses the payments matching your
+  filters, and Reports uses the bookings staying in its chosen dates, so the
+  two figures need not match.
 - **Refunded / Credited** covers every payment matching the filters,
   cancelled bookings included: every card refund and every cancellation
   credit on them.
