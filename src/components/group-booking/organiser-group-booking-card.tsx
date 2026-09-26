@@ -30,6 +30,7 @@ import {
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
 import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
+import { PendingGroupInvoice } from "@/components/group-booking/pending-group-invoice";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -384,23 +385,19 @@ export function OrganiserGroupBookingCard({
   const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
     ? "preparing"
     : (group.settlement?.invoiceDisplay ?? "preparing");
-  // #3642: joiners the organiser has not paid for. While an invoice is
-  // outstanding these are the joiners not on it; after payment, the ones who
-  // joined afterwards. Never hidden behind "everyone is confirmed".
+  // #3642: joiners the organiser has not paid for — while an invoice is
+  // outstanding, the ones not on it (PAYMENT_PENDING); after payment, the ones
+  // who joined afterwards. Never hidden behind "everyone is confirmed".
   const unsettledJoiners = activeJoiners.filter(
     (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
   );
   const notOnInvoice = activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  const sumCents = (rows: JoinerRow[]) => rows.reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
   const invoiceTotalChanged =
     !settleReference &&
     pendingInvoiceCents != null &&
-    activeJoiners
-      .filter((j) => j.status === "CONFIRMED")
-      .reduce((sum, j) => sum + (j.priceCents ?? 0), 0) !== pendingInvoiceCents;
-  const joinerNames = (rows: JoinerRow[]) => rows.map((j) => j.name).join(", ");
-  const outstandingCents = activeJoiners
-    .filter((j) => j.status === "CONFIRMED" || j.status === "PAYMENT_PENDING")
-    .reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
+    sumCents(activeJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
+  const outstandingCents = sumCents(unsettledJoiners);
 
   return (
     <Card>
@@ -556,94 +553,31 @@ export function OrganiserGroupBookingCard({
                 </div>
                 {!settleComplete && unsettledJoiners.length > 0 ? (
                   <p className="text-sm text-warning-11">
-                    Not paid for yet: {joinerNames(unsettledJoiners)}. They joined after your
+                    Not paid for yet: {unsettledJoiners.map((j) => j.name).join(", ")}. They joined after your
                     payment, so their places are not confirmed. Contact the club to pay for them.
                   </p>
                 ) : null}
               </div>
             ) : pendingReference ? (
-              <div className="space-y-3">
-                <div className="flex items-start gap-2 text-success-11">
-                  <Check className="h-5 w-5 shrink-0" />
-                  <p className="text-sm font-medium">
-                    {invoiceDisplay === "emailed"
-                      ? "Invoice emailed"
-                      : invoiceDisplay === "raised"
-                        ? "Invoice raised"
-                        : invoiceDisplay === "failed"
-                          ? "Your invoice hasn't been sent yet"
-                          : "Your invoice is being prepared"}
-                    {pendingInvoiceCents != null
-                      ? ` — ${formatCents(pendingInvoiceCents, format)}`
-                      : ""}
-                    .
-                  </p>
-                </div>
-                {invoiceDisplay === "preparing" ? (
-                  <p className="text-sm text-muted-foreground">
-                    It will be emailed to you shortly.
-                  </p>
-                ) : null}
-                {invoiceDisplay === "raised" ? (
-                  <p className="text-sm text-muted-foreground">
-                    If it hasn&apos;t reached your inbox, pay using the reference below or contact
-                    the club.
-                  </p>
-                ) : null}
-                {notOnInvoice.length > 0 || invoiceTotalChanged || invoiceDisplay === "failed" ? (
-                  <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
-                    {notOnInvoice.length > 0 ? (
-                      <p>
-                        Not on this invoice: {joinerNames(notOnInvoice)}. They joined after it was
-                        sent, so their places are not confirmed yet.
-                      </p>
-                    ) : null}
-                    {invoiceTotalChanged ? (
-                      <p>Your group&apos;s total has changed since this invoice was prepared.</p>
-                    ) : null}
-                    {invoiceDisplay === "failed" && notOnInvoice.length === 0 && !invoiceTotalChanged ? (
-                      <p>Something went wrong preparing it. You can try again.</p>
-                    ) : null}
-                    {notOnInvoice.length > 0 || invoiceTotalChanged ? (
-                      <p>
-                        Send an updated invoice for everyone. The current one will be cancelled, so
-                        don&apos;t pay it.
-                      </p>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => startSettle("internet_banking")}
-                      disabled={settleBusy}
-                    >
-                      {settleBusy
-                        ? "Preparing..."
-                        : notOnInvoice.length > 0 || invoiceTotalChanged
-                          ? "Send an updated invoice"
-                          : "Try again"}
-                    </Button>
-                  </div>
-                ) : null}
-                {invoiceDisplay === "emailed" || invoiceDisplay === "raised" ? (
-                <p className="text-sm text-muted-foreground">
-                  {/* #2919 review: every token this body may carry, not just the
-                      payment reference, and this booking's own lodge. */}
-                  {renderClientBookingMessage({
-                    template:
-                      bookingMessages["groupBooking.invoiceSent.description"],
-                    fallback:
-                      "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
-                    clubTokens: messageTokens,
-                    lodgeName,
-                    data: { paymentReference: pendingReference },
-                  })}
-                </p>
-                ) : null}
-                <div className="rounded-md border border-border p-3 text-sm">
-                  <p className="font-medium text-foreground">Payment reference</p>
-                  <p className="mt-1 font-mono text-foreground">{pendingReference}</p>
-                </div>
-              </div>
+              <PendingGroupInvoice
+                reference={pendingReference}
+                amountCents={pendingInvoiceCents}
+                display={invoiceDisplay}
+                notOnInvoice={notOnInvoice.map((j) => j.name)}
+                totalChanged={invoiceTotalChanged}
+                busy={settleBusy}
+                onSendUpdated={() => startSettle("internet_banking")}
+                // #2919 review: every token this body may carry, not just the
+                // payment reference, and this booking's own lodge.
+                invoiceSentDescription={renderClientBookingMessage({
+                  template: bookingMessages["groupBooking.invoiceSent.description"],
+                  fallback:
+                    "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
+                  clubTokens: messageTokens,
+                  lodgeName,
+                  data: { paymentReference: pendingReference },
+                })}
+              />
             ) : settleClientSecret && settleAmountCents != null ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">

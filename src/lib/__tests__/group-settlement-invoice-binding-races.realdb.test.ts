@@ -90,7 +90,7 @@ let groupSettlementInvoiceVoidKey: (typeof import("@/lib/xero-group-settlement-i
 let lockHolderClient: PrismaClient;
 let observerClient: PrismaClient;
 /** The club module settings row before this suite switched Internet Banking on. */
-let savedModuleSettings: Record<string, unknown> | null = null;
+let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: boolean } | null = null;
 
 (RUN ? describe : describe.skip)(
   "the bound group-settlement invoice under real concurrency — real PostgreSQL (#3642, INV-PAY-105)",
@@ -285,7 +285,10 @@ let savedModuleSettings: Record<string, unknown> | null = null;
 
       // The Internet Banking settle is gated on both modules; switch them on for
       // this suite and put the row back afterwards.
-      savedModuleSettings = await prisma.clubModuleSettings.findUnique({ where: { id: "default" } });
+      savedModuleSettings = await prisma.clubModuleSettings.findUnique({
+        where: { id: "default" },
+        select: { xeroIntegration: true, internetBankingPayments: true },
+      });
       await prisma.clubModuleSettings.upsert({
         where: { id: "default" },
         create: { id: "default", xeroIntegration: true, internetBankingPayments: true },
@@ -345,9 +348,14 @@ let savedModuleSettings: Record<string, unknown> | null = null;
       if (!prisma) return;
       await deleteFixtures();
       if (savedModuleSettings) {
-        const { id: _id, updatedAt: _updatedAt, createdAt: _createdAt, ...restore } =
-          savedModuleSettings as Record<string, unknown>;
-        await prisma.clubModuleSettings.update({ where: { id: "default" }, data: restore });
+        // Only the two switches this suite turned on are put back.
+        await prisma.clubModuleSettings.update({
+          where: { id: "default" },
+          data: {
+            xeroIntegration: savedModuleSettings.xeroIntegration,
+            internetBankingPayments: savedModuleSettings.internetBankingPayments,
+          },
+        });
       } else {
         await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
       }
