@@ -1,4 +1,6 @@
 import { CreditType, Prisma } from "@prisma/client";
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
 import { buildSyntheticAllocationLinkId } from "@/lib/xero-inbound/amounts";
 
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
@@ -166,6 +168,7 @@ async function assertSliceFitsFundingLot(params: {
   targetCents: number;
   bookingId: string;
   xeroCreditNoteId: string;
+  format: ClubFormat;
 }) {
   const allocated = await params.db.memberCreditNoteAllocation.aggregate({
     where: {
@@ -180,7 +183,7 @@ async function assertSliceFitsFundingLot(params: {
   );
   if (params.targetCents > remainingCents) {
     throw new Error(
-      `Cannot repair applied credit note ${params.xeroCreditNoteId} for booking ${params.bookingId}: applied ${params.targetCents}c exceeds remaining funding lot ${remainingCents}c`,
+      `Cannot repair applied credit note ${params.xeroCreditNoteId} for booking ${params.bookingId}: applied ${formatCents(params.targetCents, params.format)} exceeds remaining funding lot ${formatCents(remainingCents, params.format)}`,
     );
   }
 }
@@ -201,6 +204,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
   bookingId: string,
   invoiceId: string,
   db: RepairDb,
+  format: ClubFormat,
   options?: { providerTarget?: ProviderAppliedCreditTarget },
 ): Promise<number> {
   const appliedRows = await db.memberCredit.findMany({
@@ -288,6 +292,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
         targetCents: providerTarget.amountCents,
         bookingId,
         xeroCreditNoteId: providerTarget.xeroCreditNoteId,
+        format,
       });
       const allocation = await db.memberCreditNoteAllocation.create({
         data: {
@@ -336,6 +341,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
         targetCents: providerTarget.amountCents,
         bookingId,
         xeroCreditNoteId: providerTarget.xeroCreditNoteId,
+        format,
       });
       const changed = current.amountCents !== providerTarget.amountCents;
       if (changed && providerTarget.amountCents === 0) {
@@ -384,7 +390,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
       (positiveOffsetCents === 0 && existingTotal !== desiredAppliedCents)
     ) {
       throw new Error(
-        `Existing applied-credit slices for booking ${bookingId} total ${existingTotal}c but ledger permits ${desiredAppliedCents}c..${upperBound}c`,
+        `Existing applied-credit slices for booking ${bookingId} total ${formatCents(existingTotal, format)} but ledger permits ${formatCents(desiredAppliedCents, format)}..${formatCents(upperBound, format)}`,
       );
     }
     for (const slice of slices) {
@@ -447,6 +453,7 @@ export async function repairLegacyAppliedCreditNoteAllocationsForBooking(
     targetCents: amountCents,
     bookingId,
     xeroCreditNoteId,
+    format,
   });
   const allocation = await db.memberCreditNoteAllocation.create({
     data: {

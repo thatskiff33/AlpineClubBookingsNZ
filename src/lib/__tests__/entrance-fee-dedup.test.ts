@@ -592,7 +592,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
       expect.objectContaining({
         errorType: "entrance-fee-provider-mismatch",
         operation: expect.stringContaining("member-1"),
-        errorMessage: expect.stringContaining("inv-xero"),
+        errorMessage: expect.stringMatching(/inv-xero.*\$200\.00.*\$100\.00/),
       }),
     );
   });

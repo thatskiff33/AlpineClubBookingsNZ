@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // F20 (#1887): applyLifecycleTransitions must take the EFFECTIVE (credit-reduced)
 // price for its zero-dollar decision so a pre-payment reduction that lands a
@@ -106,12 +107,13 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
 
     expect(mockClamp).toHaveBeenCalledWith(
-      { memberId: "member-1", bookingId: "bk-1", newFinalPriceCents: 3000 },
+      { memberId: "member-1", bookingId: "bk-1", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
       expect.anything(),
     );
     expect(result.newStatus).toBe("PAID");
@@ -152,6 +154,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -189,6 +192,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 5000,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -208,6 +212,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -233,6 +238,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -279,6 +285,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -298,6 +305,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 9000,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
@@ -316,6 +324,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });

@@ -367,7 +367,7 @@ const CENTS_DISPLAY_MESSAGE =
 // (`" cents-per-night rows"` is a row count, not an amount). The negative
 // fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
 const CENTS_IN_PROSE_MESSAGE =
-  "INV-SSOT-001 / #3533: do not write `${someCents} cents` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as $84.50 — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils. The STORED value stays integer cents; this is about the sentence. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
 
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
@@ -390,16 +390,31 @@ const CENTS_DISPLAY_RESTRICTIONS = [
  * shipped; keeping the array separate is what makes the mistake unavailable
  * rather than merely noticed.
  *
- * It therefore has NO exemptions. If a legitimate one turns up it gets its own
- * list, weighed on its own terms.
+ * It has no file-wide exemption. The rounding-drift report has one reviewed
+ * dual-format annotation; its exact file overrides only the c-suffix arm with
+ * a selector that excludes that function's direct return (see below).
  */
+const CENTS_IN_PROSE_C_SUFFIX_SELECTOR =
+  'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^c(?![-\\w])/i]';
 const CENTS_IN_PROSE_RESTRICTIONS = [
   {
     selector:
       'TemplateLiteral:not(TaggedTemplateExpression > TemplateLiteral) > TemplateElement[value.raw=/^ cents(?![-\\w])/i]',
     message: CENTS_IN_PROSE_MESSAGE,
   },
+  {
+    selector: CENTS_IN_PROSE_C_SUFFIX_SELECTOR,
+    message: CENTS_IN_PROSE_MESSAGE,
+  },
 ];
+
+// #3589: this replacement is installed only on the rounding-audit path. The
+// diagnostic deliberately shows formatted currency plus signed raw-cent drift;
+// another file with a same-named function still receives the global arm.
+const ROUNDING_AUDIT_C_SUFFIX_RESTRICTION = {
+  selector: `${CENTS_IN_PROSE_C_SUFFIX_SELECTOR}:not(FunctionDeclaration[id.name="formatDriftCents"] > BlockStatement > ReturnStatement > TemplateLiteral > TemplateElement)`,
+  message: CENTS_IN_PROSE_MESSAGE,
+};
 
 /** Bare selectors, for `cents-in-prose-guard.test.ts`, same mirror as above. */
 export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
@@ -2713,6 +2728,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     reason:
       "The two reviewed money boundaries (#2685). They own the conversion every other file is sent here to use, so they are the one place allowed to write it; each carries its own written reason on MONEY_GUARD_EXEMPTIONS above.",
   },
+  {
+    files: ["src/lib/xero-invoice-rounding-audit.ts"],
+    omits: [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
+    reason:
+      "#3589: the money-domain conversion arm remains replaced by its stricter counterpart, and the global c-suffix arm is replaced only here by the same arm excluding formatDriftCents's direct dual-format return. The formatter deliberately pairs currency with signed raw-cent drift; every other function and file remains guarded.",
+  },
 ];
 
 /** The mandatory set, for the integrity test to measure blocks against. */
@@ -3143,6 +3164,20 @@ const eslintConfig = defineConfig([
         [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
         ...DATE_RENDERING_RESTRICTIONS,
         ...MONEY_MODULE_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // #3589: preserve the deliberate dual-format drift annotation in this one
+    // file and direct return only. Flat config replaces an earlier rule, so
+    // restate the Xero money-domain arm and every other mandatory restriction.
+    files: ["src/lib/xero-invoice-rounding-audit.ts"],
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        [...MONEY_CENTS_RESTRICTIONS, CENTS_IN_PROSE_RESTRICTIONS[1]],
+        ...DATE_RENDERING_RESTRICTIONS,
+        ...MONEY_MODULE_RESTRICTIONS,
+        ROUNDING_AUDIT_C_SUFFIX_RESTRICTION,
       ),
     },
   },

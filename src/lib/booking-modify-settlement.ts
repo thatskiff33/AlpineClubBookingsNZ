@@ -18,6 +18,7 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
+import type { ClubFormat } from "@/lib/club-format";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -358,6 +359,7 @@ export async function applyLifecycleTransitions(
     bookingId,
     newCheckIn,
     newFinalPriceCents,
+    format,
     guestsForPricing,
     skipBookingLifecycleRules,
     reviewUpdate,
@@ -366,6 +368,7 @@ export async function applyLifecycleTransitions(
     bookingId: string;
     newCheckIn: Date;
     newFinalPriceCents: number;
+    format: ClubFormat;
     guestsForPricing: Array<{ isMember: boolean }>;
     skipBookingLifecycleRules: boolean;
     reviewUpdate?: GuestPlan["reviewUpdate"];
@@ -472,7 +475,7 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;

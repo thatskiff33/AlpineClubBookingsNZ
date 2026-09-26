@@ -46,6 +46,9 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
+import { getClubFormat } from "@/lib/club-format-settings";
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
 import {
   assertNoAppliedCreditDeallocationFence,
 } from "./xero-applied-credit-operation-serialization";
@@ -113,6 +116,7 @@ export interface AppliedCreditPlan {
 export function planAppliedCreditAllocation(
   lots: AppliedCreditLot[],
   appliedCents: number,
+  format: ClubFormat,
 ): AppliedCreditPlan {
   const noteAllocations: PlannedNoteAllocation[] = [];
   const mintSlices: PlannedMintSlice[] = [];
@@ -144,7 +148,7 @@ export function planAppliedCreditAllocation(
 
   if (outstanding > 0) {
     throw new Error(
-      `Applied credit ${appliedCents} exceeds available credit-lot remaining by ${outstanding}c — member-credit ledger inconsistency`,
+      `Applied credit ${formatCents(appliedCents, format)} exceeds available credit-lot remaining by ${formatCents(outstanding, format)} — member-credit ledger inconsistency`,
     );
   }
 
@@ -432,6 +436,7 @@ export async function allocateAppliedCreditForBooking(
   bookingId: string,
   options?: { createdByMemberId?: string; syncOperationId?: string },
 ): Promise<void> {
+  const format = await getClubFormat();
   const syncOperationId = options?.syncOperationId;
   const createdByMemberId = options?.createdByMemberId;
 
@@ -472,7 +477,7 @@ export async function allocateAppliedCreditForBooking(
     // Invoice not raised yet — retry (the booking-invoice op is enqueued first
     // and completes first; this throw is the self-healing ordering fallback).
     throw new Error(
-      `Booking ${bookingId} has ${appliedCents}c applied credit to allocate but no Xero invoice yet; retrying.`,
+      `Booking ${bookingId} has ${formatCents(appliedCents, format)} applied credit to allocate but no Xero invoice yet; retrying.`,
     );
   }
   const invoiceId = payment.xeroInvoiceId;
@@ -499,7 +504,7 @@ export async function allocateAppliedCreditForBooking(
       return null; // a concurrent run already stamped it
     }
     const lots = await gatherAppliedCreditLots(creditOwnerMemberId, bookingId, tx);
-    const planned = planAppliedCreditAllocation(lots, lockedApplied);
+    const planned = planAppliedCreditAllocation(lots, lockedApplied, format);
     for (const na of planned.noteAllocations) {
       await tx.memberCreditNoteAllocation.upsert({
         where: {

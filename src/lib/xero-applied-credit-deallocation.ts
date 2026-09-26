@@ -25,6 +25,8 @@ import {
 } from "./xero-applied-credit-operation-serialization";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "./xero-applied-credit-allocation-repair";
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
+import { getClubFormat } from "@/lib/club-format-settings";
+import { formatCents } from "@/lib/utils";
 
 const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
@@ -634,6 +636,7 @@ export async function deallocateExcessAppliedCreditForBooking(
   bookingId: string,
   options: { syncOperationId: string }
 ): Promise<void> {
+  const format = await getClubFormat();
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { payment: true },
@@ -737,6 +740,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       bookingId,
       booking.payment!.xeroInvoiceId!,
       tx,
+      format,
     );
     const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const rows = await tx.memberCreditNoteAllocation.findMany({
@@ -862,11 +866,11 @@ export async function deallocateExcessAppliedCreditForBooking(
         await requeueForEventualConsistency({
           operationId: options.syncOperationId,
           xeroCreditNoteId: group.xeroCreditNoteId,
-          detail: `Stale top-of-loop provider allocations for credit note ${group.xeroCreditNoteId}: provider=${providerTotal}c current=${group.currentCents}c target=${group.targetCents}c`,
+          detail: `Stale top-of-loop provider allocations for credit note ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} current=${formatCents(group.currentCents, format)} target=${formatCents(group.targetCents, format)}`,
         });
       }
       throw new Error(
-        `Ambiguous Xero allocation total/provenance for credit note ${group.xeroCreditNoteId}: provider=${providerTotal}c local=${group.currentCents}c target=${group.targetCents}c; no matching active local links or durable checkpoint prove these provider allocation IDs`
+        `Ambiguous Xero allocation total/provenance for credit note ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} local=${formatCents(group.currentCents, format)} target=${formatCents(group.targetCents, format)}; no matching active local links or durable checkpoint prove these provider allocation IDs`
       );
     }
 
@@ -976,11 +980,11 @@ export async function deallocateExcessAppliedCreditForBooking(
           await requeueForEventualConsistency({
             operationId: options.syncOperationId,
             xeroCreditNoteId: group.xeroCreditNoteId,
-            detail: `Post-recreate verification for ${group.xeroCreditNoteId}: provider=${providerTotal}c target=${group.targetCents}c`,
+            detail: `Post-recreate verification for ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} target=${formatCents(group.targetCents, format)}`,
           });
         }
         throw new Error(
-          `Xero deallocation verification failed for ${group.xeroCreditNoteId}: provider=${providerTotal}c target=${group.targetCents}c`
+          `Xero deallocation verification failed for ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} target=${formatCents(group.targetCents, format)}`
         );
       }
     }

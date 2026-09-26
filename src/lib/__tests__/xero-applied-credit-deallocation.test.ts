@@ -942,7 +942,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(isXeroAppliedCreditOperationBusyError(error)).toBe(false);
-    expect((error as Error).message).toMatch(/verification failed/);
+    expect((error as Error).message).toMatch(/verification failed.*provider=\$50\.00 target=\$25\.00/);
     expect(h.operationPayload.current.eventualConsistencyRequeues).toBeUndefined();
   });
 

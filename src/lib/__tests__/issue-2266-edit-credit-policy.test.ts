@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #2266 (epic #2245, E2) — the edit-path counterpart of #2265's stored credit
 // election, plus the draft-resume policy change. This suite pins the pure
@@ -262,6 +263,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-draft",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        format: CLUB_FORMAT_TEST,
         // Non-member guests would trip the hold rail on a real booking.
         guestsForPricing: [{ isMember: false }, { isMember: true }],
         // Member edit: lifecycle rules run (only admins skip on DRAFT).
@@ -297,6 +299,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-draft",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        format: CLUB_FORMAT_TEST,
         // Minors-only after the edit — the review rule tripped upstream.
         guestsForPricing: [{ isMember: true }],
         skipBookingLifecycleRules: false,
@@ -337,6 +340,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-pp",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: true }],
         skipBookingLifecycleRules: false,
         reviewUpdate: {
@@ -383,6 +387,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-effective",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: true }],
         skipBookingLifecycleRules: false,
       },
@@ -419,6 +424,7 @@ describe("applyLifecycleTransitions — member DRAFT edits stay hold-free (#2266
         bookingId: "bk-pending",
         newCheckIn: new Date("2999-01-10"),
         newFinalPriceCents: 10_000,
+        format: CLUB_FORMAT_TEST,
         guestsForPricing: [{ isMember: false }],
         skipBookingLifecycleRules: false,
       },

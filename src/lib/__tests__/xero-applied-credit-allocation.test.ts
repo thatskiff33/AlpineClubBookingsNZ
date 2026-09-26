@@ -204,7 +204,7 @@ vi.mock("@/lib/xero-sync", () => ({
 import { CreditType } from "@prisma/client";
 import {
   allocateAppliedCreditForBooking,
-  planAppliedCreditAllocation,
+  planAppliedCreditAllocation as planAllocationWithFormat,
   type AppliedCreditLot,
 } from "@/lib/xero-applied-credit-allocation";
 import {
@@ -213,6 +213,10 @@ import {
 } from "@/lib/xero-applied-credit-mint-accounts";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
+
+const TEST_FORMAT = { currencyCode: "NZD", locale: "en-NZ" };
+const planAppliedCreditAllocation = (lots: AppliedCreditLot[], cents: number) =>
+  planAllocationWithFormat(lots, cents, TEST_FORMAT);
 
 function noteLot(
   id: string,
@@ -314,7 +318,15 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
   it("throws when the lots cannot cover the applied amount (ledger inconsistency)", () => {
     expect(() =>
       planAppliedCreditAllocation([noteLot("c1", "cn1", 1000)], 3000),
-    ).toThrow(/ledger inconsistency/);
+    ).toThrow("Applied credit $30.00 exceeds available credit-lot remaining by $20.00 — member-credit ledger inconsistency");
+  });
+
+  it("uses the club's supplied currency and locale in the operator error", () => {
+    expect(() => planAllocationWithFormat(
+      [noteLot("c1", "cn1", 1000)],
+      3000,
+      { currencyCode: "EUR", locale: "de-DE" },
+    )).toThrow(/30,00\s?€.*20,00\s?€/);
   });
 
   it("stops at the applied amount without touching later lots", () => {

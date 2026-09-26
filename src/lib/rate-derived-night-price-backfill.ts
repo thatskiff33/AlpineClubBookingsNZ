@@ -376,7 +376,7 @@ export function rateDerivedBackfillAuditRows(plan: BookingBackfillPlan, format: 
 }
 
 /** A human-readable report of a set of plans, for the dry run and the apply. */
-export function formatRateDerivedBackfillReport(plans: readonly BookingBackfillPlan[]): string {
+export function formatRateDerivedBackfillReport(plans: readonly BookingBackfillPlan[], format: ClubFormat): string {
   const rewriteStrands = plans.reduce((n, plan) => n + plan.rewrite.length, 0);
   const rewriteRows = plans.reduce(
     (n, plan) => n + plan.rewrite.reduce((m, strand) => m + strand.nights.length, 0),
@@ -399,15 +399,15 @@ export function formatRateDerivedBackfillReport(plans: readonly BookingBackfillP
     lines.push(`Booking ${plan.bookingId}:`);
     for (const strand of plan.rewrite) {
       lines.push(
-        `  rewrite guest ${strand.bookingGuestId} (total ${strand.guestTotalCents}c): ${strand.nights
-          .map((night) => `${night.date} ${night.fromPriceCents}->${night.toPriceCents}`)
+        `  rewrite guest ${strand.bookingGuestId} (total ${formatCents(strand.guestTotalCents, format)}): ${strand.nights
+          .map((night) => `${night.date} ${formatCents(night.fromPriceCents, format)}->${formatCents(night.toPriceCents, format)}`)
           .join(", ")}`,
       );
     }
     for (const item of plan.residue) {
       lines.push(
-        `  residue guest ${item.bookingGuestId} (total ${item.guestTotalCents}c): ${item.reason}${
-          item.derivedTotalCents !== undefined ? ` (derived ${item.derivedTotalCents}c)` : ""
+        `  residue guest ${item.bookingGuestId} (total ${formatCents(item.guestTotalCents, format)}): ${item.reason}${
+          item.derivedTotalCents !== undefined ? ` (derived ${formatCents(item.derivedTotalCents, format)})` : ""
         }`,
       );
     }
@@ -425,7 +425,6 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { loadActiveSeasonRates } from "@/lib/booking-modify-plan";
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import type { ClubFormat } from "@/lib/club-format";
-import { clubFormatValues } from "@/lib/club-format-server";
 
 /** The bookings that hold at least one candidate strand, oldest first. */
 export async function findRateDerivationCandidateBookings(
@@ -516,12 +515,13 @@ export type RateDerivedBackfillRun = {
 export async function runRateDerivedNightPriceBackfill(args: {
   store?: typeof prisma;
   apply: boolean;
+  format: ClubFormat;
   bookingId?: string | null;
   limit?: number | null;
 }): Promise<RateDerivedBackfillRun> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
+  // The caller resolves the club's format before this transaction-capable
+  // library entry point; no second pooled setting read may occur under a lock.
+  const format = args.format;
   const store = args.store ?? prisma;
   const config = await loadRateDerivationConfig(store);
   const bookingIds = await findRateDerivationCandidateBookings(store, { bookingId: args.bookingId, limit: args.limit });

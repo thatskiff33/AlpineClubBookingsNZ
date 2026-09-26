@@ -108,7 +108,7 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
       expect.objectContaining({
         errorType: "refund-ledger-divergence",
         operation: "inbound-credit-note-repair:cn-current",
-        errorMessage: expect.stringContaining("pay-1"),
+        errorMessage: expect.stringMatching(/\$20\.00.*pay-1.*\$50\.00/),
       })
     );
   });

@@ -400,11 +400,14 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     newFinalPriceCents,
+    format,
   }: {
     /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
     memberId: string | null;
     bookingId: string;
     newFinalPriceCents: number;
+    /** Club format resolved before the caller's transaction or ledger lock. */
+    format: ClubFormat;
   },
   tx: Prisma.TransactionClient
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
@@ -449,6 +452,7 @@ export async function clampAppliedCreditToBookingPrice(
       bookingId,
       payment.xeroInvoiceId,
       tx,
+      format,
     );
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },
