@@ -30,7 +30,7 @@ const {
   mockCreatePaymentIntent,
   mockFindOrCreateCustomer,
   mockUpsertPaymentIntentTransaction,
-  mockQueueSupersededAdditionalIntentCancellations,
+  mockPaymentTransactionFindMany,
   mockAttachIntentToWaitingOps,
   mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
@@ -73,9 +73,9 @@ const {
   mockCreatePaymentIntent: vi.fn(),
   mockFindOrCreateCustomer: vi.fn(),
   mockUpsertPaymentIntentTransaction: vi.fn().mockResolvedValue({}),
-  mockQueueSupersededAdditionalIntentCancellations: vi
-    .fn()
-    .mockResolvedValue([]),
+  // #3341: the REAL supersede helper's ledger read (`INV-OPS-015`). Empty by
+  // default - the replay fixtures carry no earlier live ask.
+  mockPaymentTransactionFindMany: vi.fn().mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
   // #3220 fix round: the withdrawal's one exception. Null is "nothing is
   // waiting on this ask", which is the shape every other test in this file
@@ -138,6 +138,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args),
       update: (...args: unknown[]) => mockPaymentTransactionUpdate(...args),
       findUnique: (...args: unknown[]) => mockPaymentTransactionFindUnique(...args),
+      findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args),
     },
     payment: {
       findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
@@ -166,9 +167,14 @@ vi.mock("@/lib/group-cancel", () => ({
     mockExecuteGroupSettlementRefundPlan(...args),
 }));
 
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: (...args: unknown[]) =>
-    mockQueueSupersededAdditionalIntentCancellations(...args),
+/**
+ * #3341 (`INV-OPS-015`): the ADDITIONAL supersede runs for REAL. The replay
+ * asserts the ask it re-mints, and a stubbed supersede is how #3340's sizing
+ * defect stayed green; its own collaborators are this module and the prisma
+ * double above.
+ */
+vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 
@@ -2038,12 +2044,16 @@ describe("payment recovery worker", () => {
           status: PaymentStatus.PENDING,
         }),
       );
-      expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
-        format: CLUB_FORMAT_TEST,
-        bookingId: "booking-1",
-        paymentId: "payment-1",
-        newPaymentIntentId: "pi_recovered",
-      });
+      // The real supersede looked for older live asks, excluding this one.
+      expect(mockPaymentTransactionFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            paymentId: "payment-1",
+            kind: "ADDITIONAL",
+            stripePaymentIntentId: { not: "pi_recovered" },
+          }),
+        }),
+      );
       // The waiting supplementary Xero op is pointed at the recovered intent.
       expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith({
         bookingModificationId: "mod-9",
@@ -2166,10 +2176,7 @@ describe("payment recovery worker", () => {
 
       expect(
         mockUpsertPaymentIntentTransaction.mock.invocationCallOrder[0],
-      ).toBeLessThan(
-        mockQueueSupersededAdditionalIntentCancellations.mock
-          .invocationCallOrder[0],
-      );
+      ).toBeLessThan(mockPaymentTransactionFindMany.mock.invocationCallOrder[0]);
     });
 
     it("completes without creating when a later edit already minted a newer additional intent", async () => {
@@ -2247,7 +2254,7 @@ describe("payment recovery worker", () => {
       expect(result.succeeded).toBe(1);
       expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
       expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
-      expect(mockQueueSupersededAdditionalIntentCancellations).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
       expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
     });
 
@@ -3077,9 +3084,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     // minted and complete having minted nothing - exactly how the first round's
     // second share was dropped.
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
-    expect(
-      mockQueueSupersededAdditionalIntentCancellations,
-    ).not.toHaveBeenCalled();
+    expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
     // The waiting supplementary Xero op is pointed at the request, under the
     // anchor the shared parser read back - never a slice of the key.
     expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith({
