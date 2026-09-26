@@ -750,7 +750,7 @@ sequenceDiagram
     OB->>DB: existing-link / duplicate checks,<br/>INSERT op (PENDING or WAITING_PAYMENT,<br/>requestPayload.queueType, idempotency key)
     BIZ--)OB: kickQueuedXeroOutboxOperationsIfConnected({limit:1})<br/>(after commit; cron ?task=outbox sweeps the rest)
 
-    Note over OB: Supplementary invoices held as WAITING_PAYMENT are released<br/>to PENDING by stripe-webhook-service when the payment settles;<br/>reapStaleWaitingPaymentXeroOutboxOperations fails them after 14 days.
+    Note over OB: Supplementary invoices held as WAITING_PAYMENT are released<br/>to PENDING by stripe-webhook-service when the payment settles;<br/>reapStaleWaitingPaymentXeroOutboxOperations retires them (14 days,<br/>or 24h after a decline) only once the ask can no longer be paid;<br/>a late capture re-queues a retired one (INV-PAY-105).
 
     OB->>DB: claim: updateMany(id, status=PENDING,<br/>expected entity/operation) → RUNNING
     OB->>DOM: dispatch on queueType (12 types)

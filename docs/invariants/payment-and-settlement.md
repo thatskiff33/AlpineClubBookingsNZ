@@ -942,9 +942,39 @@ operations, and neither covers the other's ground. Change one, check the other.
   grace is measured on the transaction's `updatedAt`, which is NOT immutable in
   the FAILED state: a redelivered `payment_intent.payment_failed` re-writes
   status=FAILED unconditionally, so `@updatedAt` bumps and the grace restarts.
-  This can only DELAY a reap, never trigger one early, and the intent-agnostic
-  14-day `createdAt` sweep is the hard backstop that bounds it (and covers ops
-  whose intent never resolved at all).
+  This can only DELAY a reap, never trigger one early, and the 14-day
+  `createdAt` arm bounds it. Past the grace, whether the op is retired at all is
+  `INV-PAY-105`'s question: a decline is not abandonment.
+
+## INV-PAY-105
+
+**Related: `INV-PAY-029`** (when a failed ask is looked at) **and #3403** (the
+supersession trigger, an open owner decision this rule deliberately leaves as
+it was).
+
+- **A waiting supplementary invoice is retired only when the member can no
+  longer pay the ask it waits on** (#3641). Both reaper arms, 14 days old and
+  24h after a decline, ask the member's pay door,
+  `payableAdditionalPaymentIntentId` (`additional-payment-chase.ts`), which the
+  additional-payment-secret route also uses: the booking still names that
+  intent, the ask is uncollected, and the booking is neither deleted nor
+  outside `ADDITIONAL_PAYABLE_BOOKING_STATUSES`. Superseded, withdrawn,
+  collected and cancelled asks are still retired. An op with no intent keeps
+  the plain age arm.
+- **A capture never silently releases nothing.** Every late-success caller
+  (the Stripe webhook's two arms, the confirm route's two arms) calls
+  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`. Finding the
+  invoice retired (`STALE_WAITING_PAYMENT`), it re-queues **that row** (same
+  payload and idempotency key) under the per-anchor supplementary-invoice lock
+  with a status-and-code guarded write, so replays and the two callers racing
+  re-queue it once. It alerts instead, once (claimed by the
+  `STALE_WAITING_PAYMENT_CAPTURED` stamp), where re-issuing is unsafe: a
+  capture short of the ask (`classifyEditReviewChargeCapture`), or an invoice
+  already linked or queued for another ask on that change. A booking that can
+  no longer take the money is left retired for the cancelled-booking
+  late-capture path.
+- Pinned by `xero-operation-outbox.test.ts` (both reaper arms, the late
+  capture) and `additional-payment-chase.test.ts` (the door).
 
 ## INV-PAY-030
 
