@@ -78,7 +78,7 @@ Stat cards (each links to its detail area):
 | Members | Active members, with the total and inactive count |
 | Total Bookings | All-time bookings (excludes deleted) |
 | Active Bookings | Payment-pending, paid, confirmed, and hold statuses |
-| Revenue This Month | Sum of **succeeded** payments this calendar month (integer cents) |
+| Revenue This Month | Payments **taken** this calendar month, **less refunds made on them** — the money the club holds from them. When any of those payments has been refunded, the gross paid and the refunded total are shown beneath the headline, so the arithmetic is on the card. A payment that is still pending or failed is not counted |
 | Upcoming Check-ins | Active bookings checking in within the next 7 NZ days |
 
 ## Troubleshooting
@@ -86,7 +86,7 @@ Stat cards (each links to its detail area):
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An attention card vanished | Its queue is now empty | Nothing to do — the card only shows while work is pending |
-| Revenue looks low | It counts only **succeeded** payments in the current NZ month | Use [Reports](reports.md) or [Payments](payments.md) for full figures |
+| Revenue looks low | It is **net of refunds**, and it counts only payments taken in the current NZ month. A refund made this month on last month's payment does not reduce it | Use [Reports](reports.md) or [Payments](payments.md) for full figures |
 | A quick-action tile is missing | The related module is off (e.g. Chore Roster needs the `chores` module) | Enable it in [Modules](modules.md) |
 
 ## Related links
