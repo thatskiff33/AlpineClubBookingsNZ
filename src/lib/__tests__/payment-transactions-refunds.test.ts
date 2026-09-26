@@ -20,6 +20,7 @@ import {
   planStripeRefundAllocation,
   reconcilePaymentAggregates,
   recordInternetBankingPaymentTransaction,
+  recordStripeRefundLedgerEntry,
   RefundAllocationRacedError,
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
@@ -274,6 +275,42 @@ describe("payment refund ledger", () => {
       })
     );
   });
+
+  /*
+    #3567 D4: the refund row's currency is Stripe's, always. There is no code
+    fallback and no database default any more, so a refund of a charge taken in
+    one currency is recorded in that currency whatever the club uses now, and a
+    refund with no currency is refused rather than guessed.
+  */
+  it("records the currency Stripe refunded in, lower-cased, whatever the club's currency", async () => {
+    const { store } = createRefundStore();
+    await recordStripeRefundLedgerEntry({
+      paymentId: "payment_1",
+      refund: { id: "re_aud_1", amount: 1200, currency: "AUD", status: "succeeded" },
+      store: store as any,
+    });
+    expect(store.paymentRefund.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ currency: "aud", stripeRefundId: "re_aud_1" }),
+        update: expect.objectContaining({ currency: "aud" }),
+      }),
+    );
+  });
+
+  it.each(["", "   "])(
+    "refuses to record a refund whose currency is %j, rather than inventing one",
+    async (currency) => {
+      const { store } = createRefundStore();
+      await expect(
+        recordStripeRefundLedgerEntry({
+          paymentId: "payment_1",
+          refund: { id: "re_blank", amount: 1200, currency, status: "succeeded" },
+          store: store as any,
+        }),
+      ).rejects.toThrow(/carries no currency/);
+      expect(store.paymentRefund.upsert).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not double-count a direct refund when an idempotent retry replays the same Stripe refund", async () => {
     const { store, transaction, refunds } = createRefundStore();

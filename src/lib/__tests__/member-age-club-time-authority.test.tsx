@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * ## Why this file exists at all
  *
  * `calculateMemberAgeParts` used to default its reference day to
- * `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE`. On a server that is
+ * `todayDateOnlyForTimeZone()`, which read the environment zone. On a server that is
  * the CONTAINER's zone; in the browser it is whatever `NEXT_PUBLIC_TZ` was baked
  * into the bundle. `INV-CONFIG-002` says neither is the club's civil-time
  * authority — the persisted `ClubTimeSettings.timeZone` is. And
@@ -34,21 +34,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ## DISCRIMINATION
  *
- * `APP_TIME_ZONE` is pinned to `America/Denver` — behind Greenwich, which is the
- * side these defects show on — and the persisted club zone is set to something
+ * The environment zone is modelled as `America/Denver` — behind Greenwich, which
+ * is the side these defects show on. (It used to be pinned with a
+ * `@/config/operational` mock; #3567 deleted that module and nothing reads the
+ * environment's zone any more.) The persisted club zone is set to something
  * the environment does NOT claim, then MOVED between assertions. Under the
  * frozen clock (`2026-07-01T00:00:00.000Z`) Denver reads 30 June and Auckland
  * reads 1 July, so the two never agree and no assertion here can pass by
  * coincidence. A suite persisting `Pacific/Auckland` while the environment also
  * claims it cannot tell the persisted zone from the environment zone (#3123
- * execution contract), which is why the environment is pinned elsewhere.
+ * execution contract), which is why the environment is modelled elsewhere.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const { mockMemberFindMany, mockMemberCount, mockClubTimeSettingsFindUnique } =
   vi.hoisted(() => ({
@@ -81,7 +77,6 @@ vi.mock("next/link", () => ({
 
 import { cleanup, render, screen } from "@testing-library/react";
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { MemberSummaryStrip } from "@/app/(admin)/admin/members/[id]/_components/member-summary-strip";
@@ -146,8 +141,7 @@ afterEach(() => {
 });
 
 describe("PREMISE: the club and the container disagree about today", () => {
-  it("pins the environment behind Greenwich, so 30 June and 1 July are both live", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
+  it("models the environment behind Greenwich, so 30 June and 1 July are both live", () => {
     const now = new Date();
     const inEnvironment = new Intl.DateTimeFormat("en-CA", {
       timeZone: ENVIRONMENT_ZONE,
@@ -165,7 +159,7 @@ describe("PREMISE: the club and the container disagree about today", () => {
 
 describe("the member-detail summary strip ages the member in the CLUB's day", () => {
   it("shows 19 years on the club's birthday, though the browser bundle is a day behind", () => {
-    // BEFORE #3123 this read `APP_TIME_ZONE` from the CLIENT bundle and showed
+    // BEFORE #3123 this read the environment zone from the CLIENT bundle and showed
     // "18 years 11 months" — the member's own birthday, understated by a year,
     // on the screen an administrator uses to confirm which record they have.
     renderStripUnderClubZone(CLUB_AHEAD);

@@ -6,10 +6,9 @@
  * thing a first boot after the upgrade can copy from. That is the whole of their
  * remaining role: `resolveClubTimeZone` consults the seed only when nothing is
  * persisted, and the boot backfill persists it once so that stops being true. The
- * transitional `APP_TIME_ZONE` constant in `src/config/operational.ts` still
- * derives from the same two variables for the call sites CT-2 to CT-5 have not
- * migrated yet, and `club-time-zone-env-agreement.test.ts` pins the two readings
- * together so they cannot drift apart while both exist. Retired by CT-6 (#2991).
+ * transitional `APP_TIME_ZONE` constant that derived from the same two variables
+ * is gone: #3567 deleted it with `src/config/operational.ts`, so this is the one
+ * reader of `TZ` / `NEXT_PUBLIC_TZ` left.
  *
  * WHY THIS IS ITS OWN MODULE rather than sitting beside the validator (#2989
  * review). `club-time-zone.ts` is deliberately free of `server-only` because the

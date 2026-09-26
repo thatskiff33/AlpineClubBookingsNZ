@@ -1,4 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 
@@ -25,9 +38,11 @@ import bcrypt from "bcryptjs";
  * status code cannot tell 30 June from 1 July when the fixture is comfortably
  * inside both, and those two days are the whole question.
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer the replaced
- * default gave, and this codebase's own fallback, so it is the one value a wrong
- * fix could still pass under. The PERSISTED zone is `America/Denver`, behind
+ * The environment's zone (`ENVIRONMENT_CLUB_ZONE`: `TZ`, else `Pacific/Auckland`)
+ * is the answer the replaced default gave, and this codebase's own fallback, so
+ * it is the one value a wrong fix could still pass under. (The constant that
+ * used to be pinned here was deleted in #3567; nothing reads it any more.) The
+ * PERSISTED zone is `America/Denver`, behind
  * Greenwich. Under the frozen clock (`2026-07-01T00:00:00.000Z`) the club's day
  * is 30 June and the environment's is 1 July, so nothing here can agree by
  * coincidence and no `vi.setSystemTime` is needed.
@@ -37,15 +52,7 @@ import bcrypt from "bcryptjs";
  * missing, when the query throws, and when the row is absent.
  */
 
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-const ENVIRONMENT_ZONE = "Pacific/Auckland";
+const ENVIRONMENT_ZONE = ENVIRONMENT_CLUB_ZONE;
 const PERSISTED_ZONE = "America/Denver";
 const PIN = "246813";
 
@@ -80,7 +87,6 @@ vi.mock("@/lib/lodge-instructions", () => ({
   getSanitizedLodgeInstructions: mocks.getSanitizedLodgeInstructions,
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { POST } from "@/app/api/lodge/instructions/preview/route";
 
@@ -132,7 +138,6 @@ beforeEach(async () => {
 
 describe("a hut-leader PIN window is judged on club time (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's disagree about the day", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(dayIn(PERSISTED_ZONE)).toBe("2026-06-30");
     expect(dayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
   });

@@ -17,19 +17,14 @@
  * an administrator reads while confirming WHICH person an identity-sensitive
  * action applies to — the one place a wrong age is not cosmetic.
  *
- * The config module is mocked to `America/Denver` for this file only. Against
- * truncation these assertions hold; against the projection the first two fail by
- * a year, which is the discrimination this file exists to provide.
+ * The config module used to be mocked to `America/Denver` for this file; #3567
+ * deleted that module and nothing reads the environment's zone any more, so the
+ * mock is gone. Against truncation these assertions hold; against a projection
+ * behind Greenwich the first two fail by a year, which is the discrimination
+ * this file exists to provide.
  */
 
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
+import { describe, expect, it } from "vitest";
 
 import {
   calculateMemberAgeParts,
@@ -86,8 +81,8 @@ describe("member age reads the STORED day, not the club-zone reading of it", () 
 
 /*
   THE BLOCK THAT USED TO CLOSE THIS FILE asserted that the DEFAULT reference date
-  came from the club zone — under this file's `America/Denver` mock, which is
-  `APP_TIME_ZONE` and therefore the CONTAINER's claim rather than the club's.
+  came from the club zone — under this file's then `America/Denver` mock, which
+  was the environment zone and therefore the CONTAINER's claim rather than the club's.
   #3123 deleted the default for exactly that reason, so the block was asserting
   the defect. The club-day half of this module's contract now sits on its
   callers, and is proved under a PERSISTED zone the host does not hold in
@@ -95,5 +90,5 @@ describe("member age reads the STORED day, not the club-zone reading of it", () 
 
   What remains in this file is the half that is still `member-age.ts`'s own: a
   date of birth is a stored calendar day and takes no zone at all, which is why
-  every assertion above holds with `APP_TIME_ZONE` pinned behind Greenwich.
+  every assertion above holds whatever zone the environment claims.
 */

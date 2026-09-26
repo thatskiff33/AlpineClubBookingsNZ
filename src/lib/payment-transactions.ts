@@ -4,7 +4,6 @@ import {
   PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
@@ -26,7 +25,7 @@ export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 type StripeRefundLedgerInput = {
   id: string;
   amount: number;
-  currency?: string | null;
+  currency: string; // Stripe's, always set; no fallback (#3567 D4)
   status?: string | null;
   reason?: string | null;
   created?: number | null;
@@ -35,15 +34,16 @@ type StripeRefundLedgerInput = {
 };
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
-  if (!created) {
-    return null;
-  }
-
-  return new Date(created * 1000);
+  return created ? new Date(created * 1000) : null;
 }
 
-function normalizeRefundCurrency(currency: string | null | undefined) {
-  return (currency ?? APP_STRIPE_CURRENCY).toLowerCase();
+// Stripe's refund currency, lower-cased. Missing fails loudly rather than being
+// guessed: the column has no default since #3567, and a guessed currency would
+// falsify the history reconciled against Stripe and Xero.
+function normalizeRefundCurrency(refundId: string, currency: string) {
+  const code = typeof currency === "string" ? currency.trim().toLowerCase() : "";
+  if (!code) throw new Error(`Stripe refund ${refundId} carries no currency; refusing to record it without one.`);
+  return code;
 }
 
 function normalizeRefundStatus(status: string | null | undefined) {
@@ -495,7 +495,7 @@ export async function recordStripeRefundLedgerEntry({
     stripeChargeId,
     stripePaymentIntentId,
     amountCents: refund.amount,
-    currency: normalizeRefundCurrency(refund.currency),
+    currency: normalizeRefundCurrency(refund.id, refund.currency),
     status: normalizeRefundStatus(refund.status),
     reason: refund.reason ?? null,
     stripeCreatedAt,

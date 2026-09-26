@@ -187,6 +187,76 @@ describe("a Full Admin", () => {
   });
 });
 
+describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
+  const IN_FLIGHT = {
+    unpaidCardPayments: 2,
+    pendingSavedCardCharges: 1,
+    unansweredSavedCardAttempts: 2,
+    openRecoveryRetries: 3,
+  };
+
+  async function openAndChooseCurrency(code: string) {
+    render(<ClubFormatPanel />);
+    await screen.findByTestId("current-club-currency");
+    fireEvent.click(screen.getByRole("button", { name: "Change currency and format" }));
+    fireEvent.change(screen.getByLabelText("Currency"), { target: { value: code } });
+  }
+
+  beforeEach(() => {
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: STORED_STATE, inFlight: IN_FLIGHT }),
+    }));
+  });
+
+  it("counts the card payments under way and names Stripe and Xero", async () => {
+    await openAndChooseCurrency("AUD");
+    const block = screen.getByTestId("club-format-currency-change");
+    expect(block).toHaveTextContent("Card payments move from CHF to AUD when you save");
+    const counts = within(block).getByTestId("club-format-in-flight");
+    expect(counts).toHaveTextContent("2 card payments already started and not yet paid — these stay in CHF.");
+    expect(counts).toHaveTextContent("1 saved card waiting to be charged later — these are charged in AUD.");
+    expect(counts).toHaveTextContent("2 saved-card charges the payment provider never answered");
+    expect(counts).toHaveTextContent("3 payment-recovery retries still open — for the first 24 hours");
+    expect(block).toHaveTextContent(/Stripe account and its Xero organisation's base currency/);
+  });
+
+  it("needs its own tick before Save, and sends it", async () => {
+    await openAndChooseCurrency("AUD");
+    const save = screen.getByRole("button", { name: "Save currency and format" });
+    const [ordinary, currencyTick] = screen.getAllByRole("checkbox");
+    fireEvent.click(ordinary);
+    expect(save).toBeDisabled();
+    fireEvent.click(currencyTick);
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    const body = JSON.parse(String((putCalls()[0][1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ currencyCode: "AUD", confirmed: true, currencyChangeConfirmed: true });
+  });
+
+  it("says so when the counts could not be read, rather than showing zero", async () => {
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: STORED_STATE, inFlight: null }),
+    }));
+    await openAndChooseCurrency("AUD");
+    expect(screen.getByTestId("club-format-in-flight-unknown")).toBeInTheDocument();
+    expect(screen.queryByTestId("club-format-in-flight")).not.toBeInTheDocument();
+  });
+
+  it("is not shown for a locale-only change", async () => {
+    render(<ClubFormatPanel />);
+    await screen.findByTestId("current-club-currency");
+    fireEvent.click(screen.getByRole("button", { name: "Change currency and format" }));
+    fireEvent.change(screen.getByLabelText("Number and date format"), { target: { value: "fr-CH" } });
+    expect(screen.queryByTestId("club-format-currency-change")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  });
+});
+
 describe("while the session is still resolving", () => {
   it("offers nothing and explains nothing yet", async () => {
     session.value = { status: "loading", data: null };

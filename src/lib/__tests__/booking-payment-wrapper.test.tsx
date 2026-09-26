@@ -8,6 +8,7 @@ import * as Sentry from "@sentry/nextjs";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
+  PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
@@ -187,6 +188,34 @@ describe("BookingPaymentWrapper", () => {
       "Payment received - check booking status",
     );
     consoleErrorSpy.mockRestore();
+  });
+
+  it("says an earlier payment is still processing, without reporting a payment-start failure (#3567)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...PAYMENT_PROCESSING_BODY, creditElection: null }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(alert).toHaveTextContent("Payment being processed"));
+    expect(alert).toHaveTextContent(
+      "This payment is being processed. Refresh the page in a minute to see it confirmed.",
+    );
+    expect(screen.queryByText("Payment Error")).toBeNull();
+    expect(document.body.textContent).not.toContain("We couldn't start the card payment");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it("reports captured-card finalisation recovery instead of a payment-start failure", async () => {

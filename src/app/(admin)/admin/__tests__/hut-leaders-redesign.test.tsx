@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { settleLodgeScopedPage } from "@/lib/__tests__/helpers/lodge-scope-settle";
 import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
@@ -333,7 +333,7 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
  * THE DISCRIMINATING ONE (CT-4, #2870).
  *
  * Every render above uses the default `CLUB_TIME_TEST_ZONE`, deliberately equal
- * to `APP_TIME_ZONE`, so a coverage block's Active/Past chip reads the same
+ * to the environment's default zone, so a coverage block's Active/Past chip reads the same
  * whether the page consulted its provider or the environment.
  *
  * That chip is the officer's answer to "is anybody covering the lodge right
@@ -365,7 +365,7 @@ describe("hut leaders — Active/Past comes from the club's day (CT-4, #2870)", 
       answerFor: dayIn,
       // NOT `["UTC"]` — see the chooser's note on "today" assertions.
     });
-    const environmentDay = dayIn(APP_TIME_ZONE);
+    const environmentDay = dayIn(ENVIRONMENT_CLUB_ZONE);
     // Hand-derived from the block below, not recomputed by the page.
     const environmentStatus = "2026-06-30" < environmentDay ? "Past" : "Active";
     expect(chosen.status).not.toBe(environmentStatus);

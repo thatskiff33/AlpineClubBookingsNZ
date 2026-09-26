@@ -255,6 +255,23 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (the
+// file-level beforeEach below) is the house fixture, so every other case reads
+// the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+// #3567: when the club format last changed, for the stale-queue alert.
+const mockLoadPersistedClubFormat = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-settings")),
+  loadPersistedClubFormatSettings: (...a: unknown[]) => mockLoadPersistedClubFormat(...a),
+}));
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
+import logger from "@/lib/logger";
 import {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -277,6 +294,10 @@ import {
   buildEditFinancialReviewAdditionalIntentStripeKey,
 } from "@/lib/payment-recovery-keys";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+beforeEach(() => {
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
+});
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -1947,6 +1968,111 @@ describe("payment recovery worker", () => {
         }),
       }),
     );
+  });
+
+  describe("card charges while the club's currency cannot be charged in (#3567)", () => {
+    // A queue that honours the worker's own `where` and `take`, so a filter
+    // dropped from the query (and moved back into the loop) shows up as the
+    // batch filling with charges it then skips.
+    type TypeWhere = { where?: { type?: string | { not?: string } } };
+    function queueOf(rows: ReturnType<typeof makeOperation>[]) {
+      const matches = (row: ReturnType<typeof makeOperation>, where?: TypeWhere["where"]) =>
+        where?.type === undefined ||
+        (typeof where.type === "string" ? row.type === where.type : row.type !== where.type.not);
+      mockPaymentRecoveryFindMany.mockImplementation(
+        (args?: { take?: number } & TypeWhere) =>
+          Promise.resolve(
+            isStaleWorkerSweep(args) ? [] : rows.filter((r) => matches(r, args?.where)).slice(0, args?.take ?? rows.length),
+          ),
+      );
+      mockPaymentRecoveryFindFirst.mockImplementation((args?: TypeWhere) =>
+        Promise.resolve(rows.find((r) => matches(r, args?.where)) ?? null),
+      );
+    }
+    const stalledAlerts = () =>
+      mockSendAdminPaymentFailureAlert.mock.calls.filter(([a]) => /queue is stalled/.test((a as { errorMessage?: string })?.errorMessage ?? ""));
+    const WAITING_LOG = expect.stringContaining("leaving card charges unclaimed");
+    const charges = Array.from({ length: 12 }, (_, n) =>
+      makeOperation({
+        id: `recovery-charge-${n}`,
+        type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+        status: "PENDING",
+        paymentIntentId: `mod_guest_bk1_mod-${n}`,
+        paymentTransactionId: null,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, n)),
+      }),
+    );
+    const refund = makeOperation({
+      id: "recovery-mod-refund",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      status: "PENDING",
+      amountCents: 4000,
+      idempotencyKey: "payment_recovery_modification_refund_mod-1",
+      paymentTransactionId: null,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    it("keeps more than a batch of waiting charges out of the query, so the refund queued behind them still runs", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf([...charges, refund]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(refund);
+
+      const result = await processPaymentRecoveryOperations({ limit: 10 });
+
+      expect(result).toMatchObject({ found: 1, processed: 1, succeeded: 1, skipped: 0 });
+      const claimedIds = mockPaymentRecoveryUpdateMany.mock.calls
+        .filter(([call]) => call?.data?.status === PaymentRecoveryOperationStatus.PROCESSING)
+        .map(([call]) => call?.where?.id);
+      expect(claimedIds).toEqual(["recovery-mod-refund"]);
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000 }));
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not call deliberately waiting charges a stalled queue", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf(charges);
+
+      const result = await processPaymentRecoveryOperations({ limit: 10 });
+
+      expect(result).toMatchObject({ found: 0, processed: 0 });
+      expect(mockPaymentRecoveryFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } }),
+        }),
+      );
+      expect(stalledAlerts()).toHaveLength(0);
+    });
+
+    it("claims charges again once the currency is fixed, without calling the wait a stalled cron", async () => {
+      // The admin fixed the currency ten minutes ago; these charges waited for months.
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 10 * 60 * 1000) });
+      queueOf([charges[0]]);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      const queueRead = mockPaymentRecoveryFindMany.mock.calls.find(([a]) => !isStaleWorkerSweep(a));
+      expect(queueRead?.[0]?.where).not.toHaveProperty("type");
+      expect(stalledAlerts()).toHaveLength(0);
+    });
+
+    it("does alert on a charge still waiting once the club format has been unchanged past the stale window", async () => {
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) });
+      queueOf([charges[0]]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(null);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(stalledAlerts()).toHaveLength(1);
+    });
+
+    it("says charges are waiting once per run, at warn, and only while one is actually waiting", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf([refund]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(refund);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(logger.warn).not.toHaveBeenCalledWith(WAITING_LOG);
+      expect(logger.error).not.toHaveBeenCalledWith(WAITING_LOG);
+
+      queueOf([...charges, refund]);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(vi.mocked(logger.warn).mock.calls.filter(([m]) => typeof m === "string" && m.includes("leaving card charges unclaimed"))).toHaveLength(1);
+    });
   });
 
   describe("additional PaymentIntent recovery (#1096)", () => {

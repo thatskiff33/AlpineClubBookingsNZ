@@ -519,9 +519,12 @@ export const CLUB_FORMAT_GUARD_ARMS = {
   requiredParameter: CLUB_FORMAT_PARAMETER_RESTRICTIONS.map((entry) => entry.selector),
 };
 
-// INV-CONFIG-006 / #3566 — nothing outside `src/config/operational.ts` IMPORTS
-// `APP_LOCALE` or `APP_CURRENCY` (#3628 review, finding B9). The acceptance
-// criterion of #3566, enforced rather than measured once.
+// INV-CONFIG-006 / #3567 — NOTHING IMPORTS `@/config/operational`. #3566 banned
+// importing `APP_LOCALE` / `APP_CURRENCY` from it (#3628 review, finding B9);
+// #3567 retired the last two exports, `APP_STRIPE_CURRENCY` and `APP_TIME_ZONE`,
+// and DELETED the file. The arm now refuses any import of that path, so a
+// recreated file starts out unreachable: the club's currency, locale and time
+// zone are its stored settings, and the environment only seeds them.
 //
 // A `no-restricted-syntax` arm on the mandatory set rather than
 // `no-restricted-imports`, for the reason the environment-zone note above gives:
@@ -529,13 +532,8 @@ export const CLUB_FORMAT_GUARD_ARMS = {
 // `no-restricted-imports`, so an import rule would be silently lifted for the
 // modules that write Xero documents. Every spelling of the module path is
 // matched, and a namespace import, a default import and a re-export are refused
-// too, since each reaches the constants without naming them. Tests are outside
-// it (they are outside `no-restricted-syntax` altogether); #3567 retires the
-// constants and the tests' last references.
-//
-// `APP_STRIPE_CURRENCY`, the card-charge currency derived from `APP_CURRENCY`,
-// is NOT covered here: its seven importers are the named #3567 exception, pinned
-// by `app-currency-import-census.test.ts` so an eighth fails there.
+// too. Tests are outside it (they are outside `no-restricted-syntax`
+// altogether); `app-currency-import-census.test.ts` walks them instead.
 // The module path, however spelled: `@/config/operational`,
 // `../config/operational`, `@/config/./operational`, `@/config//operational`,
 // `@/config/operational.js` (round 2 of the #3628 review). A template literal
@@ -543,17 +541,19 @@ export const CLUB_FORMAT_GUARD_ARMS = {
 // value, so any template mentioning `config` or `operational` in a dynamic
 // import or `require` is refused outright. What no selector can follow — a
 // computed module name, a `createRequire` alias — is backstopped by the
-// word-level census in `app-currency-import-census.test.ts`: no
-// `APP_LOCALE` / `APP_CURRENCY` token anywhere in non-test `src/` code outside
-// `operational.ts`, comments stripped.
-const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?$/";
-const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/]";
+// word-level census in `app-currency-import-census.test.ts`: none of the four
+// retired names anywhere in `src/` code, tests included, comments stripped. The
+// browser-import census in `client-server-boundary-census.test.ts` protects the
+// path in the client graph as well.
+// Case-insensitive, and the module as a path SEGMENT: with or without an
+// extension, a trailing slash, `/index` or anything beneath it (#3567 review).
+const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?(?:\\/.*)?$/i";
+const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/i]";
 const RETIRED_FORMAT_CONSTANT_MESSAGE =
-  "INV-CONFIG-006 / #3566: do not import APP_LOCALE or APP_CURRENCY. The club's locale and currency are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma, and a date's locale through the club-time binding's .format. The environment is a seed only (club-format-env.ts); #3567 retires these constants.";
+  "INV-CONFIG-006 / #3567: do not import @/config/operational. #3567 deleted it with its four constants (APP_CURRENCY, APP_LOCALE, APP_STRIPE_CURRENCY, APP_TIME_ZONE). The club's currency and locale are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from the format stripe.ts already requires; the club's time zone is clubTimeZone() / clubTime() from @/lib/club-time/server or readClubTimeZoneOutsideRequest(). The environment is a seed only (club-format-env.ts, club-time-zone-env.ts).";
 const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
-  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportSpecifier[imported.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
-  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportNamespaceSpecifier`,
-  `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}] ExportSpecifier[local.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}]`,
   `ExportAllDeclaration[source.value=${OPERATIONAL_MODULE}]`,
   `ImportExpression[source.value=${OPERATIONAL_MODULE}]`,
   `ImportExpression[source.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
@@ -562,7 +562,7 @@ const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
   `TSExternalModuleReference[expression.value=${OPERATIONAL_MODULE}]`,
 ].map((selector) => ({ selector, message: RETIRED_FORMAT_CONSTANT_MESSAGE }));
 
-/** The #3566 retired-constant arm as bare selectors, read by its guard test. */
+/** The #3566/#3567 retired-module arm as bare selectors, read by its guard test. */
 export const RETIRED_FORMAT_CONSTANT_ARMS = RETIRED_FORMAT_CONSTANT_RESTRICTIONS.map(
   (entry) => entry.selector,
 );
@@ -1044,14 +1044,41 @@ const NO_ENVIRONMENT_ZONE_ENV_READ = [
   'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
 ].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
 
-// Importing the environment zone by name. `@/config/operational` exports it as
-// a plain string, so nothing downstream of the import can tell it from a club
+// Importing the environment zone by name. `@/config/operational` exported it as
+// a plain string, so nothing downstream of the import could tell it from a club
 // zone — which is how 133 call sites came to take it as a default without one
-// review noticing.
+// review noticing. #3567 deleted the module; these stay so a recreated one
+// cannot hand the zone out again.
 const NO_ENVIRONMENT_ZONE_IMPORT = [
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.name="APP_TIME_ZONE"]',
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.value="APP_TIME_ZONE"]',
 ].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+// INV-CONFIG-006 / #3567 review — the ENVIRONMENT's currency and locale, read
+// anywhere but the one seed reader. `CURRENCY` / `LOCALE` seed the stored
+// `ClubFormatSettings` row once; `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE`
+// are not read at all. A new reader of any of the four is a second authority for
+// what the club charges and shows, so the same three spellings the zone arm
+// closes are closed here, and `club-format-env.ts` is the one file exempt.
+const ENVIRONMENT_FORMAT_ENV = "/^(CURRENCY|LOCALE|NEXT_PUBLIC_CURRENCY|NEXT_PUBLIC_LOCALE)$/";
+const ENVIRONMENT_FORMAT_MESSAGE =
+  "INV-CONFIG-006 / #3567: The environment's currency and locale are not the club's. `CURRENCY` / `LOCALE` seed the stored ClubFormatSettings row once, in club-format-env.ts, and `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE` are not read at all. Read the club's format with clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, or getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from stripeChargeCurrency(format).";
+const ENVIRONMENT_FORMAT_RESTRICTIONS = [
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  // A template-literal key, process.env[`CURRENCY`] (#3567 re-review). An alias
+  // (`const env = process.env; env.CURRENCY`) is past any selector; the
+  // word-level census in app-currency-import-census.test.ts closes that.
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.type="TemplateLiteral"]:has(TemplateElement[value.raw=${ENVIRONMENT_FORMAT_ENV}])`,
+].map((selector) => ({ selector, message: ENVIRONMENT_FORMAT_MESSAGE }));
+
+/** The one file allowed to read the environment's currency and locale. */
+const ENVIRONMENT_FORMAT_ADAPTER_FILES = ["src/lib/club-format-env.ts"];
+
+/** The environment-format arm as bare selectors, read by its guard test. */
+export const ENVIRONMENT_FORMAT_ARMS = ENVIRONMENT_FORMAT_RESTRICTIONS.map((entry) => entry.selector);
 
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
@@ -1184,12 +1211,13 @@ export const DATE_FNS_ADAPTERS = [
  * `club-time-boundary-census.test.ts` reads this record rather than keeping a
  * copy that drifts out of step with the config that ships.
  *
- * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. Two entries are structural — the
- * environment has to be read somewhere for the setup wizard to offer it — and
- * the rest are callers CT-6 measured and could not migrate without threading a
- * club zone through a surface belonging to another issue. Each names what is
- * blocking it. Adding a file here re-opens the class the guard exists to close,
- * so the census test asserts the list has not grown.
+ * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. One entry is left, and it is
+ * structural — the environment has to be read somewhere for the setup wizard to
+ * offer it. #3567 took the last three away: it deleted `src/config/operational.ts`
+ * (which defined `APP_TIME_ZONE`) and moved the two AI metering month keys
+ * (`ai-assistant-usage.ts`, `ai-diagnostics-usage.ts`) onto the club's stored
+ * zone. Adding a file here re-opens the class the guard exists to close, so the
+ * census test asserts the list has not grown.
  *
  * IT SHRANK AGAIN IN #3126, and by the route this list prefers. The last entry
  * to leave, `src/lib/member-merge-field-kinds.ts`, was excused so a client
@@ -1217,33 +1245,13 @@ export const DATE_FNS_ADAPTERS = [
  * again it would still belong in its own block rather than on this list: listing
  * it twice would give it two matching blocks, the later of which silently wins.
  */
-const ENVIRONMENT_ZONE_ADAPTER_FILES = [
-  "src/config/operational.ts",
-  "src/lib/club-time-zone-env.ts",
-  "src/lib/ai-assistant-usage.ts",
-  "src/lib/ai-diagnostics-usage.ts",
-];
+const ENVIRONMENT_ZONE_ADAPTER_FILES = ["src/lib/club-time-zone-env.ts"];
 
 export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
-    file: "src/config/operational.ts",
-    reason:
-      "STRUCTURAL. The one read of `process.env.TZ` in the tree, and the definition of APP_TIME_ZONE itself. CT-1 (#2989) kept it as the SEED the setup wizard offers and the self-heal step backfills the persisted row from, so it has to exist somewhere.",
-  },
-  {
     file: "src/lib/club-time-zone-env.ts",
     reason:
-      "STRUCTURAL. CT-1's seed reader (#2989): exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
-  },
-  {
-    file: "src/lib/ai-assistant-usage.ts",
-    reason:
-      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the one below.",
-  },
-  {
-    file: "src/lib/ai-diagnostics-usage.ts",
-    reason:
-      "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
+      "STRUCTURAL. CT-1's seed reader (#2989), and since #3567 the one read of `process.env.TZ` in the tree: exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
   },
 ];
 
@@ -1322,10 +1330,9 @@ export const DATE_GUARD_ARMS = {
 // handing it to callers as a default is not, in any file.
 //
 // WHICH NAMES ARE ON THE LIST. `INV-SSOT-003` names them, and this array is that
-// rule's implementation rather than a second opinion about it: the
-// `@/config/operational` exports naming a club-facing authority —
-// `APP_TIME_ZONE` and `APP_LOCALE` — plus the environment variables behind the
-// zone, `TZ` and `NEXT_PUBLIC_TZ`.
+// rule's implementation rather than a second opinion about it: the names the
+// deleted `@/config/operational` exported for a club-facing authority — kept so
+// a revival is refused on sight — plus the environment variables behind them.
 //
 // The zone is the measured case. The club's civil time is the
 // `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989), and
@@ -1363,17 +1370,16 @@ export const DATE_GUARD_ARMS = {
 //     the worked example of an exclusion written WITH a trigger, which is the
 //     only kind that does not rot into a permanent hole.
 //
-//     One thing the old note said remains true and unfixed here: two admin
-//     display formatters hardcode `currency: "NZD"` and `schema.prisma` gives
-//     `PaymentTransaction.currency` a `"nzd"` column default. A third, found
-//     in #3563's review and named here so #3567 is planned from a complete
-//     list: `normalizeRefundCurrency` in `src/lib/payment-transactions.ts`
-//     falls back `(currency ?? APP_STRIPE_CURRENCY)` and writes the result to
-//     that same column. It is the same defect in a shape this arm cannot see
-//     - the arm anchors on `AssignmentPattern`, and a `??` in a function body
-//     is a `LogicalExpression` - so it is invisible rather than excluded.
-//     Those are a separate defect this arm is not the instrument for; #3567 is
-//     the stage that takes them.
+//     The old note also named three defects this arm is not the instrument
+//     for, and #3567 took all three: the admin display formatters that
+//     hardcoded `currency: "NZD"` read the club's format; the `"nzd"` column
+//     default — on `PaymentRefund.currency`, which this note used to misname
+//     `PaymentTransaction.currency` (that table has no currency column) — is
+//     dropped by migration 20261012010000; and `normalizeRefundCurrency` in
+//     `src/lib/payment-transactions.ts` no longer falls back
+//     `(currency ?? APP_STRIPE_CURRENCY)`. That fallback was invisible to this
+//     arm rather than excluded — a `??` in a function body is a
+//     `LogicalExpression`, not an `AssignmentPattern`.
 //   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
 //     describes more broadly than this arm implements. MEASURED, rather than
 //     assumed, and re-measured for #3126's review because the first measurement
@@ -2666,6 +2672,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
   ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
   ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
+  ...ENVIRONMENT_FORMAT_RESTRICTIONS,
 ];
 
 /**
@@ -2696,10 +2703,16 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
       "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. #3126 then took `src/lib/member-merge-field-kinds.ts` off by deleting the `= APP_TIME_ZONE` DEFAULT the exemption had been covering (`INV-SSOT-003`) — an exemption written for a READ should never have excused a default, and `AUTHORITY_DEFAULT_RESTRICTIONS` is on the mandatory set precisely so no entry here can excuse one again. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    omits: ENVIRONMENT_FORMAT_RESTRICTIONS,
+    reason:
+      "The seed reader for the club's currency and locale (#3563; #3567 review): the one module whose job is to read CURRENCY / LOCALE once, for the first-boot backfill and the no-row fallback, and to warn when only a retired NEXT_PUBLIC_ twin is set. Every other file reads the stored setting.",
+  },
+  {
     files: ["prisma/**/*.{ts,tsx}"],
     omits: DATE_ONLY_ENCODING_RESTRICTIONS,
     reason:
-      "The seed and fixture files synthesise date STRINGS for a throwaway database rather than reading a domain column (#2684), and `prisma/e2e-fixtures.ts` is contractually a pure constants module — importing `@/lib/date-only` would pull `@/config/operational` into a file whose whole point is that it imports nothing. `scripts/` gets no such exemption: it carries the full set.",
+      "The seed and fixture files synthesise date STRINGS for a throwaway database rather than reading a domain column (#2684), and `prisma/e2e-fixtures.ts` is contractually a pure constants module — importing `@/lib/date-only` would pull a module graph into a file whose whole point is that it imports nothing. `scripts/` gets no such exemption: it carries the full set.",
   },
   {
     files: MONEY_DOMAIN_MODULES,
@@ -2959,6 +2972,19 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // The seed reader for the club's currency and locale is the one file that
+    // may read CURRENCY / LOCALE and the retired NEXT_PUBLIC_ twins (#3567
+    // review). Only that group is dropped; the rendering arms are re-stated for
+    // the reason the block above gives.
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        ENVIRONMENT_FORMAT_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
     // The raw-SQL guard (#2289) is NOT an `src/`-only rule, even though the date
     // rules above are. Operator CLIs and seed/migration helpers are where
     // hand-written SQL is most likely — Prisma cannot express a bulk correlated
@@ -2999,8 +3025,8 @@ const eslintConfig = defineConfig([
     // `prisma/e2e-fixtures.ts` synthesise date STRINGS for a throwaway database
     // rather than reading a domain column, and `e2e-fixtures.ts` declares itself
     // "a pure constants module: no Playwright, no Prisma, no `server-only`
-    // imports" — importing `@/lib/date-only` would pull `@/config/operational`
-    // into a module whose whole contract is that it imports nothing.
+    // imports" — importing `@/lib/date-only` would pull a module graph into a
+    // module whose whole contract is that it imports nothing.
     //
     // Dropped BY NAME, and recorded on `SRC_RESTRICTION_EXEMPTIONS`, so every
     // other guard — raw SQL, money, the zoned-formatter rule, anything added

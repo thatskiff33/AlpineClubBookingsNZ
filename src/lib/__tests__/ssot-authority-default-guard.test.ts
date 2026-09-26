@@ -94,8 +94,9 @@ import {
  * files than the code does — most of those occurrences are PROSE, including the
  * docblock #3126 wrote to explain deleting a default and a
  * `finance-sync-cron-config.ts` header explaining a defect it does not commit —
- * and the code holds exactly one, the structural definition in
- * `src/config/operational.ts`. Both halves of that are asserted at the bottom of
+ * and the code holds none: the one structural definition,
+ * `src/config/operational.ts`, was deleted by #3567. Both halves of that are
+ * asserted at the bottom of
  * this file rather than written down as figures here, for the same
  * numbers-drift reason as above. A raw-text census would have reported this
  * issue's success as its failure, which is what #3123 measured four times over.
@@ -1003,8 +1004,8 @@ describe("the scanner counts what it claims to count", () => {
   });
 });
 
-describe("the census: nothing in the tree binds a club authority but the module that defines them", () => {
-  it("names exactly one file, and it is the structural one", () => {
+describe("the census: nothing in the tree binds a club authority", () => {
+  it("names no file: #3567 deleted the one structural definition", () => {
     const binding = CENSUS_ROOTS.flatMap((root) =>
       walk(path.join(ROOT, root)),
     ).filter((file) => bindsClubAuthority(readCode(file)));
@@ -1022,7 +1023,7 @@ describe("the census: nothing in the tree binds a club authority but the module 
         "`tz = A`), and an authority re-exported through another module and " +
         "imported from there. Each needs a real binder rather than a scanner, " +
         "and neither has a live instance.\n" + binding.join("\n"),
-    ).toEqual(["src/config/operational.ts"]);
+    ).toEqual([]);
   });
 
   it("would report more files' worth of prose if it read raw source", () => {
