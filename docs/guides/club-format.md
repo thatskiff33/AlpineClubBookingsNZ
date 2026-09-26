@@ -134,6 +134,16 @@ places) or the Kuwaiti dinar (three), a card would be charged a hundred times,
 or a tenth of, what the member was shown. So those currencies are not offered,
 saving one is refused, and a card payment in one is refused too.
 
+If one is **already recorded** — typed into the database by hand, or copied from
+`CURRENCY` by an install that started before #3567 — pages keep working: amounts
+are shown in the server's `CURRENCY`, or in `NZD` if that is unset or unusable too.
+But **no card is charged**, anywhere, until a Full Administrator sets a currency
+with two decimal places here. Every admin page shows a red banner saying so, the
+Stripe step of the setup checklist is blocked, and the line under the currency on
+this page reads **Not usable**. Nothing is lost meanwhile: bookings waiting for a
+saved-card charge stay pending, and a price increase from a booking change is kept
+as a recovery item that is charged once the currency is fixed.
+
 **Changing the currency clears the AI spend conversion rate.** If the club has
 set a rate for AI spend ("how many of our currency one New Zealand dollar
 buys"), saving a new **currency** here deletes that rate in the same step, and
@@ -228,7 +238,7 @@ is older than the currency.
 | Saving a currency says it "does not count in hundredths" | The currency has no decimal places (`JPY`) or three (`KWD`), and every amount here is kept in hundredths | Choose a currency with two decimal places. Supporting other currencies is not planned for now |
 | A card payment was charged in the old currency after a change | The member had already started paying before the change; the payment provider keeps the currency a payment started in | Nothing to fix on this page. Reconcile it in Stripe and Xero as a payment in the old currency |
 | A payment-recovery retry failed straight after a currency change | The retry repeated a request in a different currency, which the payment provider refuses for 24 hours | Nothing to fix unless it is urgent: after 24 hours the retry is made afresh in the new currency. To settle it sooner, finish it by hand from the payment-recovery screens |
-| "Not usable" appears under the currency, naming a currency such as JPY | A currency without two decimal places was recorded by hand or copied from `CURRENCY` before #3567; card payments cannot be taken in it, so the site falls back to the default | Set a currency with two decimal places on this page |
+| "Not usable" appears under the currency, naming a currency such as JPY, and every admin page says card payments are switched off | A currency without two decimal places was recorded by hand or copied from `CURRENCY` before #3567. Amounts are shown in the server's `CURRENCY` (or `NZD`), and no card is charged | Set a currency with two decimal places on this page; card payments resume at once |
 | Xero invoices appear in the wrong currency | The Xero organisation's base currency is not the club's currency. Invoices carry no currency of their own | Change the Xero organisation's base currency to match, or talk to the club's accountant first |
 | A card was charged in a currency the club did not expect | Card payments follow this page. Before #3567 they followed the server's `CURRENCY` | Check the currency here. Changing `CURRENCY` on the server no longer affects card payments |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |

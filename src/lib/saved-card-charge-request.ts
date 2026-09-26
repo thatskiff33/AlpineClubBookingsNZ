@@ -86,21 +86,23 @@ export function isDefiniteSavedCardChargeFailure(err: unknown): boolean {
 /**
  * Whether a throw from the CHARGE (POST) ends this attempt. A refusal this
  * product made before calling Stripe — a currency without two decimal places,
- * an amount under the minimum — is definite: nothing was sent (#3567 review;
- * before it, both left the row pending and alerting on every run). An
- * `idempotency_error` on a replay that carries no intent is NOT (see above).
+ * an amount under the minimum — is definite on a FRESH attempt: nothing was
+ * sent. On a replay neither it nor an `idempotency_error` is (see above).
  */
 export function definiteChargeFailure(
   err: unknown,
   attempt: Pick<SavedCardChargeAttempt, "kind">,
 ): boolean {
-  if (isLocalChargeRefusal(err)) return true;
-  if (
-    attempt.kind === "replay" &&
-    readStripeErrorFields(err).apiType === "idempotency_error"
-  ) {
-    return false;
+  // A replay re-sends a key whose first POST may have executed. Neither Stripe's
+  // idempotency_error nor a refusal made here before calling Stripe says whether
+  // that first POST charged, so on a replay both leave the row pending (#3567
+  // re-review): marking it FAILED would erase the only record of a possible
+  // charge and let the next attempt charge again.
+  if (attempt.kind === "replay") {
+    if (isLocalChargeRefusal(err)) return false;
+    if (readStripeErrorFields(err).apiType === "idempotency_error") return false;
   }
+  if (isLocalChargeRefusal(err)) return true;
   return isDefiniteSavedCardChargeFailure(err);
 }
 

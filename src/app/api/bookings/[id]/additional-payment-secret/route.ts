@@ -10,6 +10,7 @@ import { isAdditionalPayableBookingStatus } from "@/lib/additional-payment-chase
 import {
   intentCurrencyDiffers,
   reissueAdditionalIntentInClubCurrency,
+  staleIntentAction,
 } from "@/lib/additional-intent-currency";
 import { restateAdditionalAsk } from "@/lib/additional-payment-ask";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -87,7 +88,19 @@ export async function GET(
     }
 
     let pi = await getPaymentIntent(payment.additionalPaymentIntentId);
-    if (intentCurrencyDiffers(pi, format)) {
+    const action = intentCurrencyDiffers(pi, format) ? staleIntentAction(pi) : null;
+    // #3567 re-review: a paid or paying old-currency intent is never superseded
+    // (its cancel would find it captured and refund it); a cancelled one is gone.
+    if (action === "in_flight") {
+      return NextResponse.json(
+        { error: "This payment is being processed. Refresh the page in a minute to see it confirmed." },
+        { status: 409 },
+      );
+    }
+    if (action === "gone") {
+      return NextResponse.json({ error: "No pending additional payment" }, { status: 404 });
+    }
+    if (action === "reissue") {
       /*
         #3567: this ask was minted before the club changed its currency. Its
         secret would charge the OLD currency while the page shows the new one,

@@ -209,7 +209,7 @@ describe("#3567 review: no new reader of the environment's currency or locale", 
 
   it("is on the mandatory set, so no block can lift it by accident", () => {
     const mandatory = new Set(MANDATORY_SRC_RESTRICTIONS.map((r: { selector: string }) => r.selector));
-    expect(ENVIRONMENT_FORMAT_ARMS.length).toBe(4);
+    expect(ENVIRONMENT_FORMAT_ARMS.length).toBe(5);
     for (const selector of ENVIRONMENT_FORMAT_ARMS) expect(mandatory.has(selector), selector).toBe(true);
   });
 
@@ -220,6 +220,7 @@ describe("#3567 review: no new reader of the environment's currency or locale", 
         `export const x = process.env["${name}"];`,
         `const { ${name} } = process.env;\nexport const x = ${name};`,
         `const { "${name}": v } = process.env;\nexport const x = v;`,
+        `export const x = process.env[\`${name}\`];`,
       ]) {
         for (const file of ["src/lib/season-label.ts", "src/components/x.tsx", "scripts/x.ts"]) {
           expect(await envHits(code, file), `${file}: ${code}`).toBe(1);
@@ -232,5 +233,43 @@ describe("#3567 review: no new reader of the environment's currency or locale", 
     expect(await envHits("export const x = process.env.CURRENCY;", "src/lib/club-format-env.ts")).toBe(0);
     expect(await envHits("export const x = process.env.CURRENCY_ROUNDING;", "src/lib/season-label.ts")).toBe(0);
     expect(await envHits("export const x = process.env.LOCALE_DIR;", "src/lib/season-label.ts")).toBe(0);
+  });
+});
+
+/**
+ * The word-level backstop for what no selector can follow (#3567 re-review): an
+ * alias (`const env = process.env; env.CURRENCY`), a function handed the whole
+ * environment, a re-export. Any property access or string key naming one of the
+ * four variables, in CODE (comments stripped), anywhere in src/, scripts/ or
+ * prisma/ outside the seed reader and tests.
+ */
+export function findEnvironmentFormatReads(source: string): string[] {
+  const code = stripComments(source);
+  const names = "CURRENCY|LOCALE|NEXT_PUBLIC_CURRENCY|NEXT_PUBLIC_LOCALE";
+  const access = new RegExp(`\\.(?:${names})\\b|\\[\\s*["'\`](?:${names})["'\`]\\s*\\]|\\{[^}]*\\b(?:${names})\\b[^}]*\\}\\s*=`, "g");
+  return [...code.matchAll(access)].map((match) => match[0]);
+}
+
+describe("#3567 re-review: no reader of the environment's currency or locale, in any spelling", () => {
+  it("counts the spellings it looks for, and ignores comments and look-alikes", () => {
+    expect(findEnvironmentFormatReads("const env = process.env;\nexport const x = env.CURRENCY;")).toHaveLength(1);
+    expect(findEnvironmentFormatReads("export const x = e[`NEXT_PUBLIC_LOCALE`];")).toHaveLength(1);
+    expect(findEnvironmentFormatReads("const { LOCALE: l } = e;")).toHaveLength(1);
+    expect(findEnvironmentFormatReads("// env.CURRENCY\nexport const x = env.CURRENCY_CODE;")).toHaveLength(0);
+  });
+
+  it("finds none outside the seed reader", () => {
+    const offenders = ["src", "scripts", "prisma"]
+      .filter((dir) => existsSync(path.join(ROOT, dir)))
+      .flatMap((dir) => walk(path.join(ROOT, dir)))
+      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
+      .filter((file) => !/(^|\/)__tests__\/|\.test\.[cm]?[jt]sx?$/.test(file))
+      .filter((file) => file !== "src/lib/club-format-env.ts")
+      .filter((file) => findEnvironmentFormatReads(readFileSync(path.join(ROOT, file), "utf8")).length > 0)
+      .sort();
+    expect(
+      offenders,
+      "Only src/lib/club-format-env.ts may read CURRENCY / LOCALE (the first-boot seed), and nothing reads the NEXT_PUBLIC_ twins (#3567). Read the club's stored format instead.",
+    ).toEqual([]);
   });
 });

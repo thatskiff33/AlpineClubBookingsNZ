@@ -992,15 +992,30 @@ describe("chargeSavedCardAttempt", () => {
     it.each([
       ["a currency without two decimal places", new UnsupportedChargeCurrencyError("JPY")],
       ["an amount under the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
-    ])("DEFINITE (%s, refused before Stripe was called): the row is FAILED, so it is not left pending and re-alerting", async (_label, err) => {
-      const noAnswer = seedAttempt({ status: PaymentStatus.PENDING });
+    ])("DEFINITE on a FRESH attempt (%s, refused before Stripe was called): the row is FAILED", async (_label, err) => {
       const attempt = await begin();
+      expect(attempt.kind).toBe("fresh");
       mocks.chargePaymentMethod.mockRejectedValue(err);
 
       await expect(charge(attempt)).rejects.toBe(err);
 
-      expect(row(noAnswer.id).status).toBe(PaymentStatus.FAILED);
+      expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.FAILED);
       expect(definiteChargeFailure(err, attempt)).toBe(true);
+    });
+
+    it.each([
+      ["a currency without two decimal places", new UnsupportedChargeCurrencyError("JPY")],
+      ["an amount under the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
+    ])("AMBIGUOUS on a replay with no intent (%s): the row stays PENDING, the only record of a first POST that may have charged (#3567 re-review)", async (_label, err) => {
+      const noAnswer = seedAttempt({ status: PaymentStatus.PENDING });
+      const attempt = await begin();
+      expect(attempt).toMatchObject({ kind: "replay", attemptRowId: noAnswer.id, paymentIntentId: null });
+      mocks.chargePaymentMethod.mockRejectedValue(err);
+
+      await expect(charge(attempt)).rejects.toBe(err);
+
+      expect(row(noAnswer.id).status).toBe(PaymentStatus.PENDING);
+      expect(definiteChargeFailure(err, attempt)).toBe(false);
     });
 
     describe("on a RETRIEVE (a replay that names its intent) the partition is different: only resource_missing is definite", () => {

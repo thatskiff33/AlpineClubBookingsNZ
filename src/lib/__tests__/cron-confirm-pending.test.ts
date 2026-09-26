@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { resolveClubFormat } from "@/lib/club-format";
 import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -694,28 +695,63 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
-  it("charges nothing and reads no booking when the club's currency has no two decimal places, logging one error (#3567)", async () => {
-    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
-    mockPendingBookings([makePendingBooking("b1")]);
-    const logger = (await import("@/lib/logger")).default;
-    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined as never);
-    try {
-      const result = await confirmPendingBookings();
+  /*
+    #3567 re-review, D3 as the owner decided: a STORED currency without two
+    decimal places refuses CHARGES, and only charges. The format below is what the
+    real resolver returns for a stored JPY row: it displays the fallback (NZD) and
+    names the stored code. The run still reads every booking, still bumps and
+    still extends a request-origin hold; the saved-card booking is neither claimed
+    nor given an attempt row, and is alerted on the refusal cadence, not per run.
+  */
+  it("with a stored JPY club: refuses only the charge branch, and bumps and extensions still run (#3567)", async () => {
+    const stored = resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null);
+    expect(stored).toEqual({ currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "JPY" });
+    clubFormatMock.mockResolvedValue(stored);
+    const toCharge = makePendingBooking("b1");
+    const toBump = makePendingBooking("b2");
+    const toExtend = makePendingBooking("b3", { hasPaymentMethod: false, originBookingRequest: { id: "req_1" } });
+    mockPendingBookings([toCharge, toBump, toExtend]);
+    mockCheckCapacityForGuestRanges
+      .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] })
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
+      .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] });
+    mockBookingUpdate.mockResolvedValue({});
 
-      expect(result).toEqual({
-        confirmedBookingIds: [],
-        bumpedBookingIds: [],
-        cancelledBookingIds: [],
-        partialBumpedBookingIds: [],
-        failedBookingIds: [],
-      });
-      expect(error).toHaveBeenCalledTimes(1);
-      expect(mockBookingFindMany).not.toHaveBeenCalled();
-      expect(mockPrismaTransaction).not.toHaveBeenCalled();
-      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
-    } finally {
-      error.mockRestore();
-    }
+    const result = await confirmPendingBookings();
+
+    // The charge branch: nothing claimed, nothing charged, no attempt row.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "b1", status: "PENDING" }, data: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
+    expect(result.failedBookingIds).toEqual(["b1"]);
+    // The rest of the run: the bump and the request-origin extension still ran.
+    expect(result.bumpedBookingIds).toEqual(["b2"]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "b3", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      }),
+    );
+    // Alerted on the refusal cadence, anchored on when the charge fell due.
+    const due = new Date(Math.max(toCharge.nonMemberHoldUntil!.getTime(), toCharge.createdAt.getTime()));
+    const refusalAlerts = mockSendAdminPaymentFailureAlert.mock.calls.filter(([alert]) =>
+      /JPY does not count in hundredths/.test((alert as { errorMessage: string }).errorMessage),
+    );
+    expect(refusalAlerts).toHaveLength(shouldAlertOnSavedCardChargeRefusal(due, new Date()) ? 1 : 0);
+  });
+
+  it("refuses a charge under the Stripe minimum BEFORE claiming, writing no attempt row (#3567 re-review)", async () => {
+    mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 30 })]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+
+    const result = await confirmPendingBookings();
+
+    expect(result.failedBookingIds).toEqual(["b1"]);
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
   });
 
   it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {

@@ -245,9 +245,10 @@ export function normaliseClubLocale(
  * The canonical code of a currency the club can actually USE, or `null`: it
  * normalises AND counts in hundredths (#3567 review, D3). This is the rule the
  * resolver, the first-boot seed and the admin provenance all apply, so a stored
- * or seeded `JPY` is "Not usable" everywhere at once — it falls back exactly as
- * a hand-edited `dollars` does — and never reads as configured on one screen
- * while charges refuse it on another. `normaliseClubCurrencyCode` stays the
+ * or seeded `JPY` is "Not usable" everywhere at once: display falls back exactly
+ * as for a hand-edited `dollars` (the environment seed, then `NZD`), and the
+ * STORED code travels on the format as `unusableStoredCurrency`, so every charge
+ * is refused until it is fixed (#3567 re-review) — never made in the fallback. `normaliseClubCurrencyCode` stays the
  * SHAPE rule, so the save route can still say which of the two a value failed.
  */
 export function usableClubCurrencyCode(value: string | null | undefined): string | null {
@@ -271,6 +272,14 @@ export interface ClubFormat {
   currencyCode: string;
   /** BCP 47, canonical — `en-NZ`. */
   locale: string;
+  /**
+   * Set ONLY when a currency is STORED and cannot be used (a hand-edited or
+   * seeded `JPY`, a `dollars`): the raw stored code (#3567 review, D3). Display
+   * falls back — `currencyCode` is the environment seed, then `NZD`, so pages
+   * still render — but no card is charged: `stripeChargeCurrency` refuses while
+   * this is set, until an administrator saves a usable currency.
+   */
+  unusableStoredCurrency?: string;
 }
 
 /**
@@ -318,15 +327,22 @@ export function resolveClubFormat(
   persisted: ClubFormatCandidate | null | undefined,
   environment: ClubFormatCandidate | null | undefined,
 ): ClubFormat {
+  const stored = persisted?.currencyCode;
+  const storedUsable = usableClubCurrencyCode(stored);
   return {
     currencyCode:
-      usableClubCurrencyCode(persisted?.currencyCode) ??
+      storedUsable ??
       usableClubCurrencyCode(environment?.currencyCode) ??
       CLUB_CURRENCY_FALLBACK,
     locale:
       normaliseClubLocale(persisted?.locale) ??
       normaliseClubLocale(environment?.locale) ??
       CLUB_LOCALE_FALLBACK,
+    // Only a STORED value that is present and unusable refuses charges; a row
+    // that says nothing, and the environment seed, never do.
+    ...(typeof stored === "string" && stored.trim() !== "" && storedUsable === null
+      ? { unusableStoredCurrency: stored.trim().toUpperCase().slice(0, 16) }
+      : {}),
   };
 }
 

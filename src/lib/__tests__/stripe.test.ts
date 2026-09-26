@@ -175,6 +175,14 @@ describe("Stripe library", () => {
       },
     );
 
+    it("refuses to charge for a club whose STORED currency is JPY, though it displays NZD (#3567 re-review)", async () => {
+      const stored = { currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "JPY" };
+      await expect(createPaymentIntent({ format: stored, amountCents: 500000 })).rejects.toBeInstanceOf(
+        UnsupportedChargeCurrencyError,
+      );
+      expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+    });
+
     it("exposes the derivation it uses, so a caller can never pass a second answer", () => {
       expect(stripeChargeCurrency(CLUB_FORMAT_TEST)).toBe("nzd");
       expect(stripeChargeCurrency({ currencyCode: "CHF", locale: "de-CH" })).toBe("chf");

@@ -31,6 +31,7 @@ vi.mock("@/lib/booking-payment-cleanup", () => ({
 }));
 
 import {
+  staleIntentAction,
   intentCurrencyDiffers,
   reissueAdditionalIntentInClubCurrency,
   reissueRaisedAskIfCurrencyChanged,
@@ -180,6 +181,7 @@ describe("reissueRaisedAskIfCurrencyChanged", () => {
     mocks.getPaymentIntent.mockResolvedValue({
       id: "pi_live",
       currency: "nzd",
+      status: "requires_payment_method",
       customer: { id: "cus_obj" },
     });
 
@@ -199,4 +201,44 @@ describe("reissueRaisedAskIfCurrencyChanged", () => {
       }),
     );
   });
+});
+
+/*
+  #3567 re-review: an intent in another currency is superseded ONLY while the
+  member has not paid. Superseding a paid or paying intent queues it for
+  cancellation, whose processor finds it captured and refunds it — then the
+  member is asked to pay again.
+*/
+describe("staleIntentAction reads Stripe's status, never the ledger", () => {
+  it.each([
+    ["requires_payment_method", "reissue"],
+    ["requires_confirmation", "reissue"],
+    ["requires_action", "reissue"],
+    ["succeeded", "in_flight"],
+    ["processing", "in_flight"],
+    ["canceled", "gone"],
+    ["requires_capture", "gone"],
+  ] as const)("%s -> %s", (status, action) => {
+    expect(staleIntentAction({ status })).toBe(action);
+  });
+});
+
+describe("reissueRaisedAskIfCurrencyChanged never supersedes a paid, paying or cancelled intent", () => {
+  const params = {
+    format: CLUB_FORMAT_TEST_OTHER,
+    bookingId: "bk1",
+    paymentId: "p1",
+    staleIntentId: "pi_live",
+    ask: restateAdditionalAsk({ amountCents: 4500, carriedAskCents: 0 }),
+    reason: "edit_financial_review_charge",
+  };
+  it.each(["succeeded", "processing", "canceled"])(
+    "%s: returns null and mints nothing, so the caller's own paid/recovery path runs",
+    async (status) => {
+      mocks.getPaymentIntent.mockResolvedValue({ id: "pi_live", currency: "nzd", status, customer: "cus_1" });
+      await expect(reissueRaisedAskIfCurrencyChanged(params)).resolves.toBeNull();
+      expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+      expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    },
+  );
 });

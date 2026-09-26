@@ -46,6 +46,12 @@ export class BelowStripeMinimumError extends Error {
  * places (D3).
  */
 export function stripeChargeCurrency(format: ClubFormat): string {
+  // D3 as the owner decided: refused at PAYMENT time on the STORED value. The
+  // resolver keeps displaying a fallback so pages still render, and says which
+  // stored code it could not use; no card is charged until an admin fixes it.
+  if (format.unusableStoredCurrency) {
+    throw new UnsupportedChargeCurrencyError(format.unusableStoredCurrency);
+  }
   const code = canonicalCurrencyCode(format.currencyCode);
   if (!currencyHasTwoDecimalPlaces(code)) {
     throw new UnsupportedChargeCurrencyError(code);
@@ -77,6 +83,23 @@ export function refuseBelowStripeMinimum(amountCents: number, format: ClubFormat
  */
 export function isLocalChargeRefusal(err: unknown): boolean {
   return err instanceof UnsupportedChargeCurrencyError || err instanceof BelowStripeMinimumError;
+}
+
+/**
+ * Every refusal this product would make for a charge of `amountCents` before
+ * calling Stripe — the currency (D3) or the minimum (D7) — or `null`. The cron
+ * asks this BEFORE it claims a booking or mints an attempt row, so a charge that
+ * would be refused locally never writes a row at all (#3567 review).
+ */
+export function localChargeRefusal(format: ClubFormat, amountCents: number): Error | null {
+  try {
+    stripeChargeCurrency(format);
+    refuseBelowStripeMinimum(amountCents, format);
+    return null;
+  } catch (err) {
+    if (isLocalChargeRefusal(err)) return err as Error;
+    throw err;
+  }
 }
 
 /**

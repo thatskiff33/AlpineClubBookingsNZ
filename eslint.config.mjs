@@ -1068,6 +1068,10 @@ const ENVIRONMENT_FORMAT_RESTRICTIONS = [
   `MemberExpression[object.object.name="process"][object.property.name="env"][property.value=${ENVIRONMENT_FORMAT_ENV}]`,
   `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=${ENVIRONMENT_FORMAT_ENV}]`,
   `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  // A template-literal key, process.env[`CURRENCY`] (#3567 re-review). An alias
+  // (`const env = process.env; env.CURRENCY`) is past any selector; the
+  // word-level census in app-currency-import-census.test.ts closes that.
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.type="TemplateLiteral"]:has(TemplateElement[value.raw=${ENVIRONMENT_FORMAT_ENV}])`,
 ].map((selector) => ({ selector, message: ENVIRONMENT_FORMAT_MESSAGE }));
 
 /** The one file allowed to read the environment's currency and locale. */

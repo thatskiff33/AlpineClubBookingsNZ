@@ -166,7 +166,9 @@ function describeSource(
       `Something is recorded that this app cannot use — ` +
       `"${printableStoredValue(unusableStored)}" — so it is falling back to ` +
       `${inForce}. Restarting will not repair it. Set the club's ${noun} again ` +
-      `below.`
+      `below.` +
+      // #3567: an unusable stored CURRENCY also switches card payments off.
+      (noun === "currency" ? " Until then no card payment can be taken." : "")
     );
   }
   return SOURCE_EXPLANATION[source];

@@ -75,7 +75,7 @@ import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
 import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
+import { localChargeRefusal } from "@/lib/stripe-charge-currency";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
@@ -242,6 +242,10 @@ type HoldResolution =
       booking: PendingBooking;
     }
   | { type: "missing_payment_method"; booking: PendingBooking }
+  // #3567 re-review: the charge would be refused here before Stripe is called
+  // (the club's stored currency, the minimum), so NOTHING was claimed and no
+  // attempt row exists; every other branch of the run still ran.
+  | { type: "charge_refused"; booking: PendingBooking; refusal: Error }
   | {
       type: "split_child_payment_link";
       booking: PendingBooking;
@@ -477,7 +481,8 @@ function triggerWaitlistProcessing(booking: PendingBooking, format: ClubFormat) 
 async function resolveHoldWindowUnderLock(
   bookingId: string,
   now: Date,
-  clubZone: ClubTimeZone
+  clubZone: ClubTimeZone,
+  format: ClubFormat
 ): Promise<HoldResolution> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -882,6 +887,10 @@ async function resolveHoldWindowUnderLock(
       return { type: "missing_payment_method", booking };
     }
 
+    // Before the claim, so a refused charge writes no status, no attempt row.
+    const refusal = localChargeRefusal(format, booking.finalPriceCents);
+    if (refusal) return { type: "charge_refused", booking, refusal };
+
     const claimed = await tx.booking.updateMany({
       where: { id: booking.id, status: BookingStatus.PENDING },
       data: {
@@ -1173,14 +1182,6 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   const format = await clubFormatValues();
   const now = new Date();
 
-  // #3567: an unchargeable currency stops the run before any claim or attempt
-  // row, with ONE error per run (only reachable by hand-editing the stored row).
-  const chargeRefusal = chargeCurrencyRefusal(format);
-  if (chargeRefusal) {
-    logger.error({ job: "confirmPendingBookings" }, `Pending bookings were not charged: ${chargeRefusal.message}`);
-    return { confirmedBookingIds: [], bumpedBookingIds: [], cancelledBookingIds: [], partialBumpedBookingIds: [], failedBookingIds: [] };
-  }
-
   // ONE settings read per run, outside every transaction, so no lock waits on
   // it and two bookings in one tick share a club day (`payment-link-expiry.ts`).
   const clubZone = await readClubTimeZoneOutsideRequest();
@@ -1218,7 +1219,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       const resolution = await resolveHoldWindowUnderLock(
         candidate.id,
         now,
-        clubZone
+        clubZone,
+        format
       );
 
       if (resolution.type === "already_processed") {
@@ -1611,6 +1613,28 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         continue;
       }
 
+      if (resolution.type === "charge_refused") {
+        // Alerted on the refusal cadence, anchored on when the charge fell due,
+        // never every run; the booking stays PENDING until the cause is fixed.
+        const due = await savedCardChargeDueAtForBooking(resolution.booking, resolution.booking.nonMemberHoldUntil);
+        const alert = shouldAlertOnSavedCardChargeRefusal(due, now);
+        logger.error({ bookingId: resolution.booking.id, alert, job: "confirmPendingBookings" }, `Did not charge a saved card: ${resolution.refusal.message}`);
+        result.failedBookingIds.push(resolution.booking.id);
+        if (alert) {
+          sendAdminPaymentFailureAlert({
+            memberName: `${bookingOwner(resolution.booking).member.firstName} ${bookingOwner(resolution.booking).member.lastName}`,
+            checkIn: resolution.booking.checkIn,
+            checkOut: resolution.booking.checkOut,
+            amountCents: resolution.booking.finalPriceCents,
+            errorMessage: resolution.refusal.message,
+            paymentIntentId: resolution.booking.id,
+          }, format).catch((alertErr) =>
+            logger.error({ err: alertErr, bookingId: resolution.booking.id }, "Failed to send admin payment failure alert"),
+          );
+        }
+        continue;
+      }
+
       if (resolution.type === "missing_payment_method") {
         logger.error(
           { bookingId: resolution.booking.id, job: "confirmPendingBookings" },
@@ -1956,7 +1980,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
                 now
               ),
             });
-            if (failure.outcome === "terminal") {
+            if (failure.outcome === "local_refusal") {
+              // #3567 re-review: refused before Stripe was called; alert on the
+              // refusal cadence only, and never retire the card for it.
+              escalatedAsTerminal = !shouldAlertOnSavedCardChargeRefusal(
+                await savedCardChargeDueAt(claimForCharge),
+                now,
+              );
+            } else if (failure.outcome === "terminal") {
               await retireAndEscalateUnusableSavedCard({
                 format,
                 booking: claimForCharge.booking,

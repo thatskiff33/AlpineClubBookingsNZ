@@ -26,8 +26,13 @@
   dinar, can no longer be chosen, and a card payment in one is refused before
   anything is charged or recorded. Every amount is kept in hundredths, so a card
   would otherwise be charged a hundred times, or a tenth of, what the member was
-  shown. A currency such as the Hungarian forint, which some browsers wrote with
-  no decimals, is now always shown to the cent it is charged.
+  shown. If such a currency is already recorded (by hand, or copied from
+  `CURRENCY` before this release), pages keep showing amounts in the server's
+  `CURRENCY`, or NZD, but no card is charged until a Full Administrator sets a
+  two-decimal currency: every admin page shows a banner saying so, bookings
+  awaiting a saved-card charge stay pending, and price increases are kept to be
+  charged once it is fixed. A currency such as the Hungarian forint, which some
+  browsers wrote with no decimals, is now always shown to the cent it is charged.
 
   **Upgrade note.** Before this upgrade cards were charged in the server's
   `CURRENCY` — or in NZD when `CURRENCY` was unset or empty, which is the Docker

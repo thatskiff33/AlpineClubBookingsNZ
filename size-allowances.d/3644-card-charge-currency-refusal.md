@@ -25,9 +25,12 @@ reason: the entry refusal, the currency term on the existing stale-intent
   this route's own flow; each is one or two lines.
 
 file: src/lib/cron-confirm-pending.ts
-lines: 2005
-reason: the once-per-run refusal must come before the loop's first claim,
-  which is inside this function; lifting the loop out is its own refactor.
+lines: 2036
+reason: a charge the product would refuse locally (the stored currency, the
+  minimum) is decided inside the claim transaction, before the claim, so it
+  writes no attempt row, and handled as its own resolution beside the other
+  branches of this one loop, so hold expiries, bumps and extensions still run;
+  lifting the loop out is its own refactor.
 
 file: src/lib/group-settlement.ts
 lines: 1292
@@ -42,4 +45,4 @@ reason: charge operations are skipped in this module's own claim loop, which
 file: src/lib/setup-readiness.ts
 lines: 2188
 reason: the unusable-currency block belongs in the existing Stripe step; a
-  separate step module for four lines would split one check across files.
+  separate step module for five lines would split one check across files.

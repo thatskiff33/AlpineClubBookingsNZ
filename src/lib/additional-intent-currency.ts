@@ -31,6 +31,33 @@ export function intentCurrencyDiffers(
 }
 
 /**
+ * What may be done with an intent in another currency (#3567 re-review), read
+ * off Stripe's status — never assumed from the ledger, which lags the webhook:
+ *
+ * - `reissue`: the member has not paid (`requires_payment_method`,
+ *   `requires_confirmation`, `requires_action`). Superseding it is safe.
+ * - `in_flight`: `succeeded` or `processing` — the member HAS paid, or is paying,
+ *   and the webhook has not landed yet (a 3DS return, a refresh). Re-issuing
+ *   would queue the paid intent for cancellation, whose processor finds it
+ *   captured and REFUNDS it, and then ask the member to pay again.
+ * - `gone`: `canceled` (or `requires_capture`, which this product never asks
+ *   for) — nothing to hand back and nothing to re-issue.
+ */
+export type StaleIntentAction = "reissue" | "in_flight" | "gone";
+
+const REISSUABLE_STATUSES: ReadonlySet<string> = new Set([
+  "requires_payment_method",
+  "requires_confirmation",
+  "requires_action",
+]);
+
+export function staleIntentAction(intent: Pick<Stripe.PaymentIntent, "status">): StaleIntentAction {
+  if (REISSUABLE_STATUSES.has(intent.status)) return "reissue";
+  if (intent.status === "succeeded" || intent.status === "processing") return "in_flight";
+  return "gone";
+}
+
+/**
  * Re-issue an outstanding ADDITIONAL ask on a new intent in the club's current
  * currency, and supersede the old one — the same three steps, in the same order,
  * as `createModificationAdditionalPaymentIntent`:
@@ -117,6 +144,10 @@ export async function reissueRaisedAskIfCurrencyChanged(params: {
 }): Promise<string | null> {
   const live = await getPaymentIntent(params.staleIntentId);
   if (!intentCurrencyDiffers(live, params.format)) return null;
+  // Paid, being paid, or gone: never superseded. `null` hands the raise back to
+  // the caller's own path, where a captured or cancelled intent refuses the
+  // amount update and the durable recovery takes over (#3567 re-review).
+  if (staleIntentAction(live) !== "reissue") return null;
   const customerId = live.customer
     ? typeof live.customer === "string"
       ? live.customer
