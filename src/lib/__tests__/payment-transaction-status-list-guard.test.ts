@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
@@ -20,10 +21,10 @@ function productionSourceFiles(directory = SOURCE_ROOT): SourceFile[] {
 }
 
 /**
- * The receivers cover Prisma's inline `status.in`, in-memory sets, and named
- * arrays later spread into either. #3632 owns the four existing aggregate
- * sets below and removes their exceptions as it converges those readers.
- * The canonical transaction definition is exempt.
+ * The receivers cover Prisma's inline `status.in`, in-memory sets, named
+ * arrays later spread into either, and an in-memory status receiver. The
+ * receiver matters: `Payment` and `PaymentTransaction` retain different homes
+ * even while their captured values agree. The two canonical leaves are exempt.
  */
 function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[]): string[] {
   const namedArray = /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*\[([\s\S]{0,500}?)\]/g;
@@ -31,6 +32,7 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
     /status\s*:\s*\{\s*in\s*:\s*\[([\s\S]{0,500}?)\]\s*\}/g,
     /new\s+Set(?:<\s*(?:PaymentStatus|string)\s*>)?\s*\(\s*\[([\s\S]{0,500}?)\]\s*\)/g,
     namedArray,
+    /\b\w+(?:\.\w+)*\.status\s*===\s*(?:PaymentStatus\.)?(?:["']?SUCCEEDED["']?)\s*\|\|\s*\w+(?:\.\w+)*\.status\s*===\s*(?:PaymentStatus\.)?(?:["']?PARTIALLY_REFUNDED["']?)\s*\|\|\s*\w+(?:\.\w+)*\.status\s*===\s*(?:PaymentStatus\.)?(?:["']?REFUNDED["']?)/g,
   ];
   return files.flatMap(({ file, source }) => {
     if (file.replaceAll("\\", "/") === "src/lib/payment-transaction-status.ts") return [];
@@ -39,7 +41,7 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
     const code = stripComments(source);
     for (const receiver of copiedListReceivers) {
       for (const match of code.matchAll(receiver)) {
-        const values = receiver === namedArray ? match[2] : match[1];
+        const values = receiver === namedArray ? match[2] : match[1] ?? match[0];
         if (receiver === namedArray) {
           // Full status vocabularies contain other members. This exact legacy
           // Xero eligibility list asks a different question and is not a
@@ -51,17 +53,6 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
             match[1] === "XERO_INVOICE_EXPECTED_PAYMENT_STATUSES";
           if (knownXeroEligibility) continue;
         }
-        const declaration = code.slice(Math.max(0, match.index - 64), match.index);
-        const knownAggregateSetName = {
-          "src/lib/finance-booking-metrics.ts": "FINANCE_CAPTURED_PAYMENT_STATUSES",
-          "src/lib/ib-hold-clearing-audit.ts": "REALIZED_PAYMENT_STATUSES",
-          "src/lib/xero-booking-invoices.ts": "STRIPE_CAPTURED_PAYMENT_STATUSES",
-          "src/lib/xero-booking-edit-conditions.ts": "UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES",
-        }[file.replaceAll("\\", "/")];
-        if (
-          knownAggregateSetName &&
-          new RegExp(`const\\s+${knownAggregateSetName}\\s*=\\s*$`).test(declaration)
-        ) continue;
         if (CAPTURED_STATUS_NAMES.every((status) => new RegExp(`\\b(?:PaymentStatus\\.)?${status}\\b`).test(values))) {
           matches.push(file);
         }
@@ -107,6 +98,11 @@ describe("INV-SSOT: captured PaymentTransaction status-list guard (#3606)", () =
           source:
             "const CAPTURED = [\"SUCCEEDED\", \"PARTIALLY_REFUNDED\", \"REFUNDED\"] as const; const where = { status: { in: [...CAPTURED] } };",
         },
+        {
+          file: "src/lib/mutated-payment-transaction-inline.ts",
+          source:
+            "if (paymentTransaction.status === PaymentStatus.SUCCEEDED || paymentTransaction.status === PaymentStatus.PARTIALLY_REFUNDED || paymentTransaction.status === PaymentStatus.REFUNDED) {}",
+        },
       ]),
     ).toEqual([
       "src/lib/mutated-payment-transaction-reader.ts",
@@ -114,6 +110,21 @@ describe("INV-SSOT: captured PaymentTransaction status-list guard (#3606)", () =
       "src/lib/mutated-payment-transaction-string-set.ts",
       "src/lib/mutated-payment-transaction-array.ts",
       "src/lib/mutated-payment-transaction-string-array.ts",
+      "src/lib/mutated-payment-transaction-inline.ts",
     ]);
+  });
+
+  it("rejects an inline captured-status copy written to disk", () => {
+    const directory = mkdtempSync(join(tmpdir(), "captured-status-guard-"));
+    try {
+      writeFileSync(
+        join(directory, "mutated-reader.ts"),
+        "if (transaction.status === 'SUCCEEDED' || transaction.status === 'PARTIALLY_REFUNDED' || transaction.status === 'REFUNDED') {}",
+      );
+
+      expect(handwrittenCapturedTransactionStatusLists(productionSourceFiles(directory))).toHaveLength(1);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

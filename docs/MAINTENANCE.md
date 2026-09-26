@@ -1722,6 +1722,11 @@ The late payment retired the pending note and credited the member, so a credit
 note now would credit an invoice the member paid: take no action on those rows
 (a part payment is kept, not released — see below).
 
+Its applied-credit strand section reports an already-realized loss only when a
+captured `PaymentTransaction` proves cash arrived. The aggregate payment status
+is a mutable mirror and is not cash evidence: an inbound Xero credit-note repair
+can change it on an Internet-Banking payment that was never paid.
+
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing --json
