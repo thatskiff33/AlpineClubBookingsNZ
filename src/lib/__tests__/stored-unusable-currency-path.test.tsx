@@ -67,6 +67,25 @@ describe("a stored JPY row, end to end", () => {
     expect(chargeCurrencyRefusal(format)?.currencyCode).toBe("KWD");
   });
 
+  it("treats a row with a BLANK currency as unusable too: charges refused, banner up (#3567 final check)", async () => {
+    findUnique.mockResolvedValue({ currencyCode: "  ", locale: "en-NZ", updatedByMemberId: null, updatedAt: new Date() });
+
+    const format = await getClubFormat();
+    expect(format).toEqual({ currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "(blank)" });
+    expect(() => stripeChargeCurrency(format)).toThrow("The club has no currency recorded");
+    render(<CardPaymentsRefusedBanner format={format} />);
+    expect(screen.getByTestId("card-payments-refused-banner")).toHaveTextContent(
+      "The club has no currency recorded, so no card can be charged.",
+    );
+  });
+
+  it("refuses nothing when there is no row at all", async () => {
+    findUnique.mockResolvedValue(null);
+    const format = await getClubFormat();
+    expect(format).toEqual({ currencyCode: "NZD", locale: "en-NZ" });
+    expect(chargeCurrencyRefusal(format)).toBeNull();
+  });
+
   it("shows no banner and refuses nothing for a usable stored currency", async () => {
     findUnique.mockResolvedValue({ currencyCode: "NZD", locale: "en-NZ", updatedByMemberId: null, updatedAt: new Date() });
 

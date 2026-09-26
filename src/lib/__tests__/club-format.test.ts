@@ -195,6 +195,15 @@ describe("resolveClubFormat", () => {
       locale: "ja-JP",
       unusableStoredCurrency: "JPY",
     });
+    // A row whose currency is BLANK or missing refuses charges too (#3567 final
+    // check): the admin panel calls it "Not usable", so charges must agree.
+    for (const blank of ["", "   ", null, undefined]) {
+      expect(resolveClubFormat({ currencyCode: blank, locale: "en-NZ" }, environment)).toEqual({
+        currencyCode: "AUD",
+        locale: "en-NZ",
+        unusableStoredCurrency: "(blank)",
+      });
+    }
     // The environment seed alone never refuses charges: no row, nothing stored.
     expect(resolveClubFormat(null, { currencyCode: "JPY", locale: "ja-JP" })).toEqual({
       currencyCode: CLUB_CURRENCY_FALLBACK,

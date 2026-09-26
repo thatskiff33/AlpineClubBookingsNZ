@@ -49,7 +49,7 @@ import {
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
-import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
+import { intentCurrencyDiffers, PAYMENT_BEING_PROCESSED_MESSAGE, staleIntentAction } from "@/lib/additional-intent-currency";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -638,6 +638,9 @@ export async function POST(request: NextRequest) {
           paymentId: booking.payment.id,
           newFinalPriceCents: effectivePriceCents,
         });
+      } else if (intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
+        // #3567: an old-currency intent still processing is never superseded (no double charge).
+        return NextResponse.json({ error: PAYMENT_BEING_PROCESSED_MESSAGE, creditElection }, { status: 409 });
       } else if (
         existingIntent.status !== "canceled" &&
         // #3567: an intent minted in another currency is superseded like a stale amount.

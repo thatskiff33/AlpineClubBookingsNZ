@@ -89,7 +89,16 @@ export function currencyHasTwoDecimalPlaces(currencyCode: string): boolean {
  * The refusal an operator or a log reader sees, one spelling for the save route
  * and the charge guard.
  */
+/** How a stored row with a BLANK currency is named on the format (#3567). */
+export const NO_STORED_CURRENCY = "(blank)";
+
 export function twoDecimalPlacesRequiredMessage(currencyCode: string): string {
+  if (currencyCode === NO_STORED_CURRENCY) {
+    return (
+      "The club has no currency recorded, so a card cannot be charged. " +
+      "Choose a currency with two decimal places, such as NZD, AUD or CHF."
+    );
+  }
   return (
     `${currencyCode} does not count in hundredths, and this site records every ` +
     "amount in hundredths (cents), so a card would be charged the wrong amount. " +

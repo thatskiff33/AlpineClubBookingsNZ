@@ -1627,7 +1627,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             checkOut: resolution.booking.checkOut,
             amountCents: resolution.booking.finalPriceCents,
             errorMessage: resolution.refusal.message,
-            paymentIntentId: resolution.booking.id,
+            paymentIntentId: resolution.booking.payment?.stripePaymentIntentId ?? "N/A",
           }, format).catch((alertErr) =>
             logger.error({ err: alertErr, bookingId: resolution.booking.id }, "Failed to send admin payment failure alert"),
           );

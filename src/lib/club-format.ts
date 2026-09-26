@@ -59,7 +59,7 @@
  * `server-only`, for the reason recorded there.
  */
 
-import { currencyHasTwoDecimalPlaces } from "@/lib/club-currency-minor-unit";
+import { currencyHasTwoDecimalPlaces, NO_STORED_CURRENCY } from "@/lib/club-currency-minor-unit";
 
 /**
  * The generic New Zealand defaults — used ONLY where no prior effective
@@ -338,10 +338,11 @@ export function resolveClubFormat(
       normaliseClubLocale(persisted?.locale) ??
       normaliseClubLocale(environment?.locale) ??
       CLUB_LOCALE_FALLBACK,
-    // Only a STORED value that is present and unusable refuses charges; a row
-    // that says nothing, and the environment seed, never do.
-    ...(typeof stored === "string" && stored.trim() !== "" && storedUsable === null
-      ? { unusableStoredCurrency: stored.trim().toUpperCase().slice(0, 16) }
+    // A ROW whose currency is unusable refuses charges — blank included, since
+    // the admin panel reports that as "Not usable" too (#3567 final check). No
+    // row (`null`/`undefined`) and the environment seed never do.
+    ...(persisted != null && storedUsable === null
+      ? { unusableStoredCurrency: (stored ?? "").trim().toUpperCase().slice(0, 16) || NO_STORED_CURRENCY }
       : {}),
   };
 }

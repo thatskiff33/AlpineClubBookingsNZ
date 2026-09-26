@@ -470,6 +470,39 @@ describe("payment intent routes", () => {
     );
   });
 
+  it("answers 409 for an old-currency intent still processing, and neither supersedes it nor mints (#3567 final check)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 12500,
+      member: { id: "member-1", email: "member@example.com", firstName: "Test", lastName: "Member" },
+      payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: "PENDING" },
+    });
+    // A bank debit in AUD, submitted before the club moved to NZD, not yet settled.
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      client_secret: "cs_aud", currency: "aud",
+      status: "processing",
+      amount: 12500,
+    });
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("This payment is being processed. Refresh the page in a minute to see it confirmed.");
+    expect(JSON.stringify(data)).not.toContain("cs_aud");
+    expect(mocks.queueSupersededPrimaryIntentCancellations).not.toHaveBeenCalled();
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("refuses a club currency without two decimal places with a 409 before reading the booking (#3567)", async () => {
     clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
 

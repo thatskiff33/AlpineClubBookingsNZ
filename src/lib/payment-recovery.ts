@@ -2930,7 +2930,9 @@ const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 // the whole fleet, not once per process.
 const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
 
-async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
+// `waitingCharges` (#3567): charges left unclaimed while card payments are off are
+// not a stalled cron, so never raise this alert; the admin banner says so instead.
+async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat, waitingCharges: { type?: { not: PaymentRecoveryOperationType } }) {
   const now = new Date();
   const staleThreshold = new Date(
     now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
@@ -2939,6 +2941,7 @@ async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
     where: {
       status: PaymentRecoveryOperationStatus.PENDING,
       createdAt: { lt: staleThreshold },
+      ...waitingCharges,
     },
     orderBy: { createdAt: "asc" },
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
@@ -3064,8 +3067,12 @@ export async function processPaymentRecoveryOperations(options?: {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #3567: while the stored currency cannot be charged in, card CHARGES wait,
+  // excluded IN THE QUERY so they never fill the batch and starve refunds.
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  const waitingCharges = chargeRefusal ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {};
   await resetStaleProcessingOperations(format);
-  await alertStalePaymentRecoveryQueueIfNeeded(format);
+  await alertStalePaymentRecoveryQueueIfNeeded(format, waitingCharges);
 
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
@@ -3073,6 +3080,7 @@ export async function processPaymentRecoveryOperations(options?: {
       status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: new Date() },
+      ...waitingCharges,
     },
     orderBy: { createdAt: "asc" },
     take: limit,
@@ -3087,15 +3095,8 @@ export async function processPaymentRecoveryOperations(options?: {
     skipped: 0,
   };
 
-  // #3567: a card CHARGE is left unclaimed when the club's currency cannot be
-  // charged in; refunds and cancellations still run.
-  const chargeRefusal = chargeCurrencyRefusal(format);
+  if (chargeRefusal) logger.error(`Payment recovery is leaving card charges unclaimed: ${chargeRefusal.message}`);
   for (const queuedOperation of queuedOperations) {
-    if (chargeRefusal && queuedOperation.type === PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
-      logger.error({ operationId: queuedOperation.id }, `Payment recovery left a card charge unclaimed: ${chargeRefusal.message}`);
-      result.skipped += 1;
-      continue;
-    }
     const operation = await claimPaymentRecoveryOperation(queuedOperation.id);
     if (!operation) {
       result.skipped += 1;

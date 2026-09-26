@@ -1031,6 +1031,35 @@ describe("createPaymentIntentForPaymentLink", () => {
     );
   });
 
+  it("answers 409 for an old-currency intent still processing, and neither supersedes it nor mints (#3567 final check)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_aud", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // A bank debit in AUD, submitted before the club moved to NZD, not yet settled.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "processing",
+      client_secret: "secret_aud", currency: "aud",
+      amount: 12000,
+      payment_method: null,
+    } as never);
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      name: "PaymentLinkError",
+      status: 409,
+      message: "This payment is being processed. Refresh the page in a minute to see it confirmed.",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("refuses a club currency without two decimal places with a 409 before resolving the link (#3567)", async () => {
     clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { ClubFormat } from "@/lib/club-format";
+import { NO_STORED_CURRENCY } from "@/lib/club-currency-minor-unit";
 
 /**
  * The admin-wide warning while card payments are REFUSED (#3567 re-review, D3
@@ -16,6 +17,10 @@ import type { ClubFormat } from "@/lib/club-format";
  */
 export function CardPaymentsRefusedBanner({ format }: { format: ClubFormat }) {
   if (!format.unusableStoredCurrency) return null;
+  const why =
+    format.unusableStoredCurrency === NO_STORED_CURRENCY
+      ? "The club has no currency recorded, so no card can be charged."
+      : `The club's recorded currency, "${format.unusableStoredCurrency}", cannot be charged, because it does not have two decimal places.`;
   return (
     <div
       role="alert"
@@ -24,7 +29,7 @@ export function CardPaymentsRefusedBanner({ format }: { format: ClubFormat }) {
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="font-medium">
-          {`Card payments are switched off. The club's recorded currency, "${format.unusableStoredCurrency}", cannot be charged, because it does not have two decimal places. Members see amounts in ${format.currencyCode} until it is fixed, but no card can be charged. A Full Administrator must set the club's currency again.`}
+          {`Card payments are switched off. ${why} Members see amounts in ${format.currencyCode} until it is fixed, but no card can be charged. A Full Administrator must set the club's currency again.`}
         </p>
         <Link
           href="/admin/club-format"

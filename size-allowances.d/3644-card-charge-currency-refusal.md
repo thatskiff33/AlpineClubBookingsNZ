@@ -19,10 +19,11 @@ reason: the refusal has to sit at this route's own entry point, before its
   claim transaction; a two-line guard does not justify splitting the route.
 
 file: src/app/api/payments/create-payment-intent/route.ts
-lines: 831
+lines: 834
 reason: the entry refusal, the currency term on the existing stale-intent
-  branch and the member-facing mapping in the existing catch all belong to
-  this route's own flow; each is one or two lines.
+  branch, the 409 for an old-currency intent still processing and the
+  member-facing mapping in the existing catch all belong to this route's own
+  flow; each is one to three lines.
 
 file: src/lib/cron-confirm-pending.ts
 lines: 2036
@@ -38,9 +39,10 @@ reason: the refusal must precede this function's own CONFIRMED commit, and
   the reuse condition gains one term; both are inside one existing function.
 
 file: src/lib/payment-recovery.ts
-lines: 3191
-reason: charge operations are skipped in this module's own claim loop, which
-  is the only place that knows an operation's type before it is claimed.
+lines: 3192
+reason: charge operations are kept out of this module's own queue query (and
+  its stale-queue alert) while card payments are off, so they cannot fill the
+  batch and starve refunds; the filter belongs beside the query it narrows.
 
 file: src/lib/setup-readiness.ts
 lines: 2188

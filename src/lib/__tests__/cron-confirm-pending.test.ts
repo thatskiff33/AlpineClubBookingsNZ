@@ -741,6 +741,26 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(refusalAlerts).toHaveLength(shouldAlertOnSavedCardChargeRefusal(due, new Date()) ? 1 : 0);
   });
 
+  it("labels the refusal alert with the booking's PaymentIntent, never its booking id (#3567 final check)", async () => {
+    clubFormatMock.mockResolvedValue(resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null));
+    // Fell due a minute ago: the first run of the first window, so it alerts.
+    const withIntent = makePendingBooking("b1", { holdUntil: new Date(Date.now() - 60_000).toISOString() });
+    const withIntentPayment = withIntent.payment as unknown as Record<string, unknown>;
+    withIntentPayment.stripePaymentIntentId = "pi_on_file";
+    const withoutIntent = makePendingBooking("b2", { holdUntil: new Date(Date.now() - 60_000).toISOString() });
+    (withoutIntent.payment as unknown as Record<string, unknown>).stripePaymentIntentId = null;
+    mockPendingBookings([withIntent, withoutIntent]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+
+    await confirmPendingBookings();
+
+    const labels = mockSendAdminPaymentFailureAlert.mock.calls
+      .map(([alert]) => alert as { errorMessage: string; paymentIntentId: string })
+      .filter((alert) => /JPY does not count in hundredths/.test(alert.errorMessage))
+      .map((alert) => alert.paymentIntentId);
+    expect(labels).toEqual(["pi_on_file", "N/A"]);
+  });
+
   it("refuses a charge under the Stripe minimum BEFORE claiming, writing no attempt row (#3567 re-review)", async () => {
     mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 30 })]);
     mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
