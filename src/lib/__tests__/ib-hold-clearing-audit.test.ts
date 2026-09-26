@@ -38,6 +38,7 @@ function makeRow(overrides: Partial<IbHoldClearingRow> = {}): IbHoldClearingRow 
     finalPriceCents: 15000,
     xeroAllocatedAppliedCreditCents: 0,
     clearingNotes: [makeNote()],
+    paidInCashAfterRelease: false,
     ...overrides,
   };
 }
@@ -122,6 +123,7 @@ describe("deriveIbHoldClearingFinding (INV-PAY-017 audit sizing)", () => {
         noInvoiceReleasedHolds: 0,
         underCleared: [finding!],
         totalDeltaCents: 15000,
+        paidInCashAfterRelease: [],
       },
       CLUB_FORMAT_TEST,
     );
@@ -166,8 +168,8 @@ describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
           { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
           // The inbound reconcile's copy of the first allocation.
           { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
-          // Another note's allocation does not count.
-          { localModel: "Booking", metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
+          // A payment-anchored allocation is the refund note's, not this one's.
+          { localModel: "Payment", metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
         ],
         xeroRefundCreditNoteId: null,
       }),
@@ -293,6 +295,29 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroRefundCreditNoteId: "cn_old",
         booking: { finalPriceCents: 15000, status: "CANCELLED" },
       },
+      // Released after #3535; its operation A FAILED and a retry B (queue type
+      // column null, written before the builder stamped it) created and
+      // allocated the note: cleared, not flagged.
+      {
+        id: "pay_retried",
+        bookingId: "booking_retried",
+        changeFeeCents: 0,
+        xeroInvoiceId: "inv_retried",
+        xeroInvoiceNumber: "INV-RETRIED",
+        xeroRefundCreditNoteId: null,
+        booking: { finalPriceCents: 15000, status: "CANCELLED" },
+      },
+      // Released after #3535, then the member's transfer landed: the pending
+      // note was retired and the member credited. Not an under-clear.
+      {
+        id: "pay_cash",
+        bookingId: "booking_cash",
+        changeFeeCents: 0,
+        xeroInvoiceId: "inv_cash",
+        xeroInvoiceNumber: "INV-CASH",
+        xeroRefundCreditNoteId: null,
+        booking: { finalPriceCents: 15000, status: "CANCELLED" },
+      },
       // No invoice: skipped.
       {
         id: "pay_none",
@@ -327,12 +352,50 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         xeroObjectId: "cn_old",
         requestPayload: { refundAmountCents: 15000 },
       },
+      // Newest first, as the query orders them: retry B, then the FAILED A.
+      {
+        localModel: "Booking",
+        localId: "booking_retried",
+        status: "SUCCEEDED",
+        xeroObjectId: "cn_retried",
+        requestPayload: { invoiceId: "inv_retried", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+      },
+      {
+        localModel: "Booking",
+        localId: "booking_retried",
+        status: "FAILED",
+        xeroObjectId: null,
+        requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", refundAmountCents: 15000 },
+      },
+      {
+        localModel: "Booking",
+        localId: "booking_cash",
+        status: "CANCELLED",
+        xeroObjectId: null,
+        requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", refundAmountCents: 15000 },
+      },
     ];
     const links = [
       {
         localModel: "Booking",
         localId: "booking_new",
+        xeroObjectType: "ALLOCATION",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 10000 },
+      },
+      {
+        localModel: "Booking",
+        localId: "booking_retried",
+        xeroObjectType: "ALLOCATION",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        metadata: { creditNoteId: "cn_retried", invoiceId: "inv_retried", amountCents: 15000 },
+      },
+      {
+        localModel: "Payment",
+        localId: "pay_cash",
+        xeroObjectType: "PAYMENT",
+        role: "INVOICE_PAYMENT",
+        metadata: { invoiceId: "inv_cash", amount: 150, status: "AUTHORISED" },
       },
     ];
     const operationQueries: unknown[] = [];
@@ -362,13 +425,19 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
 
     const result = await auditIbHoldClearingUnderclears({ db: fakeDb as never });
 
-    expect(result.invoiceBearingHolds).toBe(3);
+    expect(result.invoiceBearingHolds).toBe(5);
     expect(result.noInvoiceReleasedHolds).toBe(1);
     expect(result.underCleared.map((finding) => [finding.bookingId, finding.deltaCents])).toEqual([
       ["booking_failed", 15000],
       ["booking_old", 15000],
     ]);
     expect(result.totalDeltaCents).toBe(30000);
+    expect(result.paidInCashAfterRelease.map((hold) => hold.bookingId)).toEqual(["booking_cash"]);
+    const report = formatIbHoldClearingAuditReport(result, CLUB_FORMAT_TEST);
+    expect(report).toContain("Paid in cash after release, note retired - NO credit note is owed");
+    expect(report).toContain(
+      "booking booking_cash (payment pay_cash), invoice INV-CASH: clearing note (#3535) retired before it was sent ($150.00, CANCELLED)",
+    );
     // Both shapes are asked for: the booking's clearing note and the payment's
     // refund note.
     expect(operationQueries[0]).toMatchObject({
@@ -376,7 +445,7 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         entityType: "CREDIT_NOTE",
         operationType: "CREATE",
         OR: [
-          { localModel: "Booking", localId: "booking_new", queueType: "MODIFICATION_CREDIT_NOTE" },
+          { localModel: "Booking", localId: "booking_new" },
           { localModel: "Payment", localId: "pay_new", queueType: "REFUND_CREDIT_NOTE" },
         ],
       },
@@ -627,6 +696,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
       noInvoiceReleasedHolds: 0,
       underCleared: [],
       totalDeltaCents: 0,
+      paidInCashAfterRelease: [],
     }, CLUB_FORMAT_TEST);
 
     expect(report).toContain("Total open delta:              $0.00");
@@ -664,6 +734,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
       noInvoiceReleasedHolds: 0,
       underCleared: [finding],
       totalDeltaCents: 122956,
+      paidInCashAfterRelease: [],
     }, CLUB_FORMAT_TEST);
 
     // Thousands grouping, as `formatCents` renders it everywhere else: catches
@@ -717,6 +788,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
         },
       ],
       totalDeltaCents: 15000,
+      paidInCashAfterRelease: [],
     }, CLUB_FORMAT_TEST);
 
     expect(report).toContain(

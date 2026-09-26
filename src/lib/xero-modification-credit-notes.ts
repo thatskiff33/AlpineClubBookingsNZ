@@ -39,6 +39,7 @@ import {
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
+import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   findBookingSupplementaryInvoiceIds,
   planClearingAllocations,
@@ -247,6 +248,10 @@ export async function createXeroCreditNoteForModification(params: {
       idempotencyKey: creditNoteIdempotencyKey,
       correlationKey: creditNoteIdempotencyKey,
       requestPayload,
+      // #3535: a retry of a FAILED clearing note opens its row here; stamping
+      // the column is what lets the hold-clearing audit and the late-cash
+      // alert (which select clearing rows by it) see the retry and its note.
+      ...(bookingModificationId ? {} : { queueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE }),
       createdByMemberId: createdByMemberId ?? null,
     });
     operationId = operation.id;

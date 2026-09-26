@@ -23,6 +23,14 @@
  *   inbound reconcile records as allocation links on the payment. Otherwise it
  *   is reported as issued with the invoice NOT cleared.
  *
+ * A hold whose invoice later received the member's cash is NOT an under-clear:
+ * the late payment retired the pending note and credited the member
+ * (`invoice-paid-effects.ts`), so a credit note now would credit an invoice the
+ * member paid. Such holds are listed apart, as paid in cash after release,
+ * and kept out of the delta. The evidence is the inbound reconcile's
+ * INVOICE_PAYMENT link on the payment (any payment Xero recorded against the
+ * invoice, not deleted or voided).
+ *
  * Split out of `ib-hold-clearing-audit.ts` (#3535), which keeps the #1620 and
  * card applied-credit enumerations the same script prints after this one.
  *
@@ -36,10 +44,7 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
-import {
-  XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-  XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-} from "@/lib/xero-operation-outbox-payload";
+import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 
 /**
  * A note raised against a released hold's invoice: the allocated clearing note
@@ -68,6 +73,16 @@ export interface IbHoldClearingRow {
   /** Applied credit already allocated to the invoice as a Xero credit note —
    * the precise allocation ledger the release reads (INV-PAY-017), positive. */
   xeroAllocatedAppliedCreditCents: number;
+  clearingNotes: IbHoldClearingNote[];
+  /** Xero recorded a payment against the invoice after the release. */
+  paidInCashAfterRelease: boolean;
+}
+
+/** A hold the member paid in cash after its release: no credit note is owed. */
+export interface CashPaidReleasedHold {
+  bookingId: string;
+  paymentId: string;
+  invoiceRef: string;
   clearingNotes: IbHoldClearingNote[];
 }
 
@@ -101,6 +116,8 @@ export interface IbHoldClearingAuditResult {
   noInvoiceReleasedHolds: number;
   underCleared: UnderClearedIbHoldFinding[];
   totalDeltaCents: number;
+  /** Paid in cash after release; the note was retired. Not under-clears. */
+  paidInCashAfterRelease: CashPaidReleasedHold[];
 }
 
 /**
@@ -111,7 +128,8 @@ export function deriveIbHoldClearingFinding(
   row: IbHoldClearingRow,
 ): UnderClearedIbHoldFinding | null {
   // No issued invoice: nothing was (or should be) cleared. Surfaced separately.
-  if (!row.xeroInvoiceId) {
+  // Paid in cash after release: the member paid it; surfaced separately too.
+  if (!row.xeroInvoiceId || row.paidInCashAfterRelease) {
     return null;
   }
 
@@ -169,26 +187,49 @@ type ClearingOperation = {
 };
 type AllocationLink = { localModel: string; metadata: unknown };
 
-/** Sum of one credit note's allocation links on its anchor, each allocation once. */
-function allocatedFromNote(
+/**
+ * Sum of the allocation links on an anchor, each allocation once. On the
+ * Booking every credit note is a clearing note (only the clearing builder
+ * anchors one there), so every note counts — the release's, and a retry's
+ * that created the note after the release's operation FAILED. On the Payment
+ * only the refund note's own allocations count.
+ */
+function allocatedOnAnchor(
   links: AllocationLink[],
   anchor: "Booking" | "Payment",
   creditNoteId: string | null,
 ): number {
-  if (!creditNoteId) return 0;
+  if (anchor === "Payment" && !creditNoteId) return 0;
   const seen = new Map<string, number>();
   for (const link of links) {
     if (link.localModel !== anchor) continue;
     const metadata = asRecord(link.metadata);
-    if (readString(metadata?.creditNoteId) !== creditNoteId) continue;
+    const noteId = readString(metadata?.creditNoteId);
+    if (!noteId || (anchor === "Payment" && noteId !== creditNoteId)) continue;
     const invoiceId = readString(metadata?.invoiceId);
     const amountCents = readNumber(metadata?.amountCents);
     if (!invoiceId || amountCents === null || amountCents <= 0) continue;
     // The builder's link and the inbound reconcile's link describe the same
     // allocation; count it once.
-    seen.set(`${invoiceId}:${amountCents}`, amountCents);
+    seen.set(`${noteId}:${invoiceId}:${amountCents}`, amountCents);
   }
   return [...seen.values()].reduce((sum, cents) => sum + cents, 0);
+}
+
+/**
+ * Did Xero record a payment against this hold's invoice? The inbound reconcile
+ * writes an INVOICE_PAYMENT link on the payment for each one; a deleted or
+ * voided payment does not count.
+ */
+export function hasInvoiceCashPayment(
+  links: Array<{ localModel: string; xeroObjectType?: string; role?: string; metadata: unknown }>,
+): boolean {
+  return links.some((link) => {
+    if (link.localModel !== "Payment" || link.xeroObjectType !== "PAYMENT") return false;
+    if (link.role !== "INVOICE_PAYMENT") return false;
+    const status = String(asRecord(link.metadata)?.status ?? "").toUpperCase();
+    return status !== "DELETED" && status !== "VOIDED";
+  });
 }
 
 /**
@@ -203,14 +244,17 @@ export function resolveIbHoldClearingNotes(input: {
   xeroRefundCreditNoteId: string | null;
 }): IbHoldClearingNote[] {
   const notes: IbHoldClearingNote[] = [];
-  const clearing = input.operations.find((op) => op.localModel === "Booking");
+  const clearingOperations = input.operations.filter((op) => op.localModel === "Booking");
+  const clearing = clearingOperations[0];
   if (clearing) {
     notes.push({
       kind: "allocated-clearing-note",
-      creditNoteId: clearing.xeroObjectId,
+      // The newest note any clearing operation created: a retry's, when the
+      // release's own operation FAILED.
+      creditNoteId: clearingOperations.find((op) => op.xeroObjectId)?.xeroObjectId ?? null,
       amountCents: recordedNoteCents(clearing.requestPayload),
       operationStatus: clearing.status,
-      allocatedCents: allocatedFromNote(input.allocationLinks, "Booking", clearing.xeroObjectId),
+      allocatedCents: allocatedOnAnchor(input.allocationLinks, "Booking", null),
     });
   }
   const refund = input.operations.find((op) => op.localModel === "Payment");
@@ -221,7 +265,7 @@ export function resolveIbHoldClearingNotes(input: {
       creditNoteId,
       amountCents: refund ? recordedNoteCents(refund.requestPayload) : null,
       operationStatus: refund?.status ?? null,
-      allocatedCents: allocatedFromNote(input.allocationLinks, "Payment", creditNoteId),
+      allocatedCents: allocatedOnAnchor(input.allocationLinks, "Payment", creditNoteId),
     });
   }
   return notes;
@@ -260,6 +304,7 @@ export async function auditIbHoldClearingUnderclears(options?: {
     noInvoiceReleasedHolds: 0,
     underCleared: [],
     totalDeltaCents: 0,
+    paidInCashAfterRelease: [],
   };
 
   for (const payment of released) {
@@ -281,11 +326,10 @@ export async function auditIbHoldClearingUnderclears(options?: {
         entityType: "CREDIT_NOTE",
         operationType: "CREATE",
         OR: [
-          {
-            localModel: "Booking",
-            localId: payment.bookingId,
-            queueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-          },
+          // Every booking-anchored credit-note create is a clearing note; a
+          // retry row written before the builder stamped the column has no
+          // queue type, so none is required here.
+          { localModel: "Booking", localId: payment.bookingId },
           {
             localModel: "Payment",
             localId: payment.id,
@@ -296,17 +340,18 @@ export async function auditIbHoldClearingUnderclears(options?: {
       select: { localModel: true, status: true, requestPayload: true, xeroObjectId: true },
       orderBy: { createdAt: "desc" },
     });
-    const allocationLinks = await db.xeroObjectLink.findMany({
+    const links = await db.xeroObjectLink.findMany({
       where: {
-        xeroObjectType: "ALLOCATION",
+        xeroObjectType: { in: ["ALLOCATION", "PAYMENT"] },
         active: true,
         OR: [
           { localModel: "Booking", localId: payment.bookingId },
           { localModel: "Payment", localId: payment.id },
         ],
       },
-      select: { localModel: true, metadata: true },
+      select: { localModel: true, xeroObjectType: true, role: true, metadata: true },
     });
+    const allocationLinks = links.filter((link) => link.xeroObjectType === "ALLOCATION");
 
     const finding = deriveIbHoldClearingFinding({
       paymentId: payment.id,
@@ -322,8 +367,21 @@ export async function auditIbHoldClearingUnderclears(options?: {
         allocationLinks,
         xeroRefundCreditNoteId: payment.xeroRefundCreditNoteId,
       }),
+      paidInCashAfterRelease: hasInvoiceCashPayment(links),
     });
 
+    if (hasInvoiceCashPayment(links)) {
+      result.paidInCashAfterRelease.push({
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        invoiceRef: payment.xeroInvoiceNumber ?? payment.xeroInvoiceId,
+        clearingNotes: resolveIbHoldClearingNotes({
+          operations,
+          allocationLinks,
+          xeroRefundCreditNoteId: payment.xeroRefundCreditNoteId,
+        }),
+      });
+    }
     if (finding) {
       result.underCleared.push(finding);
       result.totalDeltaCents += finding.deltaCents;
@@ -341,6 +399,9 @@ function describeClearingNote(note: IbHoldClearingNote, format: ClubFormat): str
     // Never allocated by the system: issued, but the invoice is NOT cleared
     // unless someone allocated it by hand.
     return `refund note (before #3535) issued, invoice NOT cleared unless allocated by hand (${size}${status}; ${allocated})`;
+  }
+  if (note.operationStatus === "CANCELLED" && !note.creditNoteId) {
+    return `clearing note (#3535) retired before it was sent (${size}${status})`;
   }
   if (!note.creditNoteId) {
     return `clearing note (#3535) NOT created (${size}${status})`;
@@ -366,7 +427,23 @@ export function formatIbHoldClearingAuditReport(
   lines.push(`  with no invoice (skipped):   ${result.noInvoiceReleasedHolds}`);
   lines.push(`Under-cleared invoices found:  ${result.underCleared.length}`);
   lines.push(`Total open delta:              ${formatCents(result.totalDeltaCents, format)}`);
+  lines.push(`Paid in cash after release:    ${result.paidInCashAfterRelease.length}`);
   lines.push("");
+
+  if (result.paidInCashAfterRelease.length > 0) {
+    lines.push(
+      "Paid in cash after release, note retired - NO credit note is owed (the",
+    );
+    lines.push(
+      "member was credited when the cash arrived; a part payment is #3643's):",
+    );
+    for (const hold of result.paidInCashAfterRelease) {
+      lines.push(
+        `- booking ${hold.bookingId} (payment ${hold.paymentId}), invoice ${hold.invoiceRef}: ${describeClearingNotes(hold.clearingNotes, format)}`,
+      );
+    }
+    lines.push("");
+  }
 
   if (result.underCleared.length === 0) {
     lines.push("No under-cleared invoices. Nothing to repair.");

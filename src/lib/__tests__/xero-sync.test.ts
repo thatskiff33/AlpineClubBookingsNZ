@@ -798,4 +798,31 @@ describe("startXeroSyncOperation", () => {
       (createArg.data.requestPayload as { queueType?: string }).queueType
     ).toBeUndefined();
   });
+
+  // #3535: a handler that opens its own row with an execution-shape payload
+  // names the queue type explicitly; the payload's own value still wins.
+  it("takes an explicit queueType only when the payload names none (#3535)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_retry",
+      requestPayload: { invoiceId: "inv_1", refundAmountCents: 15000 },
+      queueType: "MODIFICATION_CREDIT_NOTE",
+    });
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_retry",
+      requestPayload: { queueType: "REFUND_CREDIT_NOTE" },
+      queueType: "MODIFICATION_CREDIT_NOTE",
+    });
+
+    expect(mocks.operationCreate.mock.calls[0][0].data.queueType).toBe("MODIFICATION_CREDIT_NOTE");
+    expect(mocks.operationCreate.mock.calls[1][0].data.queueType).toBe("REFUND_CREDIT_NOTE");
+    expect(mocks.operationCreate.mock.calls[0][0].data).not.toHaveProperty("requestPayload.queueType");
+  });
 });

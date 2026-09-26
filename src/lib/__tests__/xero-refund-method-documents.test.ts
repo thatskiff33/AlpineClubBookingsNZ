@@ -556,6 +556,30 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
     expect(links).toEqual(["invoice_1"]);
   });
 
+  // #3535 delta D3: a retry of a FAILED clearing note opens its own row here;
+  // the queue-type column is stamped so the audit and the late-cash alert see it.
+  it("stamps the clearing queue type on a row it opens itself, and not on an edit's note", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+      repairExistingLink: true,
+    });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ localModel: "Booking", queueType: "MODIFICATION_CREDIT_NOTE" }),
+    );
+
+    mocks.startXeroSyncOperation.mockClear();
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+    });
+    expect(mocks.startXeroSyncOperation.mock.calls[0]![0]).not.toHaveProperty("queueType");
+  });
+
   it("leaves an edit's reduction note on the original invoice without reading any invoice", async () => {
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,
@@ -566,6 +590,11 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
 
     expect(mocks.getInvoice).not.toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    // The key it always had (#3535 must not change an edit's key): the Xero
+    // idempotency key rides as the call's fifth argument.
+    expect(mocks.createCreditNoteAllocation.mock.calls[0]![4]).toBe(
+      "booking-mod:cmmodification01:mod-credit-note-allocation:2500:v1",
+    );
     const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
       requestPayload: Record<string, unknown>;
     };
