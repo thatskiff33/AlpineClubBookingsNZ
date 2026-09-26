@@ -3689,18 +3689,23 @@ queued) or waits until the email call finishes and then commits its VOID debt.
 No invoice construction, contact lookup, create, or VOID provider call is held
 inside that transaction.
 
-A settlement waiting on its combined invoice is bound to it (`INV-PAY-106`,
-#3642). The bound check runs on the settlement row re-read under the same
-`lock(1)` by every writer that could change it: the child-commit transaction
-(so a refused re-size rolls back the beds it claimed), the Internet Banking
-settlement transaction, and the card attach transaction (a refused attach
-cancels the never-handed-out intent). The reaper's release transaction and a
-settle attempt on a released settlement retire the old invoice in the same
-`lock(1)` commit — an abandon VOID outbox row keyed by the invoice, the pointer
-cleared, the link deactivated — and the create worker's three existing fences
-treat a settlement that is no longer bound like a cancellation that won. The
-paid-invoice apply compares the invoice's cash with the settlement's total
-read under `lock(1)`. No lock key, order or site is added.
+A settlement waiting on its combined invoice is bound to it (`INV-PAY-105`,
+#3642). Every writer that could change it re-reads the settlement under the
+same `lock(1)`: the child-commit transaction (a card attempt is refused before
+any claim; an Internet Banking change is refused after its claims, so they roll
+back, unless the settlement still points at the invoice checked in Xero before
+the lock), the Internet Banking settle transaction (which retires the old
+invoice and queues the next attempt in the same commit), and the card attach
+transaction. The reaper's release transaction retires the invoice in its
+commit, except for a cancelled group. The create worker's post-create fence
+(`bindCreatedGroupSettlementInvoice`) writes the pointer and the ACTIVE object
+link together under `lock(1)`, or abandons the invoice when the settlement is
+released, superseded by a later attempt, pointing elsewhere, or at another
+total. The paid-invoice and card applies compare what arrived with the total,
+invoice and intent read under `lock(1)`. Every Xero read (the replacement
+check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
+any transaction. No lock key, order or site is added; the realdb proof is
+`group-settlement-invoice-binding-races.realdb.test.ts`.
 
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database

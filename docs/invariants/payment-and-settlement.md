@@ -1043,38 +1043,41 @@ one, check the other.
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
 
-## INV-PAY-106
+## INV-PAY-105
 
-**Related: `INV-PAY-031`** (the children-total check at apply time) and
-**`INV-PAY-035`** (the cancellation fence and its VOID).
+**Related: `INV-PAY-031`** (children total at apply) and **`INV-PAY-035`**
+(the cancellation VOID). Locking: `docs/CONCURRENCY_AND_LOCKING.md`.
 
 - An organiser-pays group settlement is **bound** to its combined Internet
-  Banking invoice while it waits for it (`source = INTERNET_BANKING`,
-  `status = PENDING`; `isGroupSettlementBoundToInvoice`) (#3642). While bound it
-  is never re-sized and never switched to card: a settle attempt at a different
-  total, or by card, is refused `409 GROUP_SETTLEMENT_INVOICE_OUTSTANDING` under
-  global `lock(1)`, inside the transaction that would have claimed the beds, so
-  the claim rolls back. Asking again at the same total re-sends the same invoice.
-- A settlement that stops being bound — released by the group-settlement
-  reaper — **retires** its invoice in that same transaction
-  (`abandonGroupSettlementInvoiceInTx`): a replayable outbox VOID naming the
-  invoice, the settlement's pointer cleared, its object link deactivated but
-  kept. A later settle attempt raises a fresh invoice under a new Xero
-  idempotency key (one per invoice already linked), never a replay of the old
-  one; a CREATE that outlives its settlement raises nothing, or abandons what
-  it raised. A card settlement records `source = STRIPE`.
-- A paid invoice settles the group only when its cash equals the settlement's
-  total **as re-read under the settle lock**, and only while the settlement is
-  still bound to that invoice. Anything else settles nothing and alerts the
-  operators: a short or unreadable payment, a payment on an invoice the
-  settlement abandoned (found by its link), and a payment landing on a
-  settlement a card already paid.
-- The organiser's page renders a bound settlement as pending from the server.
+  Banking invoice while it waits for it (`isGroupSettlementBoundToInvoice`)
+  (#3642) until it is paid, replaced, cancelled or lapses. It is never
+  switched to card.
+- **A change to the group replaces the invoice** (orchestrator decision under
+  the issue's item 1, which allowed refuse-or-replace). The invoice is read in
+  Xero first: with no payment or credit it is retired and a new one raised at
+  the new total; with any money on it nothing changes and the operators are
+  alerted. The claim is refused under `lock(1)` unless the settlement still
+  points at the checked invoice, rolling the new joiner's bed back. Asking again when nothing changed returns the same
+  invoice and does not restart the reaper's clock.
+- An invoice is bound only to the settlement's current attempt, at the
+  settlement's own total; anything else is abandoned on arrival. An abandoned
+  invoice is retired in the same transaction: a VOID naming it, the pointer
+  cleared, its link kept but inactive.
+- **Money on an invoice is never walked away from.** An invoice that has
+  started being paid or credited is not voided, not released (the group keeps
+  its beds, the owner's #3643 rule) and not replaced; each alerts once. A paid
+  invoice settles the group only for the settlement's total read under
+  `lock(1)` while it is still the settlement's invoice; a card capture only
+  while the settlement is still on that intent (otherwise it is refunded).
+- The organiser's page shows the invoice's real state and names joiners not
+  on it.
 - Pinned by `group-settlement.test.ts`, `cron-group-settlement-reaper.test.ts`,
   `xero-group-settlement-invoices.test.ts`,
-  `xero-group-settlement-void-outbox.test.ts`,
-  `group-settlement-paid-invoice.test.ts` and
-  `booking-detail-group-settlement-pending.test.ts`.
+  `xero-group-settlement-invoice-outbox.test.ts`,
+  `xero-group-settlement-invoice-lines.test.ts`,
+  `group-settlement-paid-invoice.test.ts`,
+  `organiser-group-booking-card.test.tsx` and
+  `group-settlement-invoice-binding-races.realdb.test.ts`.
 
 ## INV-PAY-051
 
