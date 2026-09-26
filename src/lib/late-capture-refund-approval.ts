@@ -1,6 +1,7 @@
 import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
+  PaymentRecoveryOperationStatus,
   PaymentSource,
   PaymentTransactionKind,
   type Prisma,
@@ -17,11 +18,9 @@ import {
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
-  enqueueLateCaptureApprovalRefundRecovery,
-  markLateCaptureApprovalRefundRecoverySucceeded,
-} from "@/lib/payment-recovery";
-import {
+  buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
   buildLateCaptureRefundMetadata,
   buildLateCaptureRefundStripeKeyPrefix,
 } from "@/lib/payment-recovery-keys";
@@ -267,6 +266,27 @@ export async function persistLateCaptureApprovalRefundDebt({
     amountCents,
     allocationPlan: route.allocation,
     store,
+  });
+}
+
+/**
+ * Best-effort happy-path close of the debt above, as the edit-review one is: a
+ * lost close leaves a PENDING operation whose replay Stripe answers with the
+ * original refund under the same keys.
+ */
+async function markLateCaptureApprovalRefundRecoverySucceeded(paymentIntentId: string) {
+  return prisma.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey(paymentIntentId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
   });
 }
 

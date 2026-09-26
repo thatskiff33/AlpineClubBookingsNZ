@@ -5,6 +5,8 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import logger from "@/lib/logger";
+import { lateCaptureRefundPaymentIntentId } from "@/lib/payment-recovery-keys";
+import { prisma } from "@/lib/prisma";
 
 /**
  * #1350 / #3639: the Xero correction that follows a refund of a late capture on
@@ -46,4 +48,30 @@ export async function queueLateCaptureRefundCreditNote(params: {
       "Failed to queue the corrective Xero refund credit note after refunding a late capture on a cancelled booking",
     );
   }
+}
+
+/**
+ * The recovery cron's replay of a treasurer-approved refund the inline attempt
+ * did not finish. The operation's own `paymentIntentId` is the payment's
+ * representative intent, so the late capture's is read back off its prefix.
+ */
+export async function queueLateCaptureRefundCreditNoteAfterReplay(operation: {
+  bookingId: string;
+  paymentId: string;
+  stripeKeyPrefix: string | null;
+  amountCents: number;
+}): Promise<void> {
+  const payment = await prisma.payment.findUnique({
+    where: { id: operation.paymentId },
+    select: { xeroInvoiceId: true },
+  });
+  await queueLateCaptureRefundCreditNote({
+    paymentId: operation.paymentId,
+    paymentXeroInvoiceId: payment?.xeroInvoiceId ?? null,
+    paymentIntentId: lateCaptureRefundPaymentIntentId(
+      operation.stripeKeyPrefix ?? "",
+      operation.bookingId,
+    ),
+    amountCents: operation.amountCents,
+  });
 }

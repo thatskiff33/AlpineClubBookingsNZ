@@ -44,7 +44,7 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
+import { queueLateCaptureRefundCreditNoteAfterReplay } from "@/lib/late-capture-refund-credit-note";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -487,7 +487,6 @@ import {
   buildLateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
   isLateCaptureRefundStripeKeyPrefix,
-  lateCaptureRefundPaymentIntentId,
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
@@ -578,14 +577,7 @@ export async function markEditFinancialReviewRefundRecoverySucceeded({
   });
 }
 
-/**
- * #3639: the refund debt of a treasurer-approved late capture, persisted inside
- * the approval's own claim BEFORE the Stripe call — the edit-review pattern
- * above, for the same reason (the completion holds no advisory lock, so a crash
- * between its commit and Stripe must leave a trace). The replay runs under the
- * webhook's own `late_cancel_refund_` prefix and body, so it converges with the
- * inline attempt and with any automatic refund of the same capture.
- */
+/** #3639: a treasurer-approved late-capture refund's debt, as the edit-review one above; replayed under the webhook's own prefix. */
 export async function enqueueLateCaptureApprovalRefundRecovery({
   bookingId,
   paymentId,
@@ -613,26 +605,6 @@ export async function enqueueLateCaptureApprovalRefundRecovery({
     ),
     allocationPlan,
     store,
-  });
-}
-
-/** #3639: best-effort happy-path close, as `markEditFinancialReviewRefundRecoverySucceeded`. */
-export async function markLateCaptureApprovalRefundRecoverySucceeded(
-  paymentIntentId: string,
-) {
-  return prisma.paymentRecoveryOperation.updateMany({
-    where: {
-      idempotencyKey:
-        buildLateCaptureApprovalRefundRecoveryIdempotencyKey(paymentIntentId),
-      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-    },
-    data: {
-      status: PaymentRecoveryOperationStatus.SUCCEEDED,
-      nextRetryAt: null,
-      lastError: null,
-      processingStartedAt: null,
-      succeededAt: new Date(),
-    },
   });
 }
 
@@ -2230,23 +2202,11 @@ async function processBookingModificationRefundOperation(
     return;
   }
 
-  // #3639: a treasurer-approved late-capture refund the inline attempt did not
-  // finish. The inline path queues the Xero correction after its refund; a
-  // replay has to as well, or the invoice keeps a charge Stripe handed back. The
-  // enqueue is delta-capped, so an inline attempt that already queued it makes
-  // this a no-op, and it never throws.
+  // #3639: a replayed treasurer-approved late-capture refund queues the Xero
+  // correction its inline attempt would have (delta-capped; never throws).
   if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
-    const payment = await prisma.payment.findUnique({
-      where: { id: operation.paymentId },
-      select: { xeroInvoiceId: true },
-    });
-    await queueLateCaptureRefundCreditNote({
-      paymentId: operation.paymentId,
-      paymentXeroInvoiceId: payment?.xeroInvoiceId ?? null,
-      paymentIntentId: lateCaptureRefundPaymentIntentId(
-        operation.stripeKeyPrefix ?? "",
-        operation.bookingId,
-      ),
+    await queueLateCaptureRefundCreditNoteAfterReplay({
+      ...operation,
       amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
     });
   }

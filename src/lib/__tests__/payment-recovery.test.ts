@@ -177,7 +177,7 @@ const mockQueueLateCaptureRefundCreditNote = vi.hoisted(() =>
   vi.fn().mockResolvedValue(undefined),
 );
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
-  queueLateCaptureRefundCreditNote: (...args: unknown[]) =>
+  queueLateCaptureRefundCreditNoteAfterReplay: (...args: unknown[]) =>
     mockQueueLateCaptureRefundCreditNote(...args),
 }));
 
@@ -1176,8 +1176,6 @@ describe("payment recovery worker", () => {
         return Promise.resolve([{ ...crashed, status: "PENDING" }]);
       },
     );
-    mockPaymentFindUnique.mockResolvedValue({ xeroInvoiceId: "inv-1" });
-
     const result = await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(result.succeeded).toBe(1);
@@ -1190,12 +1188,14 @@ describe("payment recovery worker", () => {
     expect(refundArgs.allocation).toEqual([
       { paymentTransactionId: "txn-late", amountCents: 2500 },
     ]);
-    expect(mockQueueLateCaptureRefundCreditNote).toHaveBeenCalledWith({
-      paymentId: "payment-1",
-      paymentXeroInvoiceId: "inv-1",
-      paymentIntentId: "pi_late",
-      amountCents: 2500,
-    });
+    expect(mockQueueLateCaptureRefundCreditNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+        amountCents: 2500,
+      }),
+    );
   });
 
   it("replays a byte-identical refund-request Stripe body after a lost inline recording, so it converges instead of hitting idempotency_error (#1507)", async () => {

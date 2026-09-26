@@ -3,9 +3,24 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import type { BookingDefaults } from "@prisma/client"
 import { logAudit } from "@/lib/audit"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
+
+const CLUB_WIDE_ONLY_FIELDS = [
+  ["nonMemberHoldDays", "Hold days are club-wide and cannot be set per lodge"],
+  ["nonMemberHoldEnabled", "Hold enablement is club-wide and cannot be set per lodge"],
+  ["waitlistCrossLodgeOrder", "Waitlist queue order is club-wide and cannot be set per lodge"],
+  [
+    "linkedMoveChargesBothChangeFees",
+    "The linked-move change-fee setting is club-wide and cannot be set per lodge",
+  ],
+  [
+    "lateCaptureRefundNeedsApproval",
+    "The late-payment refund setting is club-wide and cannot be set per lodge",
+  ],
+] as const
 
 const policySchema = z
   .object({
@@ -30,10 +45,7 @@ const policySchema = z
     // a question about how the club treats its members, which does not differ
     // between its lodges.
     linkedMoveChargesBothChangeFees: z.boolean().optional(),
-    // #3639 (owner decision 26 Sep 2026): a genuine late capture on a cancelled
-    // booking is refunded automatically (false) or held for a treasurer to
-    // approve (true). Club-wide: it is how the club handles money, not a lodge's
-    // cancellation policy.
+    // #3639 (owner decision 26 Sep 2026): hold a late capture for a treasurer.
     lateCaptureRefundNeedsApproval: z.boolean().optional(),
     // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
     // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
@@ -49,44 +61,31 @@ const policySchema = z
         message: "At least one rule is required",
       })
     }
-    if (data.lodgeId && data.nonMemberHoldDays !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["nonMemberHoldDays"],
-        message: "Hold days are club-wide and cannot be set per lodge",
-      })
-    }
-    if (data.lodgeId && data.nonMemberHoldEnabled !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["nonMemberHoldEnabled"],
-        message: "Hold enablement is club-wide and cannot be set per lodge",
-      })
-    }
-    if (data.lodgeId && data.waitlistCrossLodgeOrder !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["waitlistCrossLodgeOrder"],
-        message: "Waitlist queue order is club-wide and cannot be set per lodge",
-      })
-    }
-    if (data.lodgeId && data.linkedMoveChargesBothChangeFees !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["linkedMoveChargesBothChangeFees"],
-        message:
-          "The linked-move change-fee setting is club-wide and cannot be set per lodge",
-      })
-    }
-    if (data.lodgeId && data.lateCaptureRefundNeedsApproval !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["lateCaptureRefundNeedsApproval"],
-        message:
-          "The late-payment refund setting is club-wide and cannot be set per lodge",
-      })
+    // The club-wide fields a lodge override may not carry (#3639: one table).
+    if (data.lodgeId) {
+      for (const [field, message] of CLUB_WIDE_ONLY_FIELDS) {
+        if (data[field] !== undefined) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message })
+        }
+      }
     }
   })
+
+// The club-wide defaults for the GET and the PUT's echo; an absent row means each
+// effective default, read from the one home rather than restated (`INV-SSOT-001`).
+function clubWideDefaults(defaults: Partial<BookingDefaults> | null) {
+  return {
+    nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
+    nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
+    waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
+    linkedMoveChargesBothChangeFees:
+      defaults?.linkedMoveChargesBothChangeFees ??
+      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+    lateCaptureRefundNeedsApproval:
+      defaults?.lateCaptureRefundNeedsApproval ??
+      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+  }
+}
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -107,20 +106,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     rules: policies.map(normalizeCancellationRule),
-    nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
-    nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
-    waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
-    // #3232: absent row means the effective default, which is `true` — charge
-    // both. A club that has never opened this page has not chosen to waive
-    // anything. Read from the one home rather than restated (`INV-SSOT-001`).
-    linkedMoveChargesBothChangeFees:
-      defaults?.linkedMoveChargesBothChangeFees ??
-      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
-    // #3639: absent row means refund automatically, the behaviour before the
-    // setting existed.
-    lateCaptureRefundNeedsApproval:
-      defaults?.lateCaptureRefundNeedsApproval ??
-      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+    ...clubWideDefaults(defaults),
     lodgeId: lodgeId ?? null,
   })
 }
@@ -247,15 +233,7 @@ export async function PUT(req: NextRequest) {
 
     return {
       rules: policies.map(normalizeCancellationRule),
-      nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
-      nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
-      waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
-      linkedMoveChargesBothChangeFees:
-        defaults?.linkedMoveChargesBothChangeFees ??
-        DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
-      lateCaptureRefundNeedsApproval:
-        defaults?.lateCaptureRefundNeedsApproval ??
-        DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+      ...clubWideDefaults(defaults),
     }
   }, { isolationLevel: "Serializable" })
 

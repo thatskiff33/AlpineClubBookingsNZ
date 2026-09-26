@@ -77,6 +77,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...a: unknown[]) => mocks.transaction(...a),
     payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
+    paymentRecoveryOperation: {
+      updateMany: (...a: unknown[]) =>
+        mocks.markLateCaptureApprovalRefundRecoverySucceeded(...a),
+    },
   },
 }));
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
@@ -110,8 +114,6 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
   enqueueLateCaptureApprovalRefundRecovery: (...a: unknown[]) =>
     mocks.enqueueLateCaptureApprovalRefundRecovery(...a),
-  markLateCaptureApprovalRefundRecoverySucceeded: (...a: unknown[]) =>
-    mocks.markLateCaptureApprovalRefundRecoverySucceeded(...a),
 }));
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: (...a: unknown[]) =>
@@ -3087,7 +3089,13 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(
       mocks.enqueueLateCaptureApprovalRefundRecovery.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]);
-    expect(mocks.markLateCaptureApprovalRefundRecoverySucceeded).toHaveBeenCalledWith("pi_late");
+    expect(mocks.markLateCaptureApprovalRefundRecoverySucceeded).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          idempotencyKey: "late_capture_approval_refund_recovery_pi_late",
+        }),
+      }),
+    );
     // Never a hand-back ledger mirror, and no member-facing REFUNDED event -
     // exactly what the automatic refund of the same money writes.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
