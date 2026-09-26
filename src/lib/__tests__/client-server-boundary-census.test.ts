@@ -206,6 +206,15 @@ function resolveSpecifier(fromFile: string, specifier: string): string | null {
     const candidate = base + ext;
     if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
   }
+  // The ESM spelling of a TypeScript module: `./x.js` names `./x.ts` (#3567).
+  // Without this an edge written that way was invisible to every walk here.
+  const esm = base.match(/^(.*)\.(?:[cm]?jsx?)$/);
+  if (esm) {
+    for (const ext of EXTENSIONS) {
+      const candidate = esm[1] + ext;
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+    }
+  }
   for (const ext of EXTENSIONS) {
     const candidate = path.join(base, `index${ext}`);
     if (existsSync(candidate)) return candidate;
@@ -276,9 +285,19 @@ function startsWithUseClientDirective(head: string): boolean {
   return code.startsWith('"use client"') || code.startsWith("'use client'");
 }
 
-const clientModules = files.filter((file) =>
-  startsWithUseClientDirective(read(file).slice(0, 400)),
+/**
+ * Browser entry points Next loads WITHOUT a `"use client"` line: the file name
+ * is what makes them client code (#3567). Walked as roots beside the client
+ * modules, so neither census can miss the graph they pull into the bundle.
+ */
+const BROWSER_ENTRY_FILES = ["src/instrumentation-client.ts"].map((file) =>
+  path.resolve(process.cwd(), file),
 );
+
+const clientModules = [
+  ...files.filter((file) => startsWithUseClientDirective(read(file).slice(0, 400))),
+  ...BROWSER_ENTRY_FILES.filter((file) => existsSync(file)),
+];
 
 /** Breadth-first, so the path reported is the shortest one. */
 function findServerReach(entry: string): string[] | null {
@@ -323,6 +342,150 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       violations,
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
+  });
+});
+
+/**
+ * THE BROWSER-IMPORT CENSUS FOR CONFIGURATION (#3567, the execution contract of
+ * programme #3205): no browser module reaches `@/config/operational`, at any
+ * depth, however the path is spelled.
+ *
+ * That module held `APP_CURRENCY`, `APP_LOCALE`, `APP_STRIPE_CURRENCY` and
+ * `APP_TIME_ZONE`, read from `process.env`. On the server that is the running
+ * environment; in a browser it is whatever Next INLINED AT BUILD TIME for the
+ * `NEXT_PUBLIC_*` spellings, which the published image never sets, so ten admin
+ * screens came to show every club New Zealand dollars. #3567 deleted the module
+ * once the last reader moved onto the stored settings — and this list keeps the
+ * NAME protected without the file, the way `@/lib/session` and `@/lib/env` are
+ * kept above, so recreating it starts out refused rather than invisible.
+ *
+ * A SEPARATE LIST FROM `FORBIDDEN_MODULES`, deliberately. That set is pinned to
+ * `MARKED_ROOTS` plus two reserved names: its members are modules carrying the
+ * `server-only` marker. This one never carried the marker — it was isomorphic
+ * configuration — so putting it there would break that set's own contract.
+ *
+ * MATCHED ON THE SPECIFIER'S PATH, NOT ON A RESOLVED FILE. The file does not
+ * exist, so resolution cannot find it; the path is normalised (`./`, `//`) and
+ * any extension is dropped (`operational.js`, `operational.ts`) before the
+ * compare, so every spelling of the name is caught with or without a file.
+ */
+const BROWSER_FORBIDDEN_CONFIG_MODULES = new Set([
+  path.join(SRC, "config", "operational"),
+]);
+
+const BROWSER_CONFIG_MESSAGE =
+  "NEXT_PUBLIC_* is inlined at build time, so a browser read answers from the build, not from the club (#3567, INV-CONFIG-006). Read the club's format and zone through the providers (useClubFormat, useClubTime).";
+
+/** The forbidden configuration path a specifier names, or null. */
+function isForbiddenConfigLeaf(fromFile: string, specifier: string): string | null {
+  let base: string;
+  if (specifier.startsWith("@/")) {
+    base = path.join(SRC, specifier.slice(2));
+  } else if (specifier.startsWith(".")) {
+    base = path.resolve(path.dirname(fromFile), specifier);
+  } else {
+    return null;
+  }
+  const withoutExt = base.replace(/\.(?:[cm]?[jt]sx?)$/, "");
+  return BROWSER_FORBIDDEN_CONFIG_MODULES.has(withoutExt) ? specifier : null;
+}
+
+/** Breadth-first, like `findServerReach`, so the trail is the shortest one. */
+function findConfigReach(
+  entry: string,
+  specifiersFor: (file: string) => string[] = specifiersOf,
+  resolve: (from: string, specifier: string) => string | null = resolveSpecifier,
+): string[] | null {
+  const seen = new Set<string>([entry]);
+  const queue: Array<{ file: string; trail: string[] }> = [{ file: entry, trail: [entry] }];
+  while (queue.length > 0) {
+    const { file, trail } = queue.shift()!;
+    for (const specifier of specifiersFor(file)) {
+      const forbidden = isForbiddenConfigLeaf(file, specifier);
+      if (forbidden !== null) return [...trail, forbidden];
+      const next = resolve(file, specifier);
+      if (next !== null && !seen.has(next)) {
+        seen.add(next);
+        queue.push({ file: next, trail: [...trail, next] });
+      }
+    }
+  }
+  return null;
+}
+
+describe("#3567: no browser module reaches @/config/operational, at any depth", () => {
+  it("guards exactly one configuration path, and it is the retired one", () => {
+    expect(BROWSER_FORBIDDEN_CONFIG_MODULES.size).toBe(1);
+    expect(BROWSER_FORBIDDEN_CONFIG_MODULES.has(path.join(SRC, "config", "operational"))).toBe(true);
+  });
+
+  it("walks the browser entry files that carry no \"use client\" line", () => {
+    for (const entry of BROWSER_ENTRY_FILES) {
+      expect(existsSync(entry), `${path.relative(process.cwd(), entry)} is missing`).toBe(true);
+      expect(clientModules).toContain(entry);
+    }
+  });
+
+  it("has no path from any browser module to it", () => {
+    const violations: string[] = [];
+    for (const entry of clientModules) {
+      const trail = findConfigReach(entry);
+      if (trail !== null) {
+        violations.push(
+          trail
+            .map((step) => (step.startsWith(SRC) ? path.relative(process.cwd(), step) : step))
+            .join("\n    -> "),
+        );
+      }
+    }
+    expect(violations, `${BROWSER_CONFIG_MESSAGE}\n\n${violations.join("\n\n")}`).toEqual([]);
+  });
+
+  it("recognises every spelling of the path, with or without a file behind it", () => {
+    const from = path.join(SRC, "components", "admin", "x.tsx");
+    for (const specifier of [
+      "@/config/operational",
+      "@/config/operational.js",
+      "@/config/operational.ts",
+      "@/config/./operational",
+      "@/config//operational",
+      "../../config/operational",
+      "../../config/operational.js",
+    ]) {
+      expect(isForbiddenConfigLeaf(from, specifier), specifier).toBe(specifier);
+    }
+    for (const specifier of ["@/config/operational-hours", "@/config/modules", "operational", "../config/operational"]) {
+      expect(isForbiddenConfigLeaf(from, specifier), specifier).toBeNull();
+    }
+  });
+
+  it("fails a planted one-hop import, a two-hop import and a dynamic import; a server module is not a root", () => {
+    const client = path.join(SRC, "components", "planted-client.tsx");
+    const helper = path.join(SRC, "lib", "planted-helper.ts");
+    const dynamic = path.join(SRC, "components", "planted-dynamic.tsx");
+    const route = path.join(SRC, "app", "api", "planted", "route.ts");
+    const sources: Record<string, string> = {
+      [client]: '"use client";\nimport { APP_TIME_ZONE } from "@/config/operational";\n',
+      [helper]: 'export { x } from "../config/./operational.js";\n',
+      [dynamic]: '"use client";\nexport const load = () => import("@/config/operational");\n',
+      [route]: 'import { x } from "@/config/operational";\nexport const GET = x;\n',
+    };
+    const twoHop = path.join(SRC, "components", "planted-two-hop.tsx");
+    sources[twoHop] = '"use client";\nimport { y } from "@/lib/planted-helper";\n';
+    const specifiersFor = (file: string) => specifiers(sources[file] ?? "");
+    const resolve = (_from: string, specifier: string) =>
+      specifier === "@/lib/planted-helper" ? helper : null;
+
+    expect(findConfigReach(client, specifiersFor, resolve)).toEqual([client, "@/config/operational"]);
+    expect(findConfigReach(twoHop, specifiersFor, resolve)).toEqual([
+      twoHop,
+      helper,
+      "../config/./operational.js",
+    ]);
+    expect(findConfigReach(dynamic, specifiersFor, resolve)).toEqual([dynamic, "@/config/operational"]);
+    // The control: the same import in a server route is not a browser root.
+    expect(startsWithUseClientDirective(sources[route])).toBe(false);
+    expect(startsWithUseClientDirective(sources[client])).toBe(true);
   });
 });
 
