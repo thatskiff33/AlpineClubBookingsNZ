@@ -638,6 +638,88 @@ describe("Admin refund and credit review page", () => {
     ).toBeDisabled();
   });
   /*
+    #3372 — the rendered half of #3340. The card's first money figure is the
+    GROSS capture, which is right beside a net "Remaining", but it was labelled
+    "Paid:" — the word that in the live incident read as "what the club holds".
+    The label now says which figure it is; the figures themselves are unchanged.
+  */
+  it("labels the gross capture as gross, beside the net remaining figure", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = {
+      id: "admin-2",
+      role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/refund-requests?status=PENDING") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: [
+              {
+                id: "refund-1",
+                bookingId: "booking-1",
+                memberId: "member-1",
+                reason: "Weather closure",
+                requestedAmountCents: 2000,
+                status: "PENDING",
+                adminNotes: null,
+                approvedAmountCents: null,
+                reviewedAt: null,
+                createdAt: "2026-07-01T00:00:00.000Z",
+                booking: {
+                  id: "booking-1",
+                  checkIn: "2026-08-01T00:00:00.000Z",
+                  checkOut: "2026-08-03T00:00:00.000Z",
+                  finalPriceCents: 13000,
+                  status: "CANCELLED",
+                  creditsFromCancellation: [],
+                  // The #3340 booking: $130.00 captured, $65.00 refunded.
+                  payment: {
+                    status: "PARTIALLY_REFUNDED",
+                    amountCents: 13000,
+                    refundedAmountCents: 6500,
+                    stripePaymentIntentId: "pi_123",
+                  },
+                },
+                member: {
+                  id: "member-1",
+                  firstName: "Jane",
+                  lastName: "Doe",
+                  email: "jane@example.com",
+                },
+              },
+            ],
+          }),
+        });
+      }
+      if (url === "/api/admin/credit-approvals?status=PENDING") {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<RefundRequestsPage />);
+
+    const grossPaid = (await screen.findByText("Gross paid:")).parentElement;
+    expect(grossPaid).toHaveTextContent("Gross paid: $130.00");
+    const remaining = screen.getByText("Remaining:").parentElement;
+    expect(remaining).toHaveTextContent("Remaining: $65.00");
+    // The bare word is gone, not merely supplemented.
+    expect(screen.queryByText("Paid:")).toBeNull();
+    expect(screen.getByText("To card:").parentElement).toHaveTextContent("To card: $65.00");
+
+    // Display only (#3372 acceptance): rendering the page sends nothing but
+    // reads.
+    expect(fetchMock).toHaveBeenCalled();
+    for (const [, init] of fetchMock.mock.calls) {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      expect(method).toBe("GET");
+    }
+  });
+
+  /*
     #2932 review. `startRefundReview` had an `if (payment)` with no `else`, so
     opening a review for a request whose booking has no payment showed the
     amount prefilled for the request reviewed BEFORE it. The server refuses that

@@ -13,7 +13,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    payment: { aggregate: vi.fn() },
+    payment: { groupBy: vi.fn() },
     refundRequest: { count: vi.fn() },
     adminCreditAdjustmentRequest: { count: vi.fn() },
     membershipCancellationRequest: { count: vi.fn() },
@@ -88,9 +88,8 @@ function mockDashboardCounts({
     .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
     .mockResolvedValueOnce(unsettledAdditionalUpcomingStays)
     .mockResolvedValueOnce(pendingBookingReviews);
-  vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-    _sum: { amountCents: 0 },
-  } as any);
+  // #3372: the revenue card groups the month's payments by status.
+  vi.mocked(prisma.payment.groupBy).mockResolvedValue([] as any);
   vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
@@ -457,11 +456,13 @@ describe("admin dashboard deep links", () => {
     // The month bounds behind "revenue this month". Written out by hand rather
     // than recomputed through the kernel, so a kernel defect cannot agree with
     // itself here.
-    expect(vi.mocked(prisma.payment.aggregate).mock.calls).toContainEqual([
+    // #3372: every status, grouped, so the net-collected-cash derivation and
+    // not this query decides which statuses are captured.
+    expect(vi.mocked(prisma.payment.groupBy).mock.calls).toContainEqual([
       {
-        _sum: { amountCents: true },
+        by: ["status"],
+        _sum: { amountCents: true, refundedAmountCents: true },
         where: {
-          status: "SUCCEEDED",
           createdAt: {
             gte: new Date(chosen.monthStart),
             lte: new Date(chosen.monthEnd),

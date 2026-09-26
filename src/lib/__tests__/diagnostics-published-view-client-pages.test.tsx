@@ -229,7 +229,7 @@ beforeEach(() => {
     totalPages: 0,
     page: 1,
     pageSize: 25,
-    summary: { totalRevenueCents: 0, refundedCents: 0, count: 0 },
+    summary: { netRevenueCents: 0, refundedCents: 0, count: 0 },
   });
 });
 
@@ -479,6 +479,60 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     // the page applied. Without this the assertion above would still pass on a
     // host whose own zone happened to agree with the chosen one.
     expect(published().filters.lastUpdatedTo).not.toBe(environmentToday);
+  });
+});
+
+/*
+  #3372 — the rendered half of #3340, on the payments board's summary tiles. It
+  is asserted here because this is the one harness that mounts the real page
+  over a stubbed API. The tile used to be titled "Total Revenue" over a gross
+  sum; the API now returns `netRevenueCents`, the tile says "Net Revenue", and
+  the two money tiles each state what they cover, because they are not a
+  subtraction of one another.
+*/
+describe("/admin/payments titles its revenue tile as net (#3372)", () => {
+  it("shows Net Revenue with the hints that name each tile's population", async () => {
+    // The #3340 booking as the whole filtered set: $130.00 captured, $65.00
+    // refunded → $65.00 net.
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: { netRevenueCents: 6_500, refundedCents: 6_500, count: 1 },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    // `SummaryCard` is Card > CardHeader > CardTitle, so the card is the
+    // title's grandparent; the figure and the hint sit in its CardContent.
+    const netTitle = await screen.findByText("Net Revenue");
+    const netCard = netTitle.parentElement?.parentElement;
+    expect(netCard).toHaveTextContent("$65.00");
+    expect(netCard).toHaveTextContent(
+      "Captured, less refunds. Excludes cancelled bookings.",
+    );
+    const refundCard = screen.getByText("Refunded / Credited").parentElement
+      ?.parentElement;
+    expect(refundCard).toHaveTextContent("$65.00");
+    expect(refundCard).toHaveTextContent(
+      "Every payment listed, cancelled bookings included.",
+    );
+    expect(screen.queryByText("Total Revenue")).toBeNull();
+
+    // Display only (#3372 acceptance): the page rendered from reads alone.
+    expect(fetchMock).toHaveBeenCalled();
+    for (const [, init] of fetchMock.mock.calls) {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      expect(method).toBe("GET");
+    }
   });
 });
 

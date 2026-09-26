@@ -13,7 +13,18 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    payment: { aggregate: vi.fn() },
+    // #3372: the revenue card reads a per-status `groupBy`, never `aggregate`.
+    // The write delegates exist only so the display-only pin below can assert
+    // they were never reached; a call on a missing delegate would throw
+    // instead, which is a crash rather than an assertion.
+    payment: {
+      groupBy: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      create: vi.fn(),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    },
     refundRequest: { count: vi.fn() },
     adminCreditAdjustmentRequest: { count: vi.fn() },
     membershipCancellationRequest: { count: vi.fn() },
@@ -151,9 +162,18 @@ function mockStats() {
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
 
-  vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-    _sum: { amountCents: 123400 },
-  } as any);
+  // #3372: the month's payments, summed per status, as `groupBy` returns them.
+  // The default fixture is the partly-refunded booking behind the #3340
+  // misreading: $130.00 captured, $65.00 refunded. The card's headline must be
+  // the $65.00 the club holds, never the $130.00 it took. A PENDING group rides
+  // along so the card is seen to leave uncaptured money out.
+  vi.mocked(prisma.payment.groupBy).mockResolvedValue([
+    {
+      status: "PARTIALLY_REFUNDED",
+      _sum: { amountCents: 13_000, refundedAmountCents: 6_500 },
+    },
+    { status: "PENDING", _sum: { amountCents: 90_000, refundedAmountCents: 0 } },
+  ] as any);
   vi.mocked(prisma.refundRequest.count).mockResolvedValue(0);
   vi.mocked(prisma.adminCreditAdjustmentRequest.count).mockResolvedValue(0);
   vi.mocked(prisma.membershipCancellationRequest.count).mockResolvedValue(0);
@@ -227,6 +247,64 @@ describe("admin dashboard officer key cards", () => {
     // Slim secondary row keeps Members + Revenue.
     expect(html).toContain("Revenue This Month");
     expect(html).toContain("active of 50 total");
+  });
+
+  /*
+    #3372 — the rendered half of #3340. In the live incident the officer read a
+    partly-refunded booking as "paid $130, $300 to pay" because a screen showed
+    the gross figure under a label that meant net. This card is titled "Revenue",
+    so its headline is what the club HOLDS: captured less refunded, through the
+    one `summarizeCollectedCash` derivation the payments board and Reports also
+    read. The gross and the refund print beneath so the arithmetic is on the card.
+  */
+  it("headlines Revenue This Month NET of refunds, with gross and refunded beneath", async () => {
+    mockActorMatrix({ overview: "edit", finance: "edit" });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    // $130.00 captured, $65.00 refunded → the club holds $65. The card renders
+    // whole dollars (`money.dollars`), so `$65` is the headline and `$130` may
+    // appear only in the breakdown line, never as the headline.
+    expect(html).toContain(">$65</div>");
+    expect(html).not.toContain(">$130</div>");
+    expect(html).toContain("$130 paid, $65 refunded");
+    // The subline says what the figure is, and no longer claims "succeeded
+    // payments" — the status set that dropped a partly-refunded payment.
+    expect(html).toContain("payments taken this month, less refunds on them");
+    expect(html).not.toContain("from succeeded payments");
+    // The $900.00 PENDING group is uncaptured money and never reaches the card.
+    expect(html).not.toContain("$900");
+    expect(html).not.toContain("$965");
+
+    // The one query is a per-status read of the month; the status decision is
+    // the derivation's, not the page's, so no `status` filter is passed.
+    expect(vi.mocked(prisma.payment.groupBy)).toHaveBeenCalledTimes(1);
+    const [groupByArgs] = vi.mocked(prisma.payment.groupBy).mock.calls[0] as [
+      { by: string[]; _sum: Record<string, boolean>; where: Record<string, unknown> },
+    ];
+    expect(groupByArgs.by).toEqual(["status"]);
+    expect(groupByArgs._sum).toEqual({ amountCents: true, refundedAmountCents: true });
+    expect(groupByArgs.where).not.toHaveProperty("status");
+
+    // Display only (#3372 acceptance): the render changes no stored value.
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.payment.upsert).not.toHaveBeenCalled();
+    expect(prisma.payment.delete).not.toHaveBeenCalled();
+  });
+
+  it("omits the breakdown line when nothing on the month's payments was refunded", async () => {
+    mockActorMatrix({ overview: "edit", finance: "edit" });
+    vi.mocked(prisma.payment.groupBy).mockResolvedValue([
+      { status: "SUCCEEDED", _sum: { amountCents: 123_400, refundedAmountCents: 0 } },
+    ] as any);
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain(">$1,234</div>");
+    expect(html).not.toContain("$1,234 paid");
+    expect(html).not.toContain("$0 refunded");
   });
 
   it("hides officer cards whose target page the actor cannot open", async () => {

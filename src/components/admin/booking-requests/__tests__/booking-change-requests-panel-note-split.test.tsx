@@ -418,6 +418,82 @@ describe("the locked-period decision form names who reads what", () => {
   });
 });
 
+/**
+ * #3372 — the rendered half of #3340, on the panel an officer reads while
+ * deciding what to charge. The "Payment:" line used to print the GROSS
+ * `amountCents` beside "Booking total", so a partly-refunded booking sized the
+ * balance wrongly by exactly the refund: in the live incident that read as
+ * "paid $130, $300 to pay". `refundedAmountCents` was already in the payload
+ * (`src/app/api/admin/booking-change-requests/route.ts` selects it) and never
+ * rendered. The headline is now net, and gross and refunded print beneath.
+ *
+ * The fixture is the API's real `booking.payment` select — every field it
+ * returns, no more — so a select change the panel depends on breaks here.
+ */
+describe("the Payment line is net of refunds", () => {
+  const partlyRefundedPayment = {
+    id: "pay-1",
+    amountCents: 13_000,
+    refundedAmountCents: 6_500,
+    status: "PARTIALLY_REFUNDED",
+    xeroInvoiceId: null,
+    xeroInvoiceNumber: null,
+  };
+
+  it("headlines what the club holds, with gross paid and refunded beneath", async () => {
+    listResponse = () =>
+      jsonResponse({
+        data: [
+          changeRequest({
+            booking: { ...changeRequest().booking, payment: partlyRefundedPayment },
+          }),
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      });
+    render(<BookingChangeRequestsPanel />);
+
+    // $130.00 captured, $65.00 refunded → the club holds $65.00, and the
+    // headline says it is net so it cannot be read as the capture.
+    const paymentLine = (await screen.findByText("Payment:")).parentElement;
+    expect(paymentLine).toHaveTextContent("Payment: PARTIALLY_REFUNDED ($65.00 net)");
+    expect(paymentLine).toHaveTextContent("$130.00 paid, $65.00 refunded");
+    expect(paymentLine).not.toHaveTextContent("($130.00)");
+
+    // Display only (#3372 acceptance): rendering the panel sends nothing but
+    // reads. A write would be a PATCH to the request's own URL.
+    expect(fetchMock).toHaveBeenCalled();
+    for (const [, init] of fetchMock.mock.calls) {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      expect(method).toBe("GET");
+    }
+  });
+
+  it("prints the plain capture, with no breakdown, when nothing was refunded", async () => {
+    listResponse = () =>
+      jsonResponse({
+        data: [
+          changeRequest({
+            booking: {
+              ...changeRequest().booking,
+              payment: { ...partlyRefundedPayment, refundedAmountCents: 0, status: "SUCCEEDED" },
+            },
+          }),
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      });
+    render(<BookingChangeRequestsPanel />);
+
+    const paymentLine = (await screen.findByText("Payment:")).parentElement;
+    expect(paymentLine).toHaveTextContent("Payment: SUCCEEDED ($130.00)");
+    expect(paymentLine).not.toHaveTextContent("net");
+    expect(paymentLine).not.toHaveTextContent("refunded");
+  });
+});
+
 describe("a decided locked-period request shows which half the member has read", () => {
   it("labels the two notes separately", async () => {
     listResponse = () =>
