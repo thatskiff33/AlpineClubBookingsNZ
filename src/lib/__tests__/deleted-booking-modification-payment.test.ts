@@ -275,7 +275,7 @@ describe("raiseDeletedBookingModificationRefundTask (#2700)", () => {
         // which is already the human decision this raise would ask for.
         OR: [
           { reason: { in: automaticCancelledBookingRefundTaskReasons(INTENT_ID) } },
-          { occurrenceKey: `late-capture-refund-approval:v1:${INTENT_ID}` },
+          { lateCaptureApprovalIntentId: INTENT_ID },
         ],
       },
       select: { id: true },

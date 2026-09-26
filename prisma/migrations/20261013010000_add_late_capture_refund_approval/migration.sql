@@ -5,60 +5,54 @@
 -- cancel) has always been refunded automatically by the webhook. The owner asked
 -- for a club setting: refund automatically (the default, today's behaviour) or
 -- have a treasurer approve the refund. This migration adds the setting and the
--- finance-queue item type the approve path raises.
+-- marker the approve path puts on its finance-queue task.
 --
--- THREE STATEMENTS, ALL ADDITIVE OR RESTATING A CHECK FOR A LABEL NO ROW CAN
--- CARRY YET:
+-- FOUR STATEMENTS, ALL ADDITIVE:
 --
 --   1. "BookingDefaults"."lateCaptureRefundNeedsApproval" BOOLEAN NOT NULL
 --      DEFAULT false. A single-row club settings table; false is today's
 --      behaviour, so every existing club reads "refund automatically" without
 --      any write.
---   2. ALTER TYPE "ManualRefundTaskKind" ADD VALUE 'LATE_CAPTURE_REFUND_APPROVAL'.
---   3. DROP/ADD "ManualRefundTask_edit_review_occurrence_key_present" so the new
---      label may NOT carry a null occurrence key. That is the duplicate fence:
---      the @@unique index on "occurrenceKey" exempts NULL, so a writer that
---      omitted the key could raise a second approval item for one capture and a
---      treasurer could be asked to refund it twice. Added now, while no row can
---      carry the label, so the validating scan is provably trivial. The label is
---      compared as text (as 20260910010000 does), so the new value is not USED
---      in the transaction that adds it.
+--   2. "ManualRefundTask"."lateCaptureApprovalIntentId" TEXT, nullable, no
+--      default: the late capture's Stripe payment intent on a task held for a
+--      treasurer, NULL on every other row.
+--   3. A UNIQUE index on it: one approval task per capture. PostgreSQL treats
+--      NULLs as distinct, so the index constrains only the rows that carry the
+--      marker and every existing row (all NULL) passes.
+--   4. CHECK "ManualRefundTask_late_capture_approval_kind": only a
+--      DELETED_BOOKING_LATE_CAPTURE row may carry the marker. Every existing row
+--      is NULL there, so the validating scan cannot fail.
 --
--- OLD-COLOUR COMPATIBLE, AND WHY THE LABEL NEED NOT WAIT A RELEASE the way
--- 20260910010000's did. The previous colour's Prisma client cannot deserialize a
--- label it does not know, and the finance queue selects "kind" over every OPEN
--- row. 20260910010000 split its label from its writer because one writer was the
--- payment-recovery drain, which the cron leader runs before cutover. This label
--- has ONE writer, the late-capture webhook handler, and it writes only for a club
--- whose "lateCaptureRefundNeedsApproval" is true. Statement 1 makes it false for
--- every club, and only the new colour's admin screen can change it - which takes
--- no traffic until cutover. So no row carries the label while the previous colour
--- serves. The ledger row states the rollback caveat.
+-- NO NEW ENUM LABEL, AND THAT IS THE COMPATIBILITY ARGUMENT. The approval task
+-- reuses the DELETED_BOOKING_LATE_CAPTURE kind (#2700), which the previous app
+-- version already reads and renders as an open late-capture question. Unlike
+-- 20260910010000, whose new label the previous colour cannot deserialize, a row
+-- the new colour writes here is one the previous colour can list, count and
+-- close, during the blue/green overlap and after a rollback alike. The previous
+-- colour neither selects nor writes the new column: its inserts omit it (NULL)
+-- and its reads never name it.
 --
 -- NO DML OF ANY KIND, so every existing row is byte-identical afterwards and the
 -- data-migration verification gate classifies this as shape-only. No session
 -- clock is needed because there is no payload.
 --
--- LOCK IMPACT: ACCESS EXCLUSIVE on the one-row "BookingDefaults" for a
--- catalog-only ADD COLUMN; a brief lock on the TYPE; ACCESS EXCLUSIVE on
--- "ManualRefundTask" for the constraint DROP and the ADD's validating scan (one
--- row per hand-settled refund task in the club's history, so milliseconds). No
--- Booking, Payment, Member, capacity, credit or provider row is read or written,
--- so INV-LOCK-001 and INV-LOCK-002 are unaffected.
+-- LOCK IMPACT: ACCESS EXCLUSIVE on the one-row "BookingDefaults" and on
+-- "ManualRefundTask" for two catalog-only ADD COLUMNs; the unique index build and
+-- the CHECK's validating scan hold a lock on "ManualRefundTask" (one row per
+-- hand-settled refund task in the club's history, so milliseconds). No Booking,
+-- Payment, Member, capacity, credit or provider row is read or written, so
+-- INV-LOCK-001 and INV-LOCK-002 are unaffected.
 
 ALTER TABLE "BookingDefaults"
   ADD COLUMN "lateCaptureRefundNeedsApproval" BOOLEAN NOT NULL DEFAULT false;
 
-ALTER TYPE "ManualRefundTaskKind" ADD VALUE IF NOT EXISTS 'LATE_CAPTURE_REFUND_APPROVAL';
+ALTER TABLE "ManualRefundTask" ADD COLUMN "lateCaptureApprovalIntentId" TEXT;
+
+CREATE UNIQUE INDEX "ManualRefundTask_lateCaptureApprovalIntentId_key"
+  ON "ManualRefundTask"("lateCaptureApprovalIntentId");
 
 ALTER TABLE "ManualRefundTask"
-  DROP CONSTRAINT IF EXISTS "ManualRefundTask_edit_review_occurrence_key_present";
-ALTER TABLE "ManualRefundTask"
-  ADD CONSTRAINT "ManualRefundTask_edit_review_occurrence_key_present" CHECK (
-    (
-      "kind"::text IS DISTINCT FROM 'EDIT_FINANCIAL_REVIEW'
-      AND "kind"::text IS DISTINCT FROM 'UNCOLLECTED_EDIT_REVIEW_SHARE'
-      AND "kind"::text IS DISTINCT FROM 'LATE_CAPTURE_REFUND_APPROVAL'
-    )
-    OR "occurrenceKey" IS NOT NULL
+  ADD CONSTRAINT "ManualRefundTask_late_capture_approval_kind" CHECK (
+    "lateCaptureApprovalIntentId" IS NULL
+    OR "kind" = 'DELETED_BOOKING_LATE_CAPTURE'
   );

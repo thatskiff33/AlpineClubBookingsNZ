@@ -1050,9 +1050,9 @@ implementation rather than a copy per handler: one record writer, one `deletedAt
 re-read, one alert decision.
 
 **WHAT "EVERY ORDERING" MEANS ON THE PRIMARY PATH, checked rather than assumed.**
-Nothing in the tree raises an `OPEN` `ManualRefundTask` for a PRIMARY payment
-intent — the confirm-modification-payment route is the only raiser of one of these
-and it handles modification intents — so the close arm is unreachable there and the
+Only the confirm-modification-payment route raises an `OPEN` task under these
+`reason` sentences, for modification intents (#3639's approval task has its own),
+so the close arm is unreachable there and the
 CREATE arm is the only one that fires. First delivery creates the row; a Stripe
 redelivery finds this writer's own row and creates nothing; a deletion landing
 between two deliveries resolves to the one row, because every lookup matches all

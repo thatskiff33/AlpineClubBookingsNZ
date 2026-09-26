@@ -666,10 +666,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   out: nothing the member is owed is held back.
 - **A genuine late capture follows the club's setting** (owner decision 26 Sep
   2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)):
-  refunded automatically (the default) or held as one `OPEN`
-  `LATE_CAPTURE_REFUND_APPROVAL` task per intent. Approving it is the automatic
-  refund, under the same Stripe keys; a task, whatever its status, owns its
-  capture.
+  refunded automatically (the default) or held as one `OPEN` #2700-kind task per
+  intent, marked by `lateCaptureApprovalIntentId` so the previous version still
+  reads it. Approving it is the automatic refund, under the same Stripe keys; a
+  task, whatever its status, owns its capture. A #2700 hand-back is refused once
+  its capture was refunded.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source (the Stripe-only list stays for Stripe actions, #668), and
   skips a payment already carrying a refund or account-credit note, or such an

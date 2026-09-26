@@ -29,7 +29,7 @@ reason: the approval's refund debt has to be persisted through the module's
   correction itself and the close live outside this file.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2079
+lines: 2080
 reason: the finance queue has to say, on the row and in the dialog, that this
   item refunds the card through Stripe or keeps the money; every sentence is a
   per-kind branch of the existing copy functions, which is where each other
@@ -41,6 +41,6 @@ reason: the setting travels with the club's other booking defaults, so it is
   one field and one constraint in that entity's declaration.
 
 file: src/lib/deleted-booking-modification-payment.ts
-lines: 868
+lines: 867
 reason: the confirm route's #2700 raise must see the webhook's approval task
-  for the same capture, so its duplicate check matches the approval key too.
+  for the same capture, so its duplicate check matches the approval marker too.

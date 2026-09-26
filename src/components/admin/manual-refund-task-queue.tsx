@@ -94,6 +94,8 @@ interface ManualRefundTask {
    * null kind is treated as the hand-back it has always been.
    */
   kind?: string | null;
+  /** #3639: a late capture held for a treasurer. Optional: a cached bundle degrades. */
+  awaitingLateCaptureApproval?: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -205,11 +207,10 @@ function isWithheldShare(task: ManualRefundTask): boolean {
  * was cancelled, held for a treasurer because the club asked for approval
  * instead of an automatic refund. Completing it refunds the CARD through Stripe
  * - nothing is paid back by hand - so none of the hand-back wording fits it.
+ * Its kind is the #2700 late-capture kind; the route's flag is what marks it.
  */
-const LATE_CAPTURE_APPROVAL_KIND: ManualRefundTaskKind = "LATE_CAPTURE_REFUND_APPROVAL";
-
 function isLateCaptureApproval(task: ManualRefundTask): boolean {
-  return task.kind === LATE_CAPTURE_APPROVAL_KIND;
+  return task.awaitingLateCaptureApproval === true;
 }
 
 /**

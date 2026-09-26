@@ -147,8 +147,10 @@ export async function resolveManualRefundTask(
         // (owner decision D2).
         raisedAmountCents: true,
         kind: true,
-        // #3639: which capture a late-capture approval refunds.
-        occurrenceKey: true,
+        // #3639: which capture a late-capture approval refunds, and the
+        // sentence that names a #2700 task's capture.
+        lateCaptureApprovalIntentId: true,
+        reason: true,
         status: true,
         // #3032: the settlement route needs three more facts, all read inside
         // the same transaction as the claim. `reviewContext` carries the

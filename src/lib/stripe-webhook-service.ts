@@ -1631,10 +1631,10 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * there.
  *
  * #2774's FENCE APPLIES HERE TOO, and one thing about it is worth stating plainly
- * rather than left for a reader to assume: nothing in the tree currently raises an
- * `OPEN` `ManualRefundTask` for a PRIMARY payment intent — the confirm-modification
- * -payment route is the only raiser of one of these and it handles modification
- * intents — so today the fence cannot fire on this path. It is here anyway because
+ * rather than left for a reader to assume: only the confirm-modification-payment
+ * route raises an `OPEN` task under the fence's `reason` sentences, and it handles
+ * modification intents — so today the fence cannot fire on this path. (#3639's
+ * treasurer-approval task carries its own sentence and is found by its marker.) It is here anyway because
  * the fence is keyed on the payment intent rather than on the handler, so a reader
  * of one handler must not conclude the other is unfenced, and a future raiser is
  * covered by construction. `booking-cancel.ts`'s cash-settlement task sits on the

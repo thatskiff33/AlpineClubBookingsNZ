@@ -37,6 +37,7 @@ import {
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 import {
+  assertLateCaptureHandBackStillOwed,
   executeLateCaptureApprovalRefund,
   planLateCaptureApprovalRefund,
   type LateCaptureRefundRoute,
@@ -221,8 +222,10 @@ export type EditReviewSettlementRoute =
 export type EditReviewSettlementTask = {
   paymentId: string | null;
   kind: ManualRefundTaskKind | null;
-  /** #3639: names the capture a `LATE_CAPTURE_REFUND_APPROVAL` task is about. */
-  occurrenceKey: string | null;
+  /** #3639: set on a late capture held for a treasurer; names its intent. */
+  lateCaptureApprovalIntentId: string | null;
+  /** #3639: a #2700 task's frozen sentence, which names its capture. */
+  reason: string;
   reviewContext: unknown;
   payment: { source: PaymentSource } | null;
   booking: {
@@ -318,8 +321,12 @@ export async function chooseEditReviewSettlementRoute({
     // #3639: an approved late-capture refund goes back to the card through
     // Stripe - never a hand-back ledger mirror, which would count one refund
     // twice once `charge.refunded` synced a dashboard refund of the same money.
-    if (task.kind === ManualRefundTaskKind.LATE_CAPTURE_REFUND_APPROVAL) {
+    if (task.lateCaptureApprovalIntentId) {
       return planLateCaptureApprovalRefund({ task, amountCents, store });
+    }
+    // #3639: and a #2700 hand-back is refused once its capture was refunded.
+    if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
+      await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
     return task.paymentId !== null
       ? {

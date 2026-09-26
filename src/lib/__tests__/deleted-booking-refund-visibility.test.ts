@@ -97,7 +97,7 @@ interface StoredTask {
   note: string | null;
   completedByMemberId: string | null;
   /** #3639: only a treasurer-approval task carries one; none here does. */
-  occurrenceKey?: string | null;
+  lateCaptureApprovalIntentId?: string | null;
 }
 
 const tx = {
@@ -322,8 +322,8 @@ interface TaskWhere {
   bookingId: string;
   paymentId: string;
   reason?: string | { in: string[] };
-  /** #3639: the raise also matches the webhook's approval task by its key. */
-  OR?: Array<{ reason?: { in: string[] }; occurrenceKey?: string }>;
+  /** #3639: the raise also matches the webhook's approval task by its marker. */
+  OR?: Array<{ reason?: { in: string[] }; lateCaptureApprovalIntentId?: string }>;
   status?: string;
 }
 
@@ -342,7 +342,7 @@ function installTaskStore() {
       where.OR.some((clause) =>
         clause.reason
           ? reasonMatches(row, clause.reason)
-          : row.occurrenceKey === clause.occurrenceKey,
+          : row.lateCaptureApprovalIntentId === clause.lateCaptureApprovalIntentId,
       )) &&
     (where.status === undefined || row.status === where.status);
 

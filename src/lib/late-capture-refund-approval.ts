@@ -11,10 +11,6 @@ import { logAudit } from "@/lib/audit";
 import type { CancelledBookingLateCapture } from "@/lib/cancelled-booking-late-capture";
 import type { ClubFormat } from "@/lib/club-format";
 import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-booking-modification-payment";
-import {
-  lateCaptureRefundApprovalOccurrenceKey,
-  paymentIntentIdFromLateCaptureApprovalKey,
-} from "@/lib/late-capture-refund-approval-key";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -44,6 +40,12 @@ import { prisma } from "@/lib/prisma";
  * so if both ever run for one capture Stripe answers the second with the first.
  * Dismissing the task keeps the money, with a note, and moves nothing.
  *
+ * THE TASK IS AN ORDINARY `DELETED_BOOKING_LATE_CAPTURE` ROW WITH A MARKER.
+ * `lateCaptureApprovalIntentId` names the capture, makes it unique, and is what
+ * routes its completion to a Stripe refund. No new kind label, so the previous
+ * app version — which cannot read a label it does not know — lists and counts
+ * it during a blue/green overlap as the open late-capture question it knows.
+ *
  * ONE TASK PER CAPTURE, AND IT OWNS THE DECISION. Once a task exists for an
  * intent — open, approved or dismissed — every later notice for that intent is
  * acknowledged without a refund, whatever the setting says by then. So a club
@@ -69,7 +71,7 @@ function heldLateCaptureReason(capture: CancelledBookingLateCapture): string {
     capture.captureKind === "primary"
       ? `The booking's own payment ${capture.paymentIntentId}`
       : `A payment for a change to the booking (${capture.paymentIntentId})`;
-  return `${which} was captured after the booking was cancelled (#3639). The club has a treasurer approve these refunds: refund it to the card, or dismiss it with a note to keep it.`.slice(
+  return `${which} was captured after the booking was cancelled (#3639) and has NOT been refunded: the club has a treasurer approve these refunds. Refund it to the card from this screen, or keep it with a note.`.slice(
     0,
     500,
   );
@@ -92,11 +94,9 @@ function heldLateCaptureReason(capture: CancelledBookingLateCapture): string {
 export async function holdLateCaptureForTreasurerIfRequired(
   capture: CancelledBookingLateCapture,
 ): Promise<boolean> {
-  const occurrenceKey = lateCaptureRefundApprovalOccurrenceKey(
-    capture.paymentIntentId,
-  );
+  const marker = { lateCaptureApprovalIntentId: capture.paymentIntentId };
   const owned = await prisma.manualRefundTask.findUnique({
-    where: { occurrenceKey },
+    where: marker,
     select: { id: true, status: true },
   });
   if (owned) {
@@ -116,7 +116,7 @@ export async function holdLateCaptureForTreasurerIfRequired(
   const raised = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const again = await tx.manualRefundTask.findUnique({
-      where: { occurrenceKey },
+      where: marker,
       select: { id: true },
     });
     if (again) return { taskId: again.id, created: false };
@@ -140,8 +140,8 @@ export async function holdLateCaptureForTreasurerIfRequired(
         paymentId: capture.paymentId,
         amountCents: capture.amountCents,
         raisedAmountCents: capture.amountCents,
-        kind: ManualRefundTaskKind.LATE_CAPTURE_REFUND_APPROVAL,
-        occurrenceKey,
+        kind: ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE,
+        lateCaptureApprovalIntentId: capture.paymentIntentId,
         reason: heldLateCaptureReason(capture),
         status: ManualRefundTaskStatus.OPEN,
       },
@@ -199,13 +199,11 @@ export async function planLateCaptureApprovalRefund({
   amountCents,
   store,
 }: {
-  task: { paymentId: string | null; occurrenceKey: string | null };
+  task: { paymentId: string | null; lateCaptureApprovalIntentId: string | null };
   amountCents: number;
   store: Prisma.TransactionClient;
 }): Promise<LateCaptureRefundRoute> {
-  const paymentIntentId = paymentIntentIdFromLateCaptureApprovalKey(
-    task.occurrenceKey,
-  );
+  const paymentIntentId = task.lateCaptureApprovalIntentId;
   const transaction =
     paymentIntentId && task.paymentId
       ? await store.paymentTransaction.findUnique({
@@ -245,6 +243,45 @@ export async function planLateCaptureApprovalRefund({
     bookingModificationId: null,
     allocation: [{ paymentTransactionId: transaction.id, amountCents }],
   };
+}
+
+/**
+ * #3639: the same question for the confirm route's #2700 task, which completes
+ * as a hand-back (a ledger mirror of money the club returned itself). If the
+ * capture has already been refunded — in the Stripe dashboard, or by the webhook
+ * before the booking was deleted — that hand-back would count one refund twice,
+ * so it is refused before the claim and the task stays OPEN to be dismissed.
+ * The capture is the one whose frozen reason sentence this task carries
+ * (`automaticCancelledBookingRefundTaskReasons` is that key), which is exact.
+ */
+export async function assertLateCaptureHandBackStillOwed({
+  task,
+  amountCents,
+  store,
+}: {
+  task: { paymentId: string | null; reason: string };
+  amountCents: number;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  const captures = task.paymentId
+    ? await store.paymentTransaction.findMany({
+        where: { paymentId: task.paymentId, stripePaymentIntentId: { not: null } },
+        select: { stripePaymentIntentId: true, amountCents: true, refundedAmountCents: true },
+      })
+    : [];
+  const capture = captures.find(
+    (row) =>
+      row.stripePaymentIntentId !== null &&
+      automaticCancelledBookingRefundTaskReasons(row.stripePaymentIntentId).includes(
+        task.reason,
+      ),
+  );
+  if (!capture) {
+    throw new ManualBookingPaymentError(LATE_CAPTURE_APPROVAL_UNREADABLE_MESSAGE, 409);
+  }
+  if (capture.amountCents - capture.refundedAmountCents < amountCents) {
+    throw new ManualBookingPaymentError(LATE_CAPTURE_APPROVAL_ALREADY_REFUNDED_MESSAGE, 409);
+  }
 }
 
 /** Inside the completion's claim: the refund debt, before any Stripe call. */

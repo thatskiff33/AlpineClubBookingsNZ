@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   // #3639: the treasurer-approved late-capture refund - its capture row, its
   // refund debt, the happy-path close, the Xero correction and its audit entry.
   paymentTransactionFindUnique: vi.fn(),
+  paymentTransactionFindMany: vi.fn(),
   paymentFindUnique: vi.fn(),
   enqueueLateCaptureApprovalRefundRecovery: vi.fn(),
   markLateCaptureApprovalRefundRecoverySucceeded: vi.fn(),
@@ -190,12 +191,15 @@ import { requireCalendarDate } from "@/lib/club-time";
 // about, so it is asserted against the real builder rather than a stub that
 // could agree with a wrong caller.
 import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import { deletedBookingModificationRefundReason } from "@/lib/deleted-booking-modification-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
   // #3639: the late capture a treasurer-approval task refunds, read before the claim.
   paymentTransaction: {
     findUnique: (...a: unknown[]) => mocks.paymentTransactionFindUnique(...a),
+    // #3639: the #2700 hand-back's capture, found by its frozen reason sentence.
+    findMany: (...a: unknown[]) => mocks.paymentTransactionFindMany(...a),
   },
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
@@ -3023,8 +3027,9 @@ describe("#3639 - approving a held late-capture refund", () => {
       paymentId: "payment-1",
       amountCents: 2500,
       raisedAmountCents: 2500,
-      kind: "LATE_CAPTURE_REFUND_APPROVAL",
-      occurrenceKey: "late-capture-refund-approval:v1:pi_late",
+      kind: "DELETED_BOOKING_LATE_CAPTURE",
+      lateCaptureApprovalIntentId: "pi_late",
+      reason: "The booking's own payment pi_late was captured after the booking was cancelled (#3639).",
       status: ManualRefundTaskStatus.OPEN,
       booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
     });
@@ -3154,6 +3159,97 @@ describe("#3639 - approving a held late-capture refund", () => {
 
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3639: the confirm route's #2700 task completes as a HAND-BACK - a ledger
+ * mirror of money the club returned itself. If Stripe already returned that
+ * capture (a dashboard refund synced by `charge.refunded`, or the webhook's own
+ * refund), recording a hand-back as well counts one refund twice. The capture is
+ * the one whose frozen reason sentence the task carries.
+ */
+describe("#3639 - a #2700 hand-back asks what already happened to its capture", () => {
+  // The REAL builder: the sentence is the key, so a copy here could agree with
+  // a wrong writer.
+  const REASON_FOR = deletedBookingModificationRefundReason;
+
+  function armHandBack(capture: { refundedAmountCents: number } | null) {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-2700",
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: 2500,
+      raisedAmountCents: 2500,
+      kind: "DELETED_BOOKING_LATE_CAPTURE",
+      lateCaptureApprovalIntentId: null,
+      reason: REASON_FOR("pi_mod"),
+      status: ManualRefundTaskStatus.OPEN,
+      booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
+    });
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { stripePaymentIntentId: "pi_primary", amountCents: 12000, refundedAmountCents: 0 },
+      ...(capture
+        ? [{ stripePaymentIntentId: "pi_mod", amountCents: 2500, ...capture }]
+        : []),
+    ]);
+  }
+
+  function complete() {
+    return resolveManualRefundTask({
+      taskId: "task-2700",
+      resolution: "completed",
+      note: "paid back by bank transfer",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+  }
+
+  it("still records the hand-back while Stripe holds the whole capture", async () => {
+    armHandBack({ refundedAmountCents: 0 });
+
+    await complete();
+
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      amountCents: 2500,
+      store: tx,
+    });
+  });
+
+  it("refuses, before the claim, a capture Stripe already refunded - the task stays OPEN", async () => {
+    // Refunded in the Stripe dashboard. The primary payment still has room, so
+    // without this check the hand-back would land on IT and count twice.
+    armHandBack({ refundedAmountCents: 2500 });
+
+    await expect(complete()).rejects.toMatchObject({ status: 409 });
+
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the task's capture cannot be found, rather than guessing", async () => {
+    armHandBack(null);
+
+    await expect(complete()).rejects.toMatchObject({ status: 409 });
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("still lets it be dismissed, which moves nothing", async () => {
+    armHandBack({ refundedAmountCents: 2500 });
+
+    await resolveManualRefundTask({
+      taskId: "task-2700",
+      resolution: "dismissed",
+      note: "already refunded in Stripe",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 });

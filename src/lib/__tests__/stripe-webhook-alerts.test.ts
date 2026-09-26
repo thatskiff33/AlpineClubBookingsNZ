@@ -2030,8 +2030,10 @@ describe("Stripe webhook Xero alerting", () => {
             paymentId: "payment-9",
             amountCents: 2500,
             raisedAmountCents: 2500,
-            kind: "LATE_CAPTURE_REFUND_APPROVAL",
-            occurrenceKey: "late-capture-refund-approval:v1:pi_additional_late",
+            // #3639: the #2700 kind the previous app version already reads,
+            // marked by the column that names the capture.
+            kind: "DELETED_BOOKING_LATE_CAPTURE",
+            lateCaptureApprovalIntentId: "pi_additional_late",
             status: "OPEN",
             reason: expect.stringContaining("A payment for a change to the booking"),
           }),
@@ -2566,8 +2568,8 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
       expect(mockManualRefundTaskCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({
-          kind: "LATE_CAPTURE_REFUND_APPROVAL",
-          occurrenceKey: "late-capture-refund-approval:v1:pi_primary_late",
+          kind: "DELETED_BOOKING_LATE_CAPTURE",
+          lateCaptureApprovalIntentId: "pi_primary_late",
           amountCents: 12000,
           status: "OPEN",
           reason: expect.stringContaining("The booking's own payment pi_primary_late"),

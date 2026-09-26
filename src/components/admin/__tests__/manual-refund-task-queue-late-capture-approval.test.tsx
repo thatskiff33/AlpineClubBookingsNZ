@@ -43,7 +43,9 @@ const HELD_TASK = {
   bookingId: "booking-9",
   amountCents: 2500,
   raisedAmountCents: 2500,
-  kind: "LATE_CAPTURE_REFUND_APPROVAL",
+  // #3639: the #2700 kind, marked by the route's flag.
+  kind: "DELETED_BOOKING_LATE_CAPTURE",
+  awaitingLateCaptureApproval: true,
   reason:
     "A payment for a change to the booking (pi_1) was captured after the booking was cancelled (#3639).",
   createdAt: "2026-06-21T00:00:00Z",
@@ -53,7 +55,7 @@ const HELD_TASK = {
   ...STAY,
 };
 
-async function renderQueue() {
+async function renderQueue(tasks: unknown[] = [HELD_TASK]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
@@ -61,7 +63,7 @@ async function renderQueue() {
       status: 200,
       json: async () => ({
         viewerCanViewBookings: true,
-        tasks: [HELD_TASK],
+        tasks,
         autoRefunded: [],
       }),
     })),
@@ -107,5 +109,16 @@ describe("#3639 - a late capture held for a treasurer", () => {
     expect(dialog).toHaveTextContent("Refund $25.00 to Grace Hopper's card?");
     expect(dialog).toHaveTextContent(/through Stripe, now/);
     expect(dialog).not.toHaveTextContent(/once the money has actually gone back/);
+  });
+
+  it("keeps the hand-back wording on a #2700 row of the same kind that is not held for approval", async () => {
+    const queue = await renderQueue([
+      { ...HELD_TASK, id: "task-2700", awaitingLateCaptureApproval: false },
+    ]);
+
+    expect(within(queue).getByRole("button", { name: "Mark paid back" })).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("manual-refund-task-late-capture-intro"),
+    ).not.toBeInTheDocument();
   });
 });

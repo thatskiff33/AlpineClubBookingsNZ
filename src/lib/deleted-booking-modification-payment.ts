@@ -6,7 +6,6 @@ import {
 } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { lateCaptureRefundApprovalOccurrenceKey } from "@/lib/late-capture-refund-approval-key";
 
 /**
  * What happens when a booking modification payment lands on a booking the club
@@ -387,7 +386,7 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
         paymentId,
         OR: [
           { reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) } },
-          { occurrenceKey: lateCaptureRefundApprovalOccurrenceKey(paymentIntentId) },
+          { lateCaptureApprovalIntentId: paymentIntentId },
         ],
       },
       select: { id: true },

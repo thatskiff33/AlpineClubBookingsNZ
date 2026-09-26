@@ -2946,6 +2946,12 @@ enum ManualRefundTaskKind {
   CANCELLED_BOOKING_HAND_BACK
   /// Stripe captured a booking-modification payment against a booking that had
   /// already been deleted (#2700, INV-ADDPAY-036).
+  ///
+  /// #3639: ALSO the kind of a late capture on a cancelled booking held for a
+  /// treasurer's approval (`ManualRefundTask.lateCaptureApprovalIntentId` set),
+  /// either capture kind, deleted or not. Reused rather than a new label so the
+  /// previous app version, which cannot read a label it does not know, renders
+  /// it as the open late-capture question it already understands.
   DELETED_BOOKING_LATE_CAPTURE
   /// The record of a late capture the webhook refunded automatically — money
   /// already back with the member, kept as a notice rather than as work
@@ -2983,15 +2989,6 @@ enum ManualRefundTaskKind {
   /// hand-back queue down with it. `uncollected-edit-review-share-expand.test.ts`
   /// fails the build if any writer starts producing it early.
   UNCOLLECTED_EDIT_REVIEW_SHARE
-  /// #3639 (owner decision 26 Sep 2026): a genuine late capture on a cancelled
-  /// booking that the club has chosen to have a treasurer approve rather than
-  /// refund automatically (`BookingDefaults.lateCaptureRefundNeedsApproval`).
-  /// Nothing has moved: completing it refunds the card through Stripe under the
-  /// same keys the automatic refund uses, and dismissing it keeps the money.
-  /// One per payment intent, by `occurrenceKey` (the CHECK in migration
-  /// 20261013010000). Written only once a club switches the setting on, which
-  /// only this release can do — see that migration's ledger row. `INV-PAY-102`.
-  LATE_CAPTURE_REFUND_APPROVAL
 }
 
 /// #3170 (epic #2797): WHICH WAY a completed task's money went.
@@ -3096,6 +3093,15 @@ model ManualRefundTask {
   /// because rows completed before this column existed carry no direction and
   /// must stay legal; it constrains every row written from here on.
   settlementDirection ManualRefundTaskDirection?
+  /// #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): set when this task is a
+  /// late capture on a cancelled booking held for a treasurer's approval, and it
+  /// names that capture's Stripe payment intent. It is the marker (completing
+  /// such a task refunds the card through Stripe, under the automatic refund's
+  /// own keys) and the duplicate fence (unique, so one capture has one approval
+  /// task). NULL on every other row. Only a `DELETED_BOOKING_LATE_CAPTURE` row may
+  /// carry it (`ManualRefundTask_late_capture_approval_kind`, migration
+  /// 20261013010000). The previous app version never selects or writes it.
+  lateCaptureApprovalIntentId String?  @unique
   reason              String                 @db.VarChar(500)
   status              ManualRefundTaskStatus @default(OPEN)
   completedByMemberId String?
@@ -3646,8 +3652,9 @@ model BookingDefaults {
   // #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): what happens to a genuine
   // late capture on a cancelled booking — money Stripe took after the cancel.
   // false (the default, and the behaviour before this column): the webhook refunds
-  // it automatically. true: nothing moves; an OPEN `LATE_CAPTURE_REFUND_APPROVAL`
-  // task waits for a treasurer, who refunds it from the finance queue or keeps it.
+  // it automatically. true: nothing moves; an OPEN approval task
+  // (`ManualRefundTask.lateCaptureApprovalIntentId`) waits for a treasurer, who
+  // refunds it from the finance queue or keeps it.
   // Club-wide, because it is how the club handles money, not a lodge's policy.
   lateCaptureRefundNeedsApproval Boolean @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
