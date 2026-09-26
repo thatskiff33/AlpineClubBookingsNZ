@@ -79,6 +79,8 @@ const SECRET_ROUTE = join(
   "route.ts",
 );
 
+const CHASE_MODULE = join(process.cwd(), "src", "lib", "additional-payment-chase.ts");
+
 function parse(path: string) {
   return ts.createSourceFile(
     path,
@@ -166,7 +168,20 @@ describe("the member's additional-payment card", () => {
   });
 
   it("is gated by the same predicate as the route that hands out the secret", () => {
+    // #3641: the route asks the member's pay door, which the Xero outbox reaper
+    // shares, and the door is built from this same predicate. Both halves are
+    // checked, so neither hop can drop it.
     const route = parse(SECRET_ROUTE);
-    expect(callsFunction(route, "isAdditionalPayableBookingStatus")).toBe(true);
+    expect(callsFunction(route, "payableAdditionalPaymentIntentId")).toBe(true);
+
+    const chase = parse(CHASE_MODULE);
+    const door = findFirst(
+      chase,
+      (candidate) =>
+        ts.isFunctionDeclaration(candidate) &&
+        candidate.name?.text === "payableAdditionalPaymentIntentId",
+    );
+    expect(door, "payableAdditionalPaymentIntentId not found").not.toBeNull();
+    expect(callsFunction(door!, "isAdditionalPayableBookingStatus")).toBe(true);
   });
 });
