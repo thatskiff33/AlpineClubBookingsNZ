@@ -455,16 +455,60 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // mandatory set, so no block can lift it. Branding the type was the
 // alternative and was not taken: every test fixture and every server reader
 // would need to mint the brand, for no protection this arm does not give.
-// Known limit, as for every selector here: a destructured property default
-// (`{ format = x }: Options`) is not seen.
-const CLUB_FORMAT_TYPE_NAME = "/^(?:ClubDateFormat|ClubFormat)$/";
+//
+// WHAT IT SEES (widened in the #3628 re-review). A club-format type reference
+// (`ClubDateFormat`, `ClubFormat`, or qualified `ct.ClubDateFormat`) that IS the
+// annotation, or sits in it as a union / intersection member, an array element,
+// or a generic argument (`Readonly<ClubDateFormat>`, `Readonly<X | null>`,
+// `Array<ClubFormat>`) — on:
+//  - a parameter with a DEFAULT (`format: ClubDateFormat | undefined = NZ`);
+//  - an OPTIONAL identifier: a function parameter, an interface-method or
+//    function-type parameter (`format?: ClubDateFormat | null`);
+//  - an OPTIONAL property signature, so an options object cannot carry it
+//    optionally (`opts: { format?: ClubDateFormat }`), nor a class field;
+//  - an optional TUPLE element, so a rest tuple cannot
+//    (`...rest: [ClubDateFormat?]`, `...rest: [format?: ClubDateFormat]`);
+//  - a DESTRUCTURED default on a property named `format` / `clubFormat` /
+//    `dateFormat` (`({ format = NZ }: Options)`) — by NAME, because a selector
+//    cannot follow `Options` to its declaration; the optional-property arm is
+//    what refuses `format?:` on that declaration.
+// The annotation is walked by explicit CHILD paths, not a descendant `:has`, on
+// purpose: an optional property whose type is a FUNCTION taking a required
+// format (`sendAlert?: (report, format: ClubFormat) => Promise<void>`, in
+// `xero-credit-sync-checker.ts`) keeps that format required, and a descendant
+// match would refuse it. That function's own parameters are still judged,
+// by the optional-identifier arm, so `(format?: ClubFormat) => void` is caught.
+// What a selector cannot see is a type ALIAS (`type F = ClubDateFormat;
+// (format?: F)`), which needs type resolution; `club-format-required-guard.test.ts`
+// backs that with a census refusing any alias of a club format outside the
+// kernel's own definition.
+const CLUB_FORMAT_TYPE_NAME = "/^Club(?:Date)?Format$/";
+const CLUB_FORMAT_REF = `TSTypeReference:matches([typeName.name=${CLUB_FORMAT_TYPE_NAME}], [typeName.right.name=${CLUB_FORMAT_TYPE_NAME}])`;
+/** Where, below an annotation's root, a club-format reference still makes that annotation "a club format". */
+const CLUB_FORMAT_ANNOTATION_PATHS = [
+  CLUB_FORMAT_REF,
+  `TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSIntersectionType > ${CLUB_FORMAT_REF}`,
+  `TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeOperator > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+];
+/** `head > path` for every annotation path, as one comma-list selector. */
+const clubFormatAnnotated = (head) =>
+  CLUB_FORMAT_ANNOTATION_PATHS.map((path) => `${head} > ${path}`).join(", ");
 const CLUB_FORMAT_REQUIRED_MESSAGE =
   "INV-CONFIG-006 / #3566: a `ClubDateFormat` / `ClubFormat` parameter is REQUIRED — no default value and no `?`. A default is the ambient-locale shape the owner declined on #3566 and #3565: it lets a caller that forgot the club's format compile. Take the format from the caller (clubTime().format / clubFormatValues() on the server, useClubTime().format / useClubFormat() in the browser).";
 const CLUB_FORMAT_PARAMETER_RESTRICTIONS = [
-  `AssignmentPattern[left.typeAnnotation.typeAnnotation.typeName.name=${CLUB_FORMAT_TYPE_NAME}]`,
-  `AssignmentPattern[left.typeAnnotation.typeAnnotation.typeName.right.name=${CLUB_FORMAT_TYPE_NAME}]`,
-  `:function > Identifier[optional=true][typeAnnotation.typeAnnotation.typeName.name=${CLUB_FORMAT_TYPE_NAME}]`,
-  `:function > Identifier[optional=true][typeAnnotation.typeAnnotation.typeName.right.name=${CLUB_FORMAT_TYPE_NAME}]`,
+  clubFormatAnnotated("AssignmentPattern > Identifier.left > TSTypeAnnotation"),
+  clubFormatAnnotated("Identifier[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSPropertySignature[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("PropertyDefinition[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSOptionalType"),
+  clubFormatAnnotated("TSNamedTupleMember[optional=true]"),
+  "ObjectPattern > Property[key.name=/^(?:format|clubFormat|dateFormat)$/] > AssignmentPattern",
 ].map((selector) => ({ selector, message: CLUB_FORMAT_REQUIRED_MESSAGE }));
 
 /**
