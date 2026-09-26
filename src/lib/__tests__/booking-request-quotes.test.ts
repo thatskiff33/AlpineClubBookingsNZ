@@ -303,6 +303,7 @@ import {
   emailWithheldForEnvironment,
 } from "@/lib/__tests__/helpers/email-outcomes";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -393,7 +394,7 @@ function memberNightConflictError() {
       canSelfRemove: false,
       isSelfGuest: false,
     },
-  ]);
+  ], CLUB_FORMAT_TEST);
 }
 
 const GUESTS = [
@@ -2569,7 +2570,8 @@ describe("holdBookingRequestSlots owner role", () => {
         actorRole: "ADMIN",
         checkIn: new Date("2026-08-01T00:00:00.000Z"),
         checkOut: new Date("2026-08-03T00:00:00.000Z"),
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const guardArgs = mockedAssertNoConflicts.mock.calls[0][1];
     // A brand-new held booking is created, so nothing is excluded.

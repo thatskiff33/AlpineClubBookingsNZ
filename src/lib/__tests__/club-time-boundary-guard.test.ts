@@ -406,8 +406,12 @@ describe("the environment-zone allowlist is a ratchet", () => {
         arm that replaces it, `AUTHORITY_DEFAULT_RESTRICTIONS`, is on the
         mandatory set that no block lifts — so a future entry here can excuse a
         read and can never again excuse a default.
-      - FIVE today. Of the four that have left, TWO migrated
-        (`member-guest-consent-labels.ts`, `member-guest-delegate-page.ts`), one
+      - FIVE until #3566 MIGRATED `src/lib/induction-display.ts`: its
+        module-level formatter took the caller's `BoundClubTime` instead, so
+        the zone (and the locale) arrive through `ClubTimeProvider`.
+      - FOUR today. Of the five that have left, THREE migrated
+        (`member-guest-consent-labels.ts`, `member-guest-delegate-page.ts`,
+        `induction-display.ts`), one
         was DELETED outright (`nzst-date.ts`) and one left by having its DEFAULT
         deleted (`member-merge-field-kinds.ts`, #3126) while still naming the
         zone in prose. Three routes off, not one — and migration is the intended
@@ -420,7 +424,7 @@ describe("the environment-zone allowlist is a ratchet", () => {
       with slack in it is not a ratchet — the slack is simply room to regrow in
       without anything failing.
     */
-    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(5);
+    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(4);
   });
 
   it("excuses exactly the files it gives reasons for", () => {

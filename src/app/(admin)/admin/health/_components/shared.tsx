@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
-import type { ClubFormat } from "@/lib/club-format";
-import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
+import {
+  formatClubInstantCompactDateTime,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -59,73 +62,37 @@ export function formatUptime(seconds: number) {
   return `${minutes}m`;
 }
 
-// #2264: deliberately not `formatNZDateTime` — the health dashboard packs many
-// timestamps into narrow rows, so it drops the year and keeps 2-digit fields.
+// #2264: deliberately not the medium date-time — the health dashboard packs
+// many timestamps into narrow rows, so it drops the year and keeps 2-digit
+// fields. Every value passed here is a real INSTANT — a cron run, a bounce, an
+// escalation — never a calendar day, so it is projected through the club's
+// PERSISTED zone (CT-4, #2870; INV-CONFIG-002).
 //
-// CT-4 (#2870) changed WHICH zone, not the shape. `APP_TIME_ZONE` is the
-// environment's answer; the club's civil-time authority is the persisted
-// `ClubTimeSettings.timeZone` (INV-CONFIG-002), which reaches a `"use client"`
-// file only as data — so the formatter can no longer be a module constant and
-// is memoised per zone instead. The kernel owns the only formatter factory in
-// the tree and would be the right home for this, but `{day, month, hour,
-// minute}` is not one of its house shapes and `src/lib` is a different lane's
-// (reported on #2870 with the other missing shapes).
-//
-// Every value passed here is a real INSTANT — a cron run, a bounce, an
-// escalation — never a calendar day.
-//
-// #3564 did to the LOCALE what CT-4 did to the zone. `APP_LOCALE` is
-// `NEXT_PUBLIC_LOCALE` inlined at BUILD time, so in the published image it is
-// `undefined` and every club's health dashboard wrote its stamps the New
-// Zealand way; the club's recorded locale reaches a `"use client"` file only as
-// data (INV-CONFIG-006). The memo is therefore keyed on the PAIR, because two
-// clubs can share a zone and differ in locale.
-const HEALTH_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function healthFormatter(
-  locale: string,
-  zone: ClubTimeZone,
-): Intl.DateTimeFormat {
-  const key = `${locale}|${zone}`;
-  const cached = HEALTH_FORMATTERS.get(key);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat(locale, {
-    timeZone: zone,
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  HEALTH_FORMATTERS.set(key, created);
-  return created;
-}
-
-/**
- * `format` is the whole `ClubFormat` rather than a bare locale STRING, and that
- * is a deliberate choice about the call sites: `dateStr` is also a string, so a
- * bare locale parameter beside it would let a transposed call compile and
- * render nonsense. An object argument makes the transposition a type error.
- */
-export function formatDate(
-  clubTime: BoundClubTime,
-  format: ClubFormat,
-  dateStr: string,
-) {
+// #3566 moved it onto the kernel's `compactDateTime` house shape, which the
+// stuck-states "generated at" stamp shares. It was a local formatter here,
+// memoised on the locale and zone pair (#3564), and an identical one on that
+// page built from the BUILD's locale, so the two screens could disagree about
+// one moment. The binding now carries both the zone and the club's locale, so
+// a bare locale string can no longer be transposed with `dateStr`.
+export function formatDate(clubTime: BoundClubTime, dateStr: string) {
   // Guarded, unlike the `new Date()` this replaces: a health payload is read
   // from a live system and a row with an unparseable stamp must not blank the
   // dashboard. An offset-less ISO string is refused rather than read in the
   // host's zone, which is the defect class this epic closes.
   const instant = parseInstant(dateStr);
   if (instant === null) return "unknown";
-  return healthFormatter(format.locale, clubTime.zone).format(instant);
+  return formatClubInstantCompactDateTime(
+    instant,
+    clubTime.zone,
+    clubTime.format,
+  );
 }
 
 export function formatOptionalDate(
   clubTime: BoundClubTime,
-  format: ClubFormat,
   dateStr: string | null,
 ) {
-  return dateStr ? formatDate(clubTime, format, dateStr) : "Not recorded";
+  return dateStr ? formatDate(clubTime, dateStr) : "Not recorded";
 }
 
 export function CronError({ error }: { error: string }) {

@@ -164,6 +164,7 @@ vi.mock("@/components/promo-code-input", () => ({
 }))
 
 import AdminBookPage from "@/app/(admin)/admin/book/page"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 function response(body: unknown): Response {
   return { ok: true, status: 200, json: async () => body } as Response
@@ -243,7 +244,7 @@ describe("admin book: the club's day decides what is retroactive (CT-4, #2870)",
     render(<AdminBookPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ClubFormatTestProvider>
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         </ClubFormatTestProvider>
       ),
     })

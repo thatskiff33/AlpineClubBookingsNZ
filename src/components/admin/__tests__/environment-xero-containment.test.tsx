@@ -26,6 +26,7 @@ import {
   type XeroContactContainment,
 } from "@/components/admin/environment-xero-containment";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** The club's persisted zone under test. Deliberately NOT the environment's. */
 const CLUB_ZONE = "Pacific/Auckland";
@@ -95,7 +96,7 @@ function render(
     by design, and the zone every case below renders under is the one named here.
   */
   return renderToStaticMarkup(
-    <ClubTimeProvider zone={zone}>
+    <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
       <EnvironmentXeroContainment
         role="NON_PRODUCTION"
         declarationKind="non-production"

@@ -326,7 +326,6 @@ export async function reserveDiagnosticsBudget(
       budgetCents: DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS,
     };
   }
-
   try {
     return await prisma.$transaction(async (tx) => {
       // Serialise every reserve for THIS month so the read-check-insert below is
@@ -538,7 +537,6 @@ export async function settleDiagnosticsRoundtrip(
     recordMeteringFailure(new Error("Diagnostics usage delegates unavailable"), failureContext);
     return;
   }
-
   try {
     await prisma.$transaction(async (tx) => {
       // Take the SAME per-month advisory lock as reserveDiagnosticsBudget as the

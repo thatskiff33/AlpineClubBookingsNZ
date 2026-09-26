@@ -13,6 +13,7 @@ import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
 import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { prisma } from "@/lib/prisma";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import { getClubFormat } from "@/lib/club-format-settings";
 
 // Split verbatim out of `src/app/api/bookings/[id]/modify-quote/route.ts`
 // (#3128), which was nine times its 250-line route budget. This branch of the
@@ -171,7 +172,7 @@ export async function buildShiftPreviewResponse({
   });
   if (memberNightConflicts.length > 0) {
     return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
+      getBookingMemberNightConflictResponse(memberNightConflicts, await getClubFormat()),
       { status: 409 },
     );
   }

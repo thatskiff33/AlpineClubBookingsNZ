@@ -38,6 +38,7 @@ import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { PromoRedemptionsPanel } from "./promo-redemptions-panel";
+import { type ClubDateFormat } from "@/lib/club-time";
 
 interface RedemptionsPromoSummary {
   id: string;
@@ -147,8 +148,8 @@ function formatPromoDateInput(value: string | null) {
   return calendarDayFromPayload(value) ?? "";
 }
 
-function formatPromoDateDisplay(value: string | null) {
-  return formatPayloadCalendarDay(value, "");
+function formatPromoDateDisplay(value: string | null, format: ClubDateFormat) {
+  return formatPayloadCalendarDay(value, format, "");
 }
 
 export function PromoCodesPageClient({
@@ -935,11 +936,11 @@ export function PromoCodesPageClient({
               <span className="text-muted-foreground">Valid:</span>{" "}
               <span className="font-medium">
                 {promo.validFrom
-                  ? formatPromoDateDisplay(promo.validFrom)
+                  ? formatPromoDateDisplay(promo.validFrom, format)
                   : "Any time"}
                 {" - "}
                 {promo.validUntil
-                  ? formatPromoDateDisplay(promo.validUntil)
+                  ? formatPromoDateDisplay(promo.validUntil, format)
                   : "No expiry"}
               </span>
             </div>

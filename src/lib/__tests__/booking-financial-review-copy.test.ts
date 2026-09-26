@@ -35,7 +35,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
  * reworded alone.
  */
 
-const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
 const PAYABLE_BOOKING = {
   status: "CONFIRMED",

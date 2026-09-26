@@ -59,9 +59,9 @@ const OCCURRED_AT = "2026-07-01T02:00:00.000Z";
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 
-const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
-const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"));
-const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+const AUCKLAND = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
+const KIRITIMATI = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"), CLUB_FORMAT_TEST);
+const PAGO = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
 
 function booking(overrides: Partial<NarrativeBooking> = {}): NarrativeBooking {
   return {

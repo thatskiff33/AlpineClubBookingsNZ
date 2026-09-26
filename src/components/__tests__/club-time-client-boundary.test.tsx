@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
+import { ClubFormatProvider } from "@/components/club-format-provider";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import {
   bindClubTime,
@@ -25,6 +26,7 @@ vi.mock("next/navigation", () => ({
 import { BookingCalendar } from "@/components/booking-calendar";
 import { NoticeAcknowledgeButton } from "@/components/notice-acknowledge-button";
 import { MembershipCancellationBlockerNotice } from "@/components/admin/membership-cancellation-blocker-notice";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * THE CLUB'S PERSISTED TIMEZONE IS THE AUTHORITY IN THE BROWSER (CT-4 group C,
@@ -118,7 +120,16 @@ afterEach(() => {
 });
 
 function renderInClubZone(ui: React.ReactElement, zone = CLUB_ZONE) {
-  return render(<ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>);
+  return render(
+    <ClubFormatProvider
+      currencyCode={CLUB_FORMAT_TEST.currencyCode}
+      locale={CLUB_FORMAT_TEST.locale}
+    >
+      <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
+        {ui}
+      </ClubTimeProvider>
+    </ClubFormatProvider>,
+  );
 }
 
 function stubEmptyAvailability() {
@@ -137,9 +148,10 @@ describe("CT-4: today comes from the club, not the environment or the browser", 
     // club's day and the environment's day fall in DIFFERENT MONTHS. If they ever
     // stop differing this fails loudly instead of going vacuous.
     expect(new Date().toISOString()).toBe(FROZEN_INSTANT);
-    const clubDay = bindClubTime(requireClubTimeZone(CLUB_ZONE)).today();
+    const clubDay = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).today();
     const legacyDay = bindClubTime(
       requireClubTimeZone(LEGACY_REFERENCE_ZONE),
+      CLUB_FORMAT_TEST,
     ).today();
     expect(clubDay).toBe("2026-06-30");
     expect(legacyDay).toBe("2026-07-01");
@@ -188,11 +200,12 @@ describe("CT-4: an instant is projected through the club's zone", () => {
   it("shows the club's day for an acknowledgement stamp", () => {
     // PREMISE as an answer: the club's projection of this instant and the legacy
     // environment projection are DIFFERENT STRINGS.
-    const inClub = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
+    const inClub = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).instantDate(
       new Date(INSTANT),
     );
     const inLegacy = bindClubTime(
       requireClubTimeZone(LEGACY_REFERENCE_ZONE),
+      CLUB_FORMAT_TEST,
     ).instantDate(new Date(INSTANT));
     expect(inClub).toBe("15 Apr 2026");
     expect(inLegacy).toBe("16 Apr 2026");
@@ -276,10 +289,10 @@ describe("CT-4: a calendar date consults NO zone at all", () => {
       BOTH halves of this case, and so would any implementation pinned to a zone
       ahead of UTC. What the case is worth is stated on the second half.
     */
-    const projected = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
+    const projected = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).instantDate(
       new Date(NIGHT),
     );
-    const asCalendarDay = formatClubDate(requireCalendarDate("2026-04-16"));
+    const asCalendarDay = formatClubDate(requireCalendarDate("2026-04-16"), CLUB_FORMAT_TEST);
     expect(projected).toBe("15 Apr 2026");
     expect(asCalendarDay).toBe("16 Apr 2026");
     expect(projected).not.toBe(asCalendarDay);

@@ -19,6 +19,7 @@ import {
   listMonthlyFacts,
   type FinanceMonthlyFactRecord,
 } from "@/lib/finance-monthly-fact-store";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 /**
  * Xero account types treated as current for working capital. Documented
@@ -72,7 +73,8 @@ function normalizedClass(record: FinanceMonthlyFactRecord): string {
 }
 
 export async function buildFinanceMonthlyBalanceSeries(
-  window: Pick<FinanceDashboardDateWindow, "fromMonth" | "toMonth">
+  window: Pick<FinanceDashboardDateWindow, "fromMonth" | "toMonth">,
+  format: ClubDateFormat,
 ): Promise<FinanceMonthlyBalanceSeries> {
   const facts = await listMonthlyFacts({
     statementKind: FinanceMonthlyStatementKind.BALANCE_SHEET,
@@ -127,7 +129,7 @@ export async function buildFinanceMonthlyBalanceSeries(
 
     return {
       monthKey,
-      label: financeDashboardTrendMonthLabel(monthKey),
+      label: financeDashboardTrendMonthLabel(monthKey, format),
       assetsCents,
       liabilitiesCents,
       equityCents,

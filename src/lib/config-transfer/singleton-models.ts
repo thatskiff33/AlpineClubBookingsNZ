@@ -85,8 +85,9 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "club policy — instance-local",
   AiSpendCurrencySettings:
     "the administrator-set NZD -> club-currency conversion rate for AI spend " +
-    "(#3354), shared by both AI modules; a property of THIS deployment's " +
-    "configured currency (APP_CURRENCY), so a source club's rate has no meaning on " +
+    "(#3354), shared by both AI modules; a property of the club's stored " +
+    "currency (ClubFormatSettings, itself instance-local, #3566) — which is why a " +
+    "currency change clears it — so a source club's rate has no meaning on " +
     "a target and, like the two spend caps it prices against, must never land " +
     "there — a fresh import keeps the target's own rate (or none) — instance-local",
   AiAssistantSettings:

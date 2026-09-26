@@ -57,6 +57,7 @@ import {
   MemberGuestAddThrottledError,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -307,7 +308,7 @@ export async function POST(request: NextRequest) {
   }
   if (memberNightConflicts.length > 0) {
     return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
+      getBookingMemberNightConflictResponse(memberNightConflicts, await clubFormatValues()),
       { status: 409 },
     );
   }

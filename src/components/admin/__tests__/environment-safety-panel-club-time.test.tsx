@@ -33,6 +33,7 @@ vi.mock("@/config/operational", () => ({
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { EnvironmentSafetyPanel } from "@/components/admin/environment-safety-panel";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const ENVIRONMENT_ZONE = "America/Denver";
 const CLUB_ZONE = "Pacific/Auckland";
@@ -72,7 +73,7 @@ function renderPanel(zone: string) {
     })),
   );
   return render(
-    <ClubTimeProvider zone={zone}>
+    <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
       <EnvironmentSafetyPanel />
     </ClubTimeProvider>,
   );

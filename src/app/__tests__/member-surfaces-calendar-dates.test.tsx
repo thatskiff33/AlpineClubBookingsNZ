@@ -139,6 +139,7 @@ import {
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { KioskWeekDaySummary } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 
 afterAll(() => {
   restoreHostTimeZone(originalHostTimeZone);
@@ -215,6 +216,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
         onToday={vi.fn()}
         onRefresh={vi.fn()}
       />,
+      { wrapper: ClubFormatTestProvider },
     );
 
     // The week range: "13 Apr - 19 Apr 2026". Under the old environment pin this
@@ -277,10 +279,10 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
       window: { start: "2026-04-16" },
     } as unknown as DisplayState;
 
-    expect(resolveDisplayText("Today is {{display-date}}.", state)).toBe(
+    expect(resolveDisplayText("Today is {{display-date}}.", state, CLUB_FORMAT_TEST)).toBe(
       "Today is Thursday, 16 April.",
     );
-    expect(resolveDisplayText("{{display-date}}", state)).not.toContain(
+    expect(resolveDisplayText("{{display-date}}", state, CLUB_FORMAT_TEST)).not.toContain(
       "15 April",
     );
   });
@@ -306,10 +308,10 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
     const night = (day: string) => new Date(`${day}T00:00:00.000Z`);
 
     expect(
-      formatConsentNightsLabel([night("2026-08-08"), night("2026-08-09")]),
+      formatConsentNightsLabel([night("2026-08-08"), night("2026-08-09")], CLUB_FORMAT_TEST),
     ).toBe("Sat 8 Aug, Sun 9 Aug");
     expect(
-      formatConsentStayLabel(night("2026-08-08"), night("2026-08-10")),
+      formatConsentStayLabel(night("2026-08-08"), night("2026-08-10"), CLUB_FORMAT_TEST),
     ).toBe("Sat 8 Aug – Mon 10 Aug 2026 (2 nights)");
   });
 });

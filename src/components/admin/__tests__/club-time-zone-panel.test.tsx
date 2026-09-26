@@ -114,6 +114,7 @@ import {
 import { ClubTimeZonePanel } from "@/components/admin/club-time-zone-panel";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
   The club-timezone maintenance panel (CT-1, #2989; epic #2988).
@@ -184,7 +185,7 @@ const SERVER_STATE = {
  * house shape twice and drifts the moment one of the two copies is edited.
  */
 function spelledIn(timeZone: string, iso: string): string {
-  return bindClubTime(requireClubTimeZone(timeZone)).instantDateTime(
+  return bindClubTime(requireClubTimeZone(timeZone), CLUB_FORMAT_TEST).instantDateTime(
     new Date(iso),
   );
 }
@@ -192,7 +193,7 @@ function spelledIn(timeZone: string, iso: string): string {
 /** A provider pinned to one named zone, replacing the harness's default. */
 function providerFor(zone: string) {
   return function PinnedClubTime({ children }: { children: ReactNode }) {
-    return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    return <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>;
   };
 }
 

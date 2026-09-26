@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -142,9 +143,9 @@ function clubFacingAnswers(): Record<string, unknown> {
     stayArrivalIso: window.arrival.toISOString(),
     stayDepartureIso: window.departure.toISOString(),
     stayNights: window.nights,
-    renderedCalendarDay: formatClubDate(checkIn),
-    renderedInstantDate: formatClubInstantDate(INSTANT, CLUB_ZONE),
-    renderedInstantDateTime: formatClubInstantDateTime(INSTANT, CLUB_ZONE),
+    renderedCalendarDay: formatClubDate(checkIn, CLUB_FORMAT_TEST),
+    renderedInstantDate: formatClubInstantDate(INSTANT, CLUB_ZONE, CLUB_FORMAT_TEST),
+    renderedInstantDateTime: formatClubInstantDateTime(INSTANT, CLUB_ZONE, CLUB_FORMAT_TEST),
     nights: countClubNights(checkIn, checkOut),
     adminCalendarRange: getAdminCalendarBookingDayRange(
       { checkIn: "2026-09-25", checkOut: "2026-09-28" },
@@ -274,10 +275,11 @@ describe("club-facing answers do not move when the host does", () => {
           ),
           stayArrivalIso: window.arrival.toISOString(),
           stayDepartureIso: window.departure.toISOString(),
-          renderedCalendarDay: clubTime.formatClubDate(checkIn),
+          renderedCalendarDay: clubTime.formatClubDate(checkIn, CLUB_FORMAT_TEST),
           renderedInstantDateTime: clubTime.formatClubInstantDateTime(
             INSTANT,
             clubZone,
+            CLUB_FORMAT_TEST,
           ),
           adminCalendarRange: freshRange(
             { checkIn: "2026-09-25", checkOut: "2026-09-28" },

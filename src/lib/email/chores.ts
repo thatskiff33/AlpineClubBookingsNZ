@@ -35,14 +35,15 @@ export async function sendChoreRosterEmail(
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null,
 ) {
-  // #2256: was a byte-identical copy of the template's own formatter; both now
-  // call the one exported helper so the subject and the body can never drift.
+  // #2256 / #3566: rendered ONCE and handed to both the subject and the body,
+  // so they cannot drift — not even across the palette await, when the email
+  // seam's locale cache may refresh.
   const formattedDate = formatChoreRosterDate(date);
 
   await sendEmail({
     to: email,
     subject: `Your chore roster for ${formattedDate} - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => choreRosterTemplate(guestName, date, chores, choreLink)),
+    html: await renderEmailHtml(() => choreRosterTemplate(guestName, formattedDate, chores, choreLink)),
     bookingContext,
     templateName: "chore-roster",
     templateData: {

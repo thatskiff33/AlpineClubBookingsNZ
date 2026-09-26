@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import {
+  renderWithClubFormat as render,
+  screen,
+} from "@/lib/__tests__/support/club-time-render";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import { ChoresBoard } from "@/components/lodge-display/modules/chores-board";
@@ -38,30 +42,30 @@ function state(overrides: Partial<DisplayState>): DisplayState {
 describe("resolveDisplayText (AC3/AC4/AC5/AC6)", () => {
   it("resolves config keys, lodge name, and display date", () => {
     const s = state({});
-    expect(resolveDisplayText("Wi-Fi: {{config:wifi-code}}", s)).toBe(
+    expect(resolveDisplayText("Wi-Fi: {{config:wifi-code}}", s, CLUB_FORMAT_TEST)).toBe(
       "Wi-Fi: alpine1234"
     );
-    expect(resolveDisplayText("Welcome to {{lodge-name}}", s)).toBe(
+    expect(resolveDisplayText("Welcome to {{lodge-name}}", s, CLUB_FORMAT_TEST)).toBe(
       "Welcome to Silverpeak Lodge"
     );
-    expect(resolveDisplayText("{{display-date}}", s)).toMatch(/Monday.*13.*April/);
+    expect(resolveDisplayText("{{display-date}}", s, CLUB_FORMAT_TEST)).toMatch(/Monday.*13.*April/);
   });
 
   it("renders a VISIBLE placeholder for an unset config key (AC4)", () => {
-    expect(resolveDisplayText("Code: {{config:door-pin}}", state({}))).toBe(
+    expect(resolveDisplayText("Code: {{config:door-pin}}", state({}), CLUB_FORMAT_TEST)).toBe(
       "Code: ⟨config:door-pin?⟩"
     );
   });
 
   it("is whitespace/case tolerant and leaves unknown syntax alone", () => {
     const s = state({});
-    expect(resolveDisplayText("{{ CONFIG:WIFI-CODE }}", s)).toBe("alpine1234");
-    expect(resolveDisplayText("{{something-else}}", s)).toBe("{{something-else}}");
+    expect(resolveDisplayText("{{ CONFIG:WIFI-CODE }}", s, CLUB_FORMAT_TEST)).toBe("alpine1234");
+    expect(resolveDisplayText("{{something-else}}", s, CLUB_FORMAT_TEST)).toBe("{{something-else}}");
   });
 
   it("returns plain text — a config value cannot inject markup (renders as text nodes)", () => {
     const s = state({ config: { note: "<img src=x onerror=alert(1)>" } });
-    render(<span>{resolveDisplayText("{{config:note}}", s)}</span>);
+    render(<span>{resolveDisplayText("{{config:note}}", s, CLUB_FORMAT_TEST)}</span>);
     // React escaped it: the literal text is present, no img element exists.
     expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeDefined();
     expect(document.querySelector("img")).toBeNull();

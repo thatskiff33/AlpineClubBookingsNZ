@@ -257,7 +257,7 @@ const projectedDay = (iso: string, zone: string) =>
 
 /** What the club's persisted zone makes of a real instant. */
 const clubInstant = (iso: string, zone: string) =>
-  bindClubTime(requireClubTimeZone(zone)).instantDateTime(new Date(iso));
+  bindClubTime(requireClubTimeZone(zone), CLUB_FORMAT_TEST).instantDateTime(new Date(iso));
 
 // ---------------------------------------------------------------------------
 // The two persisted-zone configurations

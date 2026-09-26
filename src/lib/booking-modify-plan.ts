@@ -16,7 +16,10 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
-import type { CalendarDate } from "@/lib/club-time";
+import type {
+  CalendarDate,
+  ClubDateFormat,
+} from "@/lib/club-time";
 import {
   assertOtherLodgeExists,
   requestCarriesOtherLodgeElection,
@@ -715,6 +718,7 @@ export async function prepareGuestPlan(
     memberGuestPolicy,
     subscriptionLockoutMode,
     today,
+    format,
     now = new Date(),
   }: {
     booking: LoadedBookingForModify;
@@ -767,6 +771,8 @@ export async function prepareGuestPlan(
      * host's.
      */
     today: Date;
+    /** The guard's refusal copy (#3566); threaded for the reason `today` is. */
+    format: ClubDateFormat;
     now?: Date;
   },
 ): Promise<GuestPlan> {
@@ -1099,7 +1105,7 @@ export async function prepareGuestPlan(
     // Supplied by the caller from outside this transaction (`INV-LOCK-004`) —
     // see the `today` parameter's docblock.
     today,
-  });
+  }, format);
 
   const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
   const adminReviewReason = requiresAdminReview

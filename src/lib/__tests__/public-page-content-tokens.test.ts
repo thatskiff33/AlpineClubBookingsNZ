@@ -71,7 +71,7 @@ describe("public PageContent token view models", () => {
     await expect(loadPublicAnnualFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
     await expect(loadPublicJoiningFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
     await expect(loadPublicHutFees(CLUB_FORMAT_TEST)).resolves.toEqual([]);
-    await expect(loadPublicBookingPolicy()).resolves.toBeNull();
+    await expect(loadPublicBookingPolicy(CLUB_FORMAT_TEST)).resolves.toBeNull();
     await expect(loadPublicCancellationPolicy(CLUB_FORMAT_TEST)).resolves.toBeNull();
     expect(mocks.membershipTypes).not.toHaveBeenCalled();
     expect(mocks.lodges).not.toHaveBeenCalled();
@@ -139,7 +139,7 @@ describe("public PageContent token view models", () => {
   it("fails closed for an invalid lodge slug", async () => {
     mocks.lodge.mockResolvedValue(null);
     await expect(loadPublicHutFees(CLUB_FORMAT_TEST, "missing-lodge")).resolves.toEqual([]);
-    await expect(loadPublicBookingPolicy("missing-lodge")).resolves.toBeNull();
+    await expect(loadPublicBookingPolicy(CLUB_FORMAT_TEST, "missing-lodge")).resolves.toBeNull();
     await expect(loadPublicCancellationPolicy(CLUB_FORMAT_TEST, "missing-lodge")).resolves.toBeNull();
     expect(mocks.seasons).not.toHaveBeenCalled();
     expect(mocks.cancellation).not.toHaveBeenCalled();
@@ -516,7 +516,7 @@ describe("public PageContent token view models", () => {
     mocks.periods.mockResolvedValue([{ name: "School holidays", startDate: new Date("2026-09-01"), endDate: new Date("2026-09-10"), nonMemberHoldEnabled: false, nonMemberHoldDays: 3, lodgeId: null, cancellationRules: [{ secret: true }] }]);
     mocks.minimumStays.mockResolvedValue([{ name: "Weekend", startDate: new Date("2026-07-01"), endDate: new Date("2026-08-01"), minimumNights: 2, triggerDays: [6], capacityMode: "NO_HOLD", lodgeId: null }]);
     mocks.discount.mockResolvedValue({ enabled: true, minGroupSize: 5, summerOnly: true, id: "internal" });
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
     expect(policy).toEqual(expect.objectContaining({ hold: expect.stringContaining("7 days"), groupDiscount: expect.stringContaining("5") }));
     expect(policy?.minimumStays[0]?.triggerDays).toBe("Saturday");
     // #2363 ships the model and the admin card, not the public promise: no
@@ -555,7 +555,7 @@ describe("public PageContent token view models", () => {
       },
     ]);
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     // Both modes publish nothing: the stored choice still drives the admin card
     // and configuration transfer, but the public page must not describe an
@@ -583,13 +583,13 @@ describe("public PageContent token view models", () => {
     };
 
     mocks.hostingPolicies.mockResolvedValue([]);
-    expect((await loadPublicBookingPolicy())?.adultMemberHosting).toBeNull();
+    expect((await loadPublicBookingPolicy(CLUB_FORMAT_TEST))?.adultMemberHosting).toBeNull();
 
     mocks.hostingPolicies.mockResolvedValue([{ ...clubRow, mode: "DISABLED" }]);
-    expect((await loadPublicBookingPolicy())?.adultMemberHosting).toBeNull();
+    expect((await loadPublicBookingPolicy(CLUB_FORMAT_TEST))?.adultMemberHosting).toBeNull();
 
     mocks.hostingPolicies.mockResolvedValue([clubRow]);
-    const on = await loadPublicBookingPolicy();
+    const on = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
     expect(on?.adultMemberHosting).toMatch(/adult member on the same\s+booking/);
     // Says what the rule IS; never invites an exception request, and never
     // leaks the policy id, revision or capacity mode.
@@ -624,7 +624,7 @@ describe("public PageContent token view models", () => {
         ]),
     );
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.adultMemberHosting).toContain(
       "covered by an adult member staying at the lodge",
@@ -669,7 +669,7 @@ describe("public PageContent token view models", () => {
         ]),
     );
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.adultMemberHosting).toContain(
       "covered by an adult member staying at the lodge",
@@ -712,7 +712,7 @@ describe("public PageContent token view models", () => {
         ]),
     );
 
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
 
     expect(policy?.adultMemberHosting).toContain(
       "to stay with an adult member on the same booking",
@@ -740,12 +740,12 @@ describe("public PageContent token view models", () => {
     mocks.hostingPolicies.mockResolvedValue([clubOn, lodgeOff]);
 
     // The lodge relaxed it, so its own page says nothing.
-    expect((await loadPublicBookingPolicy("one"))?.adultMemberHosting).toBeNull();
+    expect((await loadPublicBookingPolicy(CLUB_FORMAT_TEST, "one"))?.adultMemberHosting).toBeNull();
 
     // A page with no lodge in the URL is answered by the CLUB row alone, so one
     // lodge's relaxation cannot soften the club's stated rule elsewhere.
     mocks.hostingPolicies.mockResolvedValue([clubOn]);
-    expect((await loadPublicBookingPolicy())?.adultMemberHosting).not.toBeNull();
+    expect((await loadPublicBookingPolicy(CLUB_FORMAT_TEST))?.adultMemberHosting).not.toBeNull();
   });
 
   it("scopes the hosting policy READ, not just the resolution (#2364)", async () => {
@@ -754,13 +754,13 @@ describe("public PageContent token view models", () => {
     // regardless of `where`. Assert the query itself, or a one-token change to
     // the scope filter ships green.
     mocks.lodge.mockResolvedValue({ id: "lodge-1", name: "Lodge One", slug: "one" });
-    await loadPublicBookingPolicy("one");
+    await loadPublicBookingPolicy(CLUB_FORMAT_TEST, "one");
     expect(mocks.hostingPolicies.mock.calls[0][0].where).toEqual({
       OR: [{ lodgeId: "lodge-1" }, { lodgeId: null }],
     });
 
     mocks.hostingPolicies.mockClear();
-    await loadPublicBookingPolicy();
+    await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
     // No lodge in the URL: the club row alone, never a lodge override that
     // would let one lodge's setting speak for the whole club.
     expect(mocks.hostingPolicies.mock.calls[0][0].where).toEqual({
@@ -841,7 +841,7 @@ describe("public PageContent token view models", () => {
   it("states when provisional holds are disabled globally and for a period", async () => {
     mocks.defaults.mockResolvedValue({ nonMemberHoldEnabled: false, nonMemberHoldDays: 7 });
     mocks.periods.mockResolvedValue([{ name: "Peak", startDate: new Date("2026-12-01"), endDate: new Date("2026-12-10"), nonMemberHoldEnabled: false, nonMemberHoldDays: 2, lodgeId: null }]);
-    const policy = await loadPublicBookingPolicy();
+    const policy = await loadPublicBookingPolicy(CLUB_FORMAT_TEST);
     expect(policy?.hold).toBe("Non-member bookings are not held provisionally.");
     expect(policy?.periods[0]?.hold).toBe("Non-member bookings are not held provisionally.");
   });

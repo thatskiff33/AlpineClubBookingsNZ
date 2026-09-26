@@ -26,6 +26,7 @@ import {
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
 import { formatStayDateOrNull } from "@/lib/club-time"
+import { useClubFormat } from "@/components/club-format-provider"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
 
 /**
@@ -284,6 +285,7 @@ function MinStayForm({
 }
 
 export function MinimumNightStaySection() {
+  const format = useClubFormat()
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
@@ -773,8 +775,8 @@ export function MinimumNightStaySection() {
                               </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {formatStayDateOrNull(policy.startDate) ?? policy.startDate} &mdash;{" "}
-                              {formatStayDateOrNull(policy.endDate) ?? policy.endDate}
+                              {formatStayDateOrNull(policy.startDate, format) ?? policy.startDate} &mdash;{" "}
+                              {formatStayDateOrNull(policy.endDate, format) ?? policy.endDate}
                             </p>
                           </div>
                           <div className="flex space-x-2">

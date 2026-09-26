@@ -57,8 +57,8 @@ export function renderBookingDetailMessages({
     // and formats it pinned to `UTC`, which is the identity for every club.
     // `formatNZLongDate` projected them through `APP_TIME_ZONE`, so a club west
     // of Greenwich put the night BEFORE the stay into the member's email.
-    checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn)),
-    checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut)),
+    checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn), club.format),
+    checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut), club.format),
     guestCount: booking.guests.length,
     amountDue: money.cents(amountDueAfterCreditCents),
     amountPaid: booking.payment ? money.cents(booking.payment.amountCents) : "",

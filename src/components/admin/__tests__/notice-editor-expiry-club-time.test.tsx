@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   CLUB_TIME_TEST_ZONE,
   fireEvent,
@@ -126,7 +127,7 @@ function noticeWithExpiry(expiresAt: string | null): AdminNoticeData {
 
 function providerFor(zone: string) {
   return function PinnedClubTime({ children }: { children: ReactNode }) {
-    return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    return <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>;
   };
 }
 

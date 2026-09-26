@@ -372,7 +372,7 @@ export async function buildFinanceMonthlyPnlSummary(
       const comparisonMonth = comparisonMonths[index] ?? null;
       return {
         monthKey,
-        label: financeDashboardTrendMonthLabel(monthKey),
+        label: financeDashboardTrendMonthLabel(monthKey, format),
         amountCents: filteredLines.reduce(
           (total, line) => total + (line.amountByMonth.get(monthKey) ?? 0),
           0
@@ -411,7 +411,7 @@ export async function buildFinanceMonthlyPnlSummary(
   if (includesProvisionalMonth) {
     const provisionalLabels = Array.from(provisionalMonths)
       .sort()
-      .map((monthKey) => financeDashboardTrendMonthLabel(monthKey));
+      .map((monthKey) => financeDashboardTrendMonthLabel(monthKey, format));
     warnings.push(
       `${provisionalLabels.join(", ")} ${
         provisionalLabels.length === 1 ? "is" : "are"

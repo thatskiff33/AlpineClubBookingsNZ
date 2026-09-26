@@ -688,8 +688,9 @@ derivation).
   `formatClubInstantLongDate` (or a binding's `instantLongDate`) for a moment —
   is reserved for the MEMBER-FACING surfaces the owner asked to keep it on
   (#2264): booking messages and the emails built from them, the lodge and
-  hut-leader instruction "last updated" stamps, and the generated report cover.
-  Admin and internal screens use the medium shape (`formatClubDate` /
+  hut-leader instruction "last updated" stamps, and the generated report cover
+  — plus the induction record's dates, long since #2256 and on the kernel's
+  shape since #3566 rather than a local formatter. Admin and internal screens use the medium shape (`formatClubDate` /
   `formatClubInstantDate`). Until #3123 these were `formatNZLongDate` and
   `formatNZDate` on the retired `nzst-date` adapter; the rule is about the SHAPE,
   not the spelling, and the shape is byte-identical.

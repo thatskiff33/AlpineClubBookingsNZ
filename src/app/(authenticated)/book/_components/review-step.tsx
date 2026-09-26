@@ -298,7 +298,7 @@ export function ReviewStep({
       ? addCalendarDays(requireCalendarDate(checkIn), -holdDays)
       : null;
   const holdDeadlineLabel = holdDeadline
-    ? formatClubWeekdayDate(holdDeadline)
+    ? formatClubWeekdayDate(holdDeadline, format)
     : null;
 
   useEffect(() => {
@@ -367,13 +367,13 @@ export function ReviewStep({
             <div>
               <span className="text-muted-foreground">Check-in:</span>{" "}
               <span className="font-medium">
-                {formatClubWeekdayDate(requireCalendarDate(checkIn!))}
+                {formatClubWeekdayDate(requireCalendarDate(checkIn!), format)}
               </span>
             </div>
             <div>
               <span className="text-muted-foreground">Check-out:</span>{" "}
               <span className="font-medium">
-                {formatClubWeekdayDate(requireCalendarDate(checkOut!))}
+                {formatClubWeekdayDate(requireCalendarDate(checkOut!), format)}
               </span>
             </div>
             <div>

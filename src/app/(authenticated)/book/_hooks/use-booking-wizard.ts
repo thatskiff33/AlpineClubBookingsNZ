@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { type GuestData } from "@/components/guest-form";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useClubFormat } from "@/components/club-format-provider";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE } from "@/lib/booking-lodge-scope";
@@ -167,6 +168,7 @@ function clearGuestNights(guestList: GuestData[]): GuestData[] {
 // and handlers. The page renders the _components step views with this hook's
 // return. The BookErrorPaymentTarget type is referenced via state below.
 export function useBookingWizard() {
+  const format = useClubFormat();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -1096,7 +1098,7 @@ export function useBookingWizard() {
     const conflicts = data.conflicts ?? [];
     setError(
       conflicts.length > 0
-        ? buildBookingMemberNightConflictSummary(conflicts)
+        ? buildBookingMemberNightConflictSummary(conflicts, format)
         : data.error ||
           "Someone in this party is already booked on one or more of these nights."
     );
@@ -1290,7 +1292,7 @@ export function useBookingWizard() {
       setMemberNightConflicts(nextConflicts);
       setError(
         nextConflicts.length > 0
-          ? buildBookingMemberNightConflictSummary(nextConflicts)
+          ? buildBookingMemberNightConflictSummary(nextConflicts, format)
           : "",
       );
 

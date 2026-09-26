@@ -5,7 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { APP_CURRENCY } from "@/config/operational";
+import logger from "@/lib/logger";
 import {
   describeRateInputRule,
   formatClubUnitsPerNzd,
@@ -29,6 +29,27 @@ import { prisma } from "@/lib/prisma";
 // specific operational control and does NOT travel in a config-transfer bundle
 // (see config-transfer club-settings.ts). Not module-gated (feature-routes.ts):
 // it belongs to two modules and spends nothing.
+//
+// THE CLUB SIDE IS THE CLUB'S STORED CURRENCY (#3566), which the reader reads
+// through the same client as the rate, the same setting the caps are labelled in — no longer the environment's
+// `APP_CURRENCY`. A currency change in the admin panel CLEARS the stored rate
+// in that save's own transaction (`/api/admin/club-format`), so the rate a
+// `PUT` here writes must be for the currency still in force when it commits:
+// the transaction below re-reads it and refuses on a mismatch, and runs
+// Serializable so the re-read and the club-format save cannot interleave.
+
+/**
+ * Retryable failures of the Serializable transaction below, answered 503: P2028
+ * (transaction API error) and P2034 (the serialisation failure Serializable
+ * provokes when a club-format save commits across this one). The same codes
+ * `/api/admin/club-format` treats as contention, minus P2002, which an upsert
+ * of this constant-id singleton can only raise by losing a first-write race —
+ * retryable too, so it is included.
+ */
+const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
+
+/** Thrown inside the transaction when the club's currency moved under it. */
+class ClubCurrencyChangedError extends Error {}
 
 const updateSchema = z
   .object({
@@ -99,7 +120,7 @@ export async function PUT(request: Request) {
   if (micros === null) {
     return NextResponse.json(
       {
-        error: describeRateInputRule(APP_CURRENCY),
+        error: describeRateInputRule(current.clubCurrency),
       },
       { status: 400 },
     );
@@ -109,49 +130,83 @@ export async function PUT(request: Request) {
   // transaction so concurrent PUTs record accurate previous values (the same
   // race fix as the two budget routes).
   const now = new Date();
-  const row = await prisma.$transaction(async (tx) => {
-    const existing = await tx.aiSpendCurrencySettings.findUnique({
-      where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
-    });
+  let row;
+  try {
+    row = await prisma.$transaction(
+      async (tx) => {
+        // The currency this rate is FOR must still be the club's when it commits
+        // (#3566): a club-format save that changed it clears the rate, and a rate
+        // written after that clear would price the new currency at the old one's
+        // rate. A club with no stored row is still on the environment seed, which
+        // `current` already reflects.
+        if ((await loadAiSpendCurrency(tx)).clubCurrency !== current.clubCurrency) {
+          throw new ClubCurrencyChangedError();
+        }
 
-    const updated = await tx.aiSpendCurrencySettings.upsert({
-      where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
-      create: {
-        id: AI_SPEND_CURRENCY_SETTINGS_ID,
-        clubUnitsPerNzdMicros: micros,
-        rateSetAt: now,
-        rateSetByMemberId: session.user.id,
-      },
-      update: {
-        clubUnitsPerNzdMicros: micros,
-        rateSetAt: now,
-        rateSetByMemberId: session.user.id,
-      },
-    });
+        const existing = await tx.aiSpendCurrencySettings.findUnique({
+          where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
+        });
 
-    await tx.auditLog.create(
-      buildStructuredAuditLogCreateArgs({
-        action: "AI_SPEND_CURRENCY_RATE_UPDATED",
-        actor: { memberId: session.user.id },
-        entity: {
-          type: "AiSpendCurrencySettings",
-          id: AI_SPEND_CURRENCY_SETTINGS_ID,
-        },
-        category: "admin",
-        severity: "important",
-        outcome: "success",
-        summary: "AI spend NZD-to-club-currency rate updated",
-        metadata: {
-          clubCurrency: current.clubCurrency,
-          previousClubUnitsPerNzdMicros: existing?.clubUnitsPerNzdMicros ?? null,
-          newClubUnitsPerNzdMicros: micros,
-        },
-        request: getAuditRequestContext(request),
-      }),
+        const updated = await tx.aiSpendCurrencySettings.upsert({
+          where: { id: AI_SPEND_CURRENCY_SETTINGS_ID },
+          create: {
+            id: AI_SPEND_CURRENCY_SETTINGS_ID,
+            clubUnitsPerNzdMicros: micros,
+            rateSetAt: now,
+            rateSetByMemberId: session.user.id,
+          },
+          update: {
+            clubUnitsPerNzdMicros: micros,
+            rateSetAt: now,
+            rateSetByMemberId: session.user.id,
+          },
+        });
+
+        await tx.auditLog.create(
+          buildStructuredAuditLogCreateArgs({
+            action: "AI_SPEND_CURRENCY_RATE_UPDATED",
+            actor: { memberId: session.user.id },
+            entity: {
+              type: "AiSpendCurrencySettings",
+              id: AI_SPEND_CURRENCY_SETTINGS_ID,
+            },
+            category: "admin",
+            severity: "important",
+            outcome: "success",
+            summary: "AI spend NZD-to-club-currency rate updated",
+            metadata: {
+              clubCurrency: current.clubCurrency,
+              previousClubUnitsPerNzdMicros: existing?.clubUnitsPerNzdMicros ?? null,
+              newClubUnitsPerNzdMicros: micros,
+            },
+            request: getAuditRequestContext(request),
+          }),
+        );
+
+        return updated;
+      },
+      { isolationLevel: "Serializable" },
     );
-
-    return updated;
-  });
+  } catch (error) {
+    if (error instanceof ClubCurrencyChangedError) {
+      return NextResponse.json(
+        {
+          error:
+            "The club's currency changed while this rate was being saved, so it was not stored. Reload the page and enter the rate for the new currency.",
+        },
+        { status: 409 },
+      );
+    }
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && TRANSACTION_CONTENTION_CODES.has(code)) {
+      logger.warn({ err: error }, "AI spend rate save hit write contention");
+      return NextResponse.json(
+        { error: "Another update is in progress — try again shortly." },
+        { status: 503 },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json(
     toResponse({

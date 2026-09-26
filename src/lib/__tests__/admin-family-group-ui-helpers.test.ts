@@ -14,6 +14,7 @@ import {
 } from "@/lib/admin-family-group-ui-helpers";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const baseRequest: FamilyGroupRequest = {
   id: "request-1",
@@ -321,18 +322,18 @@ describe("formatFamilyGroupCalendarDay — a date of birth, with no zone", () =>
   });
 
   it("renders a bare yyyy-MM-dd day in the app's standard medium format", () => {
-    expect(formatFamilyGroupCalendarDay("2018-01-01")).toBe("1 Jan 2018");
-    expect(formatFamilyGroupCalendarDay("2014-08-28")).toBe("28 Aug 2014");
+    expect(formatFamilyGroupCalendarDay("2018-01-01", CLUB_FORMAT_TEST)).toBe("1 Jan 2018");
+    expect(formatFamilyGroupCalendarDay("2014-08-28", CLUB_FORMAT_TEST)).toBe("28 Aug 2014");
   });
 
   it("renders the UTC-midnight spelling of the same day identically", () => {
     // The two shapes a `@db.Date` column reaches the browser in: Prisma's
     // serialised `Date`, and a bare day from a route that encoded it itself.
     // Both name one civil day, so a caller must not have to know which it holds.
-    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "1 Jan 2018",
     );
-    expect(formatFamilyGroupCalendarDay("2014-08-28T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2014-08-28T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "28 Aug 2014",
     );
   });
@@ -344,36 +345,36 @@ describe("formatFamilyGroupCalendarDay — a date of birth, with no zone", () =>
     // and Kiritimati is far ahead of it — no host-reading formatter answers
     // "1 Jan 2018" to both.
     process.env.TZ = "America/New_York";
-    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "1 Jan 2018",
     );
     process.env.TZ = "Pacific/Kiritimati";
-    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "1 Jan 2018",
     );
     process.env.TZ = "UTC";
-    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "1 Jan 2018",
     );
   });
 
   it("keeps the placeholder for missing values and never throws on a bad one", () => {
-    expect(formatFamilyGroupCalendarDay(null)).toBe("Not provided");
-    expect(formatFamilyGroupCalendarDay(undefined)).toBe("Not provided");
-    expect(formatFamilyGroupCalendarDay("")).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay(null, CLUB_FORMAT_TEST)).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay(undefined, CLUB_FORMAT_TEST)).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("", CLUB_FORMAT_TEST)).toBe("Not provided");
     // `Intl.DateTimeFormat` throws RangeError on an invalid Date, which would
     // take the whole request-review card down; the guard degrades instead.
-    expect(formatFamilyGroupCalendarDay("not-a-date")).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("Not provided");
     // A day that does not exist. Neither branch rolls it forward to 1 March:
     // the bare decoder refuses it, and the instant decoder refuses an ISO
     // string whose date part is not a real day.
-    expect(formatFamilyGroupCalendarDay("2026-02-30")).toBe("Not provided");
-    expect(formatFamilyGroupCalendarDay("2026-02-30T00:00:00.000Z")).toBe(
+    expect(formatFamilyGroupCalendarDay("2026-02-30", CLUB_FORMAT_TEST)).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("2026-02-30T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe(
       "Not provided",
     );
     // A timestamp with NO offset names a wall-clock reading in whichever zone
     // happens to be reading it, which is the one thing neither decoder accepts.
-    expect(formatFamilyGroupCalendarDay("2018-01-01T13:45:00")).toBe(
+    expect(formatFamilyGroupCalendarDay("2018-01-01T13:45:00", CLUB_FORMAT_TEST)).toBe(
       "Not provided",
     );
   });
@@ -384,8 +385,8 @@ describe("formatFamilyGroupInstantDate — a Requested stamp, in the club's zone
   // 15th in Denver, so this one moment has two different civil dates to choose
   // between and the choice is the thing under test.
   const INSTANT = "2026-04-15T23:30:00.000Z";
-  const denver = bindClubTime(requireClubTimeZone("America/Denver"));
-  const auckland = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+  const denver = bindClubTime(requireClubTimeZone("America/Denver"), CLUB_FORMAT_TEST);
+  const auckland = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
   const hostTimeZone = captureHostTimeZone();
 
   afterEach(() => {

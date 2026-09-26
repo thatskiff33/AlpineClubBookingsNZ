@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -54,7 +55,7 @@ function renderControls(zone: string) {
   const onFromChange = vi.fn();
   const onToChange = vi.fn();
   render(
-    <ClubTimeProvider zone={zone}>
+    <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
       <DateRangeControls
         presets={bookingFilterDateRangePresets}
         from=""
@@ -121,7 +122,7 @@ describe('"This Month" is the club\'s month', () => {
 describe("the selected-preset LABEL is chosen against the club's day too", () => {
   function renderWithRange(zone: string, from: string, to: string) {
     render(
-      <ClubTimeProvider zone={zone}>
+      <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
         <DateRangeControls
           presets={bookingFilterDateRangePresets}
           from={from}

@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import { evaluateGuestSelfRemoval } from "@/lib/booking-guest-self-removal";
 import { buildBookingMemberNightConflictMessage } from "@/lib/booking-member-night-conflict-messages";
+import type { ClubDateFormat } from "@/lib/club-time";
 import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
 
 const BOOKING_MEMBER_NIGHT_CONFLICT_CODE =
@@ -162,12 +163,17 @@ export const BOOKING_MEMBER_NIGHT_CONFLICT_PRIVILEGED_FIELDS = [
 ] as const;
 
 export class BookingMemberNightConflictError extends Error {
-  constructor(public readonly conflicts: BookingMemberNightConflict[]) {
+  constructor(
+    public readonly conflicts: BookingMemberNightConflict[],
+    format: ClubDateFormat,
+  ) {
     // #2250 — the message says who, which nights, and what to do next, built
     // only from what the requester already supplied (the member they tried to
     // book and the nights they chose). See the disclosure rule in
-    // booking-member-night-conflict-messages.ts.
-    super(buildBookingMemberNightConflictMessage(conflicts));
+    // booking-member-night-conflict-messages.ts. The nights are written in the
+    // club's locale (#3566), which the guard's caller resolved before its
+    // transaction opened, exactly as it resolved the club's day.
+    super(buildBookingMemberNightConflictMessage(conflicts, format));
     this.name = "BookingMemberNightConflictError";
   }
 }
@@ -421,6 +427,12 @@ export async function findBookingMemberNightConflicts(
 export async function assertNoBookingMemberNightConflicts(
   db: ConflictDb,
   input: Parameters<typeof findBookingMemberNightConflicts>[1],
+  /**
+   * The club's date format, for the refusal's message (#3566). Resolved by
+   * the caller BEFORE it opened the transaction, beside `input.today`
+   * (`INV-LOCK-004`): nothing in here may read a setting under the locks.
+   */
+  format: ClubDateFormat,
 ) {
   // #1881 — take the per-member advisory lock BEFORE the guard reads, so the
   // cross-lodge person-night invariant is serialised (capacity locks are
@@ -442,12 +454,13 @@ export async function assertNoBookingMemberNightConflicts(
   }
   const conflicts = await findBookingMemberNightConflicts(db, input);
   if (conflicts.length > 0) {
-    throw new BookingMemberNightConflictError(conflicts);
+    throw new BookingMemberNightConflictError(conflicts, format);
   }
 }
 
 export function getBookingMemberNightConflictResponse(
   conflicts: BookingMemberNightConflict[],
+  format: ClubDateFormat,
 ) {
   return {
     code: BOOKING_MEMBER_NIGHT_CONFLICT_CODE,
@@ -459,7 +472,7 @@ export function getBookingMemberNightConflictResponse(
     // that DO pick the dates (the booking wizard) opt back in by rendering
     // `describeBookingMemberNightConflictNextStep` with
     // `canChooseDifferentDates`.
-    error: buildBookingMemberNightConflictMessage(conflicts),
+    error: buildBookingMemberNightConflictMessage(conflicts, format),
     conflicts,
   };
 }

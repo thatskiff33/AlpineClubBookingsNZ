@@ -17,10 +17,12 @@ import {
 } from "./arrivals-board";
 import { displayWeekday, shortDay } from "./status-helpers";
 import {
+  type ClubDateFormat,
   formatClubLongWeekdayDayMonth,
   formatClubWeekdayDayMonth,
   requireCalendarDate,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The whole-lodge blockout view (fork issues #30/#58; visual references:
 // docs/lobby-display/mockups/approved/whole-lodge.html options A/C and
@@ -45,20 +47,24 @@ import {
 // Every date below is a club date-only lodge night, formatted AS a calendar day
 // — no zone, and therefore no way for the label to slide to the neighbouring
 // day for a club west of Greenwich (CT-2, #2990; INV-DATE-010).
-function shortDate(date: string): string {
-  return formatClubWeekdayDayMonth(requireCalendarDate(date));
+function shortDate(date: string, format: ClubDateFormat): string {
+  return formatClubWeekdayDayMonth(requireCalendarDate(date), format);
 }
 
-function longDate(date: string): string {
-  return formatClubLongWeekdayDayMonth(requireCalendarDate(date));
+function longDate(date: string, format: ClubDateFormat): string {
+  return formatClubLongWeekdayDayMonth(requireCalendarDate(date), format);
 }
 
-function weekday(date: string): string {
-  return displayWeekday(date);
+function weekday(date: string, format: ClubDateFormat): string {
+  return displayWeekday(date, format);
 }
 
-function formatDayHeading(date: string, index: number): string {
-  const label = shortDay(date);
+function formatDayHeading(
+  date: string,
+  index: number,
+  format: ClubDateFormat,
+): string {
+  const label = shortDay(date, format);
   return index === 0 ? `Tonight · ${label}` : label;
 }
 
@@ -71,6 +77,7 @@ function BlockPanel({
   note: string | null;
   variant: "board" | "statement";
 }) {
+  const format = useClubFormat();
   return (
     <>
       <span className="display-blockout-kicker">
@@ -80,8 +87,8 @@ function BlockPanel({
       <span className="display-blockout-sub">{row.guestCount} guests</span>
       <span className="display-blockout-dates">
         {variant === "statement"
-          ? `${longDate(row.stayStart)} → ${longDate(row.stayEnd)}`
-          : `${shortDate(row.stayStart)} → ${shortDate(row.stayEnd)} · reopens ${weekday(row.stayEnd)}`}
+          ? `${longDate(row.stayStart, format)} → ${longDate(row.stayEnd, format)}`
+          : `${shortDate(row.stayStart, format)} → ${shortDate(row.stayEnd, format)} · reopens ${weekday(row.stayEnd, format)}`}
       </span>
       {note && <span className="display-blockout-note">{note}</span>}
     </>
@@ -95,6 +102,7 @@ export function OccupancyGrid({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const days = intOption(options, "days", ARRIVALS_BOARD_DEFAULT_DAYS, {
     min: 1,
     max: 7,
@@ -156,7 +164,7 @@ export function OccupancyGrid({
                 className="display-week-day"
                 data-today={index === 0 || undefined}
               >
-                <span className="display-week-name">{weekday(day.date)}</span>
+                <span className="display-week-name">{weekday(day.date, format)}</span>
                 <span className="display-week-bar">
                   <span
                     data-blocked={blocked || undefined}
@@ -206,7 +214,7 @@ export function OccupancyGrid({
           data-today={index === 0 || undefined}
           style={{ gridColumn: index + 2 }}
         >
-          {formatDayHeading(date, index)}
+          {formatDayHeading(date, index, format)}
         </span>
       ))}
       {rooms.map((room, index) => {
@@ -253,7 +261,7 @@ export function OccupancyGrid({
               }}
             >
               <BarNamesLabel row={row} maxNames={maxNames} segment={layout} />
-              <span className="display-bar-out">{barMeta(layout)}</span>
+              <span className="display-bar-out">{barMeta(layout, format)}</span>
             </div>
           ));
         })}

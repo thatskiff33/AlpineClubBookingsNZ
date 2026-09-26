@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 
 /*
@@ -31,7 +32,7 @@ import {
 } from "@/lib/promo-redemptions-csv";
 
 /** The club's configured zone under test. Held apart from the mock above. */
-const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
 const ROW: PromoRedemptionCsvRow = {
   createdAt: "2026-07-10T02:00:00.000Z",
@@ -132,8 +133,8 @@ describe("the Redeemed column takes the club's configured zone (#3123)", () => {
 
   it("moves with the configured zone — kills a hard-coded Pacific/Auckland", () => {
     // The leg a literal club zone cannot pass.
-    const ahead = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"));
-    const behind = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+    const ahead = bindClubTime(requireClubTimeZone("Pacific/Kiritimati"), CLUB_FORMAT_TEST);
+    const behind = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
     expect(formatRedeemedAt(ahead, STRADDLES)).toContain("10 Jul 2026");
     expect(formatRedeemedAt(behind, STRADDLES)).toContain("9 Jul 2026");
   });
@@ -147,7 +148,7 @@ describe("the Redeemed column takes the club's configured zone (#3123)", () => {
       every zone on earth. If these two ever start moving, a calendar day has
       been given a zone it does not have.
     */
-    const behind = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"));
+    const behind = bindClubTime(requireClubTimeZone("Pacific/Pago_Pago"), CLUB_FORMAT_TEST);
     const inClub = buildPromoRedemptionCsvCells(CLUB, ROW);
     const wayBehind = buildPromoRedemptionCsvCells(behind, ROW);
     expect(inClub[6]).toBe("2026-08-01");

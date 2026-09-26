@@ -40,13 +40,18 @@
  * map holds one entry per shape (a dozen) plus whatever a test pins. Adding an
  * LRU here would be complexity guarding against nothing.
  *
- * THE LOCALE STILL COMES FROM CONFIGURATION, THE ZONE NEVER DOES. `APP_LOCALE`
- * is imported; `APP_TIME_ZONE` is not, and `club-time-kernel-census.test.ts`
- * asserts no module under `src/lib/club-time/**` mentions it. Locale is a
- * separate axis this epic does not touch.
+ * NEITHER THE LOCALE NOR THE ZONE COMES FROM CONFIGURATION. Both arrive as
+ * arguments: the zone since CT-1, and the locale since stage 4 of programme
+ * #3205 (#3566), which took the `APP_LOCALE` import out of this module. The
+ * locale is the club's persisted `ClubFormatSettings.locale`, handed in as a
+ * {@link ClubDateFormat}, and `club-time-kernel-census.test.ts` asserts no
+ * module under `src/lib/club-time/**` mentions `APP_TIME_ZONE`, `APP_LOCALE` or
+ * `@/config/operational`. The PROJECTION formatters below are the exception, and
+ * a deliberate one: they are pinned to `"en-US"` because their numbers are
+ * parsed back, and a club locale with non-Latin digits would break `Number()`.
  */
 
-import { APP_LOCALE } from "@/config/operational";
+import type { ClubDateFormat } from "./types";
 
 /**
  * Every display shape the house uses, declared once.
@@ -71,7 +76,7 @@ import { APP_LOCALE } from "@/config/operational";
  *
  * NONE OF THE FIVE IS COMPOSED FROM AN EXISTING SHAPE, and that is deliberate.
  * `longWeekdayDayMonth` plus `" 2026"` is byte-identical for `en-NZ` and is NOT
- * safe in general: `APP_LOCALE` is configurable, and a locale that ordered or
+ * safe in general: the club's locale is a setting, and a locale that ordered or
  * punctuated the pair differently would silently change every day button in the
  * product. `shortMonth` is the same rule read the other way round - it is the
  * one shape that could plausibly be SLICED out of a longer one, and stripping
@@ -120,6 +125,30 @@ export const HOUSE_SHAPES = {
     day: "numeric",
     month: "long",
     year: "numeric",
+  },
+  /**
+   * "16 Apr, 02:30 pm" — a dense operations stamp: no year, two-digit fields.
+   * The stuck-states "generated at" line and the health dashboard's stamps
+   * (#2264), which kept a local formatter each until #3566 declared it here.
+   */
+  compactDateTime: {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  },
+  /**
+   * "16 Apr 2026, 2:30:05 pm" — the audit log's stamp, which keeps the seconds
+   * the medium date-time drops, because two audit rows a second apart must
+   * read as two moments (#3566 moved it here from a local formatter).
+   */
+  dateTimeSeconds: {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
   },
 } as const satisfies Record<string, Intl.DateTimeFormatOptions>;
 
@@ -200,32 +229,64 @@ function formatterFor(
 }
 
 /**
- * A display formatter for one shape in one zone.
+ * The club's locale, read off a format and REFUSED when absent.
  *
- * KEYED ON BOTH, and that is the single most likely implementation slip in this
- * module: a memo keyed on the shape alone returns the first zone's formatter
- * for every later zone, which looks perfect on a one-club installation and is
- * wrong the moment a test or a second club asks for another.
+ * The type makes `format` required, but a cast or a partial object from an
+ * untyped boundary can still hand this `{}`, and `new Intl.DateTimeFormat(
+ * undefined, …)` does not throw: it silently renders in the HOST's locale and
+ * the memo below would then keep that answer for the life of the process. The
+ * money kernel refuses the same shape for the same reason
+ * (`club-format-intl.ts`), so the two kernels fail alike.
+ */
+function requireLocale(format: ClubDateFormat): string {
+  const locale = (format as { locale?: unknown } | null | undefined)?.locale;
+  if (typeof locale !== "string" || locale.trim().length === 0) {
+    throw new TypeError(
+      "INV-CONFIG-006: a club date rendering was handed a format with no locale. " +
+        "Pass the club's resolved format — clubTime().format / clubFormatValues() on " +
+        "the server, or the club-time binding's `.format` in the browser.",
+    );
+  }
+  return locale;
+}
+
+/**
+ * A display formatter for one shape in one zone and one locale.
+ *
+ * KEYED ON ALL THREE, and that is the single most likely implementation slip in
+ * this module: a memo keyed on the shape alone returns the first zone's — or
+ * the first LOCALE's — formatter for every later one, which looks perfect on a
+ * one-club installation and is wrong the moment a test, a second club or an
+ * admin changing the club's locale asks for another. `house-shapes.test.ts`
+ * renders one shape and zone for `en-NZ` and then `de-CH` and requires the two
+ * to differ, which is what fails if the locale drops out of this key.
  */
 function displayFormatter(
   shape: HouseShape,
   timeZone: string,
+  locale: string,
 ): Intl.DateTimeFormat {
   return formatterFor(
-    `display|${timeZone}|${shape}`,
-    APP_LOCALE,
+    `display|${locale}|${timeZone}|${shape}`,
+    locale,
     timeZone,
     HOUSE_SHAPES[shape],
   );
 }
 
-/** Render `instant` in `timeZone` using one of the declared house shapes. */
+/**
+ * Render `instant` in `timeZone`, in the club's locale, using one of the
+ * declared house shapes.
+ */
 export function formatHouseShape(
   shape: HouseShape,
   instant: Date,
   timeZone: string,
+  format: ClubDateFormat,
 ): string {
-  return displayFormatter(shape, timeZone).format(instant);
+  return displayFormatter(shape, timeZone, requireLocale(format)).format(
+    instant,
+  );
 }
 
 export interface ZoneParts {
@@ -349,6 +410,7 @@ export function composeDateString(
 export function formatCalendarDateShape(
   shape: HouseShape,
   date: string,
+  format: ClubDateFormat,
 ): string {
-  return formatHouseShape(shape, new Date(`${date}T00:00:00.000Z`), "UTC");
+  return formatHouseShape(shape, new Date(`${date}T00:00:00.000Z`), "UTC", format);
 }

@@ -25,6 +25,8 @@ import {
 import { readSeasonSchedule } from "../_lib/season-schedule";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { useClubTime } from "@/components/club-time-provider"
+import { useClubFormat } from "@/components/club-format-provider"
+import { type ClubDateFormat } from "@/lib/club-time"
 import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
@@ -50,11 +52,12 @@ interface Season {
 // kernel's calendar-date formatter pins "UTC" over that encoding, so the
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string): string {
-  return formatPayloadCalendarDay(value, value)
+function formatSeasonEdge(value: string, format: ClubDateFormat): string {
+  return formatPayloadCalendarDay(value, format, value)
 }
 
 export default function SeasonsPage() {
+  const format = useClubFormat()
   const [seasons, setSeasons] = useState<Season[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -311,8 +314,8 @@ export default function SeasonsPage() {
             )}
           </div>
           <CardDescription>
-            {formatSeasonEdge(season.startDate)} &mdash;{" "}
-            {formatSeasonEdge(season.endDate)}
+            {formatSeasonEdge(season.startDate, format)} &mdash;{" "}
+            {formatSeasonEdge(season.endDate, format)}
           </CardDescription>
         </CardHeader>
       </Card>

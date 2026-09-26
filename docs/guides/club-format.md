@@ -21,53 +21,79 @@ Both are properties of the **club**, not of the server the software runs on and
 not of whoever is looking. A member reading the site from another country sees
 the club's currency, not their own.
 
-**Recorded here, and in force for every amount the site writes.** This page
-is where the club's currency and format are *recorded*, and every price,
-invoice figure, statement line, email total and Xero description now follows it
-as soon as you save. **Dates and times** are the part still worked out from the
-`LOCALE` value the server was started with: this change is money only, by the
-owner's decision, and the date locale moves in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566).
-Until then, **keep the server's `LOCALE` in step** with the format recorded here.
-What is already true, and permanent: nothing on this page rewrites any amount
-already recorded.
+**Recorded here, and in force for every amount and every date the site
+writes.** This page is where the club's currency and format are *recorded*, and
+every price, invoice figure, statement line, email total and Xero description
+follows it as soon as you save — and so does every date and time on screen, in
+the club's time zone and written the club's way. Nothing on this page rewrites
+any amount already recorded.
 
 **These used to be server settings, and this page is where they are changed
 now.** `CURRENCY` and `LOCALE` were copied here once, on the first start after
 upgrading, so nothing changed for anyone. From then on this page is the
-authority **for the setting**: editing the server value no longer changes what
-this page shows. That is the point of the change — one place will answer the
-question, so nobody has to work out which of two is winning.
+authority: editing the server value no longer changes what the site shows. That
+is the point of the change — one place answers the question, so nobody has to
+work out which of two is winning.
 
-**What already follows this page, and what does not yet.** These now come from
-the setting recorded here, as soon as you save it:
+**What follows this page.** As soon as you save:
 
 - **every amount** the site writes — a price, a nightly rate, a promo code
   amount, an invoice figure, a statement line, a finance dashboard figure, a
   booking-request total, an email total, and the amount inside a description
-  sent to Xero. All of them go through one shared money formatter, and every
-  place that formatter is used now takes the setting from this page;
-- the currency code shown beside a fee or a monthly AI spend cap;
-- the date and time on an audit-log entry, and on every row of the health
-  dashboard;
-- the grouped counts in a promo-code export notice;
-- the date on the lobby display.
+  sent to Xero;
+- **every written date and time on screen** — a lodge night, a booking's stay
+  dates, an audit-log entry, the health dashboard (its "Last refresh" line as
+  well as its rows), the stuck-states page, the induction record, the lobby
+  display's date and clock, the month headings and weekday column heads on the
+  booking calendars, and the month options in the bookings filter;
+- the currency code shown beside a fee or a monthly AI spend cap, **and the
+  currency AI spend is counted in** (see below);
+- alphabetical order where the site sorts by name — the lockers list, and the
+  pictures in a photo gallery.
 
-These do **not** yet, and still come from the server's `LOCALE`:
+**Emails follow as soon as you save.** Dates in an email — a booking
+confirmation, a reminder, the daily chore roster — are written the way this
+page says. Emails read the setting from a copy the server keeps in memory
+rather than on every message, and saving here refreshes that copy straight
+away, on the server that took the save. The one exception is a second copy of
+the app running at the same time — during a blue/green switch-over, for
+example — which does not see the save: it refreshes its own copy only when it
+next sends an email more than five minutes after its last check, so that first
+email can still show dates the old way. Its amounts already show the new
+currency either way.
 
-- every other date and time, which go through the shared date formatters and
-  move in [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566). **Two of them sit on screens listed above**, and are
-  the only places you will see the two answers side by side: the "Last refresh"
-  line at the top of the health dashboard, and the live clock on the lobby
-  display. Both are written by the shared machinery rather than by their own
-  screen, so they stay on the server's `LOCALE` while the rows and the date
-  beneath them follow this page.
+**What does not follow it.** A few labels stay in English whatever is set
+here, and are recorded rather than fixed for now:
 
-**So keep the server's `LOCALE` set, and keep it matching this page** until
-that change lands. Removing it is the one mistake worth warning about, and a
-mismatch is the other: you would see dates written one way beside amounts
-written another, with nothing flagging it. `CURRENCY` no longer affects
-anything an existing club sees; it is read only on the very first start of a
-fresh install, to seed this page.
+- the date labels along the bottom of the report charts (for example
+  "Apr 16") — the figures and every other date on the reports page do follow
+  this page;
+- the day-of-week names on the chore schedule and minimum-stay setup screens,
+  which are fixed lists of choices rather than dates;
+- the month names in the subscription lockout page's "Financial year-end
+  month" choice ("January" to "December"), also a fixed list of choices;
+- the minimum-stay check-in days on the public booking-policy page ("Friday,
+  Saturday"), written from the same fixed list of day names;
+- relative times such as "3 hours ago", which are wording, not a date format.
+
+On `en-NZ` the one visible change this brought is September: the bookings
+filter's month options and the reports page's "Joined between" line now write
+"Sept", the way every other `en-NZ` date on the site already did.
+
+**Expect some screens to look different on another format.** A different
+language tag does more than reorder the day and month. `de-CH`, for example,
+writes the time on a 24-hour clock ("14:30" rather than "2:30 pm") and spells
+the month out in German, so a long month name can make the lobby display's
+date line wider. That is the setting working, not a fault.
+
+**Changing the currency clears the AI spend conversion rate.** If the club has
+set a rate for AI spend ("how many of our currency one New Zealand dollar
+buys"), saving a new **currency** here deletes that rate in the same step, and
+the audit log records it as `AI_SPEND_CURRENCY_RATE_CLEARED`. The rate was for
+the old currency, so keeping it would count the new currency's spend at the
+wrong rate. Both AI settings pages then say the rate is not set: enter the rate
+for the new currency there. Changing only the number and date format leaves the
+rate alone.
 
 **Every administrator can see this page; only a Full Administrator can change
 it.** Any admin — a treasurer or a bookings officer checking why an amount or a
@@ -140,10 +166,11 @@ is older than the currency.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Changing `CURRENCY` on the server did not change this page | Expected. The server value seeded the setting once; this page is the authority for it now | Change it here instead |
-| Changing `CURRENCY` on the server DID change the amounts on screen | Also expected, for now. Amounts are written by a shared formatter that has not moved onto the recorded setting yet | Keep the two in step until the later stages land |
-| The currency code changed but the amounts beside it did not | Expected for now. The labels follow this page; the amounts are written by a shared formatter moved in the next change | Nothing to fix. Until then, keep the server's `CURRENCY` in step with this page |
-| Nothing at all changed after saving | Check which screen. Fees, promo codes, the AI spend cap, booking requests, the audit log, the health dashboard's rows and the lobby display's date follow this page; everything else follows the server settings for now | Nothing to fix |
-| The health dashboard's rows changed but its "Last refresh" line did not — or the lobby display's date changed but its clock did not | Expected. Those two are written by the shared date machinery, not by their own screen, so they still follow the server's `LOCALE` | Nothing to fix. Keep `LOCALE` in step with this page and the two read the same until the next change moves them |
+| Changing `LOCALE` on the server did not change the dates | Expected. The server value seeded the setting once; this page is the authority for dates as well as money | Change it here instead |
+| An email still shows dates the old way just after a change | It was sent by a second copy of the app (for example during a blue/green switch-over), which refreshes its copy of the setting only when it sends an email more than five minutes after its last check | Nothing to fix. The next email that copy sends uses the new format |
+| The report charts' date labels are still in English | A known limitation: the chart axis labels ("Apr 16") are written in English whatever the format | Nothing to fix. The figures and the other dates follow this page |
+| The AI settings page says the conversion rate is not set | The club's currency was changed, which clears the rate set for the old one | Enter the rate for the new currency on the AI settings page. **Admin → Audit Log**, action `AI_SPEND_CURRENCY_RATE_CLEARED`, says when and by whom |
+| Saving an AI spend rate says the club's currency changed | Someone changed the currency while the rate was being saved, so it was not stored | Reload the page and enter the rate for the new currency |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
 | The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |
 | Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |

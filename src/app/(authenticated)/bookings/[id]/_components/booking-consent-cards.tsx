@@ -52,17 +52,17 @@ export function BookingConsentCards({
             bookerName={`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim()}
             bookerFirstName={bookingOwner(booking).member.firstName}
             lodgeName={consentLodgeName ?? ""}
-            stayLabel={formatConsentStayLabel(booking.checkIn, booking.checkOut)}
-            nightsLabel={formatConsentNightsLabel(viewerConsentNights)}
+            stayLabel={formatConsentStayLabel(booking.checkIn, booking.checkOut, club.format)}
+            nightsLabel={formatConsentNightsLabel(viewerConsentNights, club.format)}
             nightsCountLabel={describeConsentNightsCount(viewerConsentNights.length)}
             answerByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentFullDate(consentCard.consentExpiresAt, club.zone)
+                ? formatConsentFullDate(consentCard.consentExpiresAt, club.zone, club.format)
                 : "—"
             }
             lapseByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentWeekdayDate(consentCard.consentExpiresAt, club.zone)
+                ? formatConsentWeekdayDate(consentCard.consentExpiresAt, club.zone, club.format)
                 : "the deadline"
             }
             party={booking.guests.map((guest) => ({

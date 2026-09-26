@@ -47,7 +47,11 @@
  * (`INV-OPS-013`) is the guard that keeps it that way.
  */
 
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  formatClubDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 
 export type BookingMemberNightConflictCopyInput = {
   memberName: string;
@@ -83,7 +87,7 @@ export type BookingMemberNightConflictCopyOptions = {
 
 // A night key names a calendar day, so it renders as that day in every zone and
 // on every host. `formatClubDate` is the house medium shape ("11 Jun 2026") and
-// still follows `APP_LOCALE` rather than a hardcoded English month table.
+// follows the club's locale (#3566) rather than a hardcoded English month table.
 //
 // A key naming no real day is shown VERBATIM rather than guessed at.
 // `parseCalendarDate` never rolls — `2026-02-30` is null, not 2 March — so a
@@ -91,9 +95,9 @@ export type BookingMemberNightConflictCopyOptions = {
 // plausible wrong night. That is the same fail-open the previous NaN check gave
 // this function, deliberately preserved: this is display copy on a 409, and
 // throwing here would replace a refusal the member can act on with a 500.
-function formatNight(night: string): string {
+function formatNight(night: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(night);
-  return day === null ? night : formatClubDate(day);
+  return day === null ? night : formatClubDate(day, format);
 }
 
 function joinWithAnd(items: string[]): string {
@@ -114,9 +118,12 @@ function capitaliseFirst(sentence: string): string {
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
 
-function formatNightList(nights: readonly string[]): string {
+function formatNightList(
+  nights: readonly string[],
+  format: ClubDateFormat,
+): string {
   if (nights.length === 0) return "the nights you chose";
-  const formatted = [...nights].sort().map(formatNight);
+  const formatted = [...nights].sort().map((night) => formatNight(night, format));
   if (formatted.length > 4) {
     return `${formatted.slice(0, 3).join(", ")} and ${formatted.length - 3} more nights`;
   }
@@ -144,8 +151,9 @@ function isViewersOwnPlace(
  */
 export function describeBookingMemberNightConflictNights(
   conflict: BookingMemberNightConflictCopyInput,
+  format: ClubDateFormat,
 ): string {
-  const nights = formatNightList(conflict.conflictingNights);
+  const nights = formatNightList(conflict.conflictingNights, format);
   return isViewersOwnPlace(conflict)
     ? `Already on another booking for ${nights}.`
     : `Already on a booking for ${nights}.`;
@@ -203,6 +211,7 @@ export function describeBookingMemberNightConflictNextStep(
  */
 export function buildBookingMemberNightConflictSummary(
   conflicts: readonly BookingMemberNightConflictCopyInput[],
+  format: ClubDateFormat,
 ): string {
   if (conflicts.length === 0) {
     // Defensive: every caller builds this from a non-empty conflict list.
@@ -211,7 +220,7 @@ export function buildBookingMemberNightConflictSummary(
 
   const [soleConflict, ...extraConflicts] = conflicts;
   if (soleConflict !== undefined && extraConflicts.length === 0) {
-    const nights = formatNightList(soleConflict.conflictingNights);
+    const nights = formatNightList(soleConflict.conflictingNights, format);
     return isViewersOwnPlace(soleConflict)
       ? `You are already on another booking for ${nights}.`
       : `${soleConflict.memberName} is already on a booking for ${nights}.`;
@@ -223,9 +232,10 @@ export function buildBookingMemberNightConflictSummary(
   const viewerName = conflicts.find(isViewersOwnPlace)?.memberName;
   const names = [...new Set(conflicts.map((conflict) => conflict.memberName))];
   const labels = names.map((name) => (name === viewerName ? "you" : name));
-  const nights = formatNightList([
-    ...new Set(conflicts.flatMap((conflict) => conflict.conflictingNights)),
-  ]);
+  const nights = formatNightList(
+    [...new Set(conflicts.flatMap((conflict) => conflict.conflictingNights))],
+    format,
+  );
 
   const [onlyLabel, ...extraLabels] = labels;
   if (onlyLabel !== undefined && extraLabels.length === 0) {
@@ -246,9 +256,10 @@ export function buildBookingMemberNightConflictSummary(
  */
 export function buildBookingMemberNightConflictMessage(
   conflicts: readonly BookingMemberNightConflictCopyInput[],
+  format: ClubDateFormat,
   options: BookingMemberNightConflictCopyOptions = {},
 ): string {
-  const summary = buildBookingMemberNightConflictSummary(conflicts);
+  const summary = buildBookingMemberNightConflictSummary(conflicts, format);
 
   const [soleConflict, ...extraConflicts] = conflicts;
   if (soleConflict !== undefined && extraConflicts.length === 0) {

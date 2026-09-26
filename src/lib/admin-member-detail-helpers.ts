@@ -10,6 +10,7 @@ import {
   formatClubDate,
   parseCalendarDate,
   parseInstant,
+  type ClubDateFormat,
 } from "@/lib/club-time"
 
 export interface AdminActor {
@@ -262,13 +263,17 @@ export function memberUsesSamePostalAddress(member: NullableMemberAddress) {
  * `src/app`; group F's `calendarDateOfSerialisedDbDate` (reported on #2870) is
  * the one call site both should collapse onto.
  */
-export function formatMemberCalendarDay(value: string, fallback = "—") {
+export function formatMemberCalendarDay(
+  value: string,
+  format: ClubDateFormat,
+  fallback = "—",
+) {
   const bare = parseCalendarDate(value)
-  if (bare !== null) return formatClubDate(bare)
+  if (bare !== null) return formatClubDate(bare, format)
   const instant = parseInstant(value)
   return instant === null
     ? fallback
-    : formatClubDate(calendarDateOfDateOnlyInstant(instant))
+    : formatClubDate(calendarDateOfDateOnlyInstant(instant), format)
 }
 
 export function formatMemberPhone(parts: {
@@ -342,8 +347,8 @@ export function formatMemberMembershipPreview(input: {
   currentSeasonYear: number
   currentSeasonTypeName: string | null
   currentSeasonSubscriptionLabel: string | null
-}) {
-  const season = seasonSelectLabel(input.currentSeasonYear)
+}, format: ClubDateFormat) {
+  const season = seasonSelectLabel(input.currentSeasonYear, format)
   return [
     `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
     input.currentSeasonSubscriptionLabel,
@@ -381,13 +386,13 @@ export function formatMemberCommitteePreview(input: {
 export function formatMemberHistoryPreview(input: {
   totalBookings: number
   lastStay: string | null
-}) {
+}, format: ClubDateFormat) {
   return [
     pluralize(input.totalBookings, "booking"),
     // `lastStay` is a `@db.Date` CALENDAR DAY, not an instant — see
     // `formatMemberCalendarDay`. The summary strip on the same page renders it
     // the same way, so the two can no longer name different days.
-    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay)}` : null,
+    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay, format)}` : null,
   ]
     .filter(Boolean)
     .join(PREVIEW_SEPARATOR)

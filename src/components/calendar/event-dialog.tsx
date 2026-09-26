@@ -318,13 +318,13 @@ export function EventDialog({
               {event.title}
             </DialogTitle>
             <DialogDescription>
-              {formatEventDateLong(event, club.zone)}
+              {formatEventDateLong(event, club.zone, club.format)}
               {!event.allDay && (
                 <>
                   {" · "}
-                  {formatInstantTime(event.startsAt, club.zone)}
+                  {formatInstantTime(event.startsAt, club.zone, club.format)}
                   {event.endsAt
-                    ? ` – ${formatInstantTime(event.endsAt, club.zone)}`
+                    ? ` – ${formatInstantTime(event.endsAt, club.zone, club.format)}`
                     : ""}
                 </>
               )}
@@ -345,6 +345,7 @@ export function EventDialog({
                   },
                   anchorInstant,
                   club.zone,
+                  club.format,
                 )}
               </p>
             )}
@@ -432,7 +433,7 @@ export function EventDialog({
     "Weekly on Monday" for a Tuesday.
   */
   const anchorDate = parseCalendarDate(date) ?? club.today();
-  const repeatOptions = recurrenceOptionsForDate(anchorDate);
+  const repeatOptions = recurrenceOptionsForDate(anchorDate, club.format);
 
   async function submit(scope: CalendarEditScope) {
     setError(null);

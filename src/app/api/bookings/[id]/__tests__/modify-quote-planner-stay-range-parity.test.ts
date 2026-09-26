@@ -213,6 +213,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 
 const D = (s: string) => parseDateOnly(s);
@@ -524,6 +525,7 @@ async function runPlanner(
     },
     // #2560: the mode the route resolves for this fixture (Xero module off).
     subscriptionLockoutMode: "NO_BLOCK",
+    format: CLUB_FORMAT_TEST,
   });
   return {
     envelope: [

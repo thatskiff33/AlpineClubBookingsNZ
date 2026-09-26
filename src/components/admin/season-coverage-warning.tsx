@@ -39,16 +39,17 @@
  * one-night boundary error looking exactly like a correct boundary.
  */
 
-import { formatClubDate } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
+import { type ClubDateFormat, formatClubDate } from "@/lib/club-time";
 import type { SeasonCoverageGap } from "@/lib/season-timeline";
 
 /** How a single hole reads in a sentence. */
-function describeGap(gap: SeasonCoverageGap): string {
+function describeGap(gap: SeasonCoverageGap, format: ClubDateFormat): string {
   const nights = gap.nights === 1 ? "1 night" : `${gap.nights} nights`;
   const window =
     gap.nights === 1
-      ? formatClubDate(gap.firstUncoveredNight)
-      : `${formatClubDate(gap.firstUncoveredNight)} to ${formatClubDate(gap.lastUncoveredNight)}`;
+      ? formatClubDate(gap.firstUncoveredNight, format)
+      : `${formatClubDate(gap.firstUncoveredNight, format)} to ${formatClubDate(gap.lastUncoveredNight, format)}`;
   return `${window} — ${nights}`;
 }
 
@@ -60,13 +61,14 @@ function describeGap(gap: SeasonCoverageGap): string {
  * and it is also what tells them which of the two windows to move.
  */
 export function SeasonCoverageGapNotice({ gap }: { gap: SeasonCoverageGap }) {
+  const format = useClubFormat();
   return (
     <div
       role="note"
       className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm"
     >
       <p className="font-semibold text-destructive">
-        No season covers {describeGap(gap)}
+        No season covers {describeGap(gap, format)}
       </p>
       <p className="mt-1 text-muted-foreground">
         {gap.afterSeasonName} ends the day before, and {gap.beforeSeasonName}{" "}

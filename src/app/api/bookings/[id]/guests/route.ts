@@ -478,7 +478,7 @@ export async function POST(
         // Resolved above, before this transaction opened (`INV-LOCK-004`) — the
         // same club day the edit policy and the removal window already read.
         today: clubTodayDateOnly,
-      });
+      }, format);
 
       const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
@@ -1588,7 +1588,7 @@ export async function POST(
     }
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, format),
         { status: 409 },
       );
     }

@@ -35,6 +35,7 @@
  * happily against a function that always throws.
  */
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { AgeTier } from "@prisma/client";
 
@@ -323,6 +324,7 @@ describe("buildApprovalGuestCreates refuses a short per-guest split (#3167)", ()
       adminMemberId: "admin-1",
       heldBookingId: null,
       today: CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
     });
   }
 

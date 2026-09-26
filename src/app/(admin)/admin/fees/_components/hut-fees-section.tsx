@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useClubFormat } from "@/components/club-format-provider";
+import { type ClubDateFormat } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
@@ -111,8 +112,8 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
 // kernel's calendar-date formatter pins "UTC" over that encoding, so the
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string): string {
-  return formatPayloadCalendarDay(value, value);
+function formatSeasonEdge(value: string, format: ClubDateFormat): string {
+  return formatPayloadCalendarDay(value, format, value);
 }
 
 /*
@@ -780,8 +781,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             )}
           </div>
           <CardDescription>
-            {formatSeasonEdge(season.startDate)} &mdash;{" "}
-            {formatSeasonEdge(season.endDate)}
+            {formatSeasonEdge(season.startDate, format)} &mdash;{" "}
+            {formatSeasonEdge(season.endDate, format)}
           </CardDescription>
         </CardHeader>
         <CardContent>

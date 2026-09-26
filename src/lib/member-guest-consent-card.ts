@@ -2,7 +2,10 @@ import {
   SELF_REMOVABLE_GUEST_BOOKING_STATUSES,
 } from "@/lib/booking-guest-self-removal";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
-import type { ClubTimeZone } from "@/lib/club-time";
+import type {
+  ClubDateFormat,
+  ClubTimeZone,
+} from "@/lib/club-time";
 import {
   classifyMemberGuestConsent,
   type MemberGuestConsentColumns,
@@ -399,6 +402,8 @@ export function describeMemberGuestConsentBadge(
         responderName?: string | null;
         /** The club's persisted timezone — these two audiences stamp instants. */
         timeZone: ClubTimeZone;
+        /** The club's date format (#3566), for the same stamps. */
+        format: ClubDateFormat;
       },
 ): MemberGuestConsentBadge | null {
   const { guest, audience } = params;
@@ -419,14 +424,14 @@ export function describeMemberGuestConsentBadge(
   // Past the WIZARD return, `params` is narrowed to the audiences that stamp an
   // instant, so the club's zone and the responder name are both present by
   // construction rather than by convention (#3123).
-  const { responderName, timeZone } = params;
+  const { responderName, timeZone, format } = params;
 
   switch (guest.consentStatus) {
     case "PENDING":
       return {
         tone: "pending",
         label: guest.consentExpiresAt
-          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt, timeZone)}`
+          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt, timeZone, format)}`
           : "Waiting for consent",
       };
     case "CONFIRMED":
@@ -446,14 +451,14 @@ export function describeMemberGuestConsentBadge(
         return {
           tone: "ok",
           label: guest.consentRespondedAt
-            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`
+            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt, timeZone, format)}`
             : `Consented by ${responderName}`,
         };
       }
       if (forClub && guest.consentRespondedAt) {
         return {
           tone: "ok",
-          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`,
+          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt, timeZone, format)}`,
         };
       }
       return { tone: "ok", label: "Consented" };
