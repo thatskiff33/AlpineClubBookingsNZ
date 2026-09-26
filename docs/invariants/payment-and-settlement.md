@@ -98,6 +98,29 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   cash-settled (or Xero-inbound-settled) booking is auto-refunded instead of
   silently kept.
 
+## INV-PAY-102
+
+- **Card first, then bank: a booking is never collected by two instruments
+  silently** (#3638). Two doors, one rule.
+- **The Internet Banking switch refuses unless the card payment is dead.**
+  `switch-to-internet-banking` calls `cancelPaymentIntentIfCancellableWithResult`
+  before its locked transaction and proceeds only when Stripe confirms the
+  cancel or the intent was already `canceled`. A succeeded intent, or a cancel
+  that throws, is a 409 the switch button shows, with no payment write and no
+  invoice. Under the locks it also refuses when the payment now points at a
+  different intent from the one it cancelled.
+- **Inbound, a second instrument is raised, never skipped.** Under the lock(1)
+  the settle loop holds, a PAID or COMPLETED booking whose payment carries a
+  net-captured PRIMARY row of another source is a conflict: the bank receipt
+  is recorded (the money arrived) and nothing further is written — no re-claim,
+  no credit, no refund. It raises a counter, an error log, one admin-only
+  marker event per invoice (through the helper #2262's fence uses, excluded
+  wherever CANCELLED events read as cancellations) and a cooldown-throttled
+  alert. Which payment goes back is a person's decision. An ADDITIONAL card row
+  or a fully refunded capture is not a second instrument; the opposite order is
+  `INV-PAY-043`'s. Pinned by `switch-to-internet-banking-route.test.ts` and
+  `issue-3638-second-instrument-conflict.test.ts`.
+
 ## INV-PAY-044
 
 - CANCELLATION yields a durable `ManualRefundTask`, created atomically with the

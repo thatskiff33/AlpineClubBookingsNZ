@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
   // cancel failed) survived the switch, settled the booking, and left the
   // member holding an emailed Xero invoice for the same price. Refused here,
   // before the locked transaction, so a refusal writes nothing and raises no
-  // invoice.
+  // invoice. The rule: `INV-PAY-102`.
   const cancelledCardIntentId = booking.payment?.stripePaymentIntentId ?? null;
   if (cancelledCardIntentId) {
     const retired = await retireCardIntentBeforeSwitch(

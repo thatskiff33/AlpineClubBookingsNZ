@@ -147,6 +147,7 @@ stores. Settlement rules are in
 | You expected credit to be applied | Credit shows but was not used | Check the **Account Credit** section on your [profile](your-account.md); contact the club office if it looks wrong |
 | Less credit was applied than you chose | Your balance was spent elsewhere, or the booking was repriced below what you asked to apply, between saving the draft and paying | The pay step says which; the rest is still yours on your [profile](your-account.md), and the difference was charged to your card |
 | Internet banking says there is nothing to pay by transfer | Your account credit covers the whole booking, so there is no invoice to raise | Go back to the booking page and complete it there — it settles for $0 |
+| Switching to internet banking says your card payment has already gone through | The card payment you started was completed, so switching would charge you twice | Refresh the booking page; it shows as paid once the card payment is recorded. If the switch says it could not confirm the card payment was cancelled, try again in a few minutes |
 | Your non-member guests were bumped | No bed remained at the hold deadline | Their provisional hold lapsed; your own place stands — re-add them if beds free up |
 
 ## Related links
