@@ -50,7 +50,7 @@ const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
-const mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
+const mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -200,7 +200,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 }));
 vi.mock("@/lib/webhook-log", () => ({ recordWebhookLog: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/logger", () => ({
@@ -1596,7 +1596,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
       })
     );
     expect(
-      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+      mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent
     ).toHaveBeenCalledWith("pi_additional");
   });
 
@@ -1804,7 +1804,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       })
     );
     expect(
-      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+      mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent
     ).toHaveBeenCalledWith("pi_additional");
   });
 

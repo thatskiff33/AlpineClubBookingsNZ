@@ -17,7 +17,7 @@ const {
   mockEnqueueXeroBookingInvoiceOperation,
   mockEnqueueXeroRefundCreditNoteOperation,
   mockKickQueuedXeroOutboxOperationsIfConnected,
-  mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
   mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   mockNotifyXeroSyncError,
   mockSendBookingConfirmedEmail,
@@ -86,7 +86,7 @@ const {
     failed: 0,
     skipped: 0,
   }),
-  mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn().mockResolvedValue({
+  mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent: vi.fn().mockResolvedValue({
     released: 0,
     queueOperationIds: [],
   }),
@@ -277,8 +277,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mockEnqueueXeroRefundCreditNoteOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
     mockKickQueuedXeroOutboxOperationsIfConnected(...args),
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: (...args: unknown[]) =>
-    mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent(...args),
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...args: unknown[]) =>
+    mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...args),
 }));
 
 vi.mock("@/lib/xero-error-alert", () => ({
@@ -1554,7 +1554,7 @@ describe("Stripe webhook Xero alerting", () => {
       );
       // The supplementary Xero invoice is NEVER released on this path.
       expect(
-        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+        mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
       ).not.toHaveBeenCalled();
       // No Xero presence -> no corrective credit note.
       expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
@@ -1830,7 +1830,7 @@ describe("Stripe webhook Xero alerting", () => {
         }),
       );
       expect(
-        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+        mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
       ).not.toHaveBeenCalled();
     });
 
@@ -1880,7 +1880,7 @@ describe("Stripe webhook Xero alerting", () => {
       // handler with the same idempotent refund keys.
       expect(mockProcessedWebhookDeleteMany).toHaveBeenCalled();
       expect(
-        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+        mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
       ).not.toHaveBeenCalled();
     });
 
@@ -1913,7 +1913,7 @@ describe("Stripe webhook Xero alerting", () => {
         paymentMethodId: "pm_late",
       });
       expect(
-        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+        mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
       ).toHaveBeenCalledWith("pi_additional_late");
       expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
       expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();

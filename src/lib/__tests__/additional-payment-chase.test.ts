@@ -5,6 +5,7 @@ import {
   ADDITIONAL_PAYABLE_BOOKING_STATUSES,
   isAdditionalPayableBookingStatus,
   isAdditionalPaymentOwed,
+  payableAdditionalPaymentIntentId,
   resolveAdditionalPaymentChase,
 } from "@/lib/additional-payment-chase";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
@@ -125,6 +126,58 @@ describe("isAdditionalPayableBookingStatus", () => {
     ]) {
       expect(isAdditionalPayableBookingStatus(status)).toBe(false);
     }
+  });
+});
+
+/*
+  #3641 (`INV-PAY-105`): the member's pay door. The additional-payment-secret
+  route and the Xero outbox reaper both ask it, so the reaper keeps a waiting
+  invoice for exactly as long as the member can still pay the ask.
+*/
+describe("payableAdditionalPaymentIntentId", () => {
+  const door = (
+    overrides: Partial<{
+      bookingStatus: string;
+      bookingDeletedAt: Date | null;
+      additionalPaymentIntentId: string | null;
+      additionalPaymentStatus: string | null;
+    }> = {},
+  ) =>
+    payableAdditionalPaymentIntentId({
+      bookingStatus: overrides.bookingStatus ?? "CONFIRMED",
+      bookingDeletedAt: overrides.bookingDeletedAt ?? null,
+      payment: {
+        additionalPaymentIntentId:
+          overrides.additionalPaymentIntentId === undefined
+            ? "pi_ask"
+            : overrides.additionalPaymentIntentId,
+        additionalPaymentStatus:
+          overrides.additionalPaymentStatus === undefined
+            ? "PENDING"
+            : overrides.additionalPaymentStatus,
+      },
+    });
+
+  it("hands out the ask while it is unpaid, declined included, on a payable booking", () => {
+    for (const additionalPaymentStatus of ["PENDING", "FAILED", null]) {
+      expect(door({ additionalPaymentStatus })).toBe("pi_ask");
+    }
+    expect(door({ bookingStatus: "PAYMENT_PENDING" })).toBe("pi_ask");
+  });
+
+  it("is closed once the ask is collected, withdrawn, or the booking can no longer take it", () => {
+    expect(door({ additionalPaymentStatus: "SUCCEEDED" })).toBeNull();
+    expect(door({ additionalPaymentIntentId: null })).toBeNull();
+    expect(door({ bookingDeletedAt: new Date() })).toBeNull();
+    expect(door({ bookingStatus: "CANCELLED" })).toBeNull();
+    expect(door({ bookingStatus: "BUMPED" })).toBeNull();
+    expect(
+      payableAdditionalPaymentIntentId({
+        bookingStatus: "CONFIRMED",
+        bookingDeletedAt: null,
+        payment: null,
+      }),
+    ).toBeNull();
   });
 });
 

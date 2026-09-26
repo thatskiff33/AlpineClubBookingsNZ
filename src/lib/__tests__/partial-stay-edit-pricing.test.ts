@@ -139,6 +139,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
   recordSkippedXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({ queueOperationId: "op6", message: "skipped" }),
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [] }),
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [], outcome: "none-queued" }),
 }));
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: vi.fn().mockResolvedValue(undefined),

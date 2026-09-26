@@ -8,7 +8,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
@@ -891,7 +891,7 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
     if (released.released > 0) {
@@ -931,7 +931,7 @@ async function handleAdditionalModificationPaymentSucceeded(
       : paymentIntent.payment_method?.id ?? null,
   });
 
-  const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     paymentIntent.id
   );
   if (released.released > 0) {

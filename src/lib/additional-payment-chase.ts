@@ -124,6 +124,47 @@ export function isAdditionalPayableBookingStatus(
   );
 }
 
+/**
+ * THE MEMBER'S PAY DOOR, as one predicate (#3641, `INV-PAY-105`): the
+ * additional PaymentIntent a member can still pay right now, or `null`.
+ *
+ * `GET /api/bookings/[id]/additional-payment-secret` hands out this intent's
+ * client secret and nothing else, with no age limit, and the reminder cron
+ * chases it until check-in. So "can the member still pay this ask?" has
+ * exactly one answer, and it is this one. The Xero outbox reaper asks the same
+ * question before it retires a supplementary invoice parked on an intent: an
+ * invoice waiting on an ask this door still hands out is not stale, however
+ * old it is or however many cards were declined against it.
+ *
+ * The door is closed when the booking no longer names the intent (a later
+ * change superseded it, or an officer withdrew it: the `Payment` columns
+ * always describe the LATEST additional transaction), when that ask was
+ * already collected, when the booking was deleted, or when its lifecycle can
+ * no longer take a card payment for an addition (CANCELLED, BUMPED).
+ */
+export function payableAdditionalPaymentIntentId(input: {
+  bookingStatus: string | null | undefined;
+  bookingDeletedAt: Date | null;
+  payment:
+    | {
+        additionalPaymentIntentId: string | null;
+        additionalPaymentStatus: string | null;
+      }
+    | null
+    | undefined;
+}): string | null {
+  const { payment } = input;
+  if (
+    !payment?.additionalPaymentIntentId ||
+    payment.additionalPaymentStatus === "SUCCEEDED" ||
+    input.bookingDeletedAt !== null ||
+    !isAdditionalPayableBookingStatus(input.bookingStatus)
+  ) {
+    return null;
+  }
+  return payment.additionalPaymentIntentId;
+}
+
 const MS_PER_DAY = 86_400_000;
 
 /** The `Payment` columns every surface here reads. */

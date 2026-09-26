@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { isAdditionalPayableBookingStatus } from "@/lib/additional-payment-chase";
+import { payableAdditionalPaymentIntentId } from "@/lib/additional-payment-chase";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -55,19 +55,21 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (
-      !payment.additionalPaymentIntentId ||
-      payment.additionalPaymentStatus === "SUCCEEDED" ||
-      payment.booking.deletedAt !== null ||
-      !isAdditionalPayableBookingStatus(payment.booking.status)
-    ) {
+    // #3641: the gate is shared with the Xero outbox reaper, which keeps a
+    // supplementary invoice waiting for exactly as long as this door is open.
+    const payableIntentId = payableAdditionalPaymentIntentId({
+      bookingStatus: payment.booking.status,
+      bookingDeletedAt: payment.booking.deletedAt,
+      payment,
+    });
+    if (!payableIntentId) {
       return NextResponse.json(
         { error: "No pending additional payment" },
         { status: 404 }
       );
     }
 
-    const pi = await getPaymentIntent(payment.additionalPaymentIntentId);
+    const pi = await getPaymentIntent(payableIntentId);
     if (!pi.client_secret) {
       return NextResponse.json(
         { error: "PaymentIntent has no client secret" },

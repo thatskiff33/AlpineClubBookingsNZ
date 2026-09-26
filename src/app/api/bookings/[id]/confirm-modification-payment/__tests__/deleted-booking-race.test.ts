@@ -91,7 +91,7 @@ vi.mock("@/lib/deleted-booking-modification-payment", () => ({
     mocks.raiseTask(...args),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: (
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (
     ...args: unknown[]
   ) => mocks.releaseXero(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>

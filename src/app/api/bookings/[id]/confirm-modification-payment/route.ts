@@ -13,7 +13,7 @@ import {
 } from "@/lib/payment-transactions";
 import {
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
@@ -91,7 +91,7 @@ export async function POST(
       paymentTransaction.status === "PARTIALLY_REFUNDED" ||
       paymentTransaction.status === "REFUNDED"
     ) {
-      const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+      const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
         paymentIntentId
       );
       if (released.released > 0) {
@@ -200,7 +200,7 @@ export async function POST(
       );
     }
 
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       pi.id
     );
     if (released.released > 0) {
