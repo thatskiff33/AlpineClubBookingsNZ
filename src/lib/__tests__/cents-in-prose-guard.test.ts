@@ -1,5 +1,7 @@
 import path from "path";
+import fs from "node:fs";
 import { ESLint } from "eslint";
+import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 /*
@@ -43,9 +45,12 @@ const VIOLATING_CODE =
 
 let eslint: ESLint;
 
-async function hitsIn(code: string): Promise<ESLint.LintResult["messages"]> {
+async function hitsIn(
+  code: string,
+  filename = ORDINARY_FILE,
+): Promise<ESLint.LintResult["messages"]> {
   const results = await eslint.lintText(code, {
-    filePath: path.join(REPO_ROOT, ORDINARY_FILE),
+    filePath: path.join(REPO_ROOT, filename),
   });
   return results
     .flatMap((result) => result.messages)
@@ -107,8 +112,8 @@ describe("cents-in-prose guard: it is its own group", () => {
     `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions —
     files excused for seeding an editable input or writing a raw export cell,
     none of which is a reason to put the storage form in a sentence. The arm is
-    its own array with no exemptions of its own; these two cases are what stop
-    it being folded back in.
+    its own array; #3589's one direct-return exception is confined to one
+    diagnostic file. These two cases stop it being folded back in.
   */
   it("is exported separately from the toFixed arm", async () => {
     const { pathToFileURL } = await import("url");
@@ -167,5 +172,46 @@ describe("cents-in-prose guard: negative fixtures", () => {
     expect(
       await hitsIn(`const amountCents = 1, rowCount = 1, nightCount = 1, formatCents = (c: number) => "$", sql = (s: TemplateStringsArray, ...v: unknown[]) => "";\n${code}\n`),
     ).toHaveLength(0);
+  });
+});
+
+describe("cents-in-prose guard: one reviewed rounding annotation", () => {
+  const roundingAuditFile = "src/lib/xero-invoice-rounding-audit.ts";
+  const anotherXeroFile = "src/lib/xero-other-repair.ts";
+  const pairedDiagnostic =
+    'function formatDriftCents(cents: number, format: ClubFormat): string { return `${formatCents(cents, format)} (${cents >= 0 ? "+" : ""}${cents}c)`; }';
+
+  it("pins the actual diagnostic to a formatted amount plus signed raw-cent drift", () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, roundingAuditFile), "utf8");
+    const file = ts.createSourceFile(roundingAuditFile, source, ts.ScriptTarget.Latest, true);
+    const declarations = file.statements.filter(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) && statement.name?.text === "formatDriftCents",
+    );
+    expect(declarations).toHaveLength(1);
+    const statements = declarations[0]?.body?.statements;
+    expect(statements).toHaveLength(1); // selector exempts only a direct return
+    const returned = statements?.[0];
+    expect(returned && ts.isReturnStatement(returned)).toBe(true);
+    expect(returned?.getText(file)).toBe(
+      'return `${formatCents(cents, format)} (${cents >= 0 ? "+" : ""}${cents}c)`;',
+    );
+  });
+
+  it("exempts only that direct return in the rounding-audit file", async () => {
+    expect(await hitsIn(pairedDiagnostic, roundingAuditFile)).toHaveLength(0);
+    expect(await hitsIn(pairedDiagnostic, anotherXeroFile)).toHaveLength(1);
+    expect(
+      await hitsIn(
+        'function another(cents: number) { return `${cents}c`; }',
+        roundingAuditFile,
+      ),
+    ).toHaveLength(1);
+    expect(
+      await hitsIn(
+        'function formatDriftCents(cents: number) { if (cents) return `${cents}c`; return ""; }',
+        roundingAuditFile,
+      ),
+    ).toHaveLength(1);
   });
 });
