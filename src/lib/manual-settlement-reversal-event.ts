@@ -124,10 +124,24 @@ export interface SecondInstrumentSettlementConflictEventSnapshot {
   invoiceId: string | null;
   invoiceNumber: string | null;
   bookingStatus: string;
+  /**
+   * Which conflict this is — decides the alert's wording. See
+   * `SecondInstrumentConflictKind` in `xero-inbound/settlement-conflicts.ts`.
+   */
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund";
   /** The PaymentSource of the captured PRIMARY row that settled first. */
   settledBySource: string;
   /** Its Stripe PaymentIntent, when it has one. */
   settledByPaymentIntentId: string | null;
+  /** That card row's capture and refunded amounts, in integer cents. */
+  cardAmountCents: number;
+  cardRefundedAmountCents: number;
+  /**
+   * When the admin alert was confirmed sent (ISO), or null while it is still
+   * owed. The marker is written with the bank receipt, the alert after the
+   * commit, so null is how a crash in between is re-sent on the next delivery.
+   */
+  alertSentAt: string | null;
 }
 
 export function asSecondInstrumentSettlementConflictSnapshot(

@@ -116,13 +116,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **Inbound, a second instrument is raised, never skipped.** Under the settle
   loop's lock(1), a PRIMARY capture of another source is a conflict on a PAID or
   COMPLETED booking while it holds net cash, and on a CANCELLED one while the
-  bank cash is new or this invoice has no marker yet — the marker is the
-  idempotency record, so a crash before it is raised on the retry. The bank
-  receipt is recorded; nothing else is written. It raises a counter, an error
-  log, one admin-only marker per invoice (on the staff timeline) and a
-  throttled, unmuteable alert. Not second instruments: an ADDITIONAL card row,
-  a capture the #1992 refund owns (`INV-PAY-043`), and #1765 refund history — a
-  card row refunded before the booking moved to Internet Banking.
+  bank cash is new. The bank receipt is recorded and nothing else moves. One
+  admin-only marker per invoice is written IN that transaction, so it commits
+  with the receipt; the unmuteable alert follows the commit, and the marker
+  records it sent, so a crash in between re-sends it once on the retry. Not
+  second instruments: an ADDITIONAL card row, a capture the #1992 refund owns
+  (`INV-PAY-043`), and — on a settled booking — #1765 refund history, a card
+  row refunded before the booking moved to Internet Banking.
 - **A replay on a settled booking changes nothing.** COMPLETED takes the
   already-paid arm like PAID.
 - Pinned by `switch-to-internet-banking-route.test.ts`,

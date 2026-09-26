@@ -1385,7 +1385,7 @@ export function sampleValue(token: string): string {
   // #3638: previewed as the live-booking arm — the double payment the alert is
   // named for; the cancelled-booking arm is the sender's other branch.
   if (token === "secondInstrumentConflictNote") {
-    return secondInstrumentConflictOutcomeParagraph(false);
+    return secondInstrumentConflictOutcomeParagraph("settled");
   }
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);

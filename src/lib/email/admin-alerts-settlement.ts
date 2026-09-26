@@ -37,7 +37,7 @@ export async function sendAdminSecondInstrumentSettlementConflictAlert(data: {
   checkOut: Date;
   bookingId: string;
   bookingStatus: string;
-  bookingCancelled: boolean;
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund";
   invoiceAmountCents: number;
   cardHeldCents: number;
   cardPaymentIntentId: string | null;
@@ -76,7 +76,7 @@ export async function sendAdminSecondInstrumentSettlementConflictAlert(data: {
       // The same sentence the hand-built HTML renders, so an admin's saved
       // default cannot describe the other case (#2268 convention).
       secondInstrumentConflictNote: secondInstrumentConflictOutcomeParagraph(
-        data.bookingCancelled,
+        data.conflictKind,
       ),
     },
     requirement: { area: "finance", level: "edit" },

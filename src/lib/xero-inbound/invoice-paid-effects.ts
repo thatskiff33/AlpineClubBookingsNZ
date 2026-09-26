@@ -12,7 +12,8 @@ import { providerAmountToCents } from "@/lib/money-provider-amount";
 import {
   findSecondInstrumentSettlement,
   recordManualSettlementConflict,
-  recordSecondInstrumentSettlementConflict,
+  raiseSecondInstrumentSettlementAlert,
+  recordSecondInstrumentMarkerInTransaction,
 } from "@/lib/xero-inbound/settlement-conflicts";
 import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -580,7 +581,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // fell into the quiet `alreadyPaid` arm below (a counter, nothing else).
       // Raised instead, once per invoice, and nothing further is written: no
       // PAID re-claim (which would also flip a COMPLETED booking back to PAID),
-      // no credit, no refund. The rule: `INV-PAY-102`.
+      // no credit, no refund. The durable marker is written HERE, in this
+      // transaction, so it commits with the receipt; the alert follows the
+      // commit. The rule: `INV-PAY-102`.
       if (secondInstrument) {
         return {
           type: "secondInstrumentConflict" as const,
@@ -588,6 +591,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           paymentWasPending,
           bookingStatus: fresh.booking.status,
           settledBy: secondInstrument,
+          marker: await recordSecondInstrumentMarkerInTransaction(tx, {
+            bookingId: fresh.bookingId,
+            amountCents: fresh.amountCents,
+            bookingStatus: fresh.booking.status,
+            invoiceId,
+            invoiceNumber,
+            settledBy: secondInstrument,
+          }),
         };
       }
 
@@ -943,6 +954,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           paymentWasPending,
           bookingStatus: locked.booking.status,
           settledBy: lockedSecondInstrument,
+          marker: await recordSecondInstrumentMarkerInTransaction(tx, {
+            bookingId: locked.bookingId,
+            amountCents: locked.amountCents,
+            bookingStatus: locked.booking.status,
+            invoiceId,
+            invoiceNumber,
+            settledBy: lockedSecondInstrument,
+          }),
         };
       }
       if (
@@ -1230,8 +1249,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
 
     if (outcome.type === "secondInstrumentConflict") {
       // #3638. Loud on the same axes as the #2262 fence: a counter, an error
-      // log, one durable admin-only BookingEvent per invoice and a
-      // cooldown-throttled admin alert. No money moved.
+      // log, one durable admin-only BookingEvent per invoice (written in the
+      // transaction above) and an admin alert sent once per marker. No money
+      // moved.
       result.secondInstrumentSettlementConflicts += 1;
       logger.error(
         {
@@ -1240,17 +1260,17 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           bookingStatus: outcome.bookingStatus,
           settledBySource: outcome.settledBy.source,
           settledByPaymentIntentId: outcome.settledBy.stripePaymentIntentId,
+          conflictKind: outcome.settledBy.conflictKind,
+          markerId: outcome.marker.id,
           invoiceId,
           invoiceNumber,
         },
         "Inbound Xero PAID landed on a booking a card payment had already settled (#3638): the club may hold the price twice"
       );
-      await recordSecondInstrumentSettlementConflict({
+      await raiseSecondInstrumentSettlementAlert({
         payment: outcome.payment,
-        bookingStatus: outcome.bookingStatus,
-        settledBy: outcome.settledBy,
+        marker: outcome.marker,
         invoiceId,
-        invoiceNumber,
         format,
       });
       continue;

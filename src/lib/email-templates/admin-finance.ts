@@ -471,7 +471,7 @@ export function adminSecondInstrumentSettlementConflictTemplate(data: {
   checkOut: Date;
   bookingId: string;
   bookingStatus: string;
-  bookingCancelled: boolean;
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund";
   /** The Internet Banking payment's amount — what the invoice asked for. */
   invoiceAmountCents: number;
   /** The card money still held after refunds. */
@@ -493,7 +493,7 @@ export function adminSecondInstrumentSettlementConflictTemplate(data: {
     ${
       // The SAME sentence the {{secondInstrumentConflictNote}} token renders
       // (#2268 convention).
-      paragraph(secondInstrumentConflictOutcomeParagraph(data.bookingCancelled))
+      paragraph(secondInstrumentConflictOutcomeParagraph(data.conflictKind))
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },

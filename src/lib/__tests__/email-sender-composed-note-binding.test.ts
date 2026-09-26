@@ -348,7 +348,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       checkOut: new Date("2026-08-03"),
       bookingId: "booking-9",
       bookingStatus: "PAID",
-      bookingCancelled: false,
+      conflictKind: "settled" as const,
       invoiceAmountCents: 27000,
       cardHeldCents: 27000,
       cardPaymentIntentId: "pi_card",
@@ -377,7 +377,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
 
     mocks.sendUnmuteableAdminAlert.mockClear();
     await sendAdminSecondInstrumentSettlementConflictAlert(
-      { ...alert, bookingStatus: "CANCELLED", bookingCancelled: true },
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterCard" },
       CLUB_FORMAT_TEST,
     );
     const cancelledRendered = renderDefaultBody(
@@ -386,6 +386,22 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     );
     expect(cancelledRendered).toContain("paid by card and later cancelled");
     expect(cancelledRendered).not.toContain("This booking may have been paid TWICE");
+
+    // #3638 delta D3: the #1765 arm. The card was refunded before the switch,
+    // so the mail must not claim the cancellation settled it, nor that the
+    // booking was paid twice.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterRefund" },
+      CLUB_FORMAT_TEST,
+    );
+    const refundRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(refundRendered).toContain("refunded before it moved to Internet Banking");
+    expect(refundRendered).toContain("Nothing was paid twice");
+    expect(refundRendered).not.toContain("already settled the card payment");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

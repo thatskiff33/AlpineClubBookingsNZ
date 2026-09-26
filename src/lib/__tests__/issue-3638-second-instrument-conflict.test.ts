@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   paymentRecoveryOperationFindMany: vi.fn(),
   paymentRefundFindMany: vi.fn(),
   txBookingEventFindFirst: vi.fn(),
+  txBookingEventCreate: vi.fn(),
+  bookingEventUpdate: vi.fn(),
   memberCreditFindFirst: vi.fn(),
   memberCreditAggregate: vi.fn(),
   bookingUpdateMany: vi.fn(),
@@ -60,6 +62,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingEvent: {
       findFirst: (...a: unknown[]) => mocks.bookingEventFindFirst(...a),
+      // #3638: the alert is recorded on the marker once it is sent.
+      update: (...a: unknown[]) => mocks.bookingEventUpdate(...a),
     },
   },
 }));
@@ -176,8 +180,39 @@ const tx = {
   // settle loop's transaction.
   bookingEvent: {
     findFirst: (...a: unknown[]) => mocks.txBookingEventFindFirst(...a),
+    // #3638 delta D1: the marker is written INSIDE the settle transaction.
+    create: (...a: unknown[]) => mocks.txBookingEventCreate(...a),
   },
 };
+
+/**
+ * The BookingEvent table as the settle transaction and the post-commit alert
+ * see it — stateful across deliveries, so a retry reads what the first
+ * delivery committed.
+ */
+type MarkerRow = { id: string; snapshot: Record<string, unknown> };
+let markerRows: MarkerRow[] = [];
+
+function seedMarker(snapshot: Record<string, unknown>): MarkerRow {
+  const row = {
+    id: `marker-${markerRows.length + 1}`,
+    snapshot: {
+      kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+      invoiceId: INVOICE_ID,
+      invoiceNumber: "INV-3638",
+      bookingStatus: BookingStatus.CANCELLED,
+      conflictKind: "cancelledAfterCard",
+      settledBySource: PaymentSource.STRIPE,
+      settledByPaymentIntentId: "pi_card_3638",
+      cardAmountCents: 27000,
+      cardRefundedAmountCents: 27000,
+      alertSentAt: null,
+      ...snapshot,
+    },
+  };
+  markerRows.push(row);
+  return row;
+}
 
 function invoice() {
   return {
@@ -241,7 +276,42 @@ beforeEach(() => {
   mocks.paymentTransactionFindFirst.mockResolvedValue(null);
   mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
   mocks.paymentRefundFindMany.mockResolvedValue([]);
-  mocks.txBookingEventFindFirst.mockResolvedValue(null);
+  markerRows = [];
+  mocks.txBookingEventFindFirst.mockImplementation(
+    async ({
+      where,
+    }: {
+      where: {
+        snapshot: { equals: string };
+        AND: [{ snapshot: { equals: string } }];
+      };
+    }) =>
+      markerRows.find(
+        (row) =>
+          row.snapshot.kind === where.snapshot.equals &&
+          row.snapshot.invoiceId === where.AND[0].snapshot.equals,
+      ) ?? null,
+  );
+  mocks.txBookingEventCreate.mockImplementation(
+    async ({ data }: { data: { snapshot: Record<string, unknown> } }) => {
+      const row = { id: `marker-${markerRows.length + 1}`, snapshot: data.snapshot };
+      markerRows.push(row);
+      return { id: row.id };
+    },
+  );
+  mocks.bookingEventUpdate.mockImplementation(
+    async ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: { snapshot: Record<string, unknown> };
+    }) => {
+      const row = markerRows.find((candidate) => candidate.id === where.id);
+      if (row) row.snapshot = data.snapshot;
+      return row;
+    },
+  );
   mocks.memberCreditFindFirst.mockResolvedValue(null);
   mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
   mocks.paymentUpdate.mockResolvedValue({});
@@ -291,23 +361,33 @@ describe("card first, then bank (#3638)", () => {
       expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
       expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
 
-      // The durable admin-only record.
-      expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(1);
-      expect(mocks.recordBookingEvent).toHaveBeenCalledWith({
-        bookingId: "booking-1",
-        type: BookingEventType.CANCELLED,
-        actorMemberId: null,
-        amountCents: 27000,
-        reason: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
-        snapshot: {
-          kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
-          invoiceId: INVOICE_ID,
-          invoiceNumber: "INV-3638",
-          bookingStatus: status,
-          settledBySource: PaymentSource.STRIPE,
-          settledByPaymentIntentId: "pi_card_3638",
+      // The durable admin-only record, written in the settle transaction
+      // (delta D1) so it commits with the receipt.
+      expect(mocks.txBookingEventCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.txBookingEventCreate).toHaveBeenCalledWith({
+        data: {
+          bookingId: "booking-1",
+          type: BookingEventType.CANCELLED,
+          actorMemberId: null,
+          amountCents: 27000,
+          reason: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+          snapshot: {
+            kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+            invoiceId: INVOICE_ID,
+            invoiceNumber: "INV-3638",
+            bookingStatus: status,
+            conflictKind: "settled",
+            settledBySource: PaymentSource.STRIPE,
+            settledByPaymentIntentId: "pi_card_3638",
+            cardAmountCents: 27000,
+            cardRefundedAmountCents: 0,
+            alertSentAt: null,
+          },
         },
+        select: { id: true },
       });
+      // Not the post-commit helper, which swallows its own failure.
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
 
       // Its own alert (#3638 review): it names the booking, the card payment
       // and the Xero invoice with a link to it — never the generic "Payment
@@ -320,7 +400,7 @@ describe("card first, then bank (#3638)", () => {
         checkOut: new Date("2026-08-03"),
         bookingId: "booking-1",
         bookingStatus: status,
-        bookingCancelled: false,
+        conflictKind: "settled",
         invoiceAmountCents: 27000,
         cardHeldCents: 27000,
         cardPaymentIntentId: "pi_card_3638",
@@ -329,10 +409,10 @@ describe("card first, then bank (#3638)", () => {
       });
       expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
       expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
-        expect.objectContaining({
-          key: `second-instrument-settlement-conflict:payment-1:${INVOICE_ID}`,
-        })
+        expect.objectContaining({ key: "second-instrument-alert:marker-1" })
       );
+      // Recorded as sent on the marker only after the send.
+      expect(markerRows[0].snapshot.alertSentAt).toEqual(expect.any(String));
       // No member was emailed a confirmation for money they paid twice.
       expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
       expect(mocks.error).toHaveBeenCalled();
@@ -360,28 +440,22 @@ describe("card first, then bank (#3638)", () => {
     );
   });
 
-  it("records the event ONCE per invoice, but re-counts every replay", async () => {
+  it("records the marker ONCE per invoice and mails ONCE, but re-counts every replay", async () => {
     primePayment(switchedPayment(BookingStatus.PAID));
-    mocks.bookingEventFindFirst.mockResolvedValue({ id: "event-1" });
+    seedMarker({
+      bookingStatus: BookingStatus.PAID,
+      conflictKind: "settled",
+      alertSentAt: "2026-08-04T00:00:00.000Z",
+    });
 
     const result = await sync();
 
     expect(result.secondInstrumentSettlementConflicts).toBe(1);
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
-    expect(mocks.bookingEventFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          bookingId: "booking-1",
-          snapshot: {
-            path: ["kind"],
-            equals: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
-          },
-        }),
-      })
-    );
+    expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
-  it("does not re-mail the admins inside the cooldown window", async () => {
+  it("does not send while another sender holds the alert, and leaves it owed", async () => {
     primePayment(switchedPayment(BookingStatus.PAID));
     mocks.claimAlertCooldown.mockResolvedValue(false);
 
@@ -389,6 +463,22 @@ describe("card first, then bank (#3638)", () => {
 
     expect(result.secondInstrumentSettlementConflicts).toBe(1);
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
+    expect(markerRows[0].snapshot.alertSentAt).toBeNull();
+  });
+
+  it("leaves the alert owed when the send fails, so the next delivery re-sends it", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID));
+    mocks.sendAdminSecondInstrumentSettlementConflictAlert.mockRejectedValueOnce(
+      new Error("SES down"),
+    );
+
+    await sync();
+    expect(markerRows[0].snapshot.alertSentAt).toBeNull();
+
+    await sync();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(2);
+    expect(markerRows).toHaveLength(1);
+    expect(markerRows[0].snapshot.alertSentAt).toEqual(expect.any(String));
   });
 
   it("catches a booking that became PAID while it waited for the lodge lock", async () => {
@@ -403,7 +493,7 @@ describe("card first, then bank (#3638)", () => {
 
     expect(result.secondInstrumentSettlementConflicts).toBe(1);
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
-    expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.txBookingEventCreate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -416,7 +506,7 @@ describe("not a second instrument (#3638)", () => {
 
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
     expect(result.skippedAlreadyPaidBookings).toBe(1);
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
@@ -465,17 +555,18 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     // payment that never settled — silently nothing.
     expect(result.creditedInternetBankingBookings).toBe(0);
     expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
-    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+    expect(markerRows).toEqual([
       expect.objectContaining({
         snapshot: expect.objectContaining({
           kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
           bookingStatus: BookingStatus.CANCELLED,
+          conflictKind: "cancelledAfterCard",
         }),
-      })
-    );
+      }),
+    ]);
     const [alert] = mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0];
     expect(alert).toMatchObject({
-      bookingCancelled: true,
+      conflictKind: "cancelledAfterCard",
       bookingStatus: BookingStatus.CANCELLED,
     });
     // Refunded card rows count on a cancelled booking.
@@ -494,12 +585,12 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     );
   });
 
-  it("stays out of the way on a replay once this invoice's conflict is recorded", async () => {
+  it("stays out of the way on a replay once this invoice's conflict was raised and mailed", async () => {
     primePayment(
       switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
     );
     mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
-    mocks.txBookingEventFindFirst.mockResolvedValue({ id: "marker-1" });
+    seedMarker({ alertSentAt: "2026-08-04T00:00:00.000Z" });
 
     const result = await sync();
 
@@ -512,59 +603,120 @@ describe("card first, then cancelled, then bank (#3638)", () => {
         snapshot: { path: ["kind"], equals: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND },
         AND: [{ snapshot: { path: ["invoiceId"], equals: INVOICE_ID } }],
       },
-      select: { id: true },
+      select: { id: true, snapshot: true },
     });
     expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
-  // #3638 review (concurrency F2): the receipt commits BEFORE the marker is
-  // written. A process that dies in between used to leave a receipt that made
-  // every retry read "this bank cash is not new" and stay silent: the club
-  // held the money with no record anyone could see.
-  it("raises the conflict on the retry when the process died between the receipt's commit and the marker", async () => {
+  // #3638 delta D2: with the marker atomic with the receipt, "receipt recorded
+  // and no marker" means no conflict was ever raised — a bank-first booking.
+  // A card capture that landed after it (a stale intent the late-capture
+  // handler refunded) must not be reported as having settled the booking.
+  it("stays quiet on a bank-first replay with a card capture refunded after the switch", async () => {
     primePayment(
       switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
     );
-
-    // Delivery 1: new bank cash, the receipt commits, then the process dies
-    // before the marker (the throw stands in for the kill).
-    mocks.recordBookingEvent.mockRejectedValueOnce(new Error("process killed"));
-    await expect(sync()).rejects.toThrow("process killed");
-    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalled();
-    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
-
-    // Delivery 2, the retry: the receipt is on file and no marker exists.
     mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
-    const retry = await sync();
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+    ]);
 
-    expect(retry.secondInstrumentSettlementConflicts).toBe(1);
-    expect(mocks.recordBookingEvent).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        snapshot: expect.objectContaining({
-          kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
-          invoiceId: INVOICE_ID,
-          bookingStatus: BookingStatus.CANCELLED,
-        }),
-      })
-    );
-    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
+    const result = await sync();
 
-    // Delivery 3: the marker now exists, so the conflict is not raised again.
-    mocks.txBookingEventFindFirst.mockResolvedValue({ id: "marker-1" });
-    const replay = await sync();
-
-    expect(replay.secondInstrumentSettlementConflicts).toBe(0);
-    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+    expect(markerRows).toEqual([]);
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
-  it("still raises NEW bank cash on a cancelled booking whose card row is #1765 refund history", async () => {
+  it("stays quiet on a bank-first replay whose card row is #1765 refund history", async () => {
+    // Card paid and refunded, switched to Internet Banking, repaid by bank
+    // (PAID), then cancelled. No conflict was ever raised, so no marker.
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+    ]);
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "card-row" }]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(markerRows).toEqual([]);
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
+  });
+
+  // Round-1 concurrency F2 and delta D1: the receipt commits, then the
+  // process dies before the alert. The marker committed WITH the receipt, so
+  // the retry finds it owed and re-sends once; a later replay stays quiet.
+  for (const [label, card, history, kind] of [
+    ["a card-settled booking", { ...CARD_PRIMARY, refundedAmountCents: 27000 }, [], "cancelledAfterCard"],
+    [
+      "a #1765 booking whose card was refunded before the switch",
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+      [{ paymentTransactionId: "card-row" }],
+      "cancelledAfterRefund",
+    ],
+  ] as const) {
+    it(`re-sends the alert once on the retry after a crash between commit and alert, for ${label}`, async () => {
+      const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+      primePayment(
+        switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+      );
+      mocks.paymentTransactionFindMany.mockResolvedValue([card]);
+      mocks.paymentRefundFindMany.mockResolvedValue([...history]);
+      // Delivery 1: the bank cash is new.
+      mocks.paymentTransactionFindFirst.mockImplementation(
+        async ({ orderBy }: { orderBy?: unknown }) =>
+          orderBy ? { createdAt: switchedAt } : null
+      );
+      // The process dies after the commit, before the alert (the throwing
+      // error log stands in for the kill; it runs right after the commit).
+      mocks.error.mockImplementationOnce(() => {
+        throw new Error("process killed");
+      });
+      await expect(sync()).rejects.toThrow("process killed");
+      expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalled();
+      expect(markerRows).toHaveLength(1);
+      expect(markerRows[0].snapshot).toMatchObject({
+        conflictKind: kind,
+        alertSentAt: null,
+      });
+      expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
+
+      // Delivery 2, the retry: the receipt is on file, the marker is owed.
+      mocks.paymentTransactionFindFirst.mockImplementation(
+        async ({ orderBy }: { orderBy?: unknown }) =>
+          orderBy ? { createdAt: switchedAt } : { id: "ib-primary" }
+      );
+      const retry = await sync();
+
+      expect(retry.secondInstrumentSettlementConflicts).toBe(1);
+      expect(markerRows).toHaveLength(1);
+      expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
+      expect(
+        mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+      ).toMatchObject({ conflictKind: kind, cardPaymentIntentId: "pi_card_3638" });
+      expect(markerRows[0].snapshot.alertSentAt).toEqual(expect.any(String));
+
+      // Delivery 3: sent and recorded, so nothing more.
+      const replay = await sync();
+      expect(replay.secondInstrumentSettlementConflicts).toBe(0);
+      expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("raises NEW bank cash on a cancelled #1765 booking, with the refund-history wording", async () => {
     // Repay-after-refund booking switched to Internet Banking and cancelled
     // BEFORE it was repaid; the member then pays the stale invoice. The card
     // was refunded before the switch, but this bank cash is new and has
     // nowhere to go (the credit-mint arm mints only for a payment that never
-    // settled), so it must still be raised rather than excluded as history.
+    // settled), so it is raised — and says the card was refunded, not that
+    // the cancellation settled it (delta D3).
     const switchedAt = new Date("2026-07-10T00:00:00.000Z");
     primePayment(
       switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
@@ -581,30 +733,6 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     const result = await sync();
 
     expect(result.secondInstrumentSettlementConflicts).toBe(1);
-    expect(mocks.paymentRefundFindMany).not.toHaveBeenCalled();
-  });
-
-  it("does not raise a bank-first replay whose card row is #1765 refund history", async () => {
-    // A repay-after-refund booking: card paid and refunded, switched to
-    // Internet Banking, repaid by bank (PAID), then cancelled. Its bank cash is
-    // recorded and no conflict was ever raised, so the marker is absent — the
-    // refund recorded BEFORE the switch is what says this is not one.
-    const switchedAt = new Date("2026-07-10T00:00:00.000Z");
-    primePayment(
-      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
-    );
-    mocks.paymentTransactionFindFirst.mockImplementation(
-      async ({ orderBy }: { orderBy?: unknown }) =>
-        orderBy ? { createdAt: switchedAt } : { id: "ib-primary" }
-    );
-    mocks.paymentTransactionFindMany.mockResolvedValue([
-      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
-    ]);
-    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "card-row" }]);
-
-    const result = await sync();
-
-    expect(result.secondInstrumentSettlementConflicts).toBe(0);
     expect(mocks.paymentRefundFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -613,7 +741,31 @@ describe("card first, then cancelled, then bank (#3638)", () => {
         }),
       })
     );
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(
+      mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+    ).toMatchObject({ conflictKind: "cancelledAfterRefund", cardHeldCents: 0 });
+  });
+
+  it("prefers a real card settlement over #1765 history when a cancelled booking has both", async () => {
+    const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindFirst.mockImplementation(
+      async ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy ? { createdAt: switchedAt } : null
+    );
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, id: "old-row", stripePaymentIntentId: "pi_old", refundedAmountCents: 27000 },
+      { ...CARD_PRIMARY, id: "card-row", refundedAmountCents: 27000 },
+    ]);
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "old-row" }]);
+
+    await sync();
+
+    expect(
+      mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0][0],
+    ).toMatchObject({ conflictKind: "cancelledAfterCard", cardPaymentIntentId: "pi_card_3638" });
   });
 });
 
@@ -658,7 +810,7 @@ describe("#1765 refund history is not a second instrument (#3638)", () => {
       },
       select: { paymentTransactionId: true },
     });
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
     expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
@@ -716,7 +868,7 @@ describe("a replay on a completed booking (#3638)", () => {
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
     expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
-    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
   });
 
   it("does not re-claim a booking that COMPLETED while it waited for the lodge lock", async () => {
