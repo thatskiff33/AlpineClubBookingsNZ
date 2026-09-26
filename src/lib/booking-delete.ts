@@ -1,7 +1,6 @@
 import {
   BookingStatus,
   CreditType,
-  PaymentStatus,
   type Prisma,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -15,6 +14,8 @@ import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-a
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -45,12 +46,6 @@ export type DeleteBookingResult =
 type BookingForDelete = NonNullable<
   Awaited<ReturnType<typeof loadBookingForDelete>>
 >;
-
-const CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 export async function deleteBooking(input: {
   bookingId: string;
@@ -200,7 +195,7 @@ type SoftDeleteOutcome = {
  * owner is sitting on the Stripe payment page for a modification. Deletion does
  * not touch Stripe, so the PaymentIntent stays live and the member can still
  * pay. `getCancelledBookingDeleteBlockers` cannot prevent it: that gate counts
- * CAPTURED PaymentTransactions (`CAPTURED_PAYMENT_STATUSES`) and a
+ * captured PaymentTransactions (`CAPTURED_TRANSACTION_STATUS_LIST`) and a
  * `SUCCEEDED` additional payment, so an intent that has NOT yet captured is
  * exactly the state it permits — and exactly the state that can capture a
  * moment later. Cancelling the intent is what actually shuts the window.
@@ -517,7 +512,7 @@ async function getCancelledBookingDeleteBlockers(
           where: {
             paymentId,
             OR: [
-              { status: { in: Array.from(CAPTURED_PAYMENT_STATUSES) } },
+              { status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
               { refundedAmountCents: { gt: 0 } },
             ],
           },
@@ -676,7 +671,7 @@ function hasCapturedOrCreditedPayment(
   }
 
   return (
-    CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+    isCapturedPaymentStatus(payment.status) ||
     payment.refundedAmountCents > 0 ||
     // #1547: the applied-credit mirror no longer blocks once the ledger proves
     // that applied credit was fully reversed (net-zero, reversal-only, no Xero
