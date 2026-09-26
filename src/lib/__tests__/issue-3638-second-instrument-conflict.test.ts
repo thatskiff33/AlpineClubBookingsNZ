@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   bookingEventFindFirst: vi.fn(),
   recordBookingEvent: vi.fn(),
   claimAlertCooldown: vi.fn(),
+  sendAdminSecondInstrumentSettlementConflictAlert: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
   sendAdminManualSettlementConflictAlert: vi.fn(),
   sendBookingConfirmedEmail: vi.fn(),
@@ -66,6 +67,8 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminManualSettlementConflictAlert: (...a: unknown[]) =>
     mocks.sendAdminManualSettlementConflictAlert(...a),
+  sendAdminSecondInstrumentSettlementConflictAlert: (...a: unknown[]) =>
+    mocks.sendAdminSecondInstrumentSettlementConflictAlert(...a),
   sendAdminPaymentFailureAlert: (...a: unknown[]) =>
     mocks.sendAdminPaymentFailureAlert(...a),
   sendBookingCancelledEmail: vi.fn(),
@@ -244,7 +247,7 @@ beforeEach(() => {
   mocks.bookingEventFindFirst.mockResolvedValue(null);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.claimAlertCooldown.mockResolvedValue(true);
-  mocks.sendAdminPaymentFailureAlert.mockResolvedValue(undefined);
+  mocks.sendAdminSecondInstrumentSettlementConflictAlert.mockResolvedValue(undefined);
   mocks.sendBookingConfirmedEmail.mockResolvedValue(undefined);
   mocks.syncBookingLedgerSettlements.mockResolvedValue(undefined);
   mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
@@ -304,15 +307,25 @@ describe("card first, then bank (#3638)", () => {
         },
       });
 
-      // The alert names the card payment and the invoice.
-      expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
-      const [alert] = mocks.sendAdminPaymentFailureAlert.mock.calls[0];
-      expect(alert).toMatchObject({
-        paymentIntentId: "pi_card_3638",
-        amountCents: 27000,
+      // Its own alert (#3638 review): it names the booking, the card payment
+      // and the Xero invoice with a link to it — never the generic "Payment
+      // Failed" mail the payment-failure preference can mute.
+      expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
+      const [alert] = mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0];
+      expect(alert).toEqual({
+        memberName: "Ada Lovelace",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        bookingId: "booking-1",
+        bookingStatus: status,
+        bookingCancelled: false,
+        invoiceAmountCents: 27000,
+        cardHeldCents: 27000,
+        cardPaymentIntentId: "pi_card_3638",
+        xeroInvoiceNumber: "INV-3638",
+        xeroInvoiceUrl: expect.stringContaining(INVOICE_ID),
       });
-      expect(alert.errorMessage).toContain("paid TWICE");
-      expect(alert.errorMessage).toContain("INV-3638");
+      expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
       expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
         expect.objectContaining({
           key: `second-instrument-settlement-conflict:payment-1:${INVOICE_ID}`,
@@ -373,7 +386,7 @@ describe("card first, then bank (#3638)", () => {
     const result = await sync();
 
     expect(result.secondInstrumentSettlementConflicts).toBe(1);
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
   it("catches a booking that became PAID while it waited for the lodge lock", async () => {
@@ -402,7 +415,7 @@ describe("not a second instrument (#3638)", () => {
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
     expect(result.skippedAlreadyPaidBookings).toBe(1);
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
   it("a card capture refunded in full holds nothing twice", async () => {
@@ -418,7 +431,7 @@ describe("not a second instrument (#3638)", () => {
 
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
     expect(result.skippedAlreadyPaidBookings).toBe(1);
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
   it("a booking still awaiting payment never runs the test", async () => {
@@ -458,8 +471,11 @@ describe("card first, then cancelled, then bank (#3638)", () => {
         }),
       })
     );
-    const [alert] = mocks.sendAdminPaymentFailureAlert.mock.calls[0];
-    expect(alert.errorMessage).toContain("later cancelled");
+    const [alert] = mocks.sendAdminSecondInstrumentSettlementConflictAlert.mock.calls[0];
+    expect(alert).toMatchObject({
+      bookingCancelled: true,
+      bookingStatus: BookingStatus.CANCELLED,
+    });
     // Refunded card rows count on a cancelled booking.
     expect(mocks.paymentTransactionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -498,7 +514,7 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     });
     expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
   // #3638 review (concurrency F2): the receipt commits BEFORE the marker is
@@ -515,7 +531,7 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     mocks.recordBookingEvent.mockRejectedValueOnce(new Error("process killed"));
     await expect(sync()).rejects.toThrow("process killed");
     expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalled();
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
 
     // Delivery 2, the retry: the receipt is on file and no marker exists.
     mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
@@ -531,14 +547,14 @@ describe("card first, then cancelled, then bank (#3638)", () => {
         }),
       })
     );
-    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
 
     // Delivery 3: the marker now exists, so the conflict is not raised again.
     mocks.txBookingEventFindFirst.mockResolvedValue({ id: "marker-1" });
     const replay = await sync();
 
     expect(replay.secondInstrumentSettlementConflicts).toBe(0);
-    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).toHaveBeenCalledTimes(1);
   });
 
   it("does not raise a bank-first replay whose card row is #1765 refund history", async () => {
@@ -616,7 +632,7 @@ describe("#1765 refund history is not a second instrument (#3638)", () => {
       select: { paymentTransactionId: true },
     });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 
   it("still raises a card payment refunded in part after the switch", async () => {
@@ -656,7 +672,7 @@ describe("the opposite order belongs to #1992 (#3638)", () => {
       },
       select: { idempotencyKey: true },
     });
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminSecondInstrumentSettlementConflictAlert).not.toHaveBeenCalled();
   });
 });
 

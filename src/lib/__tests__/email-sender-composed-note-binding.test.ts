@@ -48,6 +48,7 @@ import {
   sendAdminDuplicateCaptureRefundAlert,
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
+  sendAdminSecondInstrumentSettlementConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
 import {
   sendBookingBumpedEmail,
@@ -338,6 +339,53 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     );
     expect(sentRendered).toContain("may have gone back TWICE");
     expect(sentRendered).not.toContain("has NOT been sent back a second time");
+  });
+
+  it("admin-second-instrument-settlement-conflict: {{secondInstrumentConflictNote}} says what the card money already did (#3638)", async () => {
+    const alert = {
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      bookingId: "booking-9",
+      bookingStatus: "PAID",
+      bookingCancelled: false,
+      invoiceAmountCents: 27000,
+      cardHeldCents: 27000,
+      cardPaymentIntentId: "pi_card",
+      xeroInvoiceNumber: "INV-9",
+      // No link, so the send-time organisation stamp is not exercised here.
+      xeroInvoiceUrl: null,
+    };
+    await sendAdminSecondInstrumentSettlementConflictAlert(alert, CLUB_FORMAT_TEST);
+
+    const liveData = capturedUnmuteableTemplateData();
+    const liveRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      liveData,
+    );
+    expect(liveRendered).toContain("This booking may have been paid TWICE");
+    expect(liveRendered).not.toContain("later cancelled");
+    expect(liveRendered).toContain("Booking: booking-9");
+    expect(liveRendered).toContain("/bookings/booking-9");
+    // Unmuteable and named for the event, never the payment-failure mail.
+    const [liveArgs] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+      { subject: string; templateName: string },
+    ];
+    expect(liveArgs.subject).toContain("may have been paid twice");
+    expect(liveArgs.templateName).toBe("admin-second-instrument-settlement-conflict");
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", bookingCancelled: true },
+      CLUB_FORMAT_TEST,
+    );
+    const cancelledRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(cancelledRendered).toContain("paid by card and later cancelled");
+    expect(cancelledRendered).not.toContain("This booking may have been paid TWICE");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

@@ -230,6 +230,26 @@ export function lateCaptureHandBackConflictOutcomeParagraph(
 }
 
 /**
+ * #3638 — the paragraph that says what happened when Xero reported an Internet
+ * Banking invoice paid on a booking a card payment had already settled.
+ *
+ * Two arms, one situation: the club may hold the price twice, the bank payment
+ * has been recorded, and nothing was refunded or credited. They differ in what
+ * the card money already did — on a live booking it settled the booking, on a
+ * cancelled one the cancellation already settled it under the club's policy —
+ * and so in what the treasurer does next. Shared between the hand-built HTML
+ * and the `{{secondInstrumentConflictNote}}` token (#2268): the flat editable
+ * body has no conditional syntax.
+ */
+export function secondInstrumentConflictOutcomeParagraph(
+  bookingCancelled: boolean,
+): string {
+  return bookingCancelled
+    ? "This booking was paid by card and later cancelled, and Xero now reports its Internet Banking invoice paid as well. The cancellation already settled the card payment under the club's policy; the bank payment has been recorded against the booking, and nothing was credited or refunded for it automatically. Check in Xero whether it is separate money from the member, then return it or hold it as their account credit."
+    : "This booking may have been paid TWICE. A card payment had already settled it, and Xero now reports its Internet Banking invoice paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.";
+}
+
+/**
  * #2268 — the outcome-dependent lead paragraph of the recurring split-settlement
  * alert, shared by the hand-built HTML below and the `{{settlementActionNote}}`
  * token the admin-editable body renders. The flat body used to assert that a

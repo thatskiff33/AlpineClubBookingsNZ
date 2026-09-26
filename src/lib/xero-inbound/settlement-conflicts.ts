@@ -29,7 +29,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
   sendAdminManualSettlementConflictAlert,
-  sendAdminPaymentFailureAlert,
+  sendAdminSecondInstrumentSettlementConflictAlert,
 } from "@/lib/email";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -43,7 +43,6 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { buildDuplicateCaptureRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
-import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -432,19 +431,22 @@ export async function recordSecondInstrumentSettlementConflict({
   });
   if (!holdsClaim) return;
 
-  const cardNetCents = settledBy.amountCents - settledBy.refundedAmountCents;
-  const invoiceLabel = `Internet Banking invoice${invoiceNumber ? ` ${invoiceNumber}` : ""}`;
-  const errorMessage =
-    bookingStatus === BookingStatus.CANCELLED
-      ? `This booking was paid by card (${formatCents(settledBy.amountCents, format)} captured, ${formatCents(cardNetCents, format)} still held after refunds) and later cancelled, and Xero now reports its ${invoiceLabel} paid as well. The cancellation already settled the card payment under the club's policy; the bank payment has been recorded against the booking and nothing was credited or refunded for it automatically. Check in Xero whether it is separate money from the member, then return it or hold it as their account credit.`
-      : `This booking may have been paid TWICE. A card payment of ${formatCents(cardNetCents, format)} had already settled it, and Xero now reports its ${invoiceLabel} paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.`;
-  await sendAdminPaymentFailureAlert({
+  // Its own unmuteable alert, naming the double payment, with the booking and
+  // the Xero invoice one click away — not the generic "Payment Failed" mail the
+  // payment-failure preference can silence.
+  await sendAdminSecondInstrumentSettlementConflictAlert({
     memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`.trim(),
     checkIn: payment.booking.checkIn,
     checkOut: payment.booking.checkOut,
-    amountCents: payment.amountCents,
-    errorMessage,
-    paymentIntentId: settledBy.stripePaymentIntentId ?? invoiceId,
+    bookingId: payment.bookingId,
+    bookingStatus,
+    bookingCancelled: bookingStatus === BookingStatus.CANCELLED,
+    invoiceAmountCents: payment.amountCents,
+    cardHeldCents: settledBy.amountCents - settledBy.refundedAmountCents,
+    cardPaymentIntentId: settledBy.stripePaymentIntentId,
+    xeroInvoiceNumber: invoiceNumber,
+    // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
+    xeroInvoiceUrl: buildXeroInvoiceUrl(invoiceId),
   }, format).catch((err) =>
     logger.error(
       { err, bookingId: payment.bookingId, paymentId: payment.id, invoiceId },
