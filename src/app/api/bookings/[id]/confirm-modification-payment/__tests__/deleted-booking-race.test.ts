@@ -91,11 +91,13 @@ vi.mock("@/lib/deleted-booking-modification-payment", () => ({
     mocks.raiseTask(...args),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
+    mocks.kickXero(...args),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (
     ...args: unknown[]
   ) => mocks.releaseXero(...args),
-  kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
-    mocks.kickXero(...args),
 }));
 vi.mock("@/lib/audit", () => ({
   logAudit: (...args: unknown[]) => mocks.logAudit(...args),

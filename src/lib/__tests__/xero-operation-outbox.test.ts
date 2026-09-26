@@ -239,10 +239,10 @@ import {
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
   reapStaleWaitingPaymentXeroOutboxOperations,
-  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
 import {
   completeDeferredXeroSupplementaryInvoice,
   queueXeroBookingEditSettlement,

@@ -11,10 +11,10 @@ import {
   findPaymentTransactionByIntentId,
   markPaymentIntentTransactionSucceeded,
 } from "@/lib/payment-transactions";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import {
-  kickQueuedXeroOutboxOperationsIfConnected,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
-} from "@/lib/xero-operation-outbox";
+} from "@/lib/xero-supplementary-invoice-late-capture";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
 

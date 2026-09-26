@@ -963,7 +963,8 @@ it was).
   the plain age arm.
 - **A capture never silently releases nothing.** Every late-success caller
   (the Stripe webhook's two arms, the confirm route's two arms) calls
-  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`. Finding the
+  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`
+  (`xero-supplementary-invoice-late-capture.ts`). Finding the
   invoice retired (`STALE_WAITING_PAYMENT`), it re-queues **that row** (same
   payload and idempotency key) under the per-anchor supplementary-invoice lock
   with a status-and-code guarded write, so replays and the two callers racing

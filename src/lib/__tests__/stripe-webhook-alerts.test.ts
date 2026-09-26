@@ -277,6 +277,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mockEnqueueXeroRefundCreditNoteOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
     mockKickQueuedXeroOutboxOperationsIfConnected(...args),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: (...args: unknown[]) =>
     mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent(...args),
 }));

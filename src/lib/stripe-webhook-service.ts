@@ -8,8 +8,8 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
