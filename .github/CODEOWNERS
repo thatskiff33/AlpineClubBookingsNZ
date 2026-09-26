@@ -1,0 +1,89 @@
+# CODEOWNERS — the money surface only (#3341, owner decision 26 Sep 2026).
+#
+# What an entry here means for a pull request: AGENTS.md -> "Pre-authorisation
+# and attributability" (the rule's one home). Do not add paths outside money
+# movement; the owned surface is bounded by codeowners-census.test.ts.
+#
+# Syntax is gitignore's: `*` does not cross `/`, so `src/lib/*credit*.ts`
+# matches `src/lib/member-credit.ts` and NOT `src/lib/__tests__/...`. Every
+# pattern must match a tracked file — `codeowners-census.test.ts` fails on one
+# that matches nothing.
+
+# Money movement — AGENTS.md requires explicit owner approval before merge.
+/src/lib/payment-*.ts                          @thatskiff33
+/src/lib/*settlement*.ts                       @thatskiff33
+/src/lib/booking-modification-*.ts             @thatskiff33
+/src/lib/booking-modify-*.ts                   @thatskiff33
+/src/lib/booking-batch-modification-*.ts       @thatskiff33
+/src/lib/booking-date-modification-*.ts        @thatskiff33
+/src/lib/booking-payment-*.ts                  @thatskiff33
+/src/lib/additional-payment-*.ts               @thatskiff33
+/src/lib/*refund*.ts                           @thatskiff33
+/src/lib/*credit*.ts                           @thatskiff33
+/src/lib/manual-*payment*.ts                   @thatskiff33
+/src/lib/group-settlement.ts                   @thatskiff33
+/src/lib/authoritative-fees.ts                 @thatskiff33
+/src/lib/pricing.ts                            @thatskiff33
+/src/lib/money-*.ts                            @thatskiff33
+/src/lib/booking-money-lines.ts                @thatskiff33
+/src/lib/required-price-cents.ts               @thatskiff33
+/src/lib/stripe.ts                             @thatskiff33
+/src/lib/xero-*payment*.ts                     @thatskiff33
+/src/lib/xero-*credit*.ts                      @thatskiff33
+/src/lib/xero-*settlement*.ts                  @thatskiff33
+/src/lib/xero-inbound/payment.ts               @thatskiff33
+/src/lib/xero-inbound/invoice-paid-effects.ts  @thatskiff33
+/src/lib/xero-inbound/credit-note*.ts          @thatskiff33
+/src/lib/stripe-webhook-service.ts             @thatskiff33
+/src/lib/internet-banking-payment-cron.ts      @thatskiff33
+/src/lib/cancelled-booking-late-capture.ts     @thatskiff33
+/src/lib/xero-operation-outbox.ts              @thatskiff33
+/src/lib/xero-booking-invoices.ts              @thatskiff33
+/src/lib/xero-booking-repair-classify.ts       @thatskiff33
+/src/lib/group-cancel.ts                       @thatskiff33
+/src/lib/booking-cancel.ts                     @thatskiff33
+/src/lib/cancellation.ts                       @thatskiff33
+/src/lib/booking-ledger-*.ts                   @thatskiff33
+/src/lib/booking-money-reconciliation.ts       @thatskiff33
+/src/lib/edit-financial-review*.ts             @thatskiff33
+/src/lib/change-fee.ts                         @thatskiff33
+/src/lib/booking-final-price.ts                @thatskiff33
+/src/lib/stored-night-price-write.ts           @thatskiff33
+/src/lib/policies/pricing.ts                   @thatskiff33
+/src/lib/saved-card-charge-*.ts                @thatskiff33
+/src/lib/booking-create.ts                     @thatskiff33
+/src/lib/booking-delete.ts                     @thatskiff33
+/src/lib/booking-guest-removal-service.ts      @thatskiff33
+/src/lib/cron-confirm-pending.ts               @thatskiff33
+/src/lib/xero-supplementary-invoices.ts        @thatskiff33
+/src/lib/xero-operation-retry.ts               @thatskiff33
+/src/lib/xero-booking-repair-passes.ts         @thatskiff33
+
+# Routes that mint, charge, switch or size money. `[id]` is written `*`:
+# CODEOWNERS reads brackets as a character class, which would never match.
+/src/app/api/webhooks/stripe/**                @thatskiff33
+/src/app/api/payments/create-payment-intent/route.ts      @thatskiff33
+/src/app/api/payments/charge-saved-method/route.ts        @thatskiff33
+/src/app/api/payments/switch-to-internet-banking/route.ts @thatskiff33
+/src/app/api/pay/*/payment-intent/route.ts                @thatskiff33
+/src/app/api/bookings/*/modify-quote/route.ts             @thatskiff33
+/src/app/api/bookings/*/guests/route.ts                   @thatskiff33
+/src/app/api/bookings/*/guests/*/route.ts                 @thatskiff33
+/src/app/api/bookings/*/confirm-modification-payment/route.ts @thatskiff33
+/src/app/api/admin/payments/manual-refund-tasks/**        @thatskiff33
+/src/app/api/admin/refund-requests/*/route.ts             @thatskiff33
+/docs/invariants/money.md                      @thatskiff33
+/docs/invariants/payment-and-settlement.md     @thatskiff33
+/docs/invariants/additional-payment-chasing.md @thatskiff33
+/docs/invariants/booking-modifications.md      @thatskiff33
+
+# The guards themselves, and this file. The money globs above do NOT cover
+# `__tests__`, so without these lines a pull request could delete the seam
+# census (INV-OPS-015), its integration witness, or a CODEOWNERS line without
+# triggering code-owner review.
+/.github/CODEOWNERS                                               @thatskiff33
+/src/lib/__tests__/money-seam-mock-census.test.ts                 @thatskiff33
+/src/lib/__tests__/superseded-additional-ask-integration.test.ts  @thatskiff33
+/src/lib/__tests__/codeowners-census.test.ts                      @thatskiff33
+/src/lib/__tests__/*settlement*                                   @thatskiff33
+/src/lib/__tests__/*payment*                                      @thatskiff33

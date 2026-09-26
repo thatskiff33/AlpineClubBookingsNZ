@@ -59,8 +59,15 @@ const mocks = vi.hoisted(() => ({
   enqueueEditFinancialReviewRefundRecovery: vi.fn(),
   markEditFinancialReviewRefundRecoverySucceeded: vi.fn(),
   enqueueAdditionalPaymentIntentRecovery: vi.fn(),
-  createModificationAdditionalPaymentIntent: vi.fn(),
   updatePaymentIntentAmount: vi.fn(),
+  // #3341: the minter and the supersede run for REAL (`INV-OPS-015`); these are
+  // their leaves - the provider, the ledger read of asks to retire, and the
+  // durable cancel that retires one.
+  createPaymentIntent: vi.fn(),
+  findOrCreateCustomer: vi.fn(),
+  supersedeRead: vi.fn(),
+  enqueueCancel: vi.fn(),
+  cancelNow: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -82,6 +89,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       findFirst: (...a: unknown[]) => mocks.paymentTransactionFindFirst(...a),
+      // The real supersede's read of the live asks a mint retires (#3341).
+      findMany: (...a: unknown[]) => mocks.supersedeRead(...a),
     },
     payment: {
       findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a),
@@ -116,8 +125,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => {
 vi.mock("@/lib/stripe", () => ({
   updatePaymentIntentAmount: (...a: unknown[]) =>
     mocks.updatePaymentIntentAmount(...a),
-  createPaymentIntent: vi.fn(),
-  findOrCreateCustomer: vi.fn(),
+  createPaymentIntent: (...a: unknown[]) => mocks.createPaymentIntent(...a),
+  findOrCreateCustomer: (...a: unknown[]) => mocks.findOrCreateCustomer(...a),
   processRefund: vi.fn(),
   getPaymentIntent: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
@@ -135,19 +144,18 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
   enqueueAdditionalPaymentIntentRecovery: (...a: unknown[]) =>
     mocks.enqueueAdditionalPaymentIntentRecovery(...a),
+  enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) =>
+    mocks.enqueueCancel(...a),
+  runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
 }));
-/**
- * The one place a charge is MINTED. Mocked rather than exercised - it has its own
- * suites - because what this file is about is that the completion RE-ENTERS it,
- * with which keys and which amount, rather than growing a collection path of its
- * own. It is also the ONLY caller of
- * `queueSupersededAdditionalIntentCancellations`, which is what makes "this mock
- * was not called" a proof that nothing was queued for cancellation.
- */
-vi.mock("@/lib/booking-modification-settlement", () => ({
-  createModificationAdditionalPaymentIntent: (...a: unknown[]) =>
-    mocks.createModificationAdditionalPaymentIntent(...a),
-}));
+/*
+  THE ONE PLACE A CHARGE IS MINTED RUNS FOR REAL (#3341, `INV-OPS-015`), and so
+  does `queueSupersededAdditionalIntentCancellations` behind it. Both used to be
+  a single stub here, and the review charge's whole #3371 rule - that the ask
+  CARRIES the unpaid balance of the one it retires - was asserted against the
+  figure the completion HANDED that stub, never against what was minted or
+  retired. `mint()` below reads the minter's own leaves instead.
+*/
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: (...a: unknown[]) =>
     mocks.queueXeroBookingEditSettlement(...a),
@@ -364,6 +372,35 @@ function settledShare(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * What the REAL minter was asked to mint, read off its own two leaves: the
+ * Stripe intent it created, and the ADDITIONAL row it wrote straight after.
+ */
+function mint(index = 0) {
+  const intentCall = mocks.createPaymentIntent.mock.calls[index];
+  if (!intentCall) throw new Error(`the minter created no intent #${index}`);
+  const minted = mocks.createPaymentIntent.mock.invocationCallOrder[index];
+  const rowIndex =
+    mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder.findIndex(
+      (order) => order > minted,
+    );
+  const intent = intentCall[0] as {
+    amountCents: number;
+    idempotencyKey: string;
+    metadata: { bookingId: string; reason: string };
+  };
+  const row = mocks.upsertPaymentIntentTransaction.mock.calls[rowIndex]?.[0] as
+    | { paymentId: string; kind: string; amountCents: number; carriedAskCents: number; reason: string }
+    | undefined;
+  return {
+    amountCents: intent.amountCents,
+    idempotencyKey: intent.idempotencyKey,
+    bookingId: intent.metadata.bookingId,
+    reason: intent.metadata.reason,
+    row,
+  };
+}
+
 function charge(overrides: Record<string, unknown> = {}) {
   return resolveManualRefundTask({
     taskId: "task-1",
@@ -433,10 +470,20 @@ beforeEach(() => {
     source: PaymentSource.STRIPE,
     stripeCustomerId: "cus_1",
   });
-  mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-    additionalPaymentClientSecret: "cs_1",
-    additionalPaymentIntentId: "pi_additional_1",
+  // The real minter's provider. Each mint answers the next intent id, so the
+  // first is `pi_additional_1` exactly as the old stub answered.
+  let minted = 0;
+  mocks.createPaymentIntent.mockImplementation(async () => {
+    minted += 1;
+    return { id: `pi_additional_${minted}`, client_secret: `cs_${minted}` };
   });
+  mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_1" });
+  // The real minter chains `.catch` onto its own recovery enqueue.
+  mocks.enqueueAdditionalPaymentIntentRecovery.mockResolvedValue({ id: "recovery-1" });
+  // No other change's ask is live unless a case says so.
+  mocks.supersedeRead.mockResolvedValue([]);
+  mocks.enqueueCancel.mockResolvedValue({ id: "op-cancel-1" });
+  mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.updatePaymentIntentAmount.mockResolvedValue({ id: "pi_additional_1" });
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
@@ -475,24 +522,24 @@ describe("a completed review that asks the member for money (#3170)", () => {
   it("raises ONE charge, through the same additional-payment path an ordinary price increase uses", async () => {
     const result = await charge();
 
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).toHaveBeenCalledTimes(1);
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    // #3170 S2: the minter's own captured-card guard passed on the payment as it
+    // stands now, re-read after the commit - so it minted exactly once.
+    expect(mocks.createPaymentIntent).toHaveBeenCalledTimes(1);
+    const call = mint();
     expect(call.bookingId).toBe("booking-1");
-    expect(call.result.additionalAsk.amountCents).toBe(20000);
-    expect(call.result.additionalAsk.carriedCents).toBe(0);
-    expect(call.result.paymentId).toBe("payment-1");
-    expect(call.result.bookingModificationId).toBe("mod-1");
+    expect(call.amountCents).toBe(20000);
+    expect(call.row).toMatchObject({
+      paymentId: "payment-1",
+      kind: PaymentTransactionKind.ADDITIONAL,
+      amountCents: 20000,
+      carriedAskCents: 0,
+      status: PaymentStatus.PENDING,
+    });
     // The refund half of that context is inert: a charge returns nothing.
-    expect(call.result.pendingRefundAmountCents).toBe(0);
-    // #3170 S2: the minter's own guard is answered with the payment as it stands
-    // now, re-read after the commit - never a literal `true`, which would make
-    // that guard permanently dead for this caller.
-    expect(call.result.hasSucceededPayment).toBe(true);
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     // The row carries the anchor, which is how a later share finds this request.
     expect(call.reason).toBe(buildEditFinancialReviewChargeReason("mod-1"));
+    expect(call.row?.reason).toBe(buildEditFinancialReviewChargeReason("mod-1"));
 
     // EDIT-scoped on both keys, which inverts the first #3170 round. The request
     // belongs to the edit, not to the task, so a second review's settlement joins
@@ -515,13 +562,8 @@ describe("a completed review that asks the member for money (#3170)", () => {
     expect(call.idempotencyKey).not.toBe(
       buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
     );
-    expect(call.recoveryIdempotencyKey).toBe(
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
-    );
-    // A CONTROL on that claim: the two keys are genuinely different strings, so
-    // an implementation that passed one for both would fail here rather than
-    // pass twice over.
-    expect(call.idempotencyKey).not.toBe(call.recoveryIdempotencyKey);
+    // The RECOVERY key only surfaces when a mint fails, so it is asserted in the
+    // `not-raised` case below, against the minter's own recovery enqueue.
 
     expect(result.additionalPaymentIntentId).toBe("pi_additional_1");
     expect(result.settlementDirection).toBe("CHARGE_TO_MEMBER");
@@ -573,9 +615,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
 
     expect(mocks.planStripeRefundAllocation).toHaveBeenCalledTimes(1);
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledTimes(1);
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("answers the minter's captured-card guard with the payment as it stands NOW", async () => {
@@ -595,9 +635,10 @@ describe("a completed review that asks the member for money (#3170)", () => {
 
     await charge();
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.hasSucceededPayment).toBe(false);
+    // The real guard fired: nothing was minted, and the debt went to the
+    // durable recovery row instead of vanishing.
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(1);
   });
 
   it("looks for THIS edit's request, not whatever additional the payment happens to carry", async () => {
@@ -676,9 +717,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     await expect(charge()).rejects.toMatchObject({ status: 409 });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
   });
@@ -690,9 +729,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
 
     await expect(charge()).rejects.toMatchObject({ status: 409 });
 
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
@@ -728,9 +765,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     // NOTHING WRITTEN. The refusal fires before the claim, so the row is
     // untouched and still holds the money question.
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
   });
@@ -752,9 +787,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
@@ -782,9 +815,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     // No intent exists to mint on a hand-settled booking; the supplementary
     // invoice IS the ask, raised unpaid, and the club's existing
     // additional-payment chasing carries it from there.
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(result.additionalPaymentIntentId).toBeNull();
     const xero = mocks.queueXeroBookingEditSettlement.mock.calls[0][0];
     expect(xero.priceDiffCents).toBe(20000);
@@ -811,9 +842,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 
@@ -825,9 +854,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
   });
 
@@ -875,9 +902,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
     expect(claim.data.settlementDirection).toBeUndefined();
     expect(claim.data.amountCents).toBeUndefined();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 });
 
@@ -940,13 +965,12 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     );
     expect(result.additionalPaymentIntentId).toBe("pi_additional_1");
 
-    // NOTHING IS MINTED, which is also the proof that the first request is NOT
-    // cancelled: `createModificationAdditionalPaymentIntent` is the only caller
-    // of `queueSupersededAdditionalIntentCancellations`, so a mint that never
-    // happens can queue no cancellation.
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    // NOTHING IS MINTED, and the first request is NOT cancelled: the real
+    // supersede never even looked for an ask to retire (#3341 reads this off the
+    // supersede itself rather than inferring it from a stub's silence).
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.supersedeRead).not.toHaveBeenCalled();
+    expect(mocks.enqueueCancel).not.toHaveBeenCalled();
   });
 
   it("the payment's outstanding additional is rewritten to the total, on the same row", async () => {
@@ -998,9 +1022,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
     await charge();
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.additionalAsk.amountCents).toBe(23000);
+    expect(mint().amountCents).toBe(23000);
     const xero = mocks.queueXeroBookingEditSettlement.mock.calls[0][0];
     expect(xero.priceDiffCents).toBe(23000);
   });
@@ -1032,9 +1054,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("counts only the shares that are OWED TO THE CLUB on THIS edit", async () => {
@@ -1084,9 +1104,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
@@ -1103,9 +1121,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     });
 
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("CONTROL: a REFUND on the same edit is not fenced by any of that", async () => {
@@ -1184,13 +1200,10 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
    */
   it("reports `not-raised` and leaves a durable debt when the mint produced no intent", async () => {
     mocks.paymentTransactionFindFirst.mockResolvedValue(null);
-    // `createModificationAdditionalPaymentIntent` swallows the provider failure
-    // and returns empty - it does not throw, which is exactly why the caller has
-    // to read the result.
-    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-      additionalPaymentClientSecret: undefined,
-      additionalPaymentIntentId: undefined,
-    });
+    // The provider refuses. `createModificationAdditionalPaymentIntent` swallows
+    // that and returns empty - it does not throw, which is exactly why the caller
+    // has to read the result.
+    mocks.createPaymentIntent.mockRejectedValue(new Error("stripe is down"));
 
     await expect(
       syncEditFinancialReviewChargeRequest(syncArgs),
@@ -1215,6 +1228,19 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
           buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
       }),
     );
+    // The minter's OWN catch wrote the row first, under the same EDIT-scoped
+    // recovery key the caller passed it - a different string from the Stripe key
+    // it tried, so one cannot stand in for the other.
+    const minterRecovery = mocks.enqueueAdditionalPaymentIntentRecovery.mock
+      .calls[0][0] as { idempotencyKey: string; stripeIdempotencyKey: string };
+    expect(minterRecovery.idempotencyKey).toBe(
+      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
+    );
+    expect(minterRecovery.idempotencyKey).not.toBe(
+      minterRecovery.stripeIdempotencyKey,
+    );
+    // A failed mint retires nothing.
+    expect(mocks.supersedeRead).not.toHaveBeenCalled();
   });
 
   /**
@@ -1233,14 +1259,11 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       source: PaymentSource.STRIPE,
       stripeCustomerId: null,
     });
-    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-      additionalPaymentClientSecret: undefined,
-      additionalPaymentIntentId: undefined,
-    });
 
     const result = await syncEditFinancialReviewChargeRequest(syncArgs);
 
     expect(result.outcome).toBe("not-raised");
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(
       1,
     );
@@ -1253,9 +1276,9 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
    */
   it("reports `raised` and enqueues nothing when the mint produced an intent", async () => {
     mocks.paymentTransactionFindFirst.mockResolvedValue(null);
-    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-      additionalPaymentClientSecret: "secret",
-      additionalPaymentIntentId: "pi_additional_9",
+    mocks.createPaymentIntent.mockResolvedValue({
+      id: "pi_additional_9",
+      client_secret: "secret",
     });
 
     await expect(
@@ -1290,9 +1313,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
 
     // Nothing was restated on a paid ask...
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     // ...and the $30 nobody can collect automatically is written where an officer
     // will find it, with the shortfall spelled out.
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
@@ -1350,9 +1371,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       totalCents: 0,
       carriedCents: 0,
     });
-    expect(
-      mocks.createModificationAdditionalPaymentIntent,
-    ).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
   });
 });
@@ -1801,16 +1820,31 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
     mocks.paymentFindUnique.mockResolvedValue(
       paymentCarrying(20000, PaymentStatus.PENDING),
     );
+    // ...and the ledger row behind it, which the REAL supersede finds (#3341).
+    mocks.supersedeRead.mockResolvedValue([
+      { id: "ptx-other-change", stripePaymentIntentId: "pi_other_change", amountCents: 20000 },
+    ]);
   });
 
   it("asks for $260, not $60 - the exact sequence the proof exhibited", async () => {
     await charge({ confirmedAmountCents: 6000 });
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    const call = mint();
     // Before the fix this was 6000 and the $200 simply ceased to be owed.
-    expect(call.result.additionalAsk.amountCents).toBe(26000);
-    expect(call.result.additionalAsk.carriedCents).toBe(20000);
+    expect(call.amountCents).toBe(26000);
+    expect(call.row).toMatchObject({ amountCents: 26000, carriedAskCents: 20000 });
+    // And the $200 ask it absorbed really is retired, not left live beside it:
+    // mint -> supersede -> one ask for everything owed.
+    expect(mocks.enqueueCancel).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      paymentTransactionId: "ptx-other-change",
+      paymentIntentId: "pi_other_change",
+      amountCents: 20000,
+    });
+    expect(
+      mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.enqueueCancel.mock.invocationCallOrder[0]);
   });
 
   it("keeps the carried money OUT of this edit's Xero invoice", async () => {
@@ -1855,13 +1889,14 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
 
   it("carries nothing, and says nothing, when no other ask was outstanding", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentCarrying(0, null));
+    mocks.supersedeRead.mockResolvedValue([]);
 
     await charge({ confirmedAmountCents: 6000 });
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.additionalAsk.amountCents).toBe(6000);
-    expect(call.result.additionalAsk.carriedCents).toBe(0);
+    const call = mint();
+    expect(call.amountCents).toBe(6000);
+    expect(call.row?.carriedAskCents).toBe(0);
+    expect(mocks.enqueueCancel).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking.editFinancialReview.chargeCarriedUnpaidBalance",
@@ -1873,13 +1908,14 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
     mocks.paymentFindUnique.mockResolvedValue(
       paymentCarrying(20000, PaymentStatus.SUCCEEDED),
     );
+    // A captured intent is not a live ask; the supersede finds nothing to retire.
+    mocks.supersedeRead.mockResolvedValue([]);
 
     await charge({ confirmedAmountCents: 6000 });
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.additionalAsk.amountCents).toBe(6000);
-    expect(call.result.additionalAsk.carriedCents).toBe(0);
+    const call = mint();
+    expect(call.amountCents).toBe(6000);
+    expect(call.row?.carriedAskCents).toBe(0);
   });
 
   /*
@@ -1904,10 +1940,7 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
     await charge({ confirmedAmountCents: 6000 });
     await charge({ confirmedAmountCents: 6000 });
 
-    const keys = (
-      mocks.createModificationAdditionalPaymentIntent.mock
-        .calls as { idempotencyKey: string }[][]
-    ).map((args) => args[0]?.idempotencyKey);
+    const keys = [mint(0).idempotencyKey, mint(1).idempotencyKey];
     // A CONTROL on the comparison: two calls really happened, so this cannot
     // pass by comparing one call with itself.
     expect(keys).toHaveLength(2);
@@ -1916,20 +1949,18 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
 
   it("moves the Stripe key when the carried balance is paid off between attempts", async () => {
     await charge({ confirmedAmountCents: 6000 });
-    const minted =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    const minted = mint(0);
 
     // The member pays the earlier change's $200 before the replay reaches this.
-    mocks.createModificationAdditionalPaymentIntent.mockClear();
     mocks.paymentFindUnique.mockResolvedValue(
       paymentCarrying(20000, PaymentStatus.SUCCEEDED),
     );
+    mocks.supersedeRead.mockResolvedValue([]);
     await charge({ confirmedAmountCents: 6000 });
-    const replayed =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    const replayed = mint(1);
 
-    expect(minted.result.additionalAsk.amountCents).toBe(26000);
-    expect(replayed.result.additionalAsk.amountCents).toBe(6000);
+    expect(minted.amountCents).toBe(26000);
+    expect(replayed.amountCents).toBe(6000);
     expect(
       replayed.idempotencyKey,
       "INV-PAY-098: a re-derived amount under the same Stripe key is a permanent " +
@@ -1947,23 +1978,22 @@ describe("#3371: a review charge carries the unpaid ask its mint retires", () =>
     mocks.paymentFindUnique.mockResolvedValue(
       paymentCarrying(7000, PaymentStatus.FAILED),
     );
+    // A declined intent is already dead, so there is nothing live to retire -
+    // but the money it asked for is still owed, and carried.
+    mocks.supersedeRead.mockResolvedValue([]);
 
     await charge({ confirmedAmountCents: 6000 });
 
-    const call =
-      mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(call.result.additionalAsk.amountCents).toBe(13000);
-    expect(call.result.additionalAsk.carriedCents).toBe(7000);
+    const call = mint();
+    expect(call.amountCents).toBe(13000);
+    expect(call.row?.carriedAskCents).toBe(7000);
   });
 
   it("records NOTHING as carried when the mint produced no intent", async () => {
     // A failed mint retires nothing - the other change's ask is still live, and
     // the replay reads it again. Writing the provenance here would claim an
     // absorption that never happened.
-    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
-      additionalPaymentClientSecret: undefined,
-      additionalPaymentIntentId: undefined,
-    });
+    mocks.createPaymentIntent.mockRejectedValue(new Error("stripe is down"));
 
     await charge({ confirmedAmountCents: 6000 });
 
