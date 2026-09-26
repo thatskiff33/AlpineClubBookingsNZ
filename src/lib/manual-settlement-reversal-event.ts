@@ -107,10 +107,62 @@ export function asManualSettlementConflictSnapshot(
 }
 
 /**
- * True when a durable CANCELLED event is one of the two #2262 admin-only
- * markers (a manual mark-paid reversal, or the reciprocal-fence conflict).
- * NEITHER cancels the booking, so every consumer that pattern-matches CANCELLED
- * events must exclude them.
+ * #3638: the same marker shape for a SECOND INSTRUMENT. Xero reports cash on
+ * the Internet Banking invoice of a booking a card payment had already
+ * settled (the switch-to-Internet-Banking race, or any other path that leaves
+ * both open). The inbound path records the bank receipt it was told about and
+ * moves no money; this event is the durable admin-only record that the club may
+ * now hold the price twice.
+ */
+export const SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND =
+  "second_instrument_xero_conflict" as const;
+
+export const SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON =
+  "Xero reported this booking's invoice paid after a card payment had already settled it — the club may hold the price twice; reconcile by hand. The booking was not cancelled.";
+
+export interface SecondInstrumentSettlementConflictEventSnapshot {
+  kind: typeof SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  bookingStatus: string;
+  /** The PaymentSource of the captured PRIMARY row that settled first. */
+  settledBySource: string;
+  /** Its Stripe PaymentIntent, when it has one. */
+  settledByPaymentIntentId: string | null;
+}
+
+export function asSecondInstrumentSettlementConflictSnapshot(
+  value: unknown
+): SecondInstrumentSettlementConflictEventSnapshot | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    (value as { kind?: unknown }).kind ===
+      SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND
+  ) {
+    return value as SecondInstrumentSettlementConflictEventSnapshot;
+  }
+  return null;
+}
+
+/**
+ * The constant `reason` of every admin-only settlement marker above. The
+ * DB-level twin of `isManualSettlementMarkerEvent` for relation filters that
+ * cannot read the snapshot discriminator (the stuck-state crash detector), so
+ * adding a marker here is the one edit both exclusions need.
+ */
+export const SETTLEMENT_MARKER_EVENT_REASONS = [
+  MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
+  MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
+  SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+] as const;
+
+/**
+ * True when a durable CANCELLED event is one of the admin-only settlement
+ * markers: the two #2262 markers (a manual mark-paid reversal, or the
+ * reciprocal-fence conflict) or #3638's second-instrument conflict. NONE
+ * cancels the booking, so every consumer that pattern-matches CANCELLED events
+ * must exclude them.
  */
 export function isManualSettlementMarkerEvent(event: {
   type: BookingEventType;
@@ -119,6 +171,7 @@ export function isManualSettlementMarkerEvent(event: {
   return (
     event.type === BookingEventType.CANCELLED &&
     (asManualSettlementReversalSnapshot(event.snapshot) !== null ||
-      asManualSettlementConflictSnapshot(event.snapshot) !== null)
+      asManualSettlementConflictSnapshot(event.snapshot) !== null ||
+      asSecondInstrumentSettlementConflictSnapshot(event.snapshot) !== null)
   );
 }

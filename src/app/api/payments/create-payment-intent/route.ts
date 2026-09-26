@@ -8,7 +8,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
+import { cancelPaymentIntentIfCancellableWithResult, createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
@@ -712,37 +712,79 @@ export async function POST(request: NextRequest) {
         : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
-    // Mirror the effective split onto the Payment so the invariant
-    // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
-    // update branch also corrects a not-yet-paid legacy full-price payment forward
-    // to the effective amount when a fresh intent is minted here.
-    const payment = await prisma.payment.upsert({
-      where: { bookingId: booking.id },
-      create: {
-        bookingId: booking.id,
+    // #3638 (`INV-PAY-103`) — the write that attaches this intent to the
+    // booking is serialised with the Internet Banking switch on lock(1), which
+    // the switch holds while it re-reads the intent and moves the payment to
+    // Internet Banking. The source check at the top of this route ran with no
+    // lock, so a switch can commit between it and here; without this, the new
+    // intent landed on an Internet Banking payment and its client secret went
+    // to the browser beside an emailed invoice. Whichever commits first wins:
+    // a switch first is seen here and refused; this write first leaves the
+    // switch a different intent from the one it cancelled, and it refuses.
+    const attached = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const current = await tx.payment.findUnique({
+        where: { bookingId: booking.id },
+        select: { source: true },
+      });
+      if (current?.source === PaymentSource.INTERNET_BANKING) {
+        return false;
+      }
+
+      // Mirror the effective split onto the Payment so the invariant
+      // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
+      // update branch also corrects a not-yet-paid legacy full-price payment
+      // forward to the effective amount when a fresh intent is minted here.
+      const payment = await tx.payment.upsert({
+        where: { bookingId: booking.id },
+        create: {
+          bookingId: booking.id,
+          amountCents: effectivePriceCents,
+          creditAppliedCents: appliedCreditCents,
+          stripeCustomerId: customer.id,
+          status: PaymentStatus.PENDING,
+        },
+        update: {
+          amountCents: effectivePriceCents,
+          creditAppliedCents: appliedCreditCents,
+          stripeCustomerId: customer.id,
+        },
+      });
+
+      await upsertPaymentIntentTransaction({
+        paymentId: payment.id,
+        kind: PaymentTransactionKind.PRIMARY,
+        paymentIntentId: paymentIntent.id,
         amountCents: effectivePriceCents,
-        creditAppliedCents: appliedCreditCents,
+        status: PaymentStatus.PROCESSING,
+        reason: repaySupersededIntentId
+          ? "repay_after_refund"
+          : "primary_booking_payment",
         stripeCustomerId: customer.id,
-        status: PaymentStatus.PENDING,
-      },
-      update: {
-        amountCents: effectivePriceCents,
-        creditAppliedCents: appliedCreditCents,
-        stripeCustomerId: customer.id,
-      },
+        store: tx,
+      });
+      return true;
     });
 
-    await upsertPaymentIntentTransaction({
-      paymentId: payment.id,
-      kind: PaymentTransactionKind.PRIMARY,
-      paymentIntentId: paymentIntent.id,
-      amountCents: effectivePriceCents,
-      status: PaymentStatus.PROCESSING,
-      reason: repaySupersededIntentId
-        ? "repay_after_refund"
-        : "primary_booking_payment",
-      stripeCustomerId: customer.id,
-    });
+    if (!attached) {
+      // The client secret never leaves this server, so nobody can confirm the
+      // orphaned intent; cancelling it is tidiness, not safety.
+      await cancelPaymentIntentIfCancellableWithResult(paymentIntent.id).catch(
+        (err) =>
+          logger.warn(
+            { err, bookingId: booking.id, paymentIntentId: paymentIntent.id },
+            "Could not cancel a card intent minted for a booking that switched to Internet Banking meanwhile (#3638)"
+          )
+      );
+      return NextResponse.json(
+        {
+          error:
+            "This booking has switched to Internet Banking, so it can't be paid by card here. Reload the booking to see the invoice details.",
+          code: "SWITCHED_TO_INTERNET_BANKING",
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       clientSecret: paymentIntent.client_secret,

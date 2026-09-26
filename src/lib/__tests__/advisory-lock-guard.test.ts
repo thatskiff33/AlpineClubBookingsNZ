@@ -248,6 +248,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "POST /api/payments/create-payment-intent#2",
+    tier: "GLOBAL",
+    reason:
+      "#3638: attaching a freshly minted card intent to the payment re-reads the payment's source under the key the Internet Banking switch holds, so a switch that committed during the mint is refused here, and a mint that attached first leaves the switch a different intent from the one it cancelled (INV-PAY-103). Global key alone: no capacity or credit is touched.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:

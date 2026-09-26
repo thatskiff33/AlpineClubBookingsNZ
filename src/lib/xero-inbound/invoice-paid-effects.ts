@@ -4,19 +4,16 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
-  sendAdminManualSettlementConflictAlert,
   sendAdminPaymentFailureAlert,
   sendBookingCancelledEmail,
   sendBookingConfirmedEmail,
 } from "@/lib/email";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
-import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-  type ManualSettlementConflictEventSnapshot,
-} from "@/lib/manual-settlement-reversal-event";
+  findSecondInstrumentSettlement,
+  recordManualSettlementConflict,
+  recordSecondInstrumentSettlementConflict,
+} from "@/lib/xero-inbound/settlement-conflicts";
 import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -242,109 +239,6 @@ async function sumInternetBankingMintedCentsForBookings(
   return aggregate._sum.amountCents ?? 0;
 }
 
-/**
- * B5 (#2262): repeat-alert window for the reciprocal fence. A webhook replay
- * must RE-COUNT the conflict (it is still unreconciled) without re-mailing the
- * admins every time Xero redelivers the same event.
- */
-const MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-/**
- * B5 (#2262): the durable half of the reciprocal fence. Records the conflict
- * ONCE per (payment, invoice) as an admin-only BookingEvent, then alerts the
- * admins behind a cross-instance cooldown. Runs AFTER the transaction — the
- * provider call must never sit inside one — and never changes money state.
- */
-async function recordManualSettlementConflict({
-  payment,
-  bookingStatus,
-  invoiceId,
-  invoiceNumber,
-  format,
-}: {
-  payment: Prisma.PaymentGetPayload<{
-    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };
-  }>;
-  bookingStatus: BookingStatus;
-  invoiceId: string;
-  invoiceNumber: string | null;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
-}) {
-  const snapshot: ManualSettlementConflictEventSnapshot = {
-    kind: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
-    invoiceId,
-    invoiceNumber,
-    bookingStatus,
-  };
-
-  // BEST-EFFORT once per (payment, invoice): this is a read-then-create with
-  // no unique key, so two concurrent replays of the same invoice event can
-  // both pass the read and record twice. That duplicate is harmless — the
-  // event is an admin-only history marker, the alert below has its own
-  // cross-instance cooldown, and no money state keys off the event — so a
-  // unique constraint is deliberately not added. A DIFFERENT invoice reporting
-  // paid against the same payment still records its own conflict.
-  const alreadyRecorded = await prisma.bookingEvent
-    .findFirst({
-      where: {
-        bookingId: payment.bookingId,
-        type: BookingEventType.CANCELLED,
-        snapshot: { path: ["kind"], equals: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND },
-        AND: [{ snapshot: { path: ["invoiceId"], equals: invoiceId } }],
-      },
-      select: { id: true },
-    })
-    .catch((err) => {
-      logger.error(
-        { err, bookingId: payment.bookingId, invoiceId },
-        "Failed to look up an existing manual-settlement conflict event; recording a fresh one"
-      );
-      return null;
-    });
-
-  if (!alreadyRecorded) {
-    await recordBookingEvent({
-      bookingId: payment.bookingId,
-      type: BookingEventType.CANCELLED,
-      actorMemberId: null,
-      amountCents: payment.amountCents,
-      reason: MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-      snapshot: snapshot as unknown as Prisma.InputJsonValue,
-    });
-  }
-
-  const holdsClaim = await claimAlertCooldown({
-    key: `manual-settlement-conflict:${payment.id}:${invoiceId}`,
-    windowMs: MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS,
-  }).catch((err) => {
-    logger.error(
-      { err, paymentId: payment.id, invoiceId },
-      "Failed to claim the manual-settlement conflict alert cooldown; sending anyway rather than staying silent about unreconciled money"
-    );
-    return true;
-  });
-  if (!holdsClaim) return;
-
-  await sendAdminManualSettlementConflictAlert({
-    memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
-    checkIn: payment.booking.checkIn,
-    checkOut: payment.booking.checkOut,
-    amountCents: payment.amountCents,
-    bookingId: payment.bookingId,
-    bookingStatus,
-    xeroInvoiceNumber: invoiceNumber,
-    // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
-    xeroInvoiceUrl: buildXeroInvoiceUrl(invoiceId),
-  }, format).catch((err) =>
-    logger.error(
-      { err, bookingId: payment.bookingId, paymentId: payment.id, invoiceId },
-      "Failed to alert admins about a manual-settlement vs Xero payment conflict"
-    )
-  );
-}
-
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
   linkedPaymentIds: string[],
@@ -364,6 +258,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // booking. Surfaced in the inbound-event result JSON the replay route
     // returns, so the fence is never a quiet return.
     manualSettlementConflicts: 0,
+    // #3638: inbound cash on the invoice of a booking a card payment had
+    // already settled. Counted here as well as raised, like the #2262 fence.
+    secondInstrumentSettlementConflicts: 0,
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -592,6 +489,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         };
       }
 
+      // #3638 — read BEFORE the receipt below is written: for a CANCELLED
+      // booking the test asks whether this bank cash is new. Acted on after
+      // the receipt, which is recorded either way.
+      const secondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: fresh.id,
+        bookingId: fresh.bookingId,
+        bookingStatus: fresh.booking.status,
+        includeCancelled: true,
+      });
+
       const transactionUpdate = await tx.paymentTransaction.updateMany({
         where: {
           paymentId: fresh.id,
@@ -665,7 +572,31 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         });
       }
 
-      if (fresh.booking.status === BookingStatus.PAID) {
+      // #3638 — a SECOND instrument. The receipt above is recorded, because the
+      // bank transfer did arrive; but a card payment had already settled this
+      // booking, so the club may now hold the price twice. Before #3638 this
+      // fell into the quiet `alreadyPaid` arm below (a counter, nothing else).
+      // Raised instead, once per invoice, and nothing further is written: no
+      // PAID re-claim (which would also flip a COMPLETED booking back to PAID),
+      // no credit, no refund. The rule: `INV-PAY-103`.
+      if (secondInstrument) {
+        return {
+          type: "secondInstrumentConflict" as const,
+          payment: fresh,
+          paymentWasPending,
+          bookingStatus: fresh.booking.status,
+          settledBy: secondInstrument,
+        };
+      }
+
+      // #3638: COMPLETED is as settled as PAID. A replay on a completed
+      // booking used to fall through to the PAID claim below, flipping it
+      // back to PAID and re-running the paid arm's side effects (the
+      // confirmation email among them).
+      if (
+        fresh.booking.status === BookingStatus.PAID ||
+        fresh.booking.status === BookingStatus.COMPLETED
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,
@@ -991,7 +922,30 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           "Internet Banking payment disappeared during Xero reconciliation",
         );
       }
-      if (locked.booking.status === BookingStatus.PAID) {
+      // #3638: the same second-instrument test against the post-lodge-lock
+      // snapshot, for a booking that became settled inside the wait.
+      const lockedSecondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: locked.id,
+        bookingId: locked.bookingId,
+        bookingStatus: locked.booking.status,
+        // The receipt is already written, so "is this bank cash new" can no
+        // longer be read here; a booking cancelled inside the wait was not
+        // card-settled before it (the read above would have caught that).
+        includeCancelled: false,
+      });
+      if (lockedSecondInstrument) {
+        return {
+          type: "secondInstrumentConflict" as const,
+          payment: fresh,
+          paymentWasPending,
+          bookingStatus: locked.booking.status,
+          settledBy: lockedSecondInstrument,
+        };
+      }
+      if (
+        locked.booking.status === BookingStatus.PAID ||
+        locked.booking.status === BookingStatus.COMPLETED
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,
@@ -1270,6 +1224,34 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
 
     if (outcome.paymentWasPending) {
       result.paidInternetBankingPayments += 1;
+    }
+
+    if (outcome.type === "secondInstrumentConflict") {
+      // #3638. Loud on the same axes as the #2262 fence: a counter, an error
+      // log, one durable admin-only BookingEvent per invoice and a
+      // cooldown-throttled admin alert. No money moved.
+      result.secondInstrumentSettlementConflicts += 1;
+      logger.error(
+        {
+          bookingId: outcome.payment.bookingId,
+          paymentId: outcome.payment.id,
+          bookingStatus: outcome.bookingStatus,
+          settledBySource: outcome.settledBy.source,
+          settledByPaymentIntentId: outcome.settledBy.stripePaymentIntentId,
+          invoiceId,
+          invoiceNumber,
+        },
+        "Inbound Xero PAID landed on a booking a card payment had already settled (#3638): the club may hold the price twice"
+      );
+      await recordSecondInstrumentSettlementConflict({
+        payment: outcome.payment,
+        bookingStatus: outcome.bookingStatus,
+        settledBy: outcome.settledBy,
+        invoiceId,
+        invoiceNumber,
+        format,
+      });
+      continue;
     }
 
     if (outcome.type === "alreadyPaid") {

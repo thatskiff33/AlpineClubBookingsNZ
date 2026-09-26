@@ -314,10 +314,11 @@ function buildCancelledNarrative(
     };
   }
 
-  // #2262 — the two manual-settlement admin markers (a mark-paid REVERSAL, and
-  // the reciprocal fence firing on an inbound Xero PAID) are stored as CANCELLED
+  // #2262 — the admin-only settlement markers (a mark-paid REVERSAL, the
+  // reciprocal fence firing on an inbound Xero PAID, and #3638's
+  // second-instrument conflict) are stored as CANCELLED
   // events, because there is no neutral event type for "the settlement was
-  // un-recorded" / "these two records disagree". NEITHER cancels the booking.
+  // un-recorded" / "these two records disagree". NONE cancels the booking.
   // Excluding them here means a booking that hits one and is LATER genuinely
   // cancelled shows the member the REAL cancellation's date, not the marker's.
   const cancelEvent = events.find(

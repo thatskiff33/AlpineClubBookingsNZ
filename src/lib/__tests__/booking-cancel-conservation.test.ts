@@ -42,7 +42,7 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
-  cancelPaymentIntentIfCancellable: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
   processRefund: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   markPaymentIntentTransactionFailed: vi.fn(),
@@ -126,7 +126,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
-  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
+  cancelPaymentIntentIfCancellableWithResult:
+    mocks.cancelPaymentIntentIfCancellableWithResult,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -332,7 +333,11 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
       queueOperationId: "op_2",
       message: "queued",
     });
-    mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    // #3638: Stripe confirms the cancel unless a test says otherwise.
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      paymentIntent: { status: "canceled" },
+      canceled: true,
+    });
     mocks.applyLocalRefundAllocation.mockResolvedValue(undefined);
     mocks.markPaymentIntentTransactionFailed.mockResolvedValue(undefined);
     mocks.refundPaymentTransactions.mockResolvedValue({

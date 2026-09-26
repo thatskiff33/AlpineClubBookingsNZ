@@ -22,10 +22,7 @@ import { countBookingsWithUnnamedPlaceholderGuests } from "@/lib/placeholder-gue
 import { countUnconfirmedSchoolAttendeeLists } from "@/lib/school-attendee-confirmation";
 import { loadHutLeaderLookaheadDays } from "@/lib/lodge-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import {
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-  MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
-} from "@/lib/manual-settlement-reversal-event";
+import { SETTLEMENT_MARKER_EVENT_REASONS } from "@/lib/manual-settlement-reversal-event";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 import { formatBookingReference } from "@/lib/booking-reference";
@@ -899,8 +896,9 @@ async function getPaymentCounts(
           none: { type: "REFUND_BOOKING_MODIFICATION" },
         },
         events: {
-          // #2262 — the two manual-settlement admin markers are stored as
-          // CANCELLED events (reversal / reciprocal-fence conflict) but cancel
+          // #2262 — the admin-only settlement markers are stored as
+          // CANCELLED events (reversal / reciprocal-fence conflict, and
+          // #3638's second-instrument conflict) but cancel
           // nothing, so they must not count as "the cancel wrote its
           // narrative event" here: a genuinely crashed cancel on a booking
           // that once hit a marker would otherwise be invisible. The DB-level
@@ -917,10 +915,7 @@ async function getPaymentCounts(
               { reason: null },
               {
                 reason: {
-                  notIn: [
-                    MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
-                    MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-                  ],
+                  notIn: [...SETTLEMENT_MARKER_EVENT_REASONS],
                 },
               },
             ],
