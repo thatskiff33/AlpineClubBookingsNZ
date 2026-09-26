@@ -27,6 +27,7 @@ import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
   readRecordedClearingAllocations,
+  RedactedClearingPlanError,
   unallocatedClearingTargets,
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
@@ -752,8 +753,19 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
-      if (parseRefundCreditNoteRepairInput(operation) || parseModificationCreditNoteRepairInput(operation)) {
+      if (parseRefundCreditNoteRepairInput(operation)) {
         return { supported: true, reason: null };
+      }
+      try {
+        if (parseModificationCreditNoteRepairInput(operation)) {
+          return { supported: true, reason: null };
+        }
+      } catch (error) {
+        // #3535: a recorded plan with a redacted invoice id is never replayed.
+        if (error instanceof RedactedClearingPlanError) {
+          return { supported: false, reason: error.message };
+        }
+        throw error;
       }
 
       return {
@@ -1113,7 +1125,15 @@ export async function retryXeroSyncOperation(
       return { message: "Repaired Xero refund credit note follow-up actions." };
     }
 
-    const modificationCreditNoteRepair = parseModificationCreditNoteRepairInput(operation);
+    let modificationCreditNoteRepair: ReturnType<typeof parseModificationCreditNoteRepairInput>;
+    try {
+      modificationCreditNoteRepair = parseModificationCreditNoteRepairInput(operation);
+    } catch (error) {
+      if (error instanceof RedactedClearingPlanError) {
+        throw new XeroOperationRetryError(error.message);
+      }
+      throw error;
+    }
     if (
       operation.entityType === "CREDIT_NOTE" &&
       operation.operationType === "CREATE" &&

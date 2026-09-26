@@ -26,6 +26,7 @@ import { callXeroApi } from "@/lib/xero-api-client";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { formatCents } from "@/lib/utils";
+import { REDACTED_SECRET } from "@/lib/redact-sensitive-json";
 import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   readModificationNoteWording,
@@ -131,7 +132,26 @@ export async function readInvoiceAmountsDue(
   return out;
 }
 
-/** The plan a clearing note's operation recorded, or null when it recorded none. */
+/**
+ * A recorded plan whose invoice id was redacted on the way into storage cannot
+ * be replayed: allocating against "[REDACTED]" would fail at best. Refused
+ * loudly so a person looks at the row (#3535; the UUID redaction bug that
+ * caused it is fixed in `redact-sensitive-json.ts`, but rows written before
+ * that fix may still carry it).
+ */
+export class RedactedClearingPlanError extends Error {
+  constructor() {
+    super(
+      "This clearing note's recorded allocation plan has a redacted invoice id, so it cannot be replayed - allocate the note to the booking's invoices by hand in Xero."
+    );
+    this.name = "RedactedClearingPlanError";
+  }
+}
+
+/**
+ * The plan a clearing note's operation recorded, or null when it recorded none.
+ * Throws `RedactedClearingPlanError` when an invoice id in it was redacted.
+ */
 export function readRecordedClearingAllocations(
   requestPayload: unknown
 ): ClearingAllocationTarget[] | null {
@@ -142,6 +162,7 @@ export function readRecordedClearingAllocations(
     const record = asRecord(entry);
     const invoiceId = readString(record?.invoiceId);
     const amountCents = readNumber(record?.amountCents);
+    if (invoiceId === REDACTED_SECRET) throw new RedactedClearingPlanError();
     if (!invoiceId || amountCents === null || amountCents <= 0) return null;
     targets.push({ invoiceId, amountCents });
   }

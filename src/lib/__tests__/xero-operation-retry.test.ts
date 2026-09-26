@@ -2027,6 +2027,36 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3535: a plan whose invoice id was redacted into storage is refused, never
+  // replayed against "[REDACTED]".
+  it("refuses to replay a clearing note's plan when an invoice id in it was redacted", async () => {
+    const redactedPlan = makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      xeroObjectId: "cn_clear",
+      requestPayload: {
+        invoiceId: "inv_primary",
+        refundAmountCents: 41000,
+        allocations: [
+          { invoiceId: "inv_primary", amountCents: 30000 },
+          { invoiceId: "[REDACTED]", amountCents: 11000 },
+        ],
+      },
+    });
+    expect(getXeroOperationRetryMeta(redactedPlan)).toEqual({
+      supported: false,
+      reason: expect.stringContaining("redacted invoice id"),
+    });
+    mocks.findUniqueOperation.mockResolvedValue(redactedPlan);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toThrow(/redacted invoice id/);
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+
   it("replays membership cancellation credit note creation using the stored request payload", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
