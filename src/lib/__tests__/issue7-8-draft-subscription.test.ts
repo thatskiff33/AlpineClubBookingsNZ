@@ -27,6 +27,8 @@ const mockTx = {
   payment: {
     create: vi.fn(),
     upsert: vi.fn(),
+    // #3638: the pay route's mint attach re-reads the source under lock(1).
+    findUnique: vi.fn(),
   },
   season: { findMany: vi.fn() },
   promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
@@ -345,6 +347,7 @@ beforeEach(() => {
   mockTx.booking.update.mockResolvedValue({});
   mockTx.bookingGuest.findMany.mockResolvedValue([]);
   mockTx.payment.create.mockResolvedValue({});
+  mockTx.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockTx.season.findMany.mockResolvedValue([]);
   // Rate-membership-type snapshot resolution (#1930, E4): member guests resolve
   // to FULL (role default -> member rate), true non-members to NON_MEMBER.

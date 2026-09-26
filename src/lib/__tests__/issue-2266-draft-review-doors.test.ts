@@ -36,7 +36,13 @@ const tx = {
     updateMany: mocks.txBookingUpdateMany,
     update: mocks.txBookingUpdate,
   },
-  payment: { create: mocks.txPaymentCreate, upsert: vi.fn() },
+  // #3638: the pay route's mint attach re-reads the payment's source under
+  // lock(1) before writing on this handle.
+  payment: {
+    create: mocks.txPaymentCreate,
+    upsert: vi.fn().mockResolvedValue({ id: "payment-1" }),
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));

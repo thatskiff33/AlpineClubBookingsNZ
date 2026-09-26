@@ -67,7 +67,11 @@ const mocks = vi.hoisted(() => ({
 const tx = {
   $executeRaw: vi.fn().mockResolvedValue(1),
   booking: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-  payment: { upsert: vi.fn().mockResolvedValue({ id: "payment-2265" }) },
+  // #3638: the mint's attach re-reads the payment's source under lock(1).
+  payment: {
+    upsert: vi.fn().mockResolvedValue({ id: "payment-2265" }),
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
   memberCredit: {
     aggregate: vi.fn(aggregateLedger),
     create: vi.fn(async ({ data }: { data: LedgerRow }) => {
@@ -320,6 +324,10 @@ beforeEach(() => {
   });
   mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-2265" });
   tx.payment.upsert.mockResolvedValue({ id: "payment-2265" });
+  tx.payment.findUnique.mockResolvedValue(null);
+  mockPrisma.$transaction.mockImplementation(
+    async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
+  );
 });
 
 describe("#2265 the pay step honours the election made when the draft was saved", () => {
@@ -345,8 +353,10 @@ describe("#2265 the pay step honours the election made when the draft was saved"
     expect(live.status).toBe("PAYMENT_PENDING");
     expect(live.creditElectionCents).toBeNull();
 
-    // The Payment mirror keeps amountCents + creditAppliedCents = price.
-    expect(mockPrisma.payment.upsert).toHaveBeenCalledWith(
+    // The Payment mirror keeps amountCents + creditAppliedCents = price. It is
+    // written on the transaction handle since #3638 moved the mint's attach
+    // under lock(1).
+    expect(tx.payment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
           amountCents: 7_000,
