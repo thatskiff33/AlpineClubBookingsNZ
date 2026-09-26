@@ -119,6 +119,7 @@ vi.mock("@/lib/email-templates-club-time", () => ({
 const IN_FLIGHT = {
   unpaidCardPayments: 2,
   pendingSavedCardCharges: 1,
+  unansweredSavedCardAttempts: 1,
   openRecoveryRetries: 0,
 };
 const countInFlight = vi.hoisted(() => vi.fn());
@@ -382,6 +383,13 @@ describe("GET /api/admin/club-format — the read", () => {
       },
       inFlight: IN_FLIGHT,
     });
+  });
+
+  it("gives the in-flight payment counts to a Full Admin only; another admin gets null (#3567 review)", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    const body = (await (await get()).json()) as { inFlight: unknown };
+    expect(body.inFlight).toBeNull();
+    expect(countInFlight).not.toHaveBeenCalled();
   });
 
   it("answers null in-flight counts when they cannot be read, never zero", async () => {

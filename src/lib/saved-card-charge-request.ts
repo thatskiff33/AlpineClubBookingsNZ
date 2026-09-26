@@ -26,6 +26,7 @@ import {
   isStripeResourceMissingError,
   readStripeErrorFields,
 } from "./stripe-errors";
+import { isLocalChargeRefusal } from "./stripe-charge-currency";
 import type { PaymentStore } from "./payment-transactions";
 import {
   buildSavedCardChargeMetadata,
@@ -58,6 +59,17 @@ import type { ClubFormat } from "@/lib/club-format";
  * so there is one place that knows where a Stripe error keeps its type
  * (`INV-SSOT-001`). An `idempotency_error` is definite here (this attempt is
  * over) and `retry` there (the card is fine) — both are right.
+ *
+ * EXCEPT ON A REPLAY WITH NO INTENT (#3567 review, a double charge). That row's
+ * first POST may have executed — its response was lost, which is why the row
+ * carries no intent — and the replay re-sends the SAME key. If the club's
+ * currency changed in between, the body differs and Stripe answers
+ * `idempotency_error` WITHOUT saying whether the first request charged. Marking
+ * the row FAILED there would let the next attempt mint a fresh key and charge a
+ * second time. So on that row the refusal is AMBIGUOUS: the row stays pending,
+ * and once its key is past the replay window the claim refuses with
+ * `attempt_key_expired` and hands it to a person, as for any unanswered attempt.
+ * `definiteChargeFailure` below is the whole decision.
  */
 const DEFINITE_STRIPE_ERROR_TYPES: ReadonlySet<string> = new Set([
   "card_error",
@@ -69,6 +81,27 @@ const DEFINITE_STRIPE_ERROR_TYPES: ReadonlySet<string> = new Set([
 export function isDefiniteSavedCardChargeFailure(err: unknown): boolean {
   const apiType = readStripeErrorFields(err).apiType;
   return apiType !== null && DEFINITE_STRIPE_ERROR_TYPES.has(apiType);
+}
+
+/**
+ * Whether a throw from the CHARGE (POST) ends this attempt. A refusal this
+ * product made before calling Stripe — a currency without two decimal places,
+ * an amount under the minimum — is definite: nothing was sent (#3567 review;
+ * before it, both left the row pending and alerting on every run). An
+ * `idempotency_error` on a replay that carries no intent is NOT (see above).
+ */
+export function definiteChargeFailure(
+  err: unknown,
+  attempt: Pick<SavedCardChargeAttempt, "kind">,
+): boolean {
+  if (isLocalChargeRefusal(err)) return true;
+  if (
+    attempt.kind === "replay" &&
+    readStripeErrorFields(err).apiType === "idempotency_error"
+  ) {
+    return false;
+  }
+  return isDefiniteSavedCardChargeFailure(err);
 }
 
 /**
@@ -280,7 +313,7 @@ export async function chargeSavedCardAttempt(params: {
     const retrieving = retrievingIntentId !== null;
     const definite = retrieving
       ? isStripeResourceMissingError(err)
-      : isDefiniteSavedCardChargeFailure(err);
+      : definiteChargeFailure(err, attempt);
     if (definite) {
       try {
         const { ended } = await failSavedCardChargeAttempt(attempt.attemptRowId);

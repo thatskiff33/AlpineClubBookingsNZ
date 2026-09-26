@@ -27,6 +27,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
+import { bookingMonth, gateMonth } from "@/lib/ai-metering-month";
 import { AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
 import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
@@ -187,7 +188,11 @@ export async function checkAiBudget(
     return { allowed: false, spentCents: 0, budgetCents: DEFAULT_MONTHLY_BUDGET_CENTS };
   }
   try {
-    const month = aiUsageMonthKey(now, await clubTimeZone());
+    // #3567 review: an unreadable club zone fails the gate closed.
+    const month = await gateMonth(now, aiUsageMonthKey);
+    if (month === null) {
+      return { allowed: false, spentCents: 0, budgetCents: DEFAULT_MONTHLY_BUDGET_CENTS };
+    }
     const [monthly, settings, currency] = await Promise.all([
       prisma.aiAssistantUsageMonthly.findUnique({
         where: { month },
@@ -299,8 +304,9 @@ function redactTruncateErrorMessage(message?: string | null): string | null {
  */
 export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   const now = input.now ?? new Date();
-  // Resolved before the transaction below, never inside it (INV-LOCK-004).
-  const month = aiUsageMonthKey(now, await clubTimeZone());
+  // Resolved before the transaction below, never inside it (INV-LOCK-004); a
+  // failed zone read books into the fallback month and says so.
+  const month = await bookingMonth(now, aiUsageMonthKey, "ai-assistant");
   const usage = input.usage ?? EMPTY_USAGE;
   const nzdCostCents = input.usage ? estimateAiCostCents(input.model, input.usage) : 0;
   const failureContext = {

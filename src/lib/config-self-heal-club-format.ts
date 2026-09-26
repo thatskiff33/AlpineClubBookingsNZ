@@ -124,7 +124,7 @@ export const clubFormatSelfHealStepDefinition: ConfigSelfHealStep<ClubFormat> = 
       "currency",
       decision.currency,
       "CURRENCY",
-      "a three-letter ISO 4217 code such as NZD or CHF",
+      "a three-letter ISO 4217 code with two decimal places, such as NZD or CHF",
     );
     reportClubFormatBackfillField(
       "locale",

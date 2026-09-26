@@ -19,9 +19,11 @@ const mocks = vi.hoisted(() => {
   const eventFindMany = vi.fn();
   const transaction = vi.fn();
   const reportAiError = vi.fn();
+  const resvFindUnique = vi.fn();
   const dbShape = {
     $executeRaw: execRaw,
     diagnosticsBudgetReservation: {
+      findUnique: resvFindUnique,
       deleteMany: resvDeleteMany,
       aggregate: resvAggregate,
       create: resvCreate,
@@ -38,6 +40,7 @@ const mocks = vi.hoisted(() => {
     $transaction: transaction,
   } as Record<string, unknown> & { $transaction: typeof transaction };
   return {
+    resvFindUnique,
     execRaw,
     resvDeleteMany,
     resvAggregate,
@@ -60,9 +63,17 @@ vi.mock("@/lib/observability-bridge", () => ({ reportAiError: mocks.reportAiErro
 
 // #3567 D6: the month boundary is the club's STORED zone, resolved once through
 // the server binding. Pinned here so a test can move it and prove it is read.
-const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland" }));
+const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland", readFailed: false }));
 vi.mock("@/lib/club-time/server", () => ({
   clubTimeZone: async () => zoneMocks.zone,
+}));
+// The gates and writers resolve through the reader that reports a failed read.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  resolveClubTimeZoneOutsideRequest: async () => ({
+    zone: zoneMocks.zone,
+    source: "persisted",
+    readFailed: zoneMocks.readFailed,
+  }),
 }));
 
 // #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
@@ -113,6 +124,7 @@ const AUCKLAND = requireClubTimeZone("Pacific/Auckland");
 beforeEach(() => {
   vi.clearAllMocks();
   zoneMocks.zone = "Pacific/Auckland";
+  zoneMocks.readFailed = false;
   resetDiagnosticsMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   mocks.execRaw.mockResolvedValue(1);
@@ -135,6 +147,28 @@ describe("diagnosticsUsageMonthKey (the club's stored zone, #3567 D6)", () => {
   it("crosses the month at the NZ boundary, not UTC", () => {
     expect(diagnosticsUsageMonthKey(new Date("2026-06-30T13:00:00Z"), AUCKLAND)).toBe("2026-07");
     expect(diagnosticsUsageMonthKey(new Date("2026-07-31T11:59:00Z"), AUCKLAND)).toBe("2026-07");
+  });
+
+  it("FAILS CLOSED when the club's zone cannot be read: no lock, no reservation (#3567 review)", async () => {
+    zoneMocks.readFailed = true;
+    const result = await reserveDiagnosticsBudget({ reserveCents: 40, now: new Date("2026-07-01T02:00:00Z") });
+    expect(result).toMatchObject({ ok: false, reason: "metering_unavailable" });
+    expect(mocks.execRaw).not.toHaveBeenCalled();
+    expect(mocks.resvCreate).not.toHaveBeenCalled();
+  });
+
+  it("SETTLES into the reservation's own month, not the settle-time month (#3567 review)", async () => {
+    // Reserved in June (New York), settled after the club moved its zone: the
+    // spend and the lock follow the reservation.
+    mocks.resvFindUnique.mockResolvedValueOnce({ month: "2026-06" });
+    await settleDiagnosticsRoundtrip({
+      reservationId: "resv_1",
+      surface: "diagnostics",
+      model: "claude-opus-5",
+      success: true,
+      now: new Date("2026-07-15T02:00:00Z"),
+    });
+    expect(mocks.execRaw.mock.calls[0][1]).toBe("2026-06");
   });
 
   it("keys the reserve's advisory lock by the club's STORED zone month", async () => {

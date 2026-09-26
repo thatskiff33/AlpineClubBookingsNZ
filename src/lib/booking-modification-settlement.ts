@@ -25,6 +25,7 @@ import {
   findOrCreateCustomer,
 } from "@/lib/stripe";
 import type { ClubFormat } from "@/lib/club-format";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
@@ -254,6 +255,18 @@ export async function createModificationAdditionalPaymentIntent({
     !result.hasSucceededPayment ||
     !result.paymentId
   ) {
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+
+  // #3567: refused before the customer lookup, the mint and the recovery row a
+  // failed mint would write — a currency this product cannot charge in would
+  // only fail the same way on every replay.
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  if (chargeRefusal) {
+    logger.error({ bookingId, currencyCode: chargeRefusal.currencyCode }, `${failureMessage}: ${chargeRefusal.message}`);
     return {
       additionalPaymentClientSecret: undefined,
       additionalPaymentIntentId: undefined,

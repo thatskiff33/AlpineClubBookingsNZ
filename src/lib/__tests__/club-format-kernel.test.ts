@@ -60,8 +60,12 @@ const NZ: ClubFormat = { currencyCode: "NZD", locale: "en-NZ" };
 const CH: ClubFormat = CLUB_FORMAT_TEST_OTHER;
 /** A comma-decimal locale: de-CH writes a decimal POINT, so it proves nothing there. */
 const DE: ClubFormat = { currencyCode: "EUR", locale: "de-DE" };
-/** A zero-minor-unit currency — the reason `cents` declares no fraction digits. */
-const JP: ClubFormat = { currencyCode: "JPY", locale: "ja-JP" };
+/**
+ * A two-decimal currency that V8 writes with NO decimals (#3567 review): the
+ * reason `cents` pins two fraction digits. JPY used to stand here; it cannot be
+ * chosen any more, and HUF is the live case the pin exists for.
+ */
+const HU: ClubFormat = { currencyCode: "HUF", locale: "hu-HU" };
 
 /**
  * Amounts chosen for what each one can break, not for coverage theatre: zero and
@@ -312,17 +316,18 @@ describe("#3565 kernel: the format argument is load-bearing", () => {
     );
   });
 
-  it("follows the currency's own minor units rather than a pinned two decimals", () => {
-    // 12345 minor units of JPY is 12345 yen, not 123.45: the `cents` shape
-    // declares no fraction digits precisely so `Intl` answers this per currency.
-    expect(formatCents(12345, JP)).not.toContain(".");
-    expect(formatCents(12345, NZ)).toContain("123.45");
+  it("writes every amount in hundredths, even where the engine would round (#3567 review)", () => {
+    // 1234567 hundredths of a forint is 12 345,67 Ft, and that is what a card is
+    // charged: left to Intl, V8 wrote "12 346 Ft" and hid the cents it charges.
+    expect(formatCents(1234567, HU)).toMatch(/12\s345,67/);
+    expect(formatCents(12345, HU)).toMatch(/123,45/);
+    expect(formatCents(12345, NZ)).toBe("$123.45");
   });
 });
 
 describe("#3565 kernel: the bound API is the explicit API", () => {
   it("delegates every method to its explicit counterpart", () => {
-    for (const format of [NZ, CH, JP]) {
+    for (const format of [NZ, CH, HU]) {
       const bound = bindClubFormat(format);
       expect(bound.format).toBe(format);
       for (const cents of AMOUNTS_CENTS) {
@@ -512,7 +517,7 @@ describe("INV-CONFIG-006 / #3565: one module constructs the money formatters", (
  * WHY THE TESTS ARE NOT SCANNED, and it matters that this is structural rather
  * than an exemption: `sourceFiles()` skips `__tests__` and `*.test.ts` already,
  * so the four `ClubFormat` literals at the top of THIS file — `NZ`, `CH`, `DE`,
- * `JP` — are outside the population by construction. A test pinning a currency
+ * `HU` — are outside the population by construction. A test pinning a currency
  * is legitimate and is the only way to prove the argument is load-bearing. The
  * `INV-CONFIG-001` lint message says "there is no legitimate literal locale or
  * currency code in `src/`", and after this file there is one class of them; the

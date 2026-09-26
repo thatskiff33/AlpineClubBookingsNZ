@@ -1,0 +1,45 @@
+# File-size allowances for #3644 (issue #3567, review fix round)
+
+The review asked for the charge-currency refusal to run at EVERY entry point
+that can end in a card charge, straight after the club format is resolved and
+before any claim, attempt row, customer lookup or status write. The rule itself
+lives in `src/lib/stripe-charge-currency.ts` and the re-issue logic in
+`src/lib/additional-intent-currency.ts`; what is left in each file below is the
+one- or two-line call at its entry point (and, on the reuse paths, the currency
+term beside the existing stale-amount term), compacted to the minimum.
+
+file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
+lines: 924
+reason: the refusal has to sit at this route's own entry point, before its
+  claim transaction; a two-line guard does not justify splitting the route.
+
+file: src/app/api/payments/charge-saved-method/route.ts
+lines: 651
+reason: the refusal has to sit at this route's own entry point, before its
+  claim transaction; a two-line guard does not justify splitting the route.
+
+file: src/app/api/payments/create-payment-intent/route.ts
+lines: 831
+reason: the entry refusal, the currency term on the existing stale-intent
+  branch and the member-facing mapping in the existing catch all belong to
+  this route's own flow; each is one or two lines.
+
+file: src/lib/cron-confirm-pending.ts
+lines: 2005
+reason: the once-per-run refusal must come before the loop's first claim,
+  which is inside this function; lifting the loop out is its own refactor.
+
+file: src/lib/group-settlement.ts
+lines: 1292
+reason: the refusal must precede this function's own CONFIRMED commit, and
+  the reuse condition gains one term; both are inside one existing function.
+
+file: src/lib/payment-recovery.ts
+lines: 3191
+reason: charge operations are skipped in this module's own claim loop, which
+  is the only place that knows an operation's type before it is claimed.
+
+file: src/lib/setup-readiness.ts
+lines: 2188
+reason: the unusable-currency block belongs in the existing Stripe step; a
+  separate step module for four lines would split one check across files.

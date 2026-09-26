@@ -12,6 +12,7 @@ import type Stripe from "stripe";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import {
   cancelPaymentIntentIfCancellableWithResult,
@@ -3086,7 +3087,15 @@ export async function processPaymentRecoveryOperations(options?: {
     skipped: 0,
   };
 
+  // #3567: a card CHARGE is left unclaimed when the club's currency cannot be
+  // charged in; refunds and cancellations still run.
+  const chargeRefusal = chargeCurrencyRefusal(format);
   for (const queuedOperation of queuedOperations) {
+    if (chargeRefusal && queuedOperation.type === PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT) {
+      logger.error({ operationId: queuedOperation.id }, `Payment recovery left a card charge unclaimed: ${chargeRefusal.message}`);
+      result.skipped += 1;
+      continue;
+    }
     const operation = await claimPaymentRecoveryOperation(queuedOperation.id);
     if (!operation) {
       result.skipped += 1;

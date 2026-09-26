@@ -40,6 +40,8 @@ import {
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -103,6 +105,8 @@ export async function createPaymentIntentForPaymentLink(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #3567: refused before the link is resolved or anything is written.
+  if (chargeCurrencyRefusal(format)) throw new PaymentLinkError(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE, 409);
   const link = await resolvePaymentLink(token);
   const booking = link.booking;
 
@@ -210,7 +214,8 @@ export async function createPaymentIntentForPaymentLink(
     if (
       repaySupersededIntentId === null &&
       existingIntent.status !== "canceled" &&
-      existingIntent.amount !== booking.finalPriceCents
+      // #3567: minted in another currency is superseded like a stale amount.
+      (existingIntent.amount !== booking.finalPriceCents || intentCurrencyDiffers(existingIntent, format))
     ) {
       // The booking was modified after this intent was minted (#1161): a
       // stale client_secret would capture the old total. Queue the stale
@@ -220,6 +225,7 @@ export async function createPaymentIntentForPaymentLink(
           bookingId: booking.id,
           paymentId: booking.payment.id,
           newFinalPriceCents: booking.finalPriceCents,
+          ...(intentCurrencyDiffers(existingIntent, format) ? { wrongCurrencyPaymentIntentId: existingIntent.id } : {}),
         });
       }
     } else if (

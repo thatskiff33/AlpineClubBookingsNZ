@@ -37,6 +37,7 @@
 import { prisma } from "@/lib/prisma";
 import { calendarMonthOf, clubCalendarDateOf, requireInstant, type ClubTimeZone } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
+import { gateMonth, settleMonth } from "@/lib/ai-metering-month";
 import { AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
 import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
@@ -306,12 +307,13 @@ export async function reserveDiagnosticsBudget(
   input: ReserveDiagnosticsBudgetInput = {},
 ): Promise<ReserveDiagnosticsBudgetResult> {
   const now = input.now ?? new Date();
-  // Resolved before the locked transaction below, never inside it: the month is
-  // part of the lock key (INV-LOCK-004).
-  const month = diagnosticsUsageMonthKey(now, await clubTimeZone());
+  // Resolved before the locked transaction below (the month is part of the lock
+  // key, INV-LOCK-004); an unreadable club zone fails closed (#3567 review).
+  const month = await gateMonth(now, diagnosticsUsageMonthKey);
 
   const p = prisma as DiagnosticsPrisma;
   if (
+    month === null ||
     !p.diagnosticsBudgetReservation?.create ||
     !p.diagnosticsBudgetReservation?.aggregate ||
     !p.diagnosticsBudgetReservation?.deleteMany ||
@@ -514,8 +516,8 @@ export async function settleDiagnosticsRoundtrip(
   input: SettleDiagnosticsRoundtripInput,
 ): Promise<void> {
   const now = input.now ?? new Date();
-  // Resolved before the locked transaction below (INV-LOCK-004).
-  const month = diagnosticsUsageMonthKey(now, await clubTimeZone());
+  // The reservation's month, else the club-zone month; before the lock (INV-LOCK-004).
+  const month = await settleMonth(input.reservationId, now, diagnosticsUsageMonthKey);
   const usage = input.usage ?? EMPTY_USAGE;
   const nzdCostCents = input.usage
     ? estimateDiagnosticsCostCents(input.model, input.usage)

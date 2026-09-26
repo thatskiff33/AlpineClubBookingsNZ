@@ -191,6 +191,7 @@ describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
   const IN_FLIGHT = {
     unpaidCardPayments: 2,
     pendingSavedCardCharges: 1,
+    unansweredSavedCardAttempts: 2,
     openRecoveryRetries: 3,
   };
 
@@ -216,7 +217,8 @@ describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
     const counts = within(block).getByTestId("club-format-in-flight");
     expect(counts).toHaveTextContent("2 card payments already started and not yet paid — these stay in CHF.");
     expect(counts).toHaveTextContent("1 saved card waiting to be charged later — these are charged in AUD.");
-    expect(counts).toHaveTextContent("3 payment-recovery retries still open");
+    expect(counts).toHaveTextContent("2 saved-card charges the payment provider never answered");
+    expect(counts).toHaveTextContent("3 payment-recovery retries still open — for the first 24 hours");
     expect(block).toHaveTextContent(/Stripe account and its Xero organisation's base currency/);
   });
 

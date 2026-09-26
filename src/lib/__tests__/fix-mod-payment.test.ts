@@ -667,7 +667,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
-      client_secret: "pi_additional_secret_xxx",
+      client_secret: "pi_additional_secret_xxx", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -741,7 +741,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_add2",
-      client_secret: "secret_2",
+      client_secret: "secret_2", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -771,7 +771,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 2000, fromTierRefundPct: 50, toTierRefundPct: 100 }); // $20 change fee
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_fee",
-      client_secret: "fee_secret",
+      client_secret: "fee_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1251,7 +1251,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1362,7 +1362,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1437,7 +1437,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1506,7 +1506,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1995,7 +1995,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_additional",
       amount: 3650,
-      client_secret: "pi_additional_secret_xyz",
+      client_secret: "pi_additional_secret_xyz", currency: "nzd",
     } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
@@ -2062,7 +2062,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       additionalPaymentRow({ booking: { status: "PAYMENT_PENDING" } })
     );
     mockedGetPaymentIntent.mockResolvedValue({
-      client_secret: "pi_additional_secret_xyz",
+      client_secret: "pi_additional_secret_xyz", currency: "nzd",
     } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
@@ -2292,7 +2292,7 @@ describe("#3166 modify-dates parks rather than repricing an unreadable night", (
     } as any);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
-      client_secret: "pi_additional_secret_xxx",
+      client_secret: "pi_additional_secret_xxx", currency: "nzd",
     } as any);
 
     const res = await moveTheDates();

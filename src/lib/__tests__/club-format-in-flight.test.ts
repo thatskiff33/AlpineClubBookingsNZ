@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   paymentTransaction: { count: vi.fn() },
+  groupBookingSettlement: { count: vi.fn() },
   payment: { count: vi.fn() },
   paymentRecoveryOperation: { count: vi.fn() },
 }));
@@ -19,15 +20,20 @@ import { countInFlightCardPayments } from "@/lib/club-format-in-flight";
 describe("countInFlightCardPayments", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.paymentTransaction.count.mockResolvedValue(4);
+    h.paymentTransaction.count.mockImplementation(async (args: { where: { stripePaymentIntentId: unknown } }) =>
+      args.where.stripePaymentIntentId === null ? 3 : 4,
+    );
+    h.groupBookingSettlement.count.mockResolvedValue(1);
     h.payment.count.mockResolvedValue(2);
     h.paymentRecoveryOperation.count.mockResolvedValue(1);
   });
 
   it("counts the three populations a currency change catches mid-flight", async () => {
     expect(await countInFlightCardPayments()).toEqual({
-      unpaidCardPayments: 4,
+      // 4 pending card intents on bookings + 1 pending group-settlement intent.
+      unpaidCardPayments: 5,
       pendingSavedCardCharges: 2,
+      unansweredSavedCardAttempts: 3,
       openRecoveryRetries: 1,
     });
   });
@@ -40,6 +46,30 @@ describe("countInFlightCardPayments", () => {
         status: { in: ["PENDING", "PROCESSING"] },
         stripePaymentIntentId: { not: null },
         amountCents: { gt: 0 },
+      },
+    });
+  });
+
+  it("counts a group settlement's pending card intent as a payment already started", async () => {
+    await countInFlightCardPayments();
+    expect(h.groupBookingSettlement.count).toHaveBeenCalledWith({
+      where: {
+        source: "STRIPE",
+        status: "PENDING",
+        stripePaymentIntentId: { not: null },
+        amountCents: { gt: 0 },
+      },
+    });
+  });
+
+  it("counts saved-card attempts Stripe never answered: pending, no intent, an attempt key", async () => {
+    await countInFlightCardPayments();
+    expect(h.paymentTransaction.count).toHaveBeenCalledWith({
+      where: {
+        source: "STRIPE",
+        status: "PENDING",
+        stripePaymentIntentId: null,
+        reference: { startsWith: "pending_charge_" },
       },
     });
   });

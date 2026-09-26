@@ -31,7 +31,12 @@
  *   the codes it lists with no minor unit at all (precious metals, the SDR, the
  *   testing codes);
  * - Stripe's zero-decimal and three-decimal currencies, which add MGA (ISO says
- *   2; Stripe charges it in whole ariary).
+ *   2; Stripe charges it in whole ariary);
+ * - withdrawn ISO 4217 codes (List Three) whose minor unit was not 2 — the
+ *   peseta, the lira, the Turkish lira before 2005 and the rest. No payment
+ *   provider charges in them, but some engines still OFFER them in
+ *   `Intl.supportedValuesOf("currency")`, so they are refused here rather than
+ *   left selectable.
  * A code absent from both — a real two-decimal currency, or an unknown but
  * well-formed one — is taken to count in hundredths; Stripe refuses a currency
  * it does not support on its own.
@@ -41,7 +46,10 @@
  */
 
 const CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES: ReadonlySet<string> = new Set([
-  // ISO 4217 minor unit 0 (Stripe zero-decimal where it supports them).
+  // ISO 4217 minor unit 0. Stripe charges most of these as zero-decimal; ISK
+  // and UGX it keeps in a two-decimal representation for backward
+  // compatibility but only accepts amounts divisible by 100 — so either way a
+  // price kept in hundredths is not what the card would be charged.
   "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
   "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF",
   // Stripe zero-decimal, though ISO 4217 lists a minor unit of 2.
@@ -53,7 +61,20 @@ const CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES: ReadonlySet<string> = new Set([
   // ISO 4217 "N.A.": no minor unit — metals, the SDR, bond units, testing codes.
   "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XDR", "XPD", "XPT", "XSU",
   "XTS", "XUA", "XXX",
+  // Withdrawn codes (ISO 4217 List Three) whose minor unit was not 2.
+  "ADP", "BEF", "BYR", "ESP", "GRD", "ITL", "LUF", "MGF", "MRO", "PTE",
+  "STD", "TMM", "TRL", "ZWD",
 ]);
+
+/**
+ * A currency code as every money-side comparison reads it: trimmed and upper
+ * case. The ONE normaliser for that (#3567 review), shared by the refusal below
+ * and the Stripe charge currency, so the guard and the wire can never read two
+ * spellings of one code differently.
+ */
+export function canonicalCurrencyCode(currencyCode: string): string {
+  return currencyCode.trim().toUpperCase();
+}
 
 /**
  * True when `currencyCode` counts in hundredths, as every amount here does.
@@ -61,9 +82,7 @@ const CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES: ReadonlySet<string> = new Set([
  * the same answer.
  */
 export function currencyHasTwoDecimalPlaces(currencyCode: string): boolean {
-  return !CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES.has(
-    currencyCode.trim().toUpperCase(),
-  );
+  return !CURRENCIES_WITHOUT_TWO_DECIMAL_PLACES.has(canonicalCurrencyCode(currencyCode));
 }
 
 /**

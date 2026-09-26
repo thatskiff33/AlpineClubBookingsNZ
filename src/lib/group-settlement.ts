@@ -70,6 +70,8 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
@@ -210,6 +212,10 @@ export async function createGroupSettlementIntent(
     );
   }
 
+  // #3567: a card settlement is refused here (Internet Banking, above, charges no
+  // card) — before the children are committed to CONFIRMED or a customer exists.
+  if (chargeCurrencyRefusal(format)) throw new GroupBookingError(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE, 409);
+
   const settlementHasRefundHistory =
     group.settlement?.status === PaymentStatus.REFUNDED ||
     group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
@@ -300,7 +306,9 @@ export async function createGroupSettlementIntent(
         childCount: committedChildren.length,
       };
     }
-    if (existing.client_secret && existing.status !== "canceled") {
+    // #3567: an intent in another currency is not reused; a fresh one is minted
+    // below and this one voided once superseded.
+    if (existing.client_secret && existing.status !== "canceled" && !intentCurrencyDiffers(existing, format)) {
       return {
         outcome: "ready",
         amountCents,

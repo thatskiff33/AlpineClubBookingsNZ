@@ -49,6 +49,7 @@ import {
   savedPaymentMethodRowStamp,
 } from "@/lib/saved-payment-method";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
 const confirmPendingGuestsSchema = z.object({
   allowOverbook: z.boolean().optional(),
@@ -363,6 +364,9 @@ export async function POST(
         charged: false,
       });
     }
+
+    // #3567: refused before the claim, the attempt row or any Stripe call.
+    if (chargeCurrencyRefusal(format)) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
 
     // Claim-first (#1418, the cron's pattern in `resolveHoldWindowUnderLock`):
     // claim PENDING -> CONFIRMED under the advisory lock BEFORE the Stripe

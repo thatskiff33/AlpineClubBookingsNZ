@@ -37,14 +37,42 @@ describe("currencyHasTwoDecimalPlaces", () => {
     },
   );
 
-  it.each(["ISK", "IQD", "LYD", "CLF", "XAU", "XTS"])(
-    "refuses %s, whose ISO 4217 minor unit is not 2",
-    (code) => {
-      expect(currencyHasTwoDecimalPlaces(code)).toBe(false);
-    },
-  );
+  /*
+    ISO 4217 List One, every code whose minor unit is not 2, as literals (#3567
+    review: dropping UYI, XDR or XSU from the table survived the earlier
+    sample). A code missing from the table would be offered, saved and charged
+    in hundredths it does not have.
+  */
+  const ISO_MINOR_UNIT_0 = [
+    "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
+    "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF",
+  ];
+  const ISO_MINOR_UNIT_3 = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
+  const ISO_MINOR_UNIT_4 = ["CLF", "UYW"];
+  const ISO_NO_MINOR_UNIT = [
+    "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XDR", "XPD", "XPT", "XSU",
+    "XTS", "XUA", "XXX",
+  ];
+  /** Withdrawn codes some engines still offer; none counted in hundredths. */
+  const WITHDRAWN = [
+    "ADP", "BEF", "BYR", "ESP", "GRD", "ITL", "LUF", "MGF", "MRO", "PTE",
+    "STD", "TMM", "TRL", "ZWD",
+  ];
 
-  it("does not depend on the engine: HUF, IDR and COP count in hundredths here even where V8 says 0", () => {
+  it.each([
+    ...ISO_MINOR_UNIT_0,
+    ...ISO_MINOR_UNIT_3,
+    ...ISO_MINOR_UNIT_4,
+    ...ISO_NO_MINOR_UNIT,
+  ])("refuses %s, whose ISO 4217 List One minor unit is not 2", (code) => {
+    expect(currencyHasTwoDecimalPlaces(code)).toBe(false);
+  });
+
+  it.each(WITHDRAWN)("refuses %s, a withdrawn code that did not count in hundredths", (code) => {
+    expect(currencyHasTwoDecimalPlaces(code)).toBe(false);
+  });
+
+  it("does not depend on the engine: HUF, IDR and COP are two-decimal in ISO 4217 and stay selectable, even though V8 formats them with 0 decimals (the money formatter pins two)", () => {
     for (const code of ["HUF", "IDR", "COP"]) {
       expect(currencyHasTwoDecimalPlaces(code)).toBe(true);
     }

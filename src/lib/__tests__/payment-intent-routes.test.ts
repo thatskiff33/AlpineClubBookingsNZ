@@ -222,7 +222,7 @@ describe("payment intent routes", () => {
     });
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
-      client_secret: "cs_existing",
+      client_secret: "cs_existing", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
@@ -273,7 +273,7 @@ describe("payment intent routes", () => {
     // Existing intent already priced at the member portion (12000c).
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_reuse",
-      client_secret: "cs_reuse",
+      client_secret: "cs_reuse", currency: "nzd",
       status: "requires_payment_method",
       amount: 12000,
     });
@@ -320,7 +320,7 @@ describe("payment intent routes", () => {
     // Default getProvisionalNonMemberChildSummary mock returns null → non-split.
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_reuse",
-      client_secret: "cs_reuse",
+      client_secret: "cs_reuse", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
@@ -363,14 +363,14 @@ describe("payment intent routes", () => {
     // Minted at $125 before the member edited the unpaid booking to $150.
     mockGetPaymentIntent.mockResolvedValue({
       id: "pi_stale",
-      client_secret: "cs_stale",
+      client_secret: "cs_stale", currency: "nzd",
       status: "requires_payment_method",
       amount: 12500,
     });
     mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_fresh",
-      client_secret: "cs_fresh",
+      client_secret: "cs_fresh", currency: "nzd",
       amount: 15000,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-1" });
@@ -427,7 +427,7 @@ describe("payment intent routes", () => {
     });
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_split",
-      client_secret: "cs_split",
+      client_secret: "cs_split", currency: "nzd",
       amount: 12000,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-split" });
@@ -471,7 +471,7 @@ describe("payment intent routes", () => {
     // Default mock returns null → non-split.
     mockStripeCreatePaymentIntent.mockResolvedValue({
       id: "pi_full",
-      client_secret: "cs_full",
+      client_secret: "cs_full", currency: "nzd",
       amount: 12500,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-full" });
@@ -890,7 +890,7 @@ describe("payment intent routes", () => {
     });
     mockGetSetupIntent.mockResolvedValue({
       id: "seti_existing",
-      client_secret: "seti_secret",
+      client_secret: "seti_secret", currency: "nzd",
       status: "requires_payment_method",
     });
 
@@ -987,7 +987,7 @@ describe("payment intent routes", () => {
       mockGetSetupIntent.mockResolvedValue({
         id: "seti_old",
         status: "canceled",
-        client_secret: null,
+        client_secret: null, currency: "nzd",
       });
 
       const res = await postSetupIntent();

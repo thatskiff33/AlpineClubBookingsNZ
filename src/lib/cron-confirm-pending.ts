@@ -75,6 +75,7 @@ import { bookingPromoEmailOptions } from "./booking-promo-email-options";
 import { getNonMemberHoldDays } from "./cancellation";
 import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
@@ -1171,6 +1172,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
   const now = new Date();
+
+  // #3567: an unchargeable currency stops the run before any claim or attempt
+  // row, with ONE error per run (only reachable by hand-editing the stored row).
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  if (chargeRefusal) {
+    logger.error({ job: "confirmPendingBookings" }, `Pending bookings were not charged: ${chargeRefusal.message}`);
+    return { confirmedBookingIds: [], bumpedBookingIds: [], cancelledBookingIds: [], partialBumpedBookingIds: [], failedBookingIds: [] };
+  }
 
   // ONE settings read per run, outside every transaction, so no lock waits on
   // it and two bookings in one tick share a club day (`payment-link-expiry.ts`).

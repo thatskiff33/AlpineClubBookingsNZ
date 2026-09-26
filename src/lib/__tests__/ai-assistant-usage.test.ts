@@ -31,9 +31,17 @@ vi.mock("@/lib/observability-bridge", () => ({
 
 // #3567 D6: the month boundary is the club's STORED zone, resolved once through
 // the server binding. Pinned here so a test can move it and prove it is read.
-const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland" }));
+const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland", readFailed: false }));
 vi.mock("@/lib/club-time/server", () => ({
   clubTimeZone: async () => zoneMocks.zone,
+}));
+// The gates and writers resolve through the reader that reports a failed read.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  resolveClubTimeZoneOutsideRequest: async () => ({
+    zone: zoneMocks.zone,
+    source: "persisted",
+    readFailed: zoneMocks.readFailed,
+  }),
 }));
 
 // #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
@@ -88,6 +96,7 @@ const USAGE = {
 beforeEach(() => {
   vi.clearAllMocks();
   zoneMocks.zone = "Pacific/Auckland";
+  zoneMocks.readFailed = false;
   resetAiMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   // $transaction executes the array of pending ops (which are already-resolved
@@ -121,6 +130,27 @@ describe("aiUsageMonthKey (the club's stored zone, #3567 D6)", () => {
     mocks.settingsFindUnique.mockResolvedValue(null);
     await checkAiBudget(new Date("2026-07-01T02:00:00Z"));
     expect(mocks.monthlyFindUnique).toHaveBeenCalledWith({ where: { month: "2026-06" } });
+  });
+
+  it("FAILS CLOSED when the club's zone cannot be read: no budget read, no spend allowed (#3567 review)", async () => {
+    zoneMocks.readFailed = true;
+    const state = await checkAiBudget(new Date("2026-07-01T02:00:00Z"));
+    expect(state.allowed).toBe(false);
+    expect(mocks.monthlyFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("still RECORDS a call that happened when the zone cannot be read, in the fallback month", async () => {
+    zoneMocks.readFailed = true;
+    await recordAiUsage({
+      surface: "admin",
+      pathname: "/admin",
+      model: "claude-haiku-4-5",
+      success: true,
+      now: new Date("2026-07-01T02:00:00Z"),
+    });
+    expect(mocks.eventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ month: "2026-07" }) }),
+    );
   });
 
   it("records usage under the club-zone month", async () => {

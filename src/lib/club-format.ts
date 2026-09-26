@@ -241,9 +241,23 @@ export function normaliseClubLocale(
   return canonical;
 }
 
+/**
+ * The canonical code of a currency the club can actually USE, or `null`: it
+ * normalises AND counts in hundredths (#3567 review, D3). This is the rule the
+ * resolver, the first-boot seed and the admin provenance all apply, so a stored
+ * or seeded `JPY` is "Not usable" everywhere at once — it falls back exactly as
+ * a hand-edited `dollars` does — and never reads as configured on one screen
+ * while charges refuse it on another. `normaliseClubCurrencyCode` stays the
+ * SHAPE rule, so the save route can still say which of the two a value failed.
+ */
+export function usableClubCurrencyCode(value: string | null | undefined): string | null {
+  const code = normaliseClubCurrencyCode(value);
+  return code !== null && currencyHasTwoDecimalPlaces(code) ? code : null;
+}
+
 /** True when `value` is a usable club currency code. */
 export function isValidClubCurrencyCode(value: string | null | undefined): boolean {
-  return normaliseClubCurrencyCode(value) !== null;
+  return usableClubCurrencyCode(value) !== null;
 }
 
 /** True when `value` is a usable club locale. */
@@ -306,8 +320,8 @@ export function resolveClubFormat(
 ): ClubFormat {
   return {
     currencyCode:
-      normaliseClubCurrencyCode(persisted?.currencyCode) ??
-      normaliseClubCurrencyCode(environment?.currencyCode) ??
+      usableClubCurrencyCode(persisted?.currencyCode) ??
+      usableClubCurrencyCode(environment?.currencyCode) ??
       CLUB_CURRENCY_FALLBACK,
     locale:
       normaliseClubLocale(persisted?.locale) ??

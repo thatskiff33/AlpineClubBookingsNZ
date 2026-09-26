@@ -18,6 +18,7 @@ import {
 export type ClubFormatInFlightCardPayments = {
   unpaidCardPayments: number;
   pendingSavedCardCharges: number;
+  unansweredSavedCardAttempts: number;
   openRecoveryRetries: number;
 } | null;
 
@@ -65,7 +66,10 @@ export function ClubFormatCurrencyChange({
             {`${plural(inFlight.pendingSavedCardCharges, "saved card", "saved cards")} waiting to be charged later — these are charged in ${toCurrency}.`}
           </li>
           <li>
-            {`${plural(inFlight.openRecoveryRetries, "payment-recovery retry", "payment-recovery retries")} still open — the payment provider refuses these after the change.`}
+            {`${plural(inFlight.unansweredSavedCardAttempts, "saved-card charge", "saved-card charges")} the payment provider never answered — these wait for a person to check Stripe, because a retry in the new currency cannot say whether the first one charged.`}
+          </li>
+          <li>
+            {`${plural(inFlight.openRecoveryRetries, "payment-recovery retry", "payment-recovery retries")} still open — for the first 24 hours the payment provider refuses these after the change; after that they charge in ${toCurrency}.`}
           </li>
         </ul>
       ) : (

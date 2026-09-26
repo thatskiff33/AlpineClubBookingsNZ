@@ -49,9 +49,9 @@ import "server-only";
 import {
   CLUB_CURRENCY_FALLBACK,
   CLUB_LOCALE_FALLBACK,
-  normaliseClubCurrencyCode,
   normaliseClubLocale,
   resolveClubFormat,
+  usableClubCurrencyCode,
   type ClubFormat,
   type ClubFormatCandidate,
 } from "@/lib/club-format";
@@ -132,7 +132,10 @@ function classify(
 }
 
 export function classifyEnvironmentClubCurrencySeed(): EnvironmentClubFormatField {
-  return classify(readEnvironmentClubCurrencySeed(), normaliseClubCurrencyCode);
+  // `usable`, not bare shape (#3567 review): a seed of `JPY` is set and cannot
+  // be used, so the backfill records the default and WARNS rather than storing
+  // a currency no card could be charged in.
+  return classify(readEnvironmentClubCurrencySeed(), usableClubCurrencyCode);
 }
 
 export function classifyEnvironmentClubLocaleSeed(): EnvironmentClubFormatField {

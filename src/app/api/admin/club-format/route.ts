@@ -16,6 +16,7 @@ import { writeClubFormat } from "@/lib/club-format-write";
 import logger from "@/lib/logger";
 import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
 import { requireAdmin } from "@/lib/session-guards";
+import { isFullAdmin } from "@/lib/access-roles";
 
 /**
  * The club currency and locale maintenance API (stage 1 of programme #3205,
@@ -71,7 +72,9 @@ export async function GET() {
     resolveClubFormatWithSource(),
     // What a currency change would catch mid-flight (#3567 D2). Advice for the
     // confirmation, read outside any transaction; null when it cannot be read.
-    countInFlightCardPayments(),
+    // FULL ADMIN ONLY (#3567 review): only a Full Admin can change the currency,
+    // and payment counts are not part of the view-only payload other admins get.
+    isFullAdmin(guard.session.user) ? countInFlightCardPayments() : Promise.resolve(null),
   ]);
   return NextResponse.json({ state: await stateFromResolved(resolved), inFlight });
 }

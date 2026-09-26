@@ -903,7 +903,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "requires_payment_method",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: null,
     } as never);
@@ -929,7 +929,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_stale",
       status: "requires_payment_method",
-      client_secret: "secret_stale",
+      client_secret: "secret_stale", currency: "nzd",
       amount: 10000,
       payment_method: null,
     } as never);
@@ -939,7 +939,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -977,7 +977,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_existing",
       status: "succeeded",
-      client_secret: "secret_existing",
+      client_secret: "secret_existing", currency: "nzd",
       amount: 12000,
       payment_method: "pm_123",
     } as never);
@@ -1014,7 +1014,7 @@ describe("createPaymentIntentForPaymentLink", () => {
         // Stripe retains the client secret after success/refund. Keeping this
         // production-shaped is the mutation proof: removing the explicit repay
         // bypass would return this old secret before the fresh mint below.
-        client_secret: "secret_refunded_must_not_be_reused",
+        client_secret: "secret_refunded_must_not_be_reused", currency: "nzd",
         amount: 12000,
         payment_method: "pm_old",
       } as never);
@@ -1027,7 +1027,7 @@ describe("createPaymentIntentForPaymentLink", () => {
       mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
       mockedCreatePaymentIntent.mockResolvedValue({
         id: "pi_repay",
-        client_secret: "secret_repay",
+        client_secret: "secret_repay", currency: "nzd",
       } as never);
       vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1194,7 +1194,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
@@ -1241,7 +1241,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1276,7 +1276,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1307,7 +1307,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: "secret_new",
+      client_secret: "secret_new", currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
@@ -1334,7 +1334,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_new",
-      client_secret: null,
+      client_secret: null, currency: "nzd",
       amount: 12000,
     } as never);
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);

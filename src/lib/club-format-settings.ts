@@ -38,8 +38,8 @@ import "server-only";
 
 import {
   CLUB_FORMAT_SETTINGS_ID,
-  normaliseClubCurrencyCode,
   normaliseClubLocale,
+  usableClubCurrencyCode,
   type ClubFormat,
 } from "@/lib/club-format";
 import {
@@ -186,7 +186,8 @@ export async function resolveClubFormatWithSource(): Promise<ResolvedClubFormat>
       persisted !== null,
       persisted?.currencyCode,
       environment.currencyCode,
-      normaliseClubCurrencyCode,
+      // #3567 review: a stored JPY is "Not usable", not "Configured".
+      usableClubCurrencyCode,
     ),
     localeSource: fieldSource(
       persisted !== null,
