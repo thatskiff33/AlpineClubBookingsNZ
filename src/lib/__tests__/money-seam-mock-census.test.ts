@@ -194,7 +194,7 @@ function lineOf(source: string, index: number): number {
 }
 
 function escape(name: string): string {
-  return name.replace(/[$]/g, "\\$");
+  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** A module specifier as seen from `fromFile`, repo-relative and extensionless. */
