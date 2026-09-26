@@ -24,7 +24,7 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { findCompletedHandBackForLateCapture } from "@/lib/deleted-booking-modification-payment";
 import {
   announceAutomaticLateCaptureRefund,
-  findCaptureSettledByCancellation,
+  acknowledgeSettledLateNotice,
   recordAutomaticLateCaptureRefund,
   reportWithheldLateCaptureRefund,
   type CancelledBookingLateCapture,
@@ -1405,6 +1405,20 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     return;
   }
 
+  // #3639: the same question as the primary handler, first. A change payment
+  // captured before a cancel that kept it — or a replay of one this handler
+  // already refunded — is acknowledged, not refunded again.
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "modification",
+    })
+  ) {
+    return;
+  }
+
   // The cancel claim marked this transaction FAILED; Stripe has now proven it
   // captured. Record the capture before refunding (the refund allocates
   // against a captured transaction). Skipped on replays where the row is
@@ -1645,9 +1659,9 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * replays the same idempotent refund keys.
  *
  * #3639: it first asks what the cancellation already settled. A notice for money
- * captured before the cancel (the in-app confirm settles when Stripe is slow, and
- * Stripe retries for days) is acknowledged — 200, no refund, no Xero note, no
- * record, no alert, no status write — see `findCaptureSettledByCancellation`.
+ * captured before the cancel, or already refunded, is acknowledged — 200, no
+ * refund, no Xero note, no status write, an audit entry — see
+ * `acknowledgeSettledLateNotice`.
  */
 async function handleCancelledBookingPaymentSucceeded(
   booking: {
@@ -1683,15 +1697,14 @@ async function handleCancelledBookingPaymentSucceeded(
     return;
   }
 
-  const settledCapture = await findCaptureSettledByCancellation({
-    bookingId: booking.id,
-    paymentIntentId: paymentIntent.id,
-  });
-  if (settledCapture) {
-    logger.info(
-      { bookingId: booking.id, paymentIntentId: paymentIntent.id, transactionStatus: settledCapture.status },
-      "Stripe success notice for a capture the cancellation already settled; acknowledged without refunding (#3639)"
-    );
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "primary",
+    })
+  ) {
     return;
   }
 

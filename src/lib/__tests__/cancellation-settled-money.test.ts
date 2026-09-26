@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   CANCELLED_BOOKING_LATE_CAPTURE_REASON,
+  classifyCaptureOnCancelledBooking,
   getCancellationCreditCents,
-  hasCancellationSettledCapture,
   isCancellationRefundDecisionRecorded,
+  isLateCaptureHandlerWrite,
   type CancellationRefundDecisionEvidence,
 } from "@/lib/cancellation-settled-money";
 import { MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
@@ -137,43 +138,56 @@ describe("getCancellationCreditCents", () => {
   });
 });
 
-describe("hasCancellationSettledCapture (#3639)", () => {
+describe("classifyCaptureOnCancelledBooking (#3639)", () => {
   const decided: CancellationRefundDecisionEvidence = {
     ...noDecision(),
     cancelledEvents: [{ type: "CANCELLED", snapshot: { refundPercentage: 0 } }],
   };
+  const before = { capturedAfterCancellation: false };
+  const after = { capturedAfterCancellation: true };
 
-  it("holds for a capture the booking's own settlement recorded before a cancel that decided it", () => {
+  it("settles a capture recorded before a cancel that decided it, in every captured status", () => {
     for (const status of ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] as const) {
       expect(
-        hasCancellationSettledCapture({ status, reason: null }, decided)
-      ).toBe(true);
+        classifyCaptureOnCancelledBooking({ status, ...before }, decided)
+      ).toBe("settled_by_cancellation");
     }
   });
 
-  it("does not hold for a row that never captured", () => {
+  it("calls a row that never captured a late capture", () => {
     for (const status of ["PENDING", "PROCESSING", "FAILED"] as const) {
       expect(
-        hasCancellationSettledCapture({ status, reason: null }, decided)
-      ).toBe(false);
+        classifyCaptureOnCancelledBooking({ status, ...before }, decided)
+      ).toBe("late_capture");
     }
   });
 
-  it("does not hold for the late-capture handler's own earlier write, so a crash-and-retry is still refunded", () => {
+  it("refunds the handler's own earlier write on a crash-and-retry, even beside a decision", () => {
     expect(
-      hasCancellationSettledCapture(
-        { status: "SUCCEEDED", reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON },
-        decided
-      )
-    ).toBe(false);
+      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...after }, decided)
+    ).toBe("late_capture");
   });
 
-  it("does not hold for a captured row when the cancellation decided nothing — a saved-card charge answered after an unpaid cancel", () => {
+  it("refunds a captured row when the cancellation decided nothing — a saved-card charge answered after an unpaid cancel", () => {
     expect(
-      hasCancellationSettledCapture(
-        { status: "SUCCEEDED", reason: "confirm_pending_saved_card" },
-        noDecision()
-      )
-    ).toBe(false);
+      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...before }, noDecision())
+    ).toBe("late_capture");
+  });
+
+  it("acknowledges a late capture already handed back, fully or in part, rather than refunding it again", () => {
+    for (const status of ["PARTIALLY_REFUNDED", "REFUNDED"] as const) {
+      expect(
+        classifyCaptureOnCancelledBooking({ status, ...after }, decided)
+      ).toBe("already_refunded");
+      expect(
+        classifyCaptureOnCancelledBooking({ status, ...before }, noDecision())
+      ).toBe("already_refunded");
+    }
+  });
+
+  it("recognises only the primary handler's own reason as its write", () => {
+    expect(isLateCaptureHandlerWrite(CANCELLED_BOOKING_LATE_CAPTURE_REASON)).toBe(true);
+    expect(isLateCaptureHandlerWrite(null)).toBe(false);
+    expect(isLateCaptureHandlerWrite("confirm_pending_saved_card")).toBe(false);
   });
 });

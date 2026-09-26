@@ -563,7 +563,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // `admin` at the site like the rate writer it undoes, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census` on the tree merged with #3029, not incremented.
-  writeSites: 489,
+  // 489 -> 490 (#3639): `booking.payment.late_notice_acknowledged`, the
+  // record that a Stripe success notice on a cancelled booking was answered
+  // WITHOUT a refund because the cancellation had already settled the money
+  // (or it was already refunded). One `logAudit` in
+  // `src/lib/cancelled-booking-late-capture.ts`, beside its #2774 sibling
+  // `late_capture_refund_withheld`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  writeSites: 490,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -644,7 +651,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // rather than an awaited `createAuditLog` because it sits on a GET that has
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
-    logAudit: { total: 267, uncategorised: 0 },
+    // 267 -> 268 (#3639): the late-notice acknowledgement, above.
+    logAudit: { total: 268, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -897,7 +905,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 48,
+    // 48 -> 49 (#3639): the late-notice acknowledgement - a refund the
+    // late-capture handler declined, beside the rows that record the ones it
+    // made and withheld, read by the same people.
+    payment: 49,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

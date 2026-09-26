@@ -115,17 +115,16 @@ export function getCancellationCreditCents(
  *   money never moved, so it does NOT count: the recovery exhaustion alert and
  *   the repair tool's finding both stay loud.
  *
- * KNOWN LIMITS, both stated rather than hidden:
+ * THE SNAPSHOT COMMITS WITH THE CANCEL. It is written inside the paid path's
+ * claim transaction (`writePaidCancellationEvent` in `booking-cancel.ts`), so a
+ * booking seen `CANCELLED` already carries it; before #3639 it was written after
+ * commit, best-effort, and a 0%-tier cancel — whose only artefact it is — read
+ * as undecided in that gap.
  *
- * - The snapshot is written AFTER the cancel's claim commits, best-effort
- *   (`recordCancellationEvent` in `booking-cancel.ts`). A 0%-tier cancel has no
- *   other artefact, so for the few milliseconds between that commit and the
- *   event write — or for good if the write fails — the decision reads as
- *   unrecorded, and a caller falls back to what it did before #3639.
- * - The answer is per BOOKING, not per capture. On its own it cannot tell a
- *   genuine late capture from a retention on a booking that also had a paid-path
- *   cancel; `hasCancellationSettledCapture` adds the per-capture half for a
- *   caller that holds the capture row.
+ * KNOWN LIMIT: the answer is per BOOKING, not per capture. On its own it cannot
+ * tell a genuine late capture from a retention on a booking that also had a
+ * paid-path cancel; `classifyCaptureOnCancelledBooking` adds the per-capture
+ * half for a caller that holds the capture row.
  */
 export function isCancellationRefundDecisionRecorded(
   evidence: CancellationRefundDecisionEvidence
@@ -146,36 +145,72 @@ export function isCancellationRefundDecisionRecorded(
 }
 
 /**
- * #3639: is this capture money the cancellation already settled — so a later
- * process must leave it alone — rather than a genuine late capture?
+ * What a "payment succeeded" notice for a CANCELLED booking is, and so what the
+ * webhook does with it (#3639):
  *
- * BOTH halves are needed, and each closes a hole the other leaves:
+ * - `late_capture` — money that landed after the cancellation. Refunded in full,
+ *   as #1350 always has.
+ * - `settled_by_cancellation` — money captured BEFORE the cancel, whose cancel
+ *   recorded what to do with it. Acknowledged; nothing moves.
+ * - `already_refunded` — the capture has already been handed back (fully or in
+ *   part), typically a replay of a notice this handler already refunded.
+ *   Acknowledged; nothing moves, and the row is never rewritten to SUCCEEDED.
+ */
+export type CancelledBookingCaptureVerdict =
+  | "late_capture"
+  | "settled_by_cancellation"
+  | "already_refunded";
+
+/** The facts about ONE capture row the verdict reads. */
+export type CapturedRowOnCancelledBooking = {
+  status: PaymentStatus;
+  /**
+   * Durable evidence that this capture landed AFTER the cancellation: the row
+   * carries `CANCELLED_BOOKING_LATE_CAPTURE_REASON` (the primary handler's own
+   * earlier write), or the cancel's claim recorded the intent as outstanding by
+   * enqueuing its `CANCEL_PAYMENT_INTENT` recovery operation (an additional
+   * payment's intent; that handler's own write stamps no reason, and the row's
+   * reason names the booking change, so it is not overwritten). REQUIRED, so a
+   * caller that forgot to load it cannot be told "captured before" by default.
+   */
+  capturedAfterCancellation: boolean;
+};
+
+/** Whether a row's reason marks the primary late-capture handler's own write. */
+export function isLateCaptureHandlerWrite(reason: string | null): boolean {
+  return reason === CANCELLED_BOOKING_LATE_CAPTURE_REASON;
+}
+
+/**
+ * THE rule (#3639, `INV-PAY-102`): what a success notice on a cancelled booking
+ * is. Settled money needs BOTH halves, and each closes a hole the other leaves:
  *
- * 1. **The capture was recorded, and not by the late-capture handler itself.**
- *    A row in a captured status written by anybody else (the booking's own
- *    settlement, a saved-card charge) is money the club held; a row the handler
- *    stamped `CANCELLED_BOOKING_LATE_CAPTURE_REASON` is its own earlier write, so
- *    a crash-and-retry of a genuine late capture is still refunded. Skipping on
- *    "already SUCCEEDED" alone would never refund that retry, because the handler
- *    writes SUCCEEDED before it refunds.
+ * 1. **The capture is not known to have landed after the cancel.** Skipping on
+ *    "already SUCCEEDED" alone would never refund a crash-and-retry of a genuine
+ *    late capture, because the handler writes SUCCEEDED before it refunds; the
+ *    `capturedAfterCancellation` evidence is what tells its own write apart.
  * 2. **The cancellation recorded a decision about captured money**
  *    (`isCancellationRefundDecisionRecorded`). Half 1 alone is not enough: a
  *    saved-card charge that captures AFTER an unpaid cancel records its own row
  *    SUCCEEDED (`settleSavedCardChargeAttempt`) before the booking's settlement
  *    refuses the cancelled booking — a genuine late capture with a captured row
- *    and no late-capture reason. Its cancel took the unpaid branch, so no
- *    decision exists, and it is still refunded.
+ *    and no late marker. Its cancel took the unpaid branch, so no decision
+ *    exists, and it is still refunded.
  *
- * `reason` is REQUIRED so a caller that forgot to load it cannot be told
- * "not the handler's own write" by default.
+ * Anything else already past SUCCEEDED is `already_refunded`: refunding the
+ * notice's full amount again could only fail at Stripe (it will not refund past
+ * the charge) and loop the webhook, after rewriting the row to SUCCEEDED.
  */
-export function hasCancellationSettledCapture(
-  capture: { status: PaymentStatus; reason: string | null },
+export function classifyCaptureOnCancelledBooking(
+  capture: CapturedRowOnCancelledBooking,
   evidence: CancellationRefundDecisionEvidence
-): boolean {
-  return (
-    isCapturedTransactionStatus(capture.status) &&
-    capture.reason !== CANCELLED_BOOKING_LATE_CAPTURE_REASON &&
+): CancelledBookingCaptureVerdict {
+  if (!isCapturedTransactionStatus(capture.status)) return "late_capture";
+  if (
+    !capture.capturedAfterCancellation &&
     isCancellationRefundDecisionRecorded(evidence)
-  );
+  ) {
+    return "settled_by_cancellation";
+  }
+  return capture.status === "SUCCEEDED" ? "late_capture" : "already_refunded";
 }

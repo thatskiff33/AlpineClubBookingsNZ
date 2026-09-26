@@ -649,24 +649,27 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-102
 
 - **Nothing later re-decides what a cancellation settled** (#3639). One rule,
-  `src/lib/cancellation-settled-money.ts`: #1491's decision test above
-  (`isCancellationRefundDecisionRecorded`, which ignores the #2262 settlement
-  markers) plus `hasCancellationSettledCapture`, read by both processes.
-- **The Stripe webhook** acknowledges a success notice on a `CANCELLED` booking
-  — no refund, Xero note or status write — when the capture was recorded, not
-  by its own late-capture write (whose reason keeps a crash-and-retry
-  refunding), and the cancel recorded a decision. Without the decision half, a
-  saved-card charge answered after an unpaid cancel would be kept. Known limit:
-  a 0%-tier cancel's only artefact is the snapshot, written best-effort after
-  its claim commits, so a notice before that write, or after it failed, is
-  still refunded. Not the gating `INV-ADDPAY-037` rules out: nothing the member
-  is owed is held back, only money the cancel already decided.
+  `classifyCaptureOnCancelledBooking` in `src/lib/cancellation-settled-money.ts`,
+  built on #1491's decision test above (`isCancellationRefundDecisionRecorded`,
+  which ignores the #2262 settlement markers).
+- **Both late-capture webhook handlers** (the booking's own payment and a change
+  payment) acknowledge a success notice on a `CANCELLED` booking — no refund,
+  Xero note or status write — when the capture is not known to have landed after
+  the cancel and the cancel recorded a decision, or when it was already refunded.
+  "Landed after" is the primary handler's own `cancelled_booking_late_capture`
+  write, or the claim's `CANCEL_PAYMENT_INTENT` recovery for that intent, so a
+  crash-and-retry still refunds; the decision half keeps a saved-card charge
+  answered after an unpaid cancel refundable. Each acknowledgement writes
+  `booking.payment.late_notice_acknowledged` (`important` if part is still held).
+  The paid-path `CANCELLED` event commits inside the cancel's claim, so no notice
+  finds the cancel without its decision. Not the gating `INV-ADDPAY-037` rules
+  out: nothing the member is owed is held back.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source (the Stripe-only list stays for Stripe actions, #668), and
   skips a payment already carrying a refund or account-credit note, or such an
   operation queued or failed (an internet-banking cancel; a hold released
   before #3535).
-- Pinned by `cancellation-settled-money.test.ts`,
+- Pinned by `cancellation-settled-money.test.ts`, `booking-cancel.test.ts`,
   `stripe-webhook-alerts.test.ts` and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-019
