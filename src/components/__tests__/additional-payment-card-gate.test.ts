@@ -80,6 +80,7 @@ const SECRET_ROUTE = join(
 );
 
 const CHASE_MODULE = join(process.cwd(), "src", "lib", "additional-payment-chase.ts");
+const REAPER_MODULE = join(process.cwd(), "src", "lib", "xero-waiting-invoice-reaper.ts");
 
 function parse(path: string) {
   return ts.createSourceFile(
@@ -175,6 +176,8 @@ describe("the member's additional-payment card", () => {
     // the invoice disagreeing.
     const route = parse(SECRET_ROUTE);
     expect(callsFunction(route, "resolveAdditionalPaymentDoor")).toBe(true);
+    const reaper = parse(REAPER_MODULE);
+    expect(callsFunction(reaper, "resolveAdditionalPaymentDoor")).toBe(true);
 
     const chase = parse(CHASE_MODULE);
     const chain: Array<[string, string]> = [

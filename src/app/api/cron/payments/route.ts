@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
-import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-operation-outbox";
+import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-invoice-reaper";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { recordCronJobRunSafe } from "@/lib/cron-job-run";
 import logger from "@/lib/logger";
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
           { err, task },
           "Failed to reap stale WAITING_PAYMENT Xero outbox operations",
         );
-        return { reaped: 0, queueOperationIds: [] as string[] };
+        return { reaped: 0, released: 0, queueOperationIds: [] as string[] };
       },
     );
     await recordCronJobRunSafe({

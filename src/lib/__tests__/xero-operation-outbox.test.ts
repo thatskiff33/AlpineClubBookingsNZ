@@ -210,7 +210,7 @@ vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
-// #3641: the reaper asks Stripe whether an ask the pay door still hands out
+// #3641: the reaper asks Stripe, through the pay door, whether a declined ask
 // was cancelled at the provider (locally a cancel and a decline are both FAILED).
 vi.mock("@/lib/stripe", () => ({
   getPaymentIntent: mocks.getPaymentIntent,
@@ -245,11 +245,14 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
-  reapStaleWaitingPaymentXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
-import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import {
+  attachRecoveredIntentToWaitingSupplementaryInvoice,
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
+} from "@/lib/xero-supplementary-invoice-late-capture";
+import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-invoice-reaper";
 import {
   completeDeferredXeroSupplementaryInvoice,
   queueXeroBookingEditSettlement,
@@ -2592,161 +2595,25 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
   });
 });
 
+/**
+ * #3641, `INV-PAY-105`: the waiting-invoice reaper. It releases an invoice whose
+ * payment has arrived, keeps one the member can still pay, and retires only one
+ * the member can no longer pay. Stripe is asked only for a FAILED ask, which is
+ * the one case the local rows cannot answer, and at most 25 times a run.
+ */
 describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
-    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
-    mocks.findUniquePayment.mockResolvedValue(null);
-    mocks.getPaymentIntent.mockReset();
-    mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const waitingOp = (id: string, paymentIntentId: string | null, ageDays = 0) => ({
+    id,
+    createdAt: new Date(Date.now() - ageDays * DAY_MS),
+    requestPayload: paymentIntentId ? { paymentIntentId } : {},
   });
-
-  it("reaps WAITING_PAYMENT operations whose linked PaymentTransaction has been FAILED past the grace window", async () => {
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_1",
-        createdAt: new Date(),
-        requestPayload: { paymentIntentId: "pi_failed_abc" },
-      },
-    ]);
-    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
-
-    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
-
-    // F19 (#1887): the FAILED lookup is now floored by a 24h grace on updatedAt
-    // so a not-yet-retried failure cannot be cancelled out from under a
-    // same-intent retry that is about to succeed.
-    expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
-      where: {
-        source: "STRIPE",
-        stripePaymentIntentId: "pi_failed_abc",
-        status: "FAILED",
-        updatedAt: { lte: expect.any(Date) },
-      },
-      select: { id: true },
-    });
-    const graceThreshold =
-      mocks.findFirstPaymentTransaction.mock.calls[0][0].where.updatedAt.lte;
-    // ~24h ago (allow a generous window for test execution time).
-    const hoursAgo = (Date.now() - graceThreshold.getTime()) / (60 * 60 * 1000);
-    expect(hoursAgo).toBeGreaterThan(23.9);
-    expect(hoursAgo).toBeLessThan(24.5);
-    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: {
-        id: { in: ["op_waiting_1"] },
-        status: "WAITING_PAYMENT",
-      },
-      data: expect.objectContaining({
-        status: "CANCELLED",
-        lastErrorCode: "STALE_WAITING_PAYMENT",
-      }),
-    });
-    expect(result).toEqual({
-      reaped: 1,
-      queueOperationIds: ["op_waiting_1"],
-    });
+  const transaction = (status: string, failedHoursAgo = 48, amountCents = 12000) => ({
+    status,
+    amountCents,
+    updatedAt: new Date(Date.now() - failedHoursAgo * 60 * 60 * 1000),
   });
-
-  it("does NOT reap a WAITING_PAYMENT op whose linked transaction failed inside the grace window (F19, #1887)", async () => {
-    // A FAILED transaction that is still inside the grace window returns no row
-    // from the floored query (the DB predicate excludes it), so the op survives
-    // for the member's same-intent retry to succeed against.
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_recent_fail",
-        createdAt: new Date(),
-        requestPayload: { paymentIntentId: "pi_recent_fail" },
-      },
-    ]);
-    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
-
-    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
-
-    expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
-      where: {
-        source: "STRIPE",
-        stripePaymentIntentId: "pi_recent_fail",
-        status: "FAILED",
-        updatedAt: { lte: expect.any(Date) },
-      },
-      select: { id: true },
-    });
-    expect(result.reaped).toBe(0);
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
-  });
-
-  it("honours a custom failedTransactionGraceHours override (F19, #1887)", async () => {
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_custom",
-        createdAt: new Date(),
-        requestPayload: { paymentIntentId: "pi_custom" },
-      },
-    ]);
-    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
-
-    await reapStaleWaitingPaymentXeroOutboxOperations({
-      failedTransactionGraceHours: 1,
-    });
-
-    const graceThreshold =
-      mocks.findFirstPaymentTransaction.mock.calls[0][0].where.updatedAt.lte;
-    const hoursAgo = (Date.now() - graceThreshold.getTime()) / (60 * 60 * 1000);
-    expect(hoursAgo).toBeGreaterThan(0.9);
-    expect(hoursAgo).toBeLessThan(1.5);
-  });
-
-  it("reaps WAITING_PAYMENT operations older than the staleness threshold", async () => {
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_old",
-        createdAt: sixteenDaysAgo,
-        requestPayload: { paymentIntentId: "pi_still_pending" },
-      },
-    ]);
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
-
-    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
-
-    expect(mocks.findFirstPaymentTransaction).not.toHaveBeenCalled();
-    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: {
-        id: { in: ["op_waiting_old"] },
-        status: "WAITING_PAYMENT",
-      },
-      data: expect.objectContaining({
-        status: "CANCELLED",
-        lastErrorCode: "STALE_WAITING_PAYMENT",
-      }),
-    });
-    expect(result.reaped).toBe(1);
-  });
-
-  it("leaves recent WAITING_PAYMENT operations with active payments alone", async () => {
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_fresh",
-        createdAt: new Date(),
-        requestPayload: { paymentIntentId: "pi_still_active" },
-      },
-    ]);
-    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
-
-    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
-
-    expect(result.reaped).toBe(0);
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
-  });
-
-  /**
-   * #3641, `INV-PAY-105`: both arms retire only an ask the member can no longer
-   * pay. The member's pay door (`payableAdditionalPaymentIntentId`) is the test,
-   * so these fixtures shape the `Payment` row the door reads.
-   */
+  /** The `Payment` row the pay door reads, found by the intent. */
   const payableAsk = (
     paymentIntentId: string,
     overrides: {
@@ -2760,178 +2627,334 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       overrides.additionalPaymentIntentId === undefined
         ? paymentIntentId
         : overrides.additionalPaymentIntentId,
-    additionalPaymentStatus: overrides.additionalPaymentStatus ?? "PENDING",
+    additionalPaymentStatus: overrides.additionalPaymentStatus ?? "FAILED",
     booking: {
       status: overrides.bookingStatus ?? "CONFIRMED",
       deletedAt: overrides.deletedAt ?? null,
     },
   });
+  const retireCall = () =>
+    mocks.updateManyOperation.mock.calls.find(
+      ([args]) => (args as { data: { status?: string } }).data.status === "CANCELLED",
+    );
 
-  it("keeps a 14-day-old waiting invoice whose payment request the member can still pay (#3641)", async () => {
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_old_live",
-        createdAt: sixteenDaysAgo,
-        requestPayload: { paymentIntentId: "pi_live" },
-      },
-    ]);
-    mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_live"));
+  let waiting: unknown[] = [];
+  beforeEach(() => {
+    vi.clearAllMocks();
+    waiting = [];
+    // The sweep's own read has no intent filter; the late-capture release's
+    // reads (waiting on one intent, retired on one intent) do.
+    mocks.findManyOperations.mockReset();
+    mocks.findManyOperations.mockImplementation(
+      async (args: { where: { requestPayload?: unknown } }) =>
+        args.where.requestPayload ? [] : waiting,
+    );
+    mocks.findFirstPaymentTransaction.mockReset();
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
+    mocks.updateManyOperation.mockReset();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.findUniquePayment.mockReset();
+    mocks.findUniquePayment.mockResolvedValue(null);
+    mocks.getPaymentIntent.mockReset();
+    mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
+    mocks.countOperations.mockResolvedValue(0);
+  });
+
+  it("retires a waiting invoice FAILED past the grace window whose request the booking no longer names", async () => {
+    waiting = [waitingOp("op_waiting_1", "pi_superseded")];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
 
     const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-    expect(mocks.findUniquePayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { additionalPaymentIntentId: "pi_live" },
-      }),
+    expect(mocks.findManyOperations).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { updatedAt: "asc" } }),
     );
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.findUniquePayment).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { additionalPaymentIntentId: "pi_superseded" } }),
+    );
+    expect(retireCall()?.[0]).toEqual({
+      where: { id: { in: ["op_waiting_1"] }, status: "WAITING_PAYMENT" },
+      data: expect.objectContaining({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+      }),
+    });
+    expect(result).toEqual({
+      reaped: 1,
+      released: 0,
+      queueOperationIds: ["op_waiting_1"],
+    });
+  });
+
+  it("does NOT look at an ask whose transaction failed inside the grace window (F19, #1887)", async () => {
+    waiting = [waitingOp("op_waiting_recent_fail", "pi_recent_fail")];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 1));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findUniquePayment).not.toHaveBeenCalled();
+    expect(retireCall()).toBeUndefined();
     expect(result.reaped).toBe(0);
   });
 
-  it("keeps a waiting invoice 24h after a decline while the declined request is still payable (#3641)", async () => {
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_waiting_declined",
-        createdAt: new Date(),
-        requestPayload: { paymentIntentId: "pi_declined" },
-      },
-    ]);
-    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
+  it("honours a custom failedTransactionGraceHours override (F19, #1887)", async () => {
+    waiting = [waitingOp("op_waiting_custom", "pi_custom")];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 2));
+
+    const inside = await reapStaleWaitingPaymentXeroOutboxOperations({
+      failedTransactionGraceHours: 3,
+    });
+    expect(inside.reaped).toBe(0);
+
+    const past = await reapStaleWaitingPaymentXeroOutboxOperations({
+      failedTransactionGraceHours: 1,
+    });
+    expect(past.reaped).toBe(1);
+  });
+
+  it("retires a 14-day-old waiting invoice the member can no longer pay without asking Stripe", async () => {
+    waiting = [waitingOp("op_waiting_old", "pi_still_pending", 16)];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("PENDING"));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(result.reaped).toBe(1);
+  });
+
+  it("leaves a recent waiting invoice with an unfailed payment alone", async () => {
+    waiting = [waitingOp("op_waiting_fresh", "pi_still_active")];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("PENDING"));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findUniquePayment).not.toHaveBeenCalled();
+    expect(result.reaped).toBe(0);
+  });
+
+  it("keeps a 14-day-old waiting invoice whose PENDING request the member can still pay, on local rows alone", async () => {
+    waiting = [waitingOp("op_waiting_old_live", "pi_live", 16)];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("PENDING"));
     mocks.findUniquePayment.mockResolvedValue(
-      payableAsk("pi_declined", { additionalPaymentStatus: "FAILED" }),
+      payableAsk("pi_live", { additionalPaymentStatus: "PENDING" }),
     );
 
     const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(retireCall()).toBeUndefined();
+    expect(result.reaped).toBe(0);
+  });
+
+  it("keeps a waiting invoice after a decline while Stripe still lets the member pay it, with a bounded read", async () => {
+    waiting = [waitingOp("op_waiting_declined", "pi_declined")];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
+    mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_declined"));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_declined", {
+      timeoutMs: 10_000,
+    });
+    expect(retireCall()).toBeUndefined();
     expect(result.reaped).toBe(0);
   });
 
   it.each([
     ["the booking was cancelled", { bookingStatus: "CANCELLED" }],
+    ["the booking was bumped", { bookingStatus: "BUMPED" }],
     ["the booking was deleted", { deletedAt: new Date() }],
-    ["the ask was already collected", { additionalPaymentStatus: "SUCCEEDED" }],
     [
       "a later change superseded the request",
       { additionalPaymentIntentId: "pi_replacement" },
     ],
   ])(
-    "still retires an abandoned waiting invoice on both arms when %s (#3641)",
+    "still retires an abandoned waiting invoice on both arms when %s",
     async (_label, overrides) => {
-      const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-      mocks.findManyOperations.mockResolvedValue([
-        {
-          id: "op_aged",
-          createdAt: sixteenDaysAgo,
-          requestPayload: { paymentIntentId: "pi_gone" },
-        },
-        {
-          id: "op_failed",
-          createdAt: new Date(),
-          requestPayload: { paymentIntentId: "pi_gone" },
-        },
-      ]);
-      mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
+      waiting = [
+        waitingOp("op_aged", "pi_gone", 16),
+        waitingOp("op_failed", "pi_gone"),
+      ];
+      mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
       mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_gone", overrides));
       mocks.updateManyOperation.mockResolvedValue({ count: 2 });
 
       const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+      expect(retireCall()?.[0]).toEqual({
         where: { id: { in: ["op_aged", "op_failed"] }, status: "WAITING_PAYMENT" },
-        data: expect.objectContaining({
-          status: "CANCELLED",
-          lastErrorCode: "STALE_WAITING_PAYMENT",
-        }),
+        data: expect.objectContaining({ lastErrorCode: "STALE_WAITING_PAYMENT" }),
       });
       expect(result.reaped).toBe(2);
     },
   );
 
-  it("retires an ask the door still hands out once Stripe reports its intent cancelled (#3641)", async () => {
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_cancelled_at_stripe",
-        createdAt: sixteenDaysAgo,
-        requestPayload: { paymentIntentId: "pi_cancelled" },
+  it.each([
+    ["cancelled the intent", async () => ({ status: "canceled" })],
+    [
+      "has no such intent",
+      async () => {
+        throw Object.assign(new Error("No such payment_intent"), {
+          code: "resource_missing",
+        });
       },
-    ]);
-    // Locally indistinguishable from a decline: FAILED, still the latest ask.
-    mocks.findUniquePayment.mockResolvedValue(
-      payableAsk("pi_cancelled", { additionalPaymentStatus: "FAILED" }),
-    );
-    mocks.getPaymentIntent.mockResolvedValue({ status: "canceled" });
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    ],
+  ])(
+    "retires a declined ask the local door still opens once Stripe says it %s",
+    async (_label, retrieve) => {
+      waiting = [waitingOp("op_gone_at_stripe", "pi_cancelled", 16)];
+      mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
+      mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_cancelled"));
+      mocks.getPaymentIntent.mockImplementation(retrieve);
 
-    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+      const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_cancelled");
-    expect(result.reaped).toBe(1);
-  });
+      expect(result.reaped).toBe(1);
+    },
+  );
 
-  it("keeps a payable ask when Stripe cannot be read (#3641)", async () => {
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    mocks.findManyOperations.mockResolvedValue([
-      {
-        id: "op_stripe_down",
-        createdAt: sixteenDaysAgo,
-        requestPayload: { paymentIntentId: "pi_unknown" },
-      },
-    ]);
+  it.each([
+    ["Stripe cannot be read", async () => {
+      throw new Error("stripe unavailable");
+    }],
+    ["Stripe has already taken the money", async () => ({ status: "succeeded" })],
+  ])("keeps a payable ask when %s", async (_label, retrieve) => {
+    waiting = [waitingOp("op_kept", "pi_unknown", 16)];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
     mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_unknown"));
-    mocks.getPaymentIntent.mockRejectedValue(new Error("stripe unavailable"));
+    mocks.getPaymentIntent.mockImplementation(retrieve);
 
     const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(retireCall()).toBeUndefined();
     expect(result.reaped).toBe(0);
   });
 
-  it("retires an aged waiting invoice with no payment request without reading any payment (#3641)", async () => {
-    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
-    mocks.findManyOperations.mockResolvedValue([
-      { id: "op_no_intent", createdAt: sixteenDaysAgo, requestPayload: {} },
-    ]);
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  it("reads Stripe at most 25 times a run and sends the rows it read to the back of the next run", async () => {
+    waiting = Array.from({ length: 30 }, (_, i) => waitingOp(`op_${i}`, `pi_${i}`, 16));
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 48));
+    mocks.findUniquePayment.mockImplementation(
+      async (args: { where: { additionalPaymentIntentId: string } }) =>
+        payableAsk(args.where.additionalPaymentIntentId),
+    );
 
     const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
+    expect(mocks.getPaymentIntent).toHaveBeenCalledTimes(25);
+    const touch = mocks.updateManyOperation.mock.calls.find(
+      ([args]) => (args as { data: { updatedAt?: Date } }).data.updatedAt,
+    );
+    expect(touch?.[0]).toEqual({
+      where: {
+        id: { in: Array.from({ length: 25 }, (_, i) => `op_${i}`) },
+        status: "WAITING_PAYMENT",
+      },
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(result.reaped).toBe(0);
+  });
+
+  it("RELEASES, never retires, a waiting invoice whose payment was already captured", async () => {
+    const op = waitingOp("op_paid", "pi_paid", 16);
+    waiting = [op];
+    mocks.findManyOperations.mockImplementation(
+      async (args: { where: { status: string; requestPayload?: unknown } }) => {
+        if (!args.where.requestPayload) return waiting;
+        return args.where.status === "WAITING_PAYMENT"
+          ? [
+              {
+                id: "op_paid",
+                localModel: "BookingModification",
+                localId: "mod_1",
+                requestPayload: {
+                  queueType: "SUPPLEMENTARY_INVOICE",
+                  bookingId: "booking_1",
+                  priceDiffCents: 12000,
+                  changeFeeCents: 0,
+                  paymentIntentId: "pi_paid",
+                },
+              },
+            ]
+          : [];
+      },
+    );
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("SUCCEEDED"));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(retireCall()).toBeUndefined();
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: { in: ["op_paid"] }, status: "WAITING_PAYMENT" },
+      data: expect.objectContaining({ status: "PENDING" }),
+    });
+    expect(result).toEqual({
+      reaped: 0,
+      released: 1,
+      queueOperationIds: ["op_paid"],
+    });
+  });
+
+  it("retires an aged waiting invoice with no payment request without reading any payment", async () => {
+    waiting = [waitingOp("op_no_intent", null, 16)];
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findFirstPaymentTransaction).not.toHaveBeenCalled();
     expect(mocks.findUniquePayment).not.toHaveBeenCalled();
     expect(result.reaped).toBe(1);
   });
 });
 
 /**
- * #3641, `INV-PAY-105`: a capture never silently releases nothing. The late
- * capture that finds its invoice retired re-queues THAT row, exactly once, or
- * alerts where re-issuing is unsafe.
+ * #3641, `INV-PAY-105`: a capture never silently releases nothing. A waiting
+ * invoice is released or refused with an alert; a retired one is re-queued from
+ * that same row, exactly once, or alerted where issuing it is unsafe.
  */
 describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () => {
+  const payload = (priceDiffCents: number) => ({
+    queueType: "SUPPLEMENTARY_INVOICE",
+    bookingId: "booking_1",
+    bookingModificationId: "mod_1",
+    priceDiffCents,
+    changeFeeCents: 0,
+    paymentIntentId: "pi_late",
+  });
   const retiredOperation = (
-    overrides: { lastErrorCode?: string; priceDiffCents?: number } = {},
+    overrides: {
+      id?: string;
+      lastErrorCode?: string;
+      priceDiffCents?: number;
+      createdAt?: Date;
+    } = {},
   ) => ({
-    id: "op_retired",
+    id: overrides.id ?? "op_retired",
     localModel: "BookingModification",
     localId: "mod_1",
     lastErrorCode: overrides.lastErrorCode ?? "STALE_WAITING_PAYMENT",
-    requestPayload: {
-      queueType: "SUPPLEMENTARY_INVOICE",
-      bookingId: "booking_1",
-      bookingModificationId: "mod_1",
-      priceDiffCents: overrides.priceDiffCents ?? 12000,
-      changeFeeCents: 0,
-      paymentIntentId: "pi_late",
-    },
+    requestPayload: payload(overrides.priceDiffCents ?? 12000),
+    createdAt: overrides.createdAt ?? new Date("2026-06-01T00:00:00.000Z"),
+  });
+  const waitingOperation = (id = "op_waiting", priceDiffCents = 12000) => ({
+    id,
+    localModel: "BookingModification",
+    localId: "mod_1",
+    requestPayload: payload(priceDiffCents),
   });
 
+  let waiting: unknown[] = [];
+  let retired: unknown[] = [];
   beforeEach(() => {
     vi.clearAllMocks();
-    // First read: the release's WAITING_PAYMENT lookup. Second: retired rows.
+    waiting = [];
+    retired = [];
     mocks.findManyOperations.mockReset();
+    mocks.findManyOperations.mockImplementation(
+      async (args: { where: { status: string } }) =>
+        args.where.status === "WAITING_PAYMENT" ? waiting : retired,
+    );
     mocks.updateManyOperation.mockReset();
-    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     mocks.countOperations.mockResolvedValue(0);
     mocks.findFirstLink.mockReset();
     mocks.findFirstLink.mockResolvedValue(null);
@@ -2946,26 +2969,35 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     });
   });
 
-  const reviveCall = () =>
-    mocks.updateManyOperation.mock.calls.find(
-      ([args]) => (args as { data: { status?: string } }).data.status === "PENDING",
-    );
-  const alertClaimCall = () =>
-    mocks.updateManyOperation.mock.calls.find(
-      ([args]) =>
-        (args as { data: { lastErrorCode?: string } }).data.lastErrorCode ===
-        "STALE_WAITING_PAYMENT_CAPTURED",
-    );
+  const writeWith = (predicate: (data: Record<string, unknown>) => boolean) =>
+    mocks.updateManyOperation.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .filter((args) => predicate(args.data));
+  const reviveCalls = () =>
+    writeWith((data) => data.status === "PENDING" && "completedAt" in data);
+  const capturedStamps = () =>
+    writeWith((data) => data.lastErrorCode === "STALE_WAITING_PAYMENT_CAPTURED");
+  const coveredStamps = () =>
+    writeWith((data) => data.lastErrorCode === "STALE_WAITING_PAYMENT_COVERED");
 
-  it("releases a waiting invoice as before", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([{ id: "op_waiting" }])
-      .mockResolvedValueOnce([]);
-    mocks.updateManyOperation.mockResolvedValueOnce({ count: 1 });
+  it("releases a waiting invoice the capture covers, through the one release write", async () => {
+    waiting = [waitingOperation()];
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
+    expect(mocks.findManyOperations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "WAITING_PAYMENT",
+          queueType: "SUPPLEMENTARY_INVOICE",
+        }),
+      }),
+    );
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: { in: ["op_waiting"] }, status: "WAITING_PAYMENT" },
+      data: expect.objectContaining({ status: "PENDING" }),
+    });
     expect(result).toEqual({
       released: 1,
       queueOperationIds: ["op_waiting"],
@@ -2973,19 +3005,44 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     });
   });
 
-  it("re-queues the retired row itself, under the anchor lock, when the capture covers it", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  it("does not issue a still-waiting invoice on a short capture: it is cancelled unsent and an officer told, once", async () => {
+    waiting = [waitingOperation("op_waiting", 23000)];
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(mocks.findManyOperations).toHaveBeenLastCalledWith(
+    expect(capturedStamps()[0]).toEqual({
+      where: { id: "op_waiting", status: "WAITING_PAYMENT" },
+      data: expect.objectContaining({ status: "CANCELLED" }),
+    });
+    expect(
+      writeWith((data) => data.status === "PENDING").flatMap(
+        (args) => (args.where.id as { in: string[] }).in,
+      ),
+    ).toEqual([]);
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe("alerted");
+    expect(result.released).toBe(0);
+
+    // A replay racing it loses the WAITING_PAYMENT claim and alerts nobody.
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+  });
+
+  it("re-queues the retired row itself, under the change's anchor lock, when the capture covers it", async () => {
+    retired = [retiredOperation()];
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.findManyOperations).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           status: "CANCELLED",
+          queueType: "SUPPLEMENTARY_INVOICE",
+          localId: { not: null },
           lastErrorCode: {
             in: ["STALE_WAITING_PAYMENT", "STALE_WAITING_PAYMENT_CAPTURED"],
           },
@@ -2993,21 +3050,30 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
         }),
       }),
     );
+    // The enqueue's key, through the one helper: namespace and anchor.
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
-    expect(reviveCall()?.[0]).toEqual({
-      where: {
-        id: "op_retired",
-        status: "CANCELLED",
-        lastErrorCode: "STALE_WAITING_PAYMENT",
+    const [strings, ...values] = mocks.executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(strings.join("?")).toContain("pg_advisory_xact_lock");
+    expect(values).toEqual(["xero-supplementary-invoice", "mod_1"]);
+    expect(reviveCalls()).toEqual([
+      {
+        where: {
+          id: "op_retired",
+          status: "CANCELLED",
+          lastErrorCode: "STALE_WAITING_PAYMENT",
+        },
+        data: {
+          status: "PENDING",
+          startedAt: null,
+          completedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
       },
-      data: {
-        status: "PENDING",
-        startedAt: null,
-        completedAt: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-      },
-    });
+    ]);
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -3017,17 +3083,61 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     });
   });
 
+  it("revives only the NEWEST retired row of a raised ask ($100 then $130), and stamps the older one covered", async () => {
+    retired = [
+      retiredOperation({
+        id: "op_100",
+        priceDiffCents: 10000,
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      }),
+      retiredOperation({
+        id: "op_130",
+        priceDiffCents: 13000,
+        createdAt: new Date("2026-06-05T00:00:00.000Z"),
+      }),
+    ];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "SUCCEEDED",
+      amountCents: 13000,
+    });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(reviveCalls().map((args) => args.where.id)).toEqual(["op_130"]);
+    expect(coveredStamps().map((args) => args.where.id)).toEqual([
+      { in: ["op_100"] },
+    ]);
+    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("requeued");
+    expect(result.queueOperationIds).toEqual(["op_130"]);
+  });
+
+  it("names a row once in what it returns, when the reaper retired it between the release's read and its write", async () => {
+    waiting = [waitingOperation("op_raced")];
+    retired = [retiredOperation({ id: "op_raced" })];
+    mocks.updateManyOperation
+      .mockResolvedValueOnce({ count: 0 }) // the release write: already retired
+      .mockResolvedValue({ count: 1 }); // the revive
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(result).toEqual({
+      released: 1,
+      queueOperationIds: ["op_raced"],
+      outcome: "requeued",
+    });
+  });
+
   it("a caller that loses the race (or a replay) re-queues nothing and alerts nobody", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
-    // The guarded write matches nothing: the winner already moved the row.
+    retired = [retiredOperation()];
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(reviveCall()).toBeDefined();
+    expect(reviveCalls()).toHaveLength(1);
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(result).toEqual({
       released: 0,
@@ -3036,29 +3146,22 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     });
   });
 
-  it("alerts once instead of re-issuing when the capture is short of what the invoice bills", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation({ priceDiffCents: 23000 })]);
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  it("alerts once instead of re-issuing when the capture is short of what the retired invoice bills", async () => {
+    retired = [retiredOperation({ priceDiffCents: 23000 })];
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(reviveCall()).toBeUndefined();
-    expect(alertClaimCall()?.[0]).toEqual(
-      expect.objectContaining({
-        where: {
-          id: "op_retired",
-          status: "CANCELLED",
-          lastErrorCode: "STALE_WAITING_PAYMENT",
-        },
-      }),
-    );
+    expect(reviveCalls()).toEqual([]);
+    expect(capturedStamps()[0]?.where).toEqual({
+      id: "op_retired",
+      status: "CANCELLED",
+      lastErrorCode: "STALE_WAITING_PAYMENT",
+    });
     expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
     expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        errorType: "SUPPLEMENTARY_INVOICE_RETIRED_BEFORE_CAPTURE",
+        errorType: "SUPPLEMENTARY_INVOICE_NOT_ISSUED_ON_CAPTURE",
         errorMessage: expect.stringContaining("pi_late"),
       }),
     );
@@ -3066,40 +3169,31 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(result.released).toBe(0);
   });
 
-  it("does not alert a second time when another caller already claimed the alert", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation({ priceDiffCents: 23000 })]);
+  it("reports nothing alerted when another caller already claimed the row", async () => {
+    retired = [retiredOperation({ priceDiffCents: 23000 })];
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
-    expect(result.outcome).toBe("alerted");
+    expect(result.outcome).toBe("already-released");
   });
 
-  it("a row an earlier capture already alerted about is left alone", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        retiredOperation({ lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED" }),
-      ]);
+  it("a row an earlier capture already alerted about is left alone and named as such", async () => {
+    retired = [retiredOperation({ lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED" })];
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
-    expect(result.outcome).toBe("alerted");
+    expect(result.outcome).toBe("already-alerted");
   });
 
-  it("alerts instead of re-issuing when the change already has a supplementary invoice in Xero", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
+  it("alerts instead of re-issuing when the change already has another supplementary invoice in Xero", async () => {
+    retired = [retiredOperation()];
     mocks.findFirstLink.mockResolvedValue({ id: "link_existing" });
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
@@ -3114,59 +3208,93 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
         }),
       }),
     );
-    expect(reviveCall()).toBeUndefined();
+    expect(reviveCalls()).toEqual([]);
     expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
     expect(result.outcome).toBe("alerted");
   });
 
   it("alerts instead of re-issuing when another ask's invoice is already queued for the change", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
-    mocks.findFirstOperation.mockResolvedValue({
-      id: "op_other",
-      requestPayload: { paymentIntentId: "pi_other_ask" },
-    });
-    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    retired = [retiredOperation()];
+    mocks.findFirstOperation
+      .mockResolvedValueOnce(null) // nothing for THIS request
+      .mockResolvedValueOnce({ id: "op_other" }); // another ask outstanding
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(reviveCall()).toBeUndefined();
+    expect(reviveCalls()).toEqual([]);
     expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(1);
     expect(result.outcome).toBe("alerted");
   });
 
-  it("treats an invoice already queued for this same ask as covering the capture", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
-    mocks.findFirstOperation.mockResolvedValue({
-      id: "op_reparked",
-      requestPayload: { paymentIntentId: "pi_late" },
-    });
+  it("an invoice for this same request already queued or SENT covers the capture: no alert, even with its link in place", async () => {
+    retired = [retiredOperation()];
+    // The repair tool re-parked an invoice on this intent; the first caller
+    // released it and the outbox sent it, so the change now carries its link.
+    mocks.findFirstOperation.mockResolvedValueOnce({ id: "op_reparked" });
+    mocks.findFirstLink.mockResolvedValue({ id: "link_from_reparked" });
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { notIn: ["op_retired"] },
+          localId: "mod_1",
+          status: { not: "CANCELLED" },
+          requestPayload: { path: ["paymentIntentId"], equals: "pi_late" },
+        }),
+      }),
+    );
+    expect(coveredStamps()[0]?.where).toEqual({
+      id: { in: ["op_retired"] },
+      status: "CANCELLED",
+      lastErrorCode: "STALE_WAITING_PAYMENT",
+    });
+    expect(reviveCalls()).toEqual([]);
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(result.outcome).toBe("already-released");
   });
 
-  it("leaves the invoice retired on a booking that can no longer take the money", async () => {
-    mocks.findManyOperations
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([retiredOperation()]);
+  it("the second late-success caller, after the row was stamped covered, finds nothing to alert about", async () => {
+    // The covered stamp is outside the retired lookup, so the second caller
+    // sees no retired row, and the released invoice names the capture.
+    retired = [];
+    mocks.countOperations.mockResolvedValue(1);
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("already-released");
+  });
+
+  it("leaves the invoice retired on a CANCELLED booking, whose capture the webhook refunds", async () => {
+    retired = [retiredOperation()];
     mocks.findUniqueBooking.mockResolvedValue({ status: "CANCELLED" });
 
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
     expect(mocks.executeRaw).not.toHaveBeenCalled();
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "op_retired" }) }),
+    );
     expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
     expect(result.outcome).toBe("left-retired");
+  });
+
+  it("never leaves a BUMPED booking's capture silent: the money was kept, so the invoice is re-issued", async () => {
+    retired = [retiredOperation()];
+    mocks.findUniqueBooking.mockResolvedValue({ status: "BUMPED" });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(reviveCalls().map((args) => args.where.id)).toEqual(["op_retired"]);
+    expect(result.outcome).toBe("requeued");
   });
 
   it.each([
@@ -3175,7 +3303,6 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
   ])(
     "with nothing waiting or retired, names why nothing was released (released elsewhere: %i)",
     async (releasedCount, outcome) => {
-      mocks.findManyOperations.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
       mocks.countOperations.mockResolvedValue(releasedCount);
 
       const result =
@@ -3184,6 +3311,47 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
       expect(result).toEqual({ released: 0, queueOperationIds: [], outcome });
     },
   );
+});
+
+/**
+ * #3641 review round: the payment recovery's attach of a recovered intent to
+ * the change's waiting invoice must not fail silently, or the invoice waits on
+ * no intent while the member pays.
+ */
+describe("attachRecoveredIntentToWaitingSupplementaryInvoice (#3641)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findManyOperations.mockReset();
+  });
+
+  it("alerts an officer when the attach fails", async () => {
+    mocks.findManyOperations.mockRejectedValue(new Error("database is down"));
+
+    await attachRecoveredIntentToWaitingSupplementaryInvoice({
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_recovered",
+      recoveryOperationId: "recovery_1",
+    });
+
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorType: "SUPPLEMENTARY_INVOICE_INTENT_NOT_ATTACHED",
+        errorMessage: expect.stringContaining("pi_recovered"),
+      }),
+    );
+  });
+
+  it("stays quiet when the attach succeeds", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+
+    await attachRecoveredIntentToWaitingSupplementaryInvoice({
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_recovered",
+      recoveryOperationId: "recovery_1",
+    });
+
+    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+  });
 });
 
 /**

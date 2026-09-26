@@ -29,11 +29,11 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import {
-  attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
 import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
@@ -2415,15 +2415,11 @@ async function processCreateAdditionalPaymentIntentOperation(
       hasIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
     });
     if (synced.paymentIntentId) {
-      await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+      await attachRecoveredIntentToWaitingSupplementaryInvoice({
         bookingModificationId,
         paymentIntentId: synced.paymentIntentId,
-      }).catch((err) =>
-        logger.error(
-          { err, operationId: operation.id, paymentIntentId: synced.paymentIntentId },
-          "Failed to attach recovered additional intent to waiting Xero operations",
-        ),
-      );
+        recoveryOperationId: operation.id,
+      });
       await prisma.paymentRecoveryOperation.update({
         where: { id: operation.id },
         data: { paymentIntentId: synced.paymentIntentId },
@@ -2822,15 +2818,13 @@ async function processCreateAdditionalPaymentIntentOperation(
   // payment webhook can release it. The anchor comes from the shared parser at
   // the top of this function, never from a prefix slice spelled here (#3170).
   if (bookingModificationId) {
-    await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
+    // #3641: a failed attach alerts an officer rather than stranding the
+    // invoice on no intent until the age backstop retires it.
+    await attachRecoveredIntentToWaitingSupplementaryInvoice({
       bookingModificationId,
       paymentIntentId: pi.id,
-    }).catch((err) =>
-      logger.error(
-        { err, operationId: operation.id, paymentIntentId: pi.id },
-        "Failed to attach recovered additional intent to waiting Xero operations",
-      ),
-    );
+      recoveryOperationId: operation.id,
+    });
   }
 
   await prisma.paymentRecoveryOperation.update({
