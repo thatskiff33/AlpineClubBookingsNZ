@@ -107,6 +107,8 @@ vi.mock("@/lib/prisma", () => ({
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
+      // #3642: the group-settlement worker counts prior invoices for its key.
+      count: vi.fn().mockResolvedValue(0),
     },
     memberCredit: {
       aggregate: mocks.memberCreditAggregate,
@@ -705,6 +707,10 @@ describe.each(CLUB_DAY_CASES)(
       mocks.settlementFindUnique.mockResolvedValue({
         id: "settle_1",
         createdAt: instant,
+        // #3642: only a settlement still awaiting its Internet Banking invoice
+        // gets one.
+        source: "INTERNET_BANKING",
+        status: "PENDING",
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
         groupBooking: {
