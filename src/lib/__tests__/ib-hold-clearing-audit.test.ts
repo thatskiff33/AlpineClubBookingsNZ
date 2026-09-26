@@ -11,224 +11,282 @@ import {
   deriveIbHoldClearingFinding,
   formatIbHoldClearingAuditReport,
   resolveIbHoldClearingNotes,
+  type IbHoldClearingNote,
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-underclear-audit";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+function makeNote(overrides: Partial<IbHoldClearingNote> = {}): IbHoldClearingNote {
+  return {
+    kind: "allocated-clearing-note",
+    creditNoteId: "cn_1",
+    amountCents: 15000,
+    operationStatus: "SUCCEEDED",
+    allocatedCents: 15000,
+    ...overrides,
+  };
+}
 
 function makeRow(overrides: Partial<IbHoldClearingRow> = {}): IbHoldClearingRow {
   return {
     paymentId: "pay_1",
     bookingId: "booking_1",
     bookingStatus: "CANCELLED",
-    // effectivePriceCents: finalPrice (15000) − 2655 applied credit.
-    paymentAmountCents: 12345,
     changeFeeCents: 0,
     xeroInvoiceId: "inv_1",
     xeroInvoiceNumber: "INV-001",
     finalPriceCents: 15000,
     xeroAllocatedAppliedCreditCents: 0,
-    // A pre-#1597 refund note, sized at the credit-reduced payment amount.
-    clearingNotes: [
-      { kind: "refund-note", amountCents: 12345, operationStatus: "SUCCEEDED" },
-    ],
+    clearingNotes: [makeNote()],
     ...overrides,
   };
 }
 
 describe("deriveIbHoldClearingFinding (INV-PAY-017 audit sizing)", () => {
-  it("flags a credit-carrying invoice cleared at the credit-reduced amount", () => {
-    const finding = deriveIbHoldClearingFinding(makeRow());
-    expect(finding).not.toBeNull();
-    // Expected = full finalPrice (no Xero credit note allocated); actual = the
-    // credit-reduced 12345; open delta = the 2655 applied-credit slice.
-    expect(finding?.expectedClearingCents).toBe(15000);
-    expect(finding?.enqueuedClearingCents).toBe(12345);
-    expect(finding?.deltaCents).toBe(2655);
-    expect(finding?.invoiceRef).toBe("INV-001");
-    expect(finding?.clearingNotes.map((note) => note.kind)).toEqual(["refund-note"]);
+  it("accepts a clearing note whose allocation covers the INV-PAY-017 size", () => {
+    expect(deriveIbHoldClearingFinding(makeRow())).toBeNull();
   });
 
   it("returns null for a released hold with no issued invoice", () => {
-    const finding = deriveIbHoldClearingFinding(
-      makeRow({ xeroInvoiceId: null, xeroInvoiceNumber: null }),
-    );
-    expect(finding).toBeNull();
+    expect(
+      deriveIbHoldClearingFinding(makeRow({ xeroInvoiceId: null, xeroInvoiceNumber: null })),
+    ).toBeNull();
   });
 
-  it("returns null for the switch-to-IB shape cleared at full finalPrice", () => {
+  it("flags a pre-#1597 note allocated only up to the credit-reduced amount", () => {
     const finding = deriveIbHoldClearingFinding(
       makeRow({
         clearingNotes: [
-          { kind: "refund-note", amountCents: 15000, operationStatus: "SUCCEEDED" },
+          makeNote({ kind: "refund-note", amountCents: 12345, allocatedCents: 12345 }),
         ],
       }),
     );
-    expect(finding).toBeNull();
+    expect(finding?.expectedClearingCents).toBe(15000);
+    expect(finding?.allocatedClearingCents).toBe(12345);
+    expect(finding?.deltaCents).toBe(2655);
+    expect(finding?.invoiceRef).toBe("INV-001");
   });
 
   it("subtracts only credit allocated to the invoice as a Xero credit note", () => {
-    // A NZ$50 allocation already reduced the invoice's Xero balance to 10000;
-    // the note was still sized at 12345, so the invoice is OVER-cleared —
-    // expected (10000) < actual (12345), delta <= 0, no finding.
-    const finding = deriveIbHoldClearingFinding(
-      makeRow({ xeroAllocatedAppliedCreditCents: 5000 }),
-    );
-    expect(finding).toBeNull();
-  });
-
-  it("floors expected clearing at zero when Xero credit notes exceed the invoice", () => {
-    const finding = deriveIbHoldClearingFinding(
-      makeRow({ xeroAllocatedAppliedCreditCents: 20000, clearingNotes: [] }),
-    );
-    expect(finding).toBeNull();
-  });
-
-  it("includes any billed change fee in the expected outstanding", () => {
-    const finding = deriveIbHoldClearingFinding(makeRow({ changeFeeCents: 1000 }));
-    // expected = 15000 + 1000 − 0 = 16000; delta = 16000 − 12345 = 3655.
-    expect(finding?.expectedClearingCents).toBe(16000);
-    expect(finding?.deltaCents).toBe(3655);
-  });
-
-  // #3535: a hold released since then is cleared by the allocated note, and a
-  // post-#1597 hold that carried applied credit was sized correctly — judging
-  // either by `payment.amountCents` reported a phantom under-clear.
-  it("accepts a post-#3535 allocated clearing note sized by INV-PAY-017, credit or not", () => {
-    expect(
-      deriveIbHoldClearingFinding(
-        makeRow({
-          clearingNotes: [
-            { kind: "allocated-clearing-note", amountCents: 15000, operationStatus: "SUCCEEDED" },
-          ],
-        }),
-      ),
-    ).toBeNull();
-    // Applied credit already allocated to the invoice: the note was 10000.
     expect(
       deriveIbHoldClearingFinding(
         makeRow({
           xeroAllocatedAppliedCreditCents: 5000,
-          clearingNotes: [
-            { kind: "allocated-clearing-note", amountCents: 10000, operationStatus: "PENDING" },
-          ],
+          clearingNotes: [makeNote({ amountCents: 10000, allocatedCents: 10000 })],
         }),
       ),
     ).toBeNull();
   });
 
-  it("accepts a post-#1597 refund note sized at the full invoice although the payment was credit-reduced", () => {
+  it("floors expected clearing at zero when Xero credit notes exceed the invoice", () => {
+    expect(
+      deriveIbHoldClearingFinding(
+        makeRow({ xeroAllocatedAppliedCreditCents: 20000, clearingNotes: [] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("includes any billed change fee in the expected outstanding", () => {
+    const finding = deriveIbHoldClearingFinding(makeRow({ changeFeeCents: 1000 }));
+    expect(finding?.expectedClearingCents).toBe(16000);
+    expect(finding?.deltaCents).toBe(1000);
+  });
+
+  // #3535 review: a FAILED operation created nothing, so it clears nothing.
+  it("counts nothing for a FAILED newest clearing operation, and reports the invoice fully open", () => {
     const finding = deriveIbHoldClearingFinding(
       makeRow({
         clearingNotes: [
-          { kind: "refund-note", amountCents: 15000, operationStatus: "SUCCEEDED" },
+          makeNote({ creditNoteId: null, operationStatus: "FAILED", allocatedCents: 0 }),
         ],
       }),
     );
-    expect(finding).toBeNull();
+    expect(finding?.allocatedClearingCents).toBe(0);
+    expect(finding?.deltaCents).toBe(15000);
   });
 
-  it("falls back to the pre-#1597 sizing only for a refund note whose size was never recorded", () => {
+  // #3535 review: a legacy refund note was never allocated by the system.
+  it("reports a legacy refund note that nobody allocated as issued but not clearing", () => {
     const finding = deriveIbHoldClearingFinding(
       makeRow({
-        clearingNotes: [{ kind: "refund-note", amountCents: null, operationStatus: null }],
+        clearingNotes: [
+          makeNote({ kind: "refund-note", amountCents: 15000, allocatedCents: 0 }),
+        ],
       }),
     );
-    expect(finding?.enqueuedClearingCents).toBe(12345);
-    expect(finding?.deltaCents).toBe(2655);
+    expect(finding?.deltaCents).toBe(15000);
+    const report = formatIbHoldClearingAuditReport(
+      {
+        scannedReleasedHolds: 1,
+        invoiceBearingHolds: 1,
+        noInvoiceReleasedHolds: 0,
+        underCleared: [finding!],
+        totalDeltaCents: 15000,
+      },
+      CLUB_FORMAT_TEST,
+    );
+    expect(report).toContain(
+      "refund note (before #3535) issued, invoice NOT cleared unless allocated by hand ($150.00, SUCCEEDED; $0.00 allocated)",
+    );
+    expect(report).not.toContain("Nothing to repair");
+  });
+
+  it("counts a legacy refund note as far as someone allocated it by hand", () => {
+    expect(
+      deriveIbHoldClearingFinding(
+        makeRow({
+          clearingNotes: [makeNote({ kind: "refund-note", allocatedCents: 15000 })],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("reports a hold with no clearing note at all as fully open", () => {
     const finding = deriveIbHoldClearingFinding(makeRow({ clearingNotes: [] }));
-    expect(finding?.enqueuedClearingCents).toBe(0);
+    expect(finding?.allocatedClearingCents).toBe(0);
     expect(finding?.deltaCents).toBe(15000);
     expect(finding?.clearingNotes).toEqual([]);
   });
 });
 
 describe("resolveIbHoldClearingNotes (#3535: both note shapes)", () => {
-  it("reads the allocated clearing note off its booking-anchored operation", () => {
+  it("reads the clearing note's allocations off the booking's allocation links, once each", () => {
     expect(
       resolveIbHoldClearingNotes({
         operations: [
           {
             localModel: "Booking",
             status: "SUCCEEDED",
-            // The builder's execution-time payload keeps refundAmountCents.
-            requestPayload: { invoiceId: "inv_1", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+            xeroObjectId: "cn_clear",
+            requestPayload: { invoiceId: "inv_1", refundAmountCents: 41000, clearsUnpaidInvoice: true },
           },
+        ],
+        allocationLinks: [
+          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 11000 } },
+          // The inbound reconcile's copy of the first allocation.
+          { localModel: "Booking", metadata: { creditNoteId: "cn_clear", invoiceId: "inv_1", amountCents: 30000 } },
+          // Another note's allocation does not count.
+          { localModel: "Booking", metadata: { creditNoteId: "cn_other", invoiceId: "inv_1", amountCents: 999 } },
         ],
         xeroRefundCreditNoteId: null,
       }),
     ).toEqual([
-      { kind: "allocated-clearing-note", amountCents: 15000, operationStatus: "SUCCEEDED" },
+      {
+        kind: "allocated-clearing-note",
+        creditNoteId: "cn_clear",
+        amountCents: 41000,
+        operationStatus: "SUCCEEDED",
+        allocatedCents: 41000,
+      },
     ]);
   });
 
-  it("reads an older refund note's size from its queued or executed payload", () => {
+  it("gives a FAILED clearing operation no note and no allocation", () => {
     expect(
       resolveIbHoldClearingNotes({
         operations: [
-          { localModel: "Payment", status: "PENDING", requestPayload: { refundAmountCents: 12345 } },
+          {
+            localModel: "Booking",
+            status: "FAILED",
+            xeroObjectId: null,
+            requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", refundAmountCents: 15000 },
+          },
         ],
+        allocationLinks: [],
         xeroRefundCreditNoteId: null,
       }),
-    ).toEqual([{ kind: "refund-note", amountCents: 12345, operationStatus: "PENDING" }]);
+    ).toEqual([
+      {
+        kind: "allocated-clearing-note",
+        creditNoteId: null,
+        amountCents: 15000,
+        operationStatus: "FAILED",
+        allocatedCents: 0,
+      },
+    ]);
+  });
+
+  it("reads an older refund note's size and any hand allocation on the payment", () => {
     expect(
       resolveIbHoldClearingNotes({
         operations: [
           {
             localModel: "Payment",
             status: "SUCCEEDED",
+            xeroObjectId: "cn_refund",
             requestPayload: { allocation: { invoiceId: "inv_1", amount: 150 } },
           },
         ],
-        xeroRefundCreditNoteId: "cn_1",
+        allocationLinks: [
+          { localModel: "Payment", metadata: { creditNoteId: "cn_refund", invoiceId: "inv_1", amountCents: 5000 } },
+        ],
+        xeroRefundCreditNoteId: "cn_refund",
       }),
-    ).toEqual([{ kind: "refund-note", amountCents: 15000, operationStatus: "SUCCEEDED" }]);
+    ).toEqual([
+      {
+        kind: "refund-note",
+        creditNoteId: "cn_refund",
+        amountCents: 15000,
+        operationStatus: "SUCCEEDED",
+        allocatedCents: 5000,
+      },
+    ]);
   });
 
   it("keeps a refund note known only from the payment's link field, size unknown", () => {
     expect(
-      resolveIbHoldClearingNotes({ operations: [], xeroRefundCreditNoteId: "cn_1" }),
-    ).toEqual([{ kind: "refund-note", amountCents: null, operationStatus: null }]);
+      resolveIbHoldClearingNotes({ operations: [], allocationLinks: [], xeroRefundCreditNoteId: "cn_1" }),
+    ).toEqual([
+      { kind: "refund-note", creditNoteId: "cn_1", amountCents: null, operationStatus: null, allocatedCents: 0 },
+    ]);
   });
 
   it("takes the newest operation per shape and reports both shapes when both exist", () => {
     const notes = resolveIbHoldClearingNotes({
       operations: [
-        { localModel: "Booking", status: "PENDING", requestPayload: { refundAmountCents: 2655 } },
-        { localModel: "Booking", status: "FAILED", requestPayload: { refundAmountCents: 999 } },
-        { localModel: "Payment", status: "SUCCEEDED", requestPayload: { refundAmountCents: 12345 } },
+        { localModel: "Booking", status: "FAILED", xeroObjectId: null, requestPayload: { refundAmountCents: 2655 } },
+        { localModel: "Booking", status: "SUCCEEDED", xeroObjectId: "cn_old", requestPayload: { refundAmountCents: 999 } },
+        { localModel: "Payment", status: "SUCCEEDED", xeroObjectId: "cn_1", requestPayload: { refundAmountCents: 12345 } },
       ],
+      allocationLinks: [],
       xeroRefundCreditNoteId: "cn_1",
     });
-    expect(notes).toEqual([
-      { kind: "allocated-clearing-note", amountCents: 2655, operationStatus: "PENDING" },
-      { kind: "refund-note", amountCents: 12345, operationStatus: "SUCCEEDED" },
+    expect(notes.map((note) => [note.kind, note.operationStatus, note.amountCents])).toEqual([
+      ["allocated-clearing-note", "FAILED", 2655],
+      ["refund-note", "SUCCEEDED", 12345],
     ]);
   });
 });
 
 describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
-  it("judges each released hold by the ledger the release reads and the note it actually raised", async () => {
+  it("judges each released hold by the ledger the release reads and what its notes allocated", async () => {
     const payments = [
       // Released after #3535, applied credit allocated to the invoice: cleared
       // by the allocated note at 10000 — correct, not flagged.
       {
         id: "pay_new",
         bookingId: "booking_new",
-        amountCents: 12345,
         changeFeeCents: 0,
         xeroInvoiceId: "inv_new",
         xeroInvoiceNumber: "INV-NEW",
         xeroRefundCreditNoteId: null,
         booking: { finalPriceCents: 15000, status: "CANCELLED" },
       },
-      // Released before #1597: refund note at the credit-reduced amount.
+      // Released after #3535, but its clearing operation FAILED: fully open.
+      {
+        id: "pay_failed",
+        bookingId: "booking_failed",
+        changeFeeCents: 0,
+        xeroInvoiceId: "inv_failed",
+        xeroInvoiceNumber: "INV-FAILED",
+        xeroRefundCreditNoteId: null,
+        booking: { finalPriceCents: 15000, status: "CANCELLED" },
+      },
+      // Released before #3535: a refund note nobody allocated.
       {
         id: "pay_old",
         bookingId: "booking_old",
-        amountCents: 12345,
         changeFeeCents: 0,
         xeroInvoiceId: "inv_old",
         xeroInvoiceNumber: "INV-OLD",
@@ -239,7 +297,6 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
       {
         id: "pay_none",
         bookingId: "booking_none",
-        amountCents: 5000,
         changeFeeCents: 0,
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
@@ -247,22 +304,42 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         booking: { finalPriceCents: 5000, status: "CANCELLED" },
       },
     ];
-    const allocatedByBooking: Record<string, number> = { booking_new: 5000, booking_old: 0 };
+    const allocatedByBooking: Record<string, number> = { booking_new: 5000 };
     const operations = [
       {
         localModel: "Booking",
         localId: "booking_new",
         status: "SUCCEEDED",
+        xeroObjectId: "cn_new",
         requestPayload: { refundAmountCents: 10000, clearsUnpaidInvoice: true },
+      },
+      {
+        localModel: "Booking",
+        localId: "booking_failed",
+        status: "FAILED",
+        xeroObjectId: null,
+        requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", refundAmountCents: 15000 },
       },
       {
         localModel: "Payment",
         localId: "pay_old",
         status: "SUCCEEDED",
-        requestPayload: { refundAmountCents: 12345 },
+        xeroObjectId: "cn_old",
+        requestPayload: { refundAmountCents: 15000 },
+      },
+    ];
+    const links = [
+      {
+        localModel: "Booking",
+        localId: "booking_new",
+        metadata: { creditNoteId: "cn_new", invoiceId: "inv_new", amountCents: 10000 },
       },
     ];
     const operationQueries: unknown[] = [];
+    const matches = (
+      arms: Array<{ localModel: string; localId: string }>,
+      row: { localModel: string; localId: string },
+    ) => arms.some((arm) => arm.localModel === row.localModel && arm.localId === row.localId);
 
     const fakeDb = {
       payment: { findMany: async () => payments },
@@ -272,26 +349,26 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         }),
       },
       xeroSyncOperation: {
-        findMany: async (query: {
-          where: { OR: Array<{ localModel: string; localId: string }> };
-        }) => {
+        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> } }) => {
           operationQueries.push(query);
-          return operations.filter((op) =>
-            query.where.OR.some(
-              (arm) => arm.localModel === op.localModel && arm.localId === op.localId,
-            ),
-          );
+          return operations.filter((op) => matches(query.where.OR, op));
         },
+      },
+      xeroObjectLink: {
+        findMany: async (query: { where: { OR: Array<{ localModel: string; localId: string }> } }) =>
+          links.filter((link) => matches(query.where.OR, link)),
       },
     };
 
     const result = await auditIbHoldClearingUnderclears({ db: fakeDb as never });
 
-    expect(result.invoiceBearingHolds).toBe(2);
+    expect(result.invoiceBearingHolds).toBe(3);
     expect(result.noInvoiceReleasedHolds).toBe(1);
-    expect(result.underCleared.map((finding) => finding.bookingId)).toEqual(["booking_old"]);
-    expect(result.underCleared[0]?.deltaCents).toBe(2655);
-    expect(result.totalDeltaCents).toBe(2655);
+    expect(result.underCleared.map((finding) => [finding.bookingId, finding.deltaCents])).toEqual([
+      ["booking_failed", 15000],
+      ["booking_old", 15000],
+    ]);
+    expect(result.totalDeltaCents).toBe(30000);
     // Both shapes are asked for: the booking's clearing note and the payment's
     // refund note.
     expect(operationQueries[0]).toMatchObject({
@@ -578,7 +655,7 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
       changeFeeCents: -500,
       xeroAllocatedAppliedCreditCents: 0,
       expectedClearingCents: 122956,
-      enqueuedClearingCents: 0,
+      allocatedClearingCents: 0,
       deltaCents: 122956,
     };
     const report = formatIbHoldClearingAuditReport({
@@ -615,22 +692,35 @@ describe("formatIbHoldClearingAuditReport (#3302, #3325)", () => {
           bookingStatus: "CANCELLED",
           invoiceRef: "INV-001",
           clearingNotes: [
-            { kind: "allocated-clearing-note", amountCents: 1000, operationStatus: "PARTIAL" },
-            { kind: "refund-note", amountCents: null, operationStatus: null },
+            {
+              kind: "allocated-clearing-note",
+              creditNoteId: "cn_1",
+              amountCents: 1000,
+              operationStatus: "PARTIAL",
+              allocatedCents: 0,
+            },
+            {
+              kind: "allocated-clearing-note",
+              creditNoteId: null,
+              amountCents: 15000,
+              operationStatus: "FAILED",
+              allocatedCents: 0,
+            },
+            { kind: "refund-note", creditNoteId: "cn_2", amountCents: null, operationStatus: null, allocatedCents: 0 },
           ],
           finalPriceCents: 15000,
           changeFeeCents: 0,
           xeroAllocatedAppliedCreditCents: 0,
           expectedClearingCents: 15000,
-          enqueuedClearingCents: 13345,
-          deltaCents: 1655,
+          allocatedClearingCents: 0,
+          deltaCents: 15000,
         },
       ],
-      totalDeltaCents: 1655,
+      totalDeltaCents: 15000,
     }, CLUB_FORMAT_TEST);
 
     expect(report).toContain(
-      "clearing notes:   allocated clearing note (#3535) ($10.00, PARTIAL); refund note (before #3535) (size not recorded, assumed the pre-#1597 payment amount)",
+      "clearing notes:   allocated clearing note (#3535) ($10.00, PARTIAL; $0.00 allocated); clearing note (#3535) NOT created ($150.00, FAILED); refund note (before #3535) issued, invoice NOT cleared unless allocated by hand (size not recorded; $0.00 allocated)",
     );
   });
 });
