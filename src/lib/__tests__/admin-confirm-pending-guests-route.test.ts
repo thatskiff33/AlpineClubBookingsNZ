@@ -119,9 +119,18 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
 
 import { POST } from "@/app/api/admin/bookings/[id]/confirm-pending-guests/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-currency";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
@@ -257,6 +266,7 @@ const FULL = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   mocks.requireAdmin.mockResolvedValue({
     ok: true,
     session: { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
@@ -1148,6 +1158,31 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       mocks.settleHosting.mock.invocationCallOrder[0],
     );
     expect(mocks.paymentUpsert).toHaveBeenCalled();
+    expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("refuses a card charge in a club currency without two decimal places with a 409 before the claim (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.paymentTransactionCreate).not.toHaveBeenCalled();
+    expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("still confirms a $0 booking to PAID in a club currency without two decimal places (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking({ finalPriceCents: 0 }));
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ status: "PAID", charged: false });
     expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
   });
 

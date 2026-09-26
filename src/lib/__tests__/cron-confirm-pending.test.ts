@@ -324,6 +324,15 @@ vi.mock("../prisma", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 const {
   confirmPendingBookings,
   splitSettlementExtensionNumber,
@@ -527,6 +536,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
     vi.clearAllMocks();
+    clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
     mockEnqueueXeroBookingInvoiceOperation.mockResolvedValue({
       queueOperationId: "op_1",
       message: "queued",
@@ -682,6 +692,30 @@ describe("Cron: Confirm Pending Bookings", () => {
         orderBy: { createdAt: "asc" },
       })
     );
+  });
+
+  it("charges nothing and reads no booking when the club's currency has no two decimal places, logging one error (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mockPendingBookings([makePendingBooking("b1")]);
+    const logger = (await import("@/lib/logger")).default;
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined as never);
+    try {
+      const result = await confirmPendingBookings();
+
+      expect(result).toEqual({
+        confirmedBookingIds: [],
+        bumpedBookingIds: [],
+        cancelledBookingIds: [],
+        partialBumpedBookingIds: [],
+        failedBookingIds: [],
+      });
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(mockBookingFindMany).not.toHaveBeenCalled();
+      expect(mockPrismaTransaction).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {

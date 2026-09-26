@@ -30,14 +30,14 @@ export const CLUB_FORMAT_SERVER_SETTINGS =
 
 /** Nothing recorded is rewritten. */
 export const CLUB_FORMAT_NOTHING_REWRITTEN =
-  "No amount already recorded is rewritten or re-converted. A payment of 8450 cents is still 8450 cents; only the way an amount is written follows this setting, never what it is worth.";
+  "No amount is converted, recorded or not. A payment of 8450 cents stays 8450 cents in the currency it was paid in, and every price keeps its number — after a change the same number is shown, and charged, in the new currency.";
 
 /**
  * Card payments follow the setting (#3567, owner decision D1), and what a
  * change does to a payment already under way.
  */
 export const CLUB_FORMAT_CARD_PAYMENTS =
-  "Card payments are charged in this currency. Saving a different one changes what cards are charged in straight away: a card payment already started stays in the currency it was started in, a saved card charged later is charged in the new currency, and a payment-recovery retry that began before the change is refused by the payment provider. Currencies without two decimal places, such as JPY or KWD, cannot be chosen, because every amount here is kept in hundredths.";
+  "Card payments are charged in this currency. Saving a different one changes what new card charges are made in straight away. A card payment already started stays in the currency it was started in unless the member reopens it, when it is replaced by one in the new currency. A saved card charged later is charged in the new currency. A payment-recovery retry is refused by the payment provider for the first 24 hours after the change and is then made in the new currency. A refund of a payment taken before the change goes back in that payment's original currency, though this site shows its amount in the new one. Currencies without two decimal places, such as JPY or KWD, cannot be chosen, because every amount here is kept in hundredths.";
 
 /**
  * Xero's base currency must match (#3567, owner decision D8). Invoices sent to

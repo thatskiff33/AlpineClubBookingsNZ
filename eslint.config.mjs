@@ -545,8 +545,10 @@ export const CLUB_FORMAT_GUARD_ARMS = {
 // retired names anywhere in `src/` code, tests included, comments stripped. The
 // browser-import census in `client-server-boundary-census.test.ts` protects the
 // path in the client graph as well.
-const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?$/";
-const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/]";
+// Case-insensitive, and the module as a path SEGMENT: with or without an
+// extension, a trailing slash, `/index` or anything beneath it (#3567 review).
+const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?(?:\\/.*)?$/i";
+const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/i]";
 const RETIRED_FORMAT_CONSTANT_MESSAGE =
   "INV-CONFIG-006 / #3567: do not import @/config/operational. #3567 deleted it with its four constants (APP_CURRENCY, APP_LOCALE, APP_STRIPE_CURRENCY, APP_TIME_ZONE). The club's currency and locale are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from the format stripe.ts already requires; the club's time zone is clubTimeZone() / clubTime() from @/lib/club-time/server or readClubTimeZoneOutsideRequest(). The environment is a seed only (club-format-env.ts, club-time-zone-env.ts).";
 const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
@@ -1051,6 +1053,28 @@ const NO_ENVIRONMENT_ZONE_IMPORT = [
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.name="APP_TIME_ZONE"]',
   'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.value="APP_TIME_ZONE"]',
 ].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+// INV-CONFIG-006 / #3567 review — the ENVIRONMENT's currency and locale, read
+// anywhere but the one seed reader. `CURRENCY` / `LOCALE` seed the stored
+// `ClubFormatSettings` row once; `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE`
+// are not read at all. A new reader of any of the four is a second authority for
+// what the club charges and shows, so the same three spellings the zone arm
+// closes are closed here, and `club-format-env.ts` is the one file exempt.
+const ENVIRONMENT_FORMAT_ENV = "/^(CURRENCY|LOCALE|NEXT_PUBLIC_CURRENCY|NEXT_PUBLIC_LOCALE)$/";
+const ENVIRONMENT_FORMAT_MESSAGE =
+  "INV-CONFIG-006 / #3567: The environment's currency and locale are not the club's. `CURRENCY` / `LOCALE` seed the stored ClubFormatSettings row once, in club-format-env.ts, and `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE` are not read at all. Read the club's format with clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, or getClubFormat() in a src/lib module that already imports @/lib/prisma; card charges take the currency from stripeChargeCurrency(format).";
+const ENVIRONMENT_FORMAT_RESTRICTIONS = [
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `MemberExpression[object.object.name="process"][object.property.name="env"][property.value=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=${ENVIRONMENT_FORMAT_ENV}]`,
+  `VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=${ENVIRONMENT_FORMAT_ENV}]`,
+].map((selector) => ({ selector, message: ENVIRONMENT_FORMAT_MESSAGE }));
+
+/** The one file allowed to read the environment's currency and locale. */
+const ENVIRONMENT_FORMAT_ADAPTER_FILES = ["src/lib/club-format-env.ts"];
+
+/** The environment-format arm as bare selectors, read by its guard test. */
+export const ENVIRONMENT_FORMAT_ARMS = ENVIRONMENT_FORMAT_RESTRICTIONS.map((entry) => entry.selector);
 
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
@@ -2644,6 +2668,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
   ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
   ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
+  ...ENVIRONMENT_FORMAT_RESTRICTIONS,
 ];
 
 /**
@@ -2672,6 +2697,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     omits: ENVIRONMENT_ZONE_RESTRICTIONS,
     reason:
       "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. #3126 then took `src/lib/member-merge-field-kinds.ts` off by deleting the `= APP_TIME_ZONE` DEFAULT the exemption had been covering (`INV-SSOT-003`) — an exemption written for a READ should never have excused a default, and `AUTHORITY_DEFAULT_RESTRICTIONS` is on the mandatory set precisely so no entry here can excuse one again. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
+  },
+  {
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    omits: ENVIRONMENT_FORMAT_RESTRICTIONS,
+    reason:
+      "The seed reader for the club's currency and locale (#3563; #3567 review): the one module whose job is to read CURRENCY / LOCALE once, for the first-boot backfill and the no-row fallback, and to warn when only a retired NEXT_PUBLIC_ twin is set. Every other file reads the stored setting.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
@@ -2932,6 +2963,19 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         ENVIRONMENT_ZONE_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // The seed reader for the club's currency and locale is the one file that
+    // may read CURRENCY / LOCALE and the retired NEXT_PUBLIC_ twins (#3567
+    // review). Only that group is dropped; the rendering arms are re-stated for
+    // the reason the block above gives.
+    files: ENVIRONMENT_FORMAT_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        ENVIRONMENT_FORMAT_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
       ),
     },

@@ -59,6 +59,9 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
   it("says card payments follow the setting, and Stripe and Xero must match (#3567 D1, D2, D8)", () => {
     expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/charged in this currency/);
     expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/already started stays/);
+    // #3567 review: the retry window and the refund divergence are disclosed.
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/first 24 hours/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/refund of a payment taken before the change/);
     expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/saved card charged later/);
     expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/two decimal places/);
     expect(CLUB_FORMAT_CARD_PAYMENTS).not.toMatch(/configured with|conversation with/);

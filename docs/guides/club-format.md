@@ -89,24 +89,36 @@ writes the time on a 24-hour clock ("14:30" rather than "2:30 pm") and spells
 the month out in German, so a long month name can make the lobby display's
 date line wider. That is the setting working, not a fault.
 
-**Card payments are charged in this currency.** What a member is shown and what
-their card is charged are the same currency, always. Until #3567 cards were
+**Card payments are charged in this currency.** Every NEW card charge is made in
+the currency a member is shown. Until #3567 cards were
 charged in the server's `CURRENCY` instead, so a club that changed its currency
 here was shown one currency and charged another. Saving a different currency
 therefore changes live card charges **at once**, and three kinds of payment
 already under way behave differently:
 
 - a card payment a member has **already started** stays in the currency it was
-  started in, and is recorded as the same number of cents;
+  started in if they finish it from the page they already have open, and is
+  recorded as the same number of cents; if they reopen the payment page, the
+  old payment is replaced by one in the new currency;
 - a **saved card** waiting to be charged later (a pending booking) is charged
   the same number of cents in the **new** currency, even though its price was
   set in the old one;
+- a **saved-card charge the payment provider never answered** waits for a
+  person: its retry, now in a different currency, is refused without saying
+  whether the first try charged, so after 23 hours the site asks an
+  administrator to check Stripe rather than risk charging twice;
 - a **payment-recovery retry** that began before the change is refused by the
-  payment provider, because it repeats a request in a different currency; it
-  shows up on the payment-recovery screens for a person to finish.
+  payment provider for the first 24 hours, because it repeats a request in a
+  different currency; after that it is made afresh in the new currency;
+- a **refund** of a payment taken before the change goes back in that payment's
+  original currency (Stripe refunds in the currency it charged), but this site
+  shows the refunded amount in the new currency, because it records every amount
+  as a number of cents without a currency.
 
-The confirmation counts all three before you save, and a currency change needs
-its own tick on top of the ordinary one. It warns; it does not stop you.
+The confirmation counts the payments under way before you save, and a currency
+change needs its own tick on top of the ordinary one. It warns; it does not stop
+you. Only a Full Administrator sees the counts, because only a Full Administrator
+can make the change.
 
 **The club's Stripe account and its Xero base currency must match this
 currency.** Invoices this site sends to Xero carry no currency of their own, so
@@ -212,10 +224,11 @@ is older than the currency.
 | The AI settings page says the conversion rate is not set | The club's currency was changed, which clears the rate set for the old one | Enter the rate for the new currency on the AI settings page. **Admin → Audit Log**, action `AI_SPEND_CURRENCY_RATE_CLEARED`, says when and by whom |
 | Saving an AI spend rate says the club's currency changed | Someone changed the currency while the rate was being saved, so it was not stored | Reload the page and enter the rate for the new currency |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
-| The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |
+| The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents, in the currency it was paid in | Nothing to fix. No amount is converted: after a change the same numbers are shown, and new card charges are made, in the new currency |
 | Saving a currency says it "does not count in hundredths" | The currency has no decimal places (`JPY`) or three (`KWD`), and every amount here is kept in hundredths | Choose a currency with two decimal places. Supporting other currencies is not planned for now |
 | A card payment was charged in the old currency after a change | The member had already started paying before the change; the payment provider keeps the currency a payment started in | Nothing to fix on this page. Reconcile it in Stripe and Xero as a payment in the old currency |
-| A payment-recovery retry failed straight after a currency change | The retry repeated a request in a different currency, which the payment provider refuses | Finish that payment by hand from the payment-recovery screens |
+| A payment-recovery retry failed straight after a currency change | The retry repeated a request in a different currency, which the payment provider refuses for 24 hours | Nothing to fix unless it is urgent: after 24 hours the retry is made afresh in the new currency. To settle it sooner, finish it by hand from the payment-recovery screens |
+| "Not usable" appears under the currency, naming a currency such as JPY | A currency without two decimal places was recorded by hand or copied from `CURRENCY` before #3567; card payments cannot be taken in it, so the site falls back to the default | Set a currency with two decimal places on this page |
 | Xero invoices appear in the wrong currency | The Xero organisation's base currency is not the club's currency. Invoices carry no currency of their own | Change the Xero organisation's base currency to match, or talk to the club's accountant first |
 | A card was charged in a currency the club did not expect | Card payments follow this page. Before #3567 they followed the server's `CURRENCY` | Check the currency here. Changing `CURRENCY` on the server no longer affects card payments |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |

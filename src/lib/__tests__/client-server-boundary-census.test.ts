@@ -79,11 +79,11 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * zone list.
  *
  * `@/lib/club-format-env` (#3563) is the same pair for the same reason, and it
- * is the sharper case: `NEXT_PUBLIC_CURRENCY` and `NEXT_PUBLIC_LOCALE` have NO
- * `Dockerfile` build argument, so in the published image they inline as
- * `undefined` — a client-side read would not merely answer from the build, it
- * would answer nothing at all and fall through to the shipped New Zealand
- * defaults on every club. That is the defect programme #3205 exists to fix, so
+ * is the sharper case: it reads the server's `CURRENCY` / `LOCALE`, which a
+ * browser bundle does not have at all (they are not `NEXT_PUBLIC_`, and since
+ * #3567 the `NEXT_PUBLIC_` twins are not read either), so a client-side read
+ * would answer nothing and fall through to the shipped New Zealand defaults on
+ * every club. That is the defect programme #3205 existed to fix, so
  * re-creating it in the module written to fix it would be a particular kind of
  * absurd. Its sibling `@/lib/club-format` is pure validation and is
  * deliberately NOT here: the admin panel needs its currency list.
@@ -183,17 +183,39 @@ function read(file: string) {
  */
 const RUNTIME_IMPORT =
   /^[ \t]*(?:import|export)\s+(?!type[\s{])(?:[^;'"]*?\bfrom\s+)?["']([^"']+)["']/gm;
-const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
+/**
+ * A dynamic `import()` / `require()` whose argument is a literal: quoted, or a
+ * backtick literal with no `${}` in it, with an options argument allowed after
+ * it (#3567 review). It is matched on the text with comments STRIPPED by the one
+ * canonical stripper, which is what stops a webpack magic comment inside the
+ * parentheses hiding the specifier.
+ */
+const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*(["'`])([^"'`$]+)\1\s*[,)]/g;
 
 function specifiers(text: string): string[] {
   return [
     ...[...text.matchAll(RUNTIME_IMPORT)].map((m) => m[1]),
-    ...[...text.matchAll(DYNAMIC_IMPORT)].map((m) => m[1]),
+    ...[...stripComments(text).matchAll(DYNAMIC_IMPORT)].map((m) => m[2]),
   ];
 }
 
 /** Resolve a specifier to an absolute file under `src/`, or null if external. */
+/**
+ * Resolution is memoised per (directory, specifier) (#3567 review): both walks
+ * below resolve the same edges from 500-odd roots, and the uncached filesystem
+ * probes were what put each walk near the 5 s test timeout.
+ */
+const resolveCache = new Map<string, string | null>();
 function resolveSpecifier(fromFile: string, specifier: string): string | null {
+  const key = `${path.dirname(fromFile)}|${specifier}`;
+  const cached = resolveCache.get(key);
+  if (cached !== undefined) return cached;
+  const resolved = resolveSpecifierUncached(fromFile, specifier);
+  resolveCache.set(key, resolved);
+  return resolved;
+}
+
+function resolveSpecifierUncached(fromFile: string, specifier: string): string | null {
   let base: string;
   if (specifier.startsWith("@/")) {
     base = path.join(SRC, specifier.slice(2));
@@ -295,7 +317,9 @@ const BROWSER_ENTRY_FILES = ["src/instrumentation-client.ts"].map((file) =>
 );
 
 const clientModules = [
-  ...files.filter((file) => startsWithUseClientDirective(read(file).slice(0, 400))),
+  // The WHOLE file, not a 400-character head (#3567 review): a directive after a
+  // long header comment was missed, and a module it marks went unwalked.
+  ...files.filter((file) => startsWithUseClientDirective(read(file))),
   ...BROWSER_ENTRY_FILES.filter((file) => existsSync(file)),
 ];
 
@@ -342,7 +366,7 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
       violations,
       `A "use client" module reaches server-only code. Everything on the path below is compiled into the browser bundle:\n\n${violations.join("\n\n")}`,
     ).toEqual([]);
-  });
+  }, 30_000);
 });
 
 /**
@@ -386,8 +410,22 @@ function isForbiddenConfigLeaf(fromFile: string, specifier: string): string | nu
   } else {
     return null;
   }
-  const withoutExt = base.replace(/\.(?:[cm]?[jt]sx?)$/, "");
-  return BROWSER_FORBIDDEN_CONFIG_MODULES.has(withoutExt) ? specifier : null;
+  // Case-insensitive, and the NAME as a path segment: the module itself with or
+  // without an extension, a trailing slash, an `/index`, or anything beneath it
+  // (`@/config/Operational`, `@/config/operational/sub`) — #3567 review. A
+  // sibling that merely starts with the letters (`operational-hours`) is not it.
+  const target = path.normalize(base).replace(/[\\/]+$/, "").toLowerCase();
+  for (const forbidden of BROWSER_FORBIDDEN_CONFIG_MODULES) {
+    const name = forbidden.toLowerCase();
+    if (
+      target === name ||
+      /^\.(?:[cm]?[jt]sx?)$/.test(target.slice(name.length)) && target.startsWith(name) ||
+      target.startsWith(name + path.sep)
+    ) {
+      return specifier;
+    }
+  }
+  return null;
 }
 
 /** Breadth-first, like `findServerReach`, so the trail is the shortest one. */
@@ -414,6 +452,21 @@ function findConfigReach(
 }
 
 describe("#3567: no browser module reaches @/config/operational, at any depth", () => {
+  it("reads a dynamic import through a magic comment, a backtick literal and an options argument (#3567 review)", () => {
+    expect(specifiers('export const a = () => import(/* webpackChunkName: "x" */ "@/config/operational");')).toContain("@/config/operational");
+    expect(specifiers("export const b = () => import(`@/config/operational`);")).toContain("@/config/operational");
+    expect(specifiers('export const c = () => import("@/config/operational", { with: {} });')).toContain("@/config/operational");
+    // A template WITH a substitution cannot be read to a value, and is not
+    // guessed at; the lint arm refuses it outright instead.
+    expect(specifiers("export const d = (n: string) => import(`@/config/${n}`);")).toEqual([]);
+  });
+
+  it("finds a \"use client\" directive after a long header comment (#3567 review)", () => {
+    const header = `/**\n${" * a long docblock line that pushes the directive past the old limit\n".repeat(20)} */\n`;
+    expect(header.length).toBeGreaterThan(400);
+    expect(startsWithUseClientDirective(`${header}"use client";\nexport const x = 1;\n`)).toBe(true);
+  });
+
   it("guards exactly one configuration path, and it is the retired one", () => {
     expect(BROWSER_FORBIDDEN_CONFIG_MODULES.size).toBe(1);
     expect(BROWSER_FORBIDDEN_CONFIG_MODULES.has(path.join(SRC, "config", "operational"))).toBe(true);
@@ -439,7 +492,7 @@ describe("#3567: no browser module reaches @/config/operational, at any depth", 
       }
     }
     expect(violations, `${BROWSER_CONFIG_MESSAGE}\n\n${violations.join("\n\n")}`).toEqual([]);
-  });
+  }, 30_000);
 
   it("recognises every spelling of the path, with or without a file behind it", () => {
     const from = path.join(SRC, "components", "admin", "x.tsx");
@@ -451,6 +504,16 @@ describe("#3567: no browser module reaches @/config/operational, at any depth", 
       "@/config//operational",
       "../../config/operational",
       "../../config/operational.js",
+    ]) {
+      expect(isForbiddenConfigLeaf(from, specifier), specifier).toBe(specifier);
+    }
+    // Every case and shape of the NAME, with or without a file (#3567 review).
+    for (const specifier of [
+      "@/config/Operational",
+      "@/config/OPERATIONAL.ts",
+      "@/config/operational/",
+      "@/config/operational/index",
+      "@/config/operational/sub/deeper",
     ]) {
       expect(isForbiddenConfigLeaf(from, specifier), specifier).toBe(specifier);
     }

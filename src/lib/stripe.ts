@@ -48,7 +48,6 @@ export async function getStripe(): Promise<Stripe> {
  * `stripe-charge-currency.ts`, re-exported here for existing importers.
  */
 export {
-  BelowStripeMinimumError,
   stripeChargeCurrency,
   UnsupportedChargeCurrencyError,
 } from "@/lib/stripe-charge-currency";

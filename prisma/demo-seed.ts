@@ -35,6 +35,7 @@ import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { redeemPromoCode } from "../src/lib/promo";
 import { getClubFormat } from "../src/lib/club-format-settings";
+import { stripeChargeCurrency } from "../src/lib/stripe-charge-currency";
 import {
   DEMO_BOOKING_WINDOWS,
   DUAL_HAT_ADMIN,
@@ -270,7 +271,7 @@ async function main() {
   const format = await getClubFormat();
   // A refund row records the currency Stripe refunded in; the demo's charges
   // were taken in the club's currency, and the column has no default (#3567).
-  const demoRefundCurrency = format.currencyCode.toLowerCase();
+  const demoRefundCurrency = stripeChargeCurrency(format);
   await assertDemoSeedSafety();
   await cleanup();
   console.log("Building demo data...");

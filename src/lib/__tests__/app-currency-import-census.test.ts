@@ -3,7 +3,11 @@ import path from "node:path";
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { MANDATORY_SRC_RESTRICTIONS, RETIRED_FORMAT_CONSTANT_ARMS } from "../../../eslint.config.mjs";
+import {
+  ENVIRONMENT_FORMAT_ARMS,
+  MANDATORY_SRC_RESTRICTIONS,
+  RETIRED_FORMAT_CONSTANT_ARMS,
+} from "../../../eslint.config.mjs";
 import { stripComments } from "./support/strip-comments";
 
 /**
@@ -55,8 +59,15 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("#3567: @/config/operational is deleted, and no import of it lints clean", () => {
-  it("no longer exists", () => {
-    expect(existsSync(path.join(ROOT, "src/config/operational.ts"))).toBe(false);
+  it("no longer exists, in any case or shape", () => {
+    // Case-insensitive, and a directory counts too (#3567 review): Windows and
+    // macOS resolve `Operational.ts` for `@/config/operational`, and a
+    // `operational/index.ts` directory is the same module to a bundler.
+    expect(existsSync(path.join(ROOT, "src/config"))).toBe(true);
+    const revived = readdirSync(path.join(ROOT, "src/config")).filter((name) =>
+      /^operational(?:\.|$)/i.test(name),
+    );
+    expect(revived, "src/config/operational is retired (#3567); do not recreate it").toEqual([]);
   });
 
   it("is on the mandatory set, so no block can lift it", () => {
@@ -114,6 +125,22 @@ describe("#3567: @/config/operational is deleted, and no import of it lints clea
     }
   });
 
+  it("refuses every case and shape of the path: a capital, a trailing slash, /index, a subpath (#3567 review)", async () => {
+    for (const code of [
+      'import { x } from "@/config/Operational";\nexport const y = x;',
+      'import { x } from "@/config/operational/";\nexport const y = x;',
+      'import { x } from "@/config/operational/index";\nexport const y = x;',
+      'import { x } from "@/config/OPERATIONAL/sub.js";\nexport const y = x;',
+      "export const y = () => import(`@/config/Operational`);",
+    ]) {
+      expect(await hits(code, "src/lib/season-label.ts"), code).toBe(1);
+    }
+    // A sibling that merely begins with the letters is a different module.
+    expect(
+      await hits('import { x } from "@/config/operational-hours";\nexport const y = x;', "src/lib/season-label.ts"),
+    ).toBe(0);
+  });
+
   it("refuses the two constants #3567 retired too, which the #3566 arm used to leave alone", async () => {
     for (const code of [
       'import { APP_TIME_ZONE } from "@/config/operational";\nexport const x = APP_TIME_ZONE;',
@@ -167,5 +194,43 @@ describe("#3567 backstop: none of the four retired names in src code, tests incl
       offenders,
       "The environment constants are retired (#3567): take the club's locale and currency from clubFormatValues() / clubFormat() on the server or useClubFormat() in the browser, the card-charge currency from stripe.ts's own derivation, and the club's time zone from clubTimeZone() or readClubTimeZoneOutsideRequest(). A test pins a fixed value instead (CLUB_FORMAT_TEST, CLUB_TIME_TEST_ZONE).",
     ).toEqual([]);
+  });
+});
+
+describe("#3567 review: no new reader of the environment's currency or locale", () => {
+  const ENV_PREFIX = "INV-CONFIG-006 / #3567: The environment's currency and locale";
+
+  async function envHits(code: string, file: string): Promise<number> {
+    const results = await eslint.lintText(code, { filePath: path.join(ROOT, file) });
+    return results
+      .flatMap((result) => result.messages)
+      .filter((message) => (message.message ?? "").startsWith(ENV_PREFIX)).length;
+  }
+
+  it("is on the mandatory set, so no block can lift it by accident", () => {
+    const mandatory = new Set(MANDATORY_SRC_RESTRICTIONS.map((r: { selector: string }) => r.selector));
+    expect(ENVIRONMENT_FORMAT_ARMS.length).toBe(4);
+    for (const selector of ENVIRONMENT_FORMAT_ARMS) expect(mandatory.has(selector), selector).toBe(true);
+  });
+
+  it("refuses all three spellings, for each of the four variables, anywhere but the seed reader", async () => {
+    for (const name of ["CURRENCY", "LOCALE", "NEXT_PUBLIC_CURRENCY", "NEXT_PUBLIC_LOCALE"]) {
+      for (const code of [
+        `export const x = process.env.${name};`,
+        `export const x = process.env["${name}"];`,
+        `const { ${name} } = process.env;\nexport const x = ${name};`,
+        `const { "${name}": v } = process.env;\nexport const x = v;`,
+      ]) {
+        for (const file of ["src/lib/season-label.ts", "src/components/x.tsx", "scripts/x.ts"]) {
+          expect(await envHits(code, file), `${file}: ${code}`).toBe(1);
+        }
+      }
+    }
+  });
+
+  it("leaves the seed reader, and other variables, alone", async () => {
+    expect(await envHits("export const x = process.env.CURRENCY;", "src/lib/club-format-env.ts")).toBe(0);
+    expect(await envHits("export const x = process.env.CURRENCY_ROUNDING;", "src/lib/season-label.ts")).toBe(0);
+    expect(await envHits("export const x = process.env.LOCALE_DIR;", "src/lib/season-label.ts")).toBe(0);
   });
 });

@@ -251,6 +251,25 @@ vi.mock("@/lib/booking-payment-cleanup", () => ({
     mockQueueSupersededPrimaryIntentCancellations(...args),
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (the
+// file-level beforeEach) is the house fixture, so every other case reads the
+// format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+// #3567: PARTIAL, so `intentCurrencyDiffers` stays real (it is the rule under
+// test) and only the re-issue, whose own steps are unit-tested in
+// `additional-intent-currency.test.ts`, is replaced.
+const mockReissueAdditionalIntentInClubCurrency = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/additional-intent-currency", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/additional-intent-currency")),
+  reissueAdditionalIntentInClubCurrency: (...a: unknown[]) =>
+    mockReissueAdditionalIntentInClubCurrency(...a),
+}));
+
 // Chore cleanup mock
 vi.mock("@/lib/chore-cleanup", () => ({
   cleanupChoreAssignmentsForDateChange: vi.fn().mockResolvedValue({ choreWarnings: [] }),
@@ -270,6 +289,7 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -568,6 +588,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(FIXED_NOW);
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   mockQueueSupersededAdditionalIntentCancellations.mockResolvedValue([]);
   mockQueueSupersededPrimaryIntentCancellations.mockResolvedValue([]);
   mockUpsertPaymentIntentTransaction.mockResolvedValue({});
@@ -2068,6 +2089,89 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(200);
+  });
+
+  it("re-issues an ask minted in another currency and returns the NEW intent's secret, never the old one (#3567)", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(
+      additionalPaymentRow({ stripeCustomerId: "cus_1" })
+    );
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      client_secret: "pi_additional_secret_aud", currency: "aud",
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      carriedAskCents: 1000,
+      reason: "edit_financial_review_charge",
+      status: "PENDING",
+      createdAt: new Date(),
+    });
+    mockReissueAdditionalIntentInClubCurrency.mockResolvedValue({
+      id: "pi_reissued",
+      amount: 3000,
+      client_secret: "pi_reissued_secret_nzd", currency: "nzd",
+    });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toEqual({
+      clientSecret: "pi_reissued_secret_nzd",
+      amountCents: 3000,
+      paymentIntentId: "pi_reissued",
+    });
+    expect(mockReissueAdditionalIntentInClubCurrency).toHaveBeenCalledTimes(1);
+    const [call] = mockReissueAdditionalIntentInClubCurrency.mock.calls[0];
+    expect(call).toMatchObject({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "bk1",
+      paymentId: "p1",
+      staleIntentId: "pi_additional",
+      reason: "edit_financial_review_charge",
+      customerId: "cus_1",
+    });
+    // The ask is restated unchanged: the same total, the same carried part.
+    expect(call.ask.amountCents).toBe(3000);
+    expect(call.ask.carriedCents).toBe(1000);
+  });
+
+  it("does not re-issue an intent already in the club's currency (#3567)", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      client_secret: "pi_additional_secret_nzd", currency: " NZD ",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ clientSecret: "pi_additional_secret_nzd" });
+    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+  });
+
+  it("refuses with a 409 in a club currency without two decimal places before reading the payment (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE });
+    expect(mockPaymentFindUnique).not.toHaveBeenCalled();
+    expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
+    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
   });
 
   it("returns 403 for a different member trying to access", async () => {

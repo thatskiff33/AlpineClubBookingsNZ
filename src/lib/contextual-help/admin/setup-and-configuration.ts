@@ -582,7 +582,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Currency",
           description:
-            "The three-letter code for the currency the club charges in, such as NZD. It decides how an amount is written - it never converts one. An amount already recorded is worth exactly what it was worth before.",
+            "The three-letter code for the currency the club charges in, such as NZD. It decides how an amount is written and the currency new card charges are made in. It never converts an amount: an amount already recorded stays the same number in the currency it was paid in.",
         },
         {
           name: "Number and date format",

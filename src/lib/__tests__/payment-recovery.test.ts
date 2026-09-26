@@ -255,6 +255,16 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (the
+// file-level beforeEach below) is the house fixture, so every other case reads
+// the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 import {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -277,6 +287,10 @@ import {
   buildEditFinancialReviewAdditionalIntentStripeKey,
 } from "@/lib/payment-recovery-keys";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+beforeEach(() => {
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
+});
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -1947,6 +1961,31 @@ describe("payment recovery worker", () => {
         }),
       }),
     );
+  });
+
+  it("leaves a card charge unclaimed in a club currency without two decimal places, and still runs a cancellation (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    const charge = makeOperation({
+      id: "recovery-charge",
+      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+      status: "PENDING",
+      paymentIntentId: "mod_guest_bk1_mod-9",
+      paymentTransactionId: null,
+    });
+    const cancel = makeOperation({ status: "PENDING" });
+    mockPaymentRecoveryFindMany.mockImplementation((args?: unknown) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : [charge, cancel]),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 10 });
+
+    expect(result).toMatchObject({ found: 2, processed: 1, succeeded: 1, skipped: 1 });
+    const claimedIds = mockPaymentRecoveryUpdateMany.mock.calls
+      .filter(([call]) => call?.data?.status === PaymentRecoveryOperationStatus.PROCESSING)
+      .map(([call]) => call?.where?.id);
+    expect(claimedIds).toEqual(["recovery-1"]);
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_superseded");
   });
 
   describe("additional PaymentIntent recovery (#1096)", () => {
