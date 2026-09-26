@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   txExecuteRaw: vi.fn(),
   recordInternetBankingPaymentTransaction: vi.fn(),
-  cancelPaymentIntentIfCancellable: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
+  txPaymentFindUnique: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
   enqueueXeroAppliedCreditAllocationOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
@@ -49,7 +50,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     mocks.recordInternetBankingPaymentTransaction,
 }));
 vi.mock("@/lib/stripe", () => ({
-  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
+  cancelPaymentIntentIfCancellableWithResult:
+    mocks.cancelPaymentIntentIfCancellableWithResult,
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroBookingInvoiceOperation,
@@ -177,7 +179,7 @@ beforeEach(() => {
         $executeRaw: mocks.txExecuteRaw,
         $queryRaw: vi.fn().mockResolvedValue([]),
         lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
-        payment: { upsert: mocks.upsert },
+        payment: { upsert: mocks.upsert, findUnique: mocks.txPaymentFindUnique },
         memberCredit: { aggregate: mocks.creditAggregate },
         booking: {
           findUnique: mocks.txBookingFindUnique,
@@ -186,7 +188,13 @@ beforeEach(() => {
         },
       })
   );
-  mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(undefined);
+  // #3638 — Stripe confirms the cancel by default; the refusal tests override.
+  mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+    paymentIntent: { id: "pi_123", status: "canceled" },
+    canceled: true,
+  });
+  // Under the locks the payment still points at the intent that was cancelled.
+  mocks.txPaymentFindUnique.mockResolvedValue({ stripePaymentIntentId: "pi_123" });
   mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
     queueOperationId: "queue-1",
   });
@@ -424,7 +432,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     });
 
     // Voids the open Stripe intent.
-    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_123");
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_123");
 
     // Flips the payment to Internet Banking, clearing the Stripe intent. With no
     // applied credit the effective amount is the full price and the mirror is 0.
@@ -538,12 +546,118 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
   });
 
-  it("still succeeds when a Stripe intent cannot be cancelled", async () => {
-    mocks.cancelPaymentIntentIfCancellable.mockRejectedValueOnce(
+});
+
+/**
+ * #3638 — the switch refuses unless the card payment is really cancelled. It
+ * used to ignore the cancel's answer, so a card payment that had already gone
+ * through survived the switch and the member was invoiced for the same price.
+ * Every refusal happens before the locked transaction: no lock, no payment
+ * write, no invoice.
+ */
+describe("POST /api/payments/switch-to-internet-banking — the card payment must be dead (#3638)", () => {
+  function expectNothingWritten() {
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  }
+
+  // Whatever status Stripe reports, `canceled: false` on a live intent is a
+  // refusal — the route does not second-guess which statuses can still charge.
+  for (const status of ["succeeded", "processing", "requires_capture"] as const) {
+    it(`refuses with 409 and raises no invoice when Stripe does not cancel a ${status} intent`, async () => {
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+        paymentIntent: { id: "pi_123", status },
+        canceled: false,
+      });
+
+      const res = await POST(postRequest());
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        code: "CARD_PAYMENT_NOT_CANCELLABLE",
+        error: expect.stringContaining("already gone through"),
+      });
+      expectNothingWritten();
+    });
+  }
+
+  it("refuses with 409 and raises no invoice when the cancel throws (a failed cancel proves nothing)", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValueOnce(
       new Error("stripe down")
     );
+
     const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_CANCEL_UNCONFIRMED",
+      error: expect.stringContaining("couldn't confirm"),
+    });
+    expectNothingWritten();
+  });
+
+  it("switches when the intent was already cancelled before the request", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "canceled" },
+      canceled: false,
+    });
+
+    const res = await POST(postRequest());
+
     expect(res.status).toBe(200);
     expect(mocks.upsert).toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalled();
+  });
+
+  it("does not call Stripe at all when the booking has no card intent", async () => {
+    mocks.findUnique.mockResolvedValueOnce(
+      stripeBooking({
+        payment: {
+          source: PaymentSource.STRIPE,
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: null,
+        },
+      })
+    );
+    mocks.txPaymentFindUnique.mockResolvedValueOnce({ stripePaymentIntentId: null });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+  });
+
+  it("409s and writes nothing when a different card intent appeared while it waited for the locks", async () => {
+    // The member opened the pay page in another tab: a fresh, chargeable intent
+    // replaced the one this request cancelled. Forgetting it would re-open the
+    // double collection.
+    mocks.txPaymentFindUnique.mockResolvedValueOnce({ stripePaymentIntentId: "pi_new" });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("409s when an intent appeared under the locks for a booking that had none", async () => {
+    mocks.findUnique.mockResolvedValueOnce(
+      stripeBooking({
+        payment: {
+          source: PaymentSource.STRIPE,
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: null,
+        },
+      })
+    );
+    mocks.txPaymentFindUnique.mockResolvedValueOnce({ stripePaymentIntentId: "pi_new" });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });
