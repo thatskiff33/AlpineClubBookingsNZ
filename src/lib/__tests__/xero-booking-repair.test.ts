@@ -628,6 +628,69 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  // #3535: a clearing note that went PARTIAL replays its recorded allocation
+  // plan through the retry; the arm no longer queues a fresh full-size
+  // allocation against the primary invoice alone.
+  it("retries a partial clearing note's recorded allocations instead of queueing a full one (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_partial_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PARTIAL",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true })
+    );
+    expect(
+      bookingReport.actions.some((action) =>
+        JSON.stringify(action.payload).includes("operation_partial_clearing")
+      )
+    ).toBe(true);
+  });
+
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
   // cancel path's own helper — applied credit already allocated to the invoice
   // is not cleared twice, and a fully allocated invoice needs no note at all.

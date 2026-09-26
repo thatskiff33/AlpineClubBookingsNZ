@@ -26,6 +26,10 @@ import {
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
+import {
+  readRecordedClearingAllocations,
+  type ClearingAllocationTarget,
+} from "@/lib/xero-clearing-allocations";
 import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -677,7 +681,11 @@ function parseBookingClearingNoteRetryInput(
 
 function parseModificationCreditNoteRepairInput(
   operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "xeroObjectId">
-): { creditNoteId: string; invoiceId: string; amountCents: number; allocationRole: string } | null {
+): {
+  creditNoteId: string;
+  targets: ClearingAllocationTarget[];
+  allocationRole: string;
+} | null {
   if (
     (!operation.localModel || (operation.localModel !== "Booking" && operation.localModel !== "BookingModification")) ||
     !operation.localId ||
@@ -687,16 +695,18 @@ function parseModificationCreditNoteRepairInput(
   }
 
   const payload = asRecord(operation.requestPayload);
+  // #3535: a clearing note records the invoices it was planned across; replay
+  // exactly those. An edit's note (and any row from before) has one target.
+  const recorded = readRecordedClearingAllocations(payload);
   const invoiceId = readString(payload?.invoiceId);
   const amountCents = readNumber(payload?.refundAmountCents);
-  if (!invoiceId || amountCents === null) {
+  if (!recorded && (!invoiceId || amountCents === null)) {
     return null;
   }
 
   return {
     creditNoteId: operation.xeroObjectId,
-    invoiceId,
-    amountCents,
+    targets: recorded ?? [{ invoiceId: invoiceId!, amountCents: amountCents! }],
     allocationRole: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
   };
 }
@@ -1138,17 +1148,41 @@ export async function retryXeroSyncOperation(
       operation.localModel &&
       operation.localId
     ) {
-      await xero.allocateCreditNoteToInvoice(
-        modificationCreditNoteRepair.creditNoteId,
-        modificationCreditNoteRepair.invoiceId,
-        modificationCreditNoteRepair.amountCents,
-        {
+      // Skip a target the first attempt already allocated (its link exists):
+      // re-allocating it would exceed what that invoice now owes.
+      const existingAllocations = await prisma.xeroObjectLink.findMany({
+        where: {
           localModel: operation.localModel,
           localId: operation.localId,
+          xeroObjectType: "ALLOCATION",
           role: modificationCreditNoteRepair.allocationRole,
-          createdByMemberId,
-        }
+          active: true,
+        },
+        select: { metadata: true },
+      });
+      const allocatedInvoiceIds = new Set(
+        existingAllocations
+          .map((link) => asRecord(link.metadata))
+          .filter(
+            (metadata) =>
+              readString(metadata?.creditNoteId) === modificationCreditNoteRepair.creditNoteId
+          )
+          .map((metadata) => readString(metadata?.invoiceId))
       );
+      for (const target of modificationCreditNoteRepair.targets) {
+        if (allocatedInvoiceIds.has(target.invoiceId)) continue;
+        await xero.allocateCreditNoteToInvoice(
+          modificationCreditNoteRepair.creditNoteId,
+          target.invoiceId,
+          target.amountCents,
+          {
+            localModel: operation.localModel,
+            localId: operation.localId,
+            role: modificationCreditNoteRepair.allocationRole,
+            createdByMemberId,
+          }
+        );
+      }
 
       return { message: "Repaired Xero modification credit note allocation." };
     }

@@ -39,6 +39,12 @@ import {
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
+import {
+  findBookingSupplementaryInvoiceIds,
+  planClearingAllocations,
+  readInvoiceAmountsDue,
+  type ClearingAllocationTarget,
+} from "@/lib/xero-clearing-allocations";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -174,6 +180,39 @@ export async function createXeroCreditNoteForModification(params: {
 
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
+
+  // Where the note is allocated. An edit's reduction goes against the original
+  // invoice, as it always has. A booking-anchored note clears an unpaid
+  // booking's whole invoicing (INV-PAY-017), so it is spread across the
+  // primary and any supplementary invoice, each up to what it still owes, and
+  // is not created at all when they owe less than it (#3535,
+  // `xero-clearing-allocations.ts`).
+  let allocationTargets: ClearingAllocationTarget[];
+  if (bookingModificationId) {
+    allocationTargets = [{ invoiceId: originalInvoiceId, amountCents: refundAmountCents }];
+  } else {
+    try {
+      allocationTargets = planClearingAllocations({
+        format: params.format,
+        noteCents: refundAmountCents,
+        invoices: await readInvoiceAmountsDue(xero, tenantId, [
+          originalInvoiceId,
+          ...(await findBookingSupplementaryInvoiceIds(bookingId)).filter(
+            (invoiceId) => invoiceId !== originalInvoiceId
+          ),
+        ]),
+      });
+    } catch (planError) {
+      if (syncOperationId) {
+        await failXeroSyncOperation(syncOperationId, planError);
+      }
+      throw planError;
+    }
+  }
+  // Recorded only for the booking-anchored note: an edit's single target is
+  // the `invoiceId` it has always recorded.
+  const recordedAllocations = bookingModificationId ? {} : { allocations: allocationTargets };
+
   const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "booking",
     localId,
@@ -187,6 +226,7 @@ export async function createXeroCreditNoteForModification(params: {
     invoiceId: originalInvoiceId,
     refundAmountCents,
     ...recordedWording,
+    ...recordedAllocations,
     ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
@@ -229,6 +269,7 @@ export async function createXeroCreditNoteForModification(params: {
         invoiceId: originalInvoiceId,
         refundAmountCents,
         ...recordedWording,
+        ...recordedAllocations,
         ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
@@ -256,101 +297,98 @@ export async function createXeroCreditNoteForModification(params: {
     }
     const createdCreditNoteId = created.creditNoteID;
 
-    const allocationIdempotencyKey = buildXeroIdempotencyKey(
-      bookingModificationId ? "booking-mod" : "booking",
+    // One allocation call per target, each with its own Xero idempotency key.
+    // A single target (every edit's note, and a clearing note with no
+    // supplementary invoice) keeps the key it always had.
+    const noteLink = {
+      localModel,
       localId,
-      "mod-credit-note-allocation",
-      refundAmountCents,
-      "v1"
-    );
-
-    try {
-      const allocationResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.createCreditNoteAllocation(
-            tenantId,
-            createdCreditNoteId,
-            {
-              allocations: [
-                {
-                  invoice: { invoiceID: originalInvoiceId },
-                  amount: refundAmountCents / 100,
-                  date: modificationCreditNoteDate,
-                },
-              ],
-            },
-            undefined,
-            allocationIdempotencyKey
-          ),
-        {
-          operation: "createCreditNoteAllocation",
-          resourceType: "ALLOCATION",
-          workflow: "createXeroCreditNoteForModification",
-          context: `createCreditNoteAllocation(modification ${localId})`,
-        }
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: createdCreditNoteId,
+      xeroObjectNumber: created.creditNoteNumber ?? null,
+      role: "MODIFICATION_CREDIT_NOTE",
+    };
+    const allocated: ClearingAllocationTarget[] = [];
+    const allocationResponses: unknown[] = [];
+    let allocationError: unknown = null;
+    for (const target of allocationTargets) {
+      const allocationIdempotencyKey = buildXeroIdempotencyKey(
+        bookingModificationId ? "booking-mod" : "booking",
+        localId,
+        "mod-credit-note-allocation",
+        ...(allocationTargets.length > 1 ? [target.invoiceId] : []),
+        target.amountCents,
+        "v1"
       );
-
-      await completeXeroSyncOperation(operationId!, {
-        responsePayload: {
-          creditNote: response.body,
-          allocation: allocationResponse.body,
-        },
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: createdCreditNoteId,
-        xeroObjectNumber: created.creditNoteNumber ?? null,
-        extraLinks: [
-          {
-            localModel,
-            localId,
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: createdCreditNoteId,
-            xeroObjectNumber: created.creditNoteNumber ?? null,
-            role: "MODIFICATION_CREDIT_NOTE",
-          },
-          {
-            localModel,
-            localId,
-            xeroObjectType: "ALLOCATION",
-            xeroObjectId: buildSyntheticAllocationId(
+      try {
+        const allocationResponse = await callXeroApi(
+          () =>
+            xero.accountingApi.createCreditNoteAllocation(
+              tenantId,
               createdCreditNoteId,
-              originalInvoiceId,
-              refundAmountCents
+              {
+                allocations: [
+                  {
+                    invoice: { invoiceID: target.invoiceId },
+                    amount: target.amountCents / 100,
+                    date: modificationCreditNoteDate,
+                  },
+                ],
+              },
+              undefined,
+              allocationIdempotencyKey
             ),
-            xeroObjectUrl: buildXeroInvoiceUrl(originalInvoiceId),
-            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
-            metadata: {
-              creditNoteId: createdCreditNoteId,
-              invoiceId: originalInvoiceId,
-              amountCents: refundAmountCents,
-            },
-          },
-        ],
-      });
-
-      return createdCreditNoteId;
-    } catch (allocationError) {
-      await completeXeroSyncOperation(operationId!, {
-        status: "PARTIAL",
-        responsePayload: {
-          creditNote: response.body,
-          allocationError,
-        },
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: createdCreditNoteId,
-        xeroObjectNumber: created.creditNoteNumber ?? null,
-        extraLinks: [
           {
-            localModel,
-            localId,
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: createdCreditNoteId,
-            xeroObjectNumber: created.creditNoteNumber ?? null,
-            role: "MODIFICATION_CREDIT_NOTE",
-          },
-        ],
-      });
-      return createdCreditNoteId;
+            operation: "createCreditNoteAllocation",
+            resourceType: "ALLOCATION",
+            workflow: "createXeroCreditNoteForModification",
+            context: `createCreditNoteAllocation(modification ${localId} -> ${target.invoiceId})`,
+          }
+        );
+        allocated.push(target);
+        allocationResponses.push(allocationResponse.body);
+      } catch (error) {
+        allocationError = error;
+        break;
+      }
     }
+
+    const allocationLinks = allocated.map((target) => ({
+      localModel,
+      localId,
+      xeroObjectType: "ALLOCATION",
+      xeroObjectId: buildSyntheticAllocationId(
+        createdCreditNoteId,
+        target.invoiceId,
+        target.amountCents
+      ),
+      xeroObjectUrl: buildXeroInvoiceUrl(target.invoiceId),
+      role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+      metadata: {
+        creditNoteId: createdCreditNoteId,
+        invoiceId: target.invoiceId,
+        amountCents: target.amountCents,
+      },
+    }));
+    const allocationBody =
+      allocationResponses.length === 1 ? allocationResponses[0] : allocationResponses;
+
+    await completeXeroSyncOperation(operationId!, {
+      ...(allocationError ? { status: "PARTIAL" as const } : {}),
+      responsePayload: allocationError
+        ? {
+            creditNote: response.body,
+            allocationError,
+            ...(allocationResponses.length > 0 ? { allocation: allocationBody } : {}),
+          }
+        : { creditNote: response.body, allocation: allocationBody },
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: createdCreditNoteId,
+      xeroObjectNumber: created.creditNoteNumber ?? null,
+      extraLinks: [noteLink, ...allocationLinks],
+    });
+
+    return createdCreditNoteId;
   } catch (error) {
     await failXeroSyncOperation(operationId!, error);
     throw error;
