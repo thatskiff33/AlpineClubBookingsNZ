@@ -489,6 +489,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         };
       }
 
+      // #3638 — read BEFORE the receipt below is written: for a CANCELLED
+      // booking the test asks whether this bank cash is new. Acted on after
+      // the receipt, which is recorded either way.
+      const secondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: fresh.id,
+        bookingId: fresh.bookingId,
+        bookingStatus: fresh.booking.status,
+        includeCancelled: true,
+      });
+
       const transactionUpdate = await tx.paymentTransaction.updateMany({
         where: {
           paymentId: fresh.id,
@@ -569,11 +579,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // Raised instead, once per invoice, and nothing further is written: no
       // PAID re-claim (which would also flip a COMPLETED booking back to PAID),
       // no credit, no refund. The rule: `INV-PAY-103`.
-      const secondInstrument = await findSecondInstrumentSettlement(
-        tx,
-        fresh.id,
-        fresh.booking.status,
-      );
       if (secondInstrument) {
         return {
           type: "secondInstrumentConflict" as const,
@@ -584,7 +589,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         };
       }
 
-      if (fresh.booking.status === BookingStatus.PAID) {
+      // #3638: COMPLETED is as settled as PAID. A replay on a completed
+      // booking used to fall through to the PAID claim below, flipping it
+      // back to PAID and re-running the paid arm's side effects (the
+      // confirmation email among them).
+      if (
+        fresh.booking.status === BookingStatus.PAID ||
+        fresh.booking.status === BookingStatus.COMPLETED
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,
@@ -912,11 +924,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
       // #3638: the same second-instrument test against the post-lodge-lock
       // snapshot, for a booking that became settled inside the wait.
-      const lockedSecondInstrument = await findSecondInstrumentSettlement(
-        tx,
-        locked.id,
-        locked.booking.status,
-      );
+      const lockedSecondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: locked.id,
+        bookingId: locked.bookingId,
+        bookingStatus: locked.booking.status,
+        // The receipt is already written, so "is this bank cash new" can no
+        // longer be read here; a booking cancelled inside the wait was not
+        // card-settled before it (the read above would have caught that).
+        includeCancelled: false,
+      });
       if (lockedSecondInstrument) {
         return {
           type: "secondInstrumentConflict" as const,
@@ -926,7 +942,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           settledBy: lockedSecondInstrument,
         };
       }
-      if (locked.booking.status === BookingStatus.PAID) {
+      if (
+        locked.booking.status === BookingStatus.PAID ||
+        locked.booking.status === BookingStatus.COMPLETED
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,

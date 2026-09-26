@@ -32,6 +32,9 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindMany: vi.fn(),
   paymentTransactionFindFirst: vi.fn(),
   paymentTransactionCreate: vi.fn(),
+  paymentRecoveryOperationFindMany: vi.fn(),
+  memberCreditFindFirst: vi.fn(),
+  memberCreditAggregate: vi.fn(),
   bookingUpdateMany: vi.fn(),
   memberCreditCreate: vi.fn(),
   bookingEventFindFirst: vi.fn(),
@@ -150,6 +153,11 @@ const tx = {
   },
   memberCredit: {
     create: (...a: unknown[]) => mocks.memberCreditCreate(...a),
+    findFirst: (...a: unknown[]) => mocks.memberCreditFindFirst(...a),
+    aggregate: (...a: unknown[]) => mocks.memberCreditAggregate(...a),
+  },
+  paymentRecoveryOperation: {
+    findMany: (...a: unknown[]) => mocks.paymentRecoveryOperationFindMany(...a),
   },
 };
 
@@ -210,6 +218,11 @@ beforeEach(() => {
   mocks.executeRaw.mockResolvedValue(undefined);
   mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
   mocks.paymentTransactionFindMany.mockResolvedValue([CARD_PRIMARY]);
+  // No captured Internet Banking row yet: this bank cash is new.
+  mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+  mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+  mocks.memberCreditFindFirst.mockResolvedValue(null);
+  mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
   mocks.paymentUpdate.mockResolvedValue({});
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingEventFindFirst.mockResolvedValue(null);
@@ -401,6 +414,116 @@ describe("not a second instrument (#3638)", () => {
     await sync();
 
     expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("card first, then cancelled, then bank (#3638)", () => {
+  it("raises the conflict for new bank cash on a card-settled booking that was cancelled", async () => {
+    // The cancellation refunded the card in full under the club's policy.
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+    ]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(1);
+    // Before #3638 this was the credit-mint arm, which mints only for a
+    // payment that never settled — silently nothing.
+    expect(result.creditedInternetBankingBookings).toBe(0);
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+          bookingStatus: BookingStatus.CANCELLED,
+        }),
+      })
+    );
+    const [alert] = mocks.sendAdminPaymentFailureAlert.mock.calls[0];
+    expect(alert.errorMessage).toContain("later cancelled");
+    // Refunded card rows count on a cancelled booking.
+    expect(mocks.paymentTransactionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: [
+              PaymentStatus.SUCCEEDED,
+              PaymentStatus.PARTIALLY_REFUNDED,
+              PaymentStatus.REFUNDED,
+            ],
+          },
+        }),
+      })
+    );
+  });
+
+  it("stays out of the way when the bank cash was already recorded (a replay, or bank first)", async () => {
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("the opposite order belongs to #1992 (#3638)", () => {
+  it("a card capture the duplicate-capture refund owns is not a second instrument", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID));
+    mocks.paymentRecoveryOperationFindMany.mockResolvedValue([
+      { idempotencyKey: "duplicate_capture_booking-1_pi_card_3638" },
+    ]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(result.skippedAlreadyPaidBookings).toBe(1);
+    expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalledWith({
+      where: {
+        idempotencyKey: { in: ["duplicate_capture_booking-1_pi_card_3638"] },
+      },
+      select: { idempotencyKey: true },
+    });
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe("a replay on a completed booking (#3638)", () => {
+  it("never flips it back to PAID or re-sends the confirmation", async () => {
+    // An ordinary Internet Banking booking, paid by bank and completed after
+    // the stay; Xero redelivers the invoice event.
+    primePayment(switchedPayment(BookingStatus.COMPLETED));
+    mocks.paymentTransactionFindMany.mockResolvedValue([]);
+
+    const result = await sync();
+
+    expect(result.skippedAlreadyPaidBookings).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
+    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not re-claim a booking that COMPLETED while it waited for the lodge lock", async () => {
+    const pending = switchedPayment(BookingStatus.CONFIRMED);
+    mocks.paymentFindMany.mockResolvedValue([pending]);
+    mocks.paymentFindUnique
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(switchedPayment(BookingStatus.COMPLETED));
+    mocks.paymentTransactionFindMany.mockResolvedValue([]);
+
+    const result = await sync();
+
+    expect(result.skippedAlreadyPaidBookings).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
 });
 

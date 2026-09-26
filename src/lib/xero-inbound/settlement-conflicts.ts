@@ -37,6 +37,7 @@ import {
   type SecondInstrumentSettlementConflictEventSnapshot,
 } from "@/lib/manual-settlement-reversal-event";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { buildDuplicateCaptureRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -195,26 +196,68 @@ const SECOND_INSTRUMENT_SETTLED_BOOKING_STATUSES = new Set<BookingStatus>([
   BookingStatus.COMPLETED,
 ]);
 
+/** Every status a captured transaction can end in, refunds included. */
+const CAPTURED_STATUSES = [
+  PaymentStatus.SUCCEEDED,
+  PaymentStatus.PARTIALLY_REFUNDED,
+  PaymentStatus.REFUNDED,
+];
+
 /**
  * #3638: the captured PRIMARY row of a DIFFERENT instrument — not Internet
- * Banking, so today a card payment — that still holds net cash, on a booking
- * that is already settled. Null when there is none, which is every ordinary
- * Internet Banking booking and every replay of one.
+ * Banking, so today a card payment — on a booking that instrument already
+ * settled. Null when there is none, which is every ordinary Internet Banking
+ * booking and every replay of one.
+ *
+ * - PAID / COMPLETED: the card row must still hold net cash — a capture
+ *   refunded in full holds nothing twice.
+ * - CANCELLED (only with `includeCancelled`, the pre-settlement read): any
+ *   capture, refunded or not, because the cancellation already settled the
+ *   card money under its own policy and this bank cash has nowhere to go —
+ *   the credit-mint arm mints only for a payment that never settled. Counted
+ *   only while the bank cash is NEW (no captured Internet Banking PRIMARY row
+ *   yet), so a replay of a bank payment that settled the booking FIRST, on a
+ *   booking a stray card capture later hit, is not mistaken for one.
+ *
+ * Never a capture the #1992 duplicate-capture refund owns: that is the
+ * opposite order (bank first, card second), and its durable refund operation
+ * already says which side goes back (`INV-PAY-043`).
  *
  * Read under the lock(1) the settle loop already holds, which the card
  * settlement takes too, so the settlement it looks for has either committed or
  * not started. PRIMARY only: an ADDITIONAL card row is a booking change paid by
- * card on top of an Internet Banking booking — one price paid once. A fully
- * refunded capture (the #1992 duplicate-capture refund of a card that landed
- * AFTER the bank transfer) holds nothing twice.
+ * card on top of an Internet Banking booking — one price paid once.
  */
 export async function findSecondInstrumentSettlement(
   tx: Prisma.TransactionClient,
-  paymentId: string,
-  bookingStatus: BookingStatus,
+  {
+    paymentId,
+    bookingId,
+    bookingStatus,
+    includeCancelled,
+  }: {
+    paymentId: string;
+    bookingId: string;
+    bookingStatus: BookingStatus;
+    includeCancelled: boolean;
+  },
 ) {
-  if (!SECOND_INSTRUMENT_SETTLED_BOOKING_STATUSES.has(bookingStatus)) {
+  const cancelled =
+    includeCancelled && bookingStatus === BookingStatus.CANCELLED;
+  if (!cancelled && !SECOND_INSTRUMENT_SETTLED_BOOKING_STATUSES.has(bookingStatus)) {
     return null;
+  }
+  if (cancelled) {
+    const bankCashAlreadyRecorded = await tx.paymentTransaction.findFirst({
+      where: {
+        paymentId,
+        kind: PaymentTransactionKind.PRIMARY,
+        source: PaymentSource.INTERNET_BANKING,
+        status: { in: CAPTURED_STATUSES },
+      },
+      select: { id: true },
+    });
+    if (bankCashAlreadyRecorded) return null;
   }
   const captured = await tx.paymentTransaction.findMany({
     where: {
@@ -222,7 +265,9 @@ export async function findSecondInstrumentSettlement(
       kind: PaymentTransactionKind.PRIMARY,
       source: { not: PaymentSource.INTERNET_BANKING },
       status: {
-        in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+        in: cancelled
+          ? CAPTURED_STATUSES
+          : [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
       },
     },
     select: {
@@ -232,9 +277,43 @@ export async function findSecondInstrumentSettlement(
       refundedAmountCents: true,
     },
   });
+  const candidates = cancelled
+    ? captured
+    : captured.filter(
+        (transaction) => transaction.amountCents > transaction.refundedAmountCents
+      );
+  if (candidates.length === 0) return null;
+
+  const duplicateKeys = candidates.flatMap((transaction) =>
+    transaction.stripePaymentIntentId
+      ? [
+          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+            bookingId,
+            transaction.stripePaymentIntentId,
+          ),
+        ]
+      : []
+  );
+  const duplicateRefunds =
+    duplicateKeys.length > 0
+      ? await tx.paymentRecoveryOperation.findMany({
+          where: { idempotencyKey: { in: duplicateKeys } },
+          select: { idempotencyKey: true },
+        })
+      : [];
+  const ownedByDuplicateRefund = new Set(
+    duplicateRefunds.map((operation) => operation.idempotencyKey)
+  );
   return (
-    captured.find(
-      (transaction) => transaction.amountCents > transaction.refundedAmountCents
+    candidates.find(
+      (transaction) =>
+        !transaction.stripePaymentIntentId ||
+        !ownedByDuplicateRefund.has(
+          buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+            bookingId,
+            transaction.stripePaymentIntentId,
+          )
+        )
     ) ?? null
   );
 }
@@ -287,12 +366,17 @@ export async function recordSecondInstrumentSettlementConflict({
   if (!holdsClaim) return;
 
   const cardNetCents = settledBy.amountCents - settledBy.refundedAmountCents;
+  const invoiceLabel = `Internet Banking invoice${invoiceNumber ? ` ${invoiceNumber}` : ""}`;
+  const errorMessage =
+    bookingStatus === BookingStatus.CANCELLED
+      ? `This booking was paid by card (${formatCents(settledBy.amountCents, format)} captured, ${formatCents(cardNetCents, format)} still held after refunds) and later cancelled, and Xero now reports its ${invoiceLabel} paid as well. The cancellation already settled the card payment under the club's policy; the bank payment has been recorded against the booking and nothing was credited or refunded for it automatically. Check in Xero whether it is separate money from the member, then return it or hold it as their account credit.`
+      : `This booking may have been paid TWICE. A card payment of ${formatCents(cardNetCents, format)} had already settled it, and Xero now reports its ${invoiceLabel} paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.`;
   await sendAdminPaymentFailureAlert({
     memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`.trim(),
     checkIn: payment.booking.checkIn,
     checkOut: payment.booking.checkOut,
     amountCents: payment.amountCents,
-    errorMessage: `This booking may have been paid TWICE. A card payment of ${formatCents(cardNetCents, format)} had already settled it, and Xero now reports its Internet Banking invoice${invoiceNumber ? ` ${invoiceNumber}` : ""} paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.`,
+    errorMessage,
     paymentIntentId: settledBy.stripePaymentIntentId ?? invoiceId,
   }, format).catch((err) =>
     logger.error(
