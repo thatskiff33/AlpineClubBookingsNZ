@@ -14,7 +14,7 @@
  */
 
 import { Invoice, LineAmountTypes } from "xero-node";
-import { GroupBookingStatus } from "@prisma/client";
+import { GroupBookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
@@ -68,6 +68,86 @@ import { formatCents } from "@/lib/utils";
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
+}
+
+/**
+ * #3642 (`INV-PAY-105`): the post-create fence, under `lock(1)`. The invoice
+ * Xero just raised is bound to the settlement only if the settlement is still
+ * waiting on THIS attempt, for THIS total — otherwise it is abandoned on
+ * arrival: its VOID queued and its link written INACTIVE (so a payment on it is
+ * still recognised), never pointed at or emailed. That covers a settlement
+ * released or taken over by card meanwhile, a later attempt that superseded
+ * this one, a settlement already pointing at another invoice, and an invoice
+ * whose total is not the settlement's. The ACTIVE link is written beside the
+ * pointer, so a reaper that later retires the invoice always sees it.
+ *
+ * A cancelled group keeps the pre-#3642 rule: the pointer is written and the
+ * cancellation VOID queued (`INV-PAY-035`).
+ */
+export async function bindCreatedGroupSettlementInvoice(
+  tx: Prisma.TransactionClient,
+  params: {
+    settlementId: string;
+    attempt: number;
+    invoice: { id: string; number: string | null; totalCents: number | null };
+  }
+): Promise<{
+  cancellationWon: boolean;
+  abandoned: boolean;
+  totalMismatch: boolean;
+  queuedVoidOperationId: string | null;
+}> {
+  const { settlementId, attempt, invoice } = params;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+  const fresh = await tx.groupBookingSettlement.findUnique({
+    where: { id: settlementId },
+    select: {
+      source: true,
+      status: true,
+      amountCents: true,
+      xeroInvoiceId: true,
+      groupBooking: { select: { status: true } },
+    },
+  });
+  if (!fresh) {
+    throw new Error(`Group settlement not found: ${settlementId}`);
+  }
+  const link = groupSettlementInvoiceLink(settlementId, invoice);
+  const current = await currentGroupSettlementInvoiceAttempt(tx, settlementId);
+  const totalMatches = invoice.totalCents === fresh.amountCents;
+  if (
+    fresh.groupBooking.status !== GroupBookingStatus.CANCELLED &&
+    (!isGroupSettlementBoundToInvoice(fresh) ||
+      (current !== null && attempt < current) ||
+      (fresh.xeroInvoiceId !== null && fresh.xeroInvoiceId !== invoice.id) ||
+      !totalMatches)
+  ) {
+    await enqueueXeroGroupSettlementInvoiceAbandonVoidOperation(settlementId, invoice.id, {
+      store: tx,
+    });
+    await upsertXeroObjectLink({ ...link, active: false }, { store: tx });
+    return {
+      cancellationWon: false,
+      abandoned: true,
+      totalMismatch: isGroupSettlementBoundToInvoice(fresh) && !totalMatches,
+      queuedVoidOperationId: null,
+    };
+  }
+  await tx.groupBookingSettlement.update({
+    where: { id: settlementId },
+    data: { xeroInvoiceId: invoice.id, xeroInvoiceNumber: invoice.number },
+  });
+  await upsertXeroObjectLink(link, { store: tx });
+  const cancellationWon = fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
+  const queuedVoid = cancellationWon
+    ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlementId, { store: tx })
+    : null;
+  return {
+    cancellationWon,
+    abandoned: false,
+    totalMismatch: false,
+    queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
+  };
 }
 
 /**
@@ -302,78 +382,17 @@ export async function createXeroInvoiceForGroupSettlement(
     // wins: retain the provider id for retryable compensation, void the invoice,
     // and never email it. If this transaction sees OPEN/CLOSED, issuance won the
     // serialization point and a later cancellation is a separate lifecycle.
-    const cancellationResult = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const fresh = await tx.groupBookingSettlement.findUnique({
-        where: { id: settlement.id },
-        select: {
-          source: true,
-          status: true,
-          amountCents: true,
-          xeroInvoiceId: true,
-          groupBooking: { select: { status: true } },
+    const cancellationResult = await prisma.$transaction((tx) =>
+      bindCreatedGroupSettlementInvoice(tx, {
+        settlementId: settlement.id,
+        attempt,
+        invoice: {
+          id: createdInvoice.invoiceID!,
+          number: createdInvoice.invoiceNumber ?? null,
+          totalCents: providerAmountToCents(createdInvoice.total),
         },
-      });
-      if (!fresh) {
-        throw new Error(`Group settlement not found: ${settlementId}`);
-      }
-      const link = groupSettlementInvoiceLink(settlement.id, {
-        id: createdInvoice.invoiceID!,
-        number: createdInvoice.invoiceNumber,
-      });
-      // #3642: bound to THIS attempt, for THIS total — or abandoned on arrival
-      // (VOID queued, linked INACTIVE so a payment on it is still recognised,
-      // never pointed at or emailed). Released or taken over by card meanwhile;
-      // a later attempt superseded this one; the settlement already points at
-      // another invoice; or what Xero raised is not the settlement's total.
-      const current = await currentGroupSettlementInvoiceAttempt(tx, settlementId);
-      const totalMatches =
-        providerAmountToCents(createdInvoice.total) === fresh.amountCents;
-      if (
-        fresh.groupBooking.status !== GroupBookingStatus.CANCELLED &&
-        (!isGroupSettlementBoundToInvoice(fresh) ||
-          (current !== null && attempt < current) ||
-          (fresh.xeroInvoiceId !== null &&
-            fresh.xeroInvoiceId !== createdInvoice.invoiceID) ||
-          !totalMatches)
-      ) {
-        await enqueueXeroGroupSettlementInvoiceAbandonVoidOperation(
-          settlement.id,
-          createdInvoice.invoiceID!,
-          { store: tx }
-        );
-        await upsertXeroObjectLink({ ...link, active: false }, { store: tx });
-        return {
-          cancellationWon: false,
-          abandoned: true,
-          totalMismatch: isGroupSettlementBoundToInvoice(fresh) && !totalMatches,
-          queuedVoidOperationId: null,
-        };
-      }
-      await tx.groupBookingSettlement.update({
-        where: { id: settlement.id },
-        data: {
-          xeroInvoiceId: createdInvoice.invoiceID,
-          xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
-        },
-      });
-      // #3642: the ACTIVE link is written beside the pointer, under the same
-      // lock, so a reaper that retires the invoice always sees it.
-      await upsertXeroObjectLink(link, { store: tx });
-      const cancellationWon =
-        fresh.groupBooking.status === GroupBookingStatus.CANCELLED;
-      const queuedVoid = cancellationWon
-        ? await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
-            store: tx,
-          })
-        : null;
-      return {
-        cancellationWon,
-        abandoned: false,
-        totalMismatch: false,
-        queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
-      };
-    });
+      })
+    );
 
     if (cancellationResult.abandoned) {
       if (cancellationResult.totalMismatch) {

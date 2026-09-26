@@ -145,6 +145,13 @@ import "./booking-ledger-credit-sync.realdb.test";
 // the one dietary module's select. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-2941-` fixtures.
 import "./member-dietary-omit.realdb.test";
+// #3642 reuses it to prove the bound group-settlement invoice against
+// PostgreSQL itself: a refused change really rolls back the bed it claimed, the
+// reaper's release and the create worker's fence decide one invoice exactly
+// once in either order, and two observers abandoning one invoice converge on
+// one VOID row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
+// its own `race-3642-` fixtures.
+import "./group-settlement-invoice-binding-races.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
