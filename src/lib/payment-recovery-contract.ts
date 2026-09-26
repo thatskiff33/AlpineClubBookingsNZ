@@ -101,7 +101,7 @@ export function isRefundedCardTransactionRepaymentRequired(
 }
 
 /**
- * #3638 (`INV-PAY-103`): the booking is being paid by Internet Banking — it
+ * #3638 (`INV-PAY-102`): the booking is being paid by Internet Banking — it
  * switched before this request, or while its card intent was being minted — so
  * the session pay route refuses a card payment beside the emailed invoice. One
  * body for both refusals, and a pure leaf so the pay page can recognise it

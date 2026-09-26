@@ -3461,7 +3461,7 @@ lodge, then `lockMemberCreditLedger(memberId)` locks in that order;
 the IB payment mirror must never mix a pre-lock price with post-lock credit (or
 vice versa). The switch and both card mint doors (the pay route and the
 `/pay/<token>` link) also exclude each other on lock(1) (#3638,
-`INV-PAY-103`): the switch refuses unless Stripe confirms the card intent is
+`INV-PAY-102`): the switch refuses unless Stripe confirms the card intent is
 dead before its transaction, and under the lock it refuses when the payment
 points at a different intent from the one it retired; each mint door attaches
 its freshly minted intent through `attachMintedCardIntent`, a global-only

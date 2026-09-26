@@ -251,7 +251,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "attachMintedCardIntent#1",
     tier: "GLOBAL",
     reason:
-      "#3638: both card mint doors (create-payment-intent and the /pay/<token> link) attach a freshly minted intent here, re-reading the payment's source and the booking's status under the key the Internet Banking switch holds, so a switch that committed during the mint is refused, and a mint that attached first leaves the switch a different intent from the one it cancelled (INV-PAY-103). Global key alone: no capacity or credit is touched.",
+      "#3638: both card mint doors (create-payment-intent and the /pay/<token> link) attach a freshly minted intent here, re-reading the payment's source and the booking's status under the key the Internet Banking switch holds, so a switch that committed during the mint is refused, and a mint that attached first leaves the switch a different intent from the one it cancelled (INV-PAY-102). Global key alone: no capacity or credit is touched.",
     invariant: "INV-LOCK-001",
   },
   {

@@ -68,7 +68,7 @@ export class PaymentLinkPaymentRecoveryError extends Error {
  * raised alongside carries the full detail.
  */
 /**
- * #3638 (`INV-PAY-103`). The booking is being paid by Internet Banking — it was
+ * #3638 (`INV-PAY-102`). The booking is being paid by Internet Banking — it was
  * switched before this request, or while its intent was being minted — so the
  * link will not take a card payment beside the emailed invoice. The pay page
  * shows the bank-transfer details this points at.
@@ -124,7 +124,7 @@ export async function createPaymentIntentForPaymentLink(
   }
 
   // #3638 — a booking switched to Internet Banking has an emailed invoice; a
-  // card payment beside it is the double collection `INV-PAY-103` forbids.
+  // card payment beside it is the double collection `INV-PAY-102` forbids.
   // Checked here with no lock, and again under lock(1) where the intent is
   // attached, for a switch that commits in between.
   if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
@@ -410,7 +410,7 @@ export async function createPaymentIntentForPaymentLink(
       : `pl_pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  // #3638 (`INV-PAY-103`): attached under lock(1) after re-reading the
+  // #3638 (`INV-PAY-102`): attached under lock(1) after re-reading the
   // payment's source and the booking's status — see the shared helper. A
   // refused intent is cancelled there and its secret never leaves the server.
   const attached = await attachMintedCardIntent({

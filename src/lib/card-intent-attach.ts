@@ -1,6 +1,6 @@
 /**
  * ATTACHING A FRESHLY MINTED CARD INTENT TO A BOOKING'S PAYMENT — one home for
- * both card mint doors (#3638, `INV-PAY-103`): the session pay route
+ * both card mint doors (#3638, `INV-PAY-102`): the session pay route
  * (`create-payment-intent`) and the payment-link route (`/pay/<token>`).
  *
  * The write is serialised with the Internet Banking switch on lock(1), which

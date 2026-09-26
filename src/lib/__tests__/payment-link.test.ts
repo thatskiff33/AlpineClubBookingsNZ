@@ -1338,7 +1338,7 @@ describe("createPaymentIntentForPaymentLink", () => {
     );
   });
 
-  // #3638 (`INV-PAY-103`): the link is the third card door. A booking switched
+  // #3638 (`INV-PAY-102`): the link is the third card door. A booking switched
   // to Internet Banking has an emailed invoice, and a card intent recorded
   // beside it also flips the payment's source back to STRIPE, hiding a later
   // bank payment from the inbound loop — so the link refuses before minting,

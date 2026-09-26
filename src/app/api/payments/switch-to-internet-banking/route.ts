@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
   // member holding an emailed Xero invoice for the same price. Refused here,
   // before the locked transaction, so a refusal writes nothing and raises no
   // invoice. A refunded intent (#1765's repay-after-refund booking) is as dead
-  // as a cancelled one. The rule: `INV-PAY-103`.
+  // as a cancelled one. The rule: `INV-PAY-102`.
   const cancelledCardIntentId = booking.payment?.stripePaymentIntentId ?? null;
   if (cancelledCardIntentId && booking.payment) {
     const retired = await retireCardIntentBeforeSwitch(

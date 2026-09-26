@@ -459,7 +459,7 @@ export function adminManualSettlementConflictTemplate(data: {
 
 // ---- #3638: Admin Alert — card payment and Xero payment on one booking ----
 //
-// The second-instrument conflict (`INV-PAY-103`). A card payment settled the
+// The second-instrument conflict (`INV-PAY-102`). A card payment settled the
 // booking and Xero then reported its Internet Banking invoice paid too, so the
 // club may hold the price twice. Its OWN template, not the generic payment-
 // failure mail it first shipped as: nothing failed, and "Payment Failed" is the

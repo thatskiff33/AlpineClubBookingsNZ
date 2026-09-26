@@ -13,7 +13,7 @@ import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
- * #3638 (`INV-PAY-103`): a card payment settled the booking and Xero then
+ * #3638 (`INV-PAY-102`): a card payment settled the booking and Xero then
  * reported its Internet Banking invoice paid as well — the club may hold the
  * price twice. It first shipped as a generic "Payment Failed" mail through
  * `sendAdminPaymentFailureAlert`, which misdescribed the event (#2761's

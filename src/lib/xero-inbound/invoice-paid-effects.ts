@@ -580,7 +580,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // fell into the quiet `alreadyPaid` arm below (a counter, nothing else).
       // Raised instead, once per invoice, and nothing further is written: no
       // PAID re-claim (which would also flip a COMPLETED booking back to PAID),
-      // no credit, no refund. The rule: `INV-PAY-103`.
+      // no credit, no refund. The rule: `INV-PAY-102`.
       if (secondInstrument) {
         return {
           type: "secondInstrumentConflict" as const,

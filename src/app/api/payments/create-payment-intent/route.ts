@@ -706,7 +706,7 @@ export async function POST(request: NextRequest) {
         : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
-    // #3638 (`INV-PAY-103`) — attach under lock(1), after re-reading the
+    // #3638 (`INV-PAY-102`) — attach under lock(1), after re-reading the
     // payment's source and the booking's status: a switch to Internet Banking
     // (or a cancel) that committed while the intent was being minted is seen
     // there, and the new intent is refused and cancelled rather than handed
