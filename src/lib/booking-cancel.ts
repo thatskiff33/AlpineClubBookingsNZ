@@ -35,6 +35,7 @@ import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed,
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -1427,6 +1428,11 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     const payment = fresh.payment;
+    // #3640: the Payment row FIRST, before the fold, the top-up write and the
+    // credit allocation touch any row - the one order every writer of the
+    // refunded total takes (`lockPaymentForRefundedTotal`), so a card refund's
+    // webhook landing now cannot deadlock against this claim.
+    await lockPaymentForRefundedTotal(tx, payment.id);
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile

@@ -13,6 +13,8 @@ import { formatCents } from "@/lib/utils";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { withStoreTransaction } from "@/lib/db-transaction";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
+import logger from "@/lib/logger";
+import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
 import { z } from "zod";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -20,6 +22,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 // without an import cycle (#3581); re-exported so existing importers stand.
 import {
   EXCLUDED_LEDGER_REFUND_STATUSES,
+  expectedRefundedFloorCents,
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
 } from "@/lib/payment-transaction-status";
@@ -507,26 +510,25 @@ async function recordStripeRefundLedgerEntry({
   });
   let reversedCents = 0;
   if (inserted.count === 0) {
-    if (!isRecordedRefundStatus(data.status)) {
-      // #3640: a counted refund Stripe now reports failed or cancelled returned
-      // no money, so the mirror takes it back out. The transition is decided by
-      // this guarded write, so exactly one writer sees it and subtracts.
-      const reversed = await store.paymentRefund.updateMany({
-        where: {
-          stripeRefundId: refund.id,
-          status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES },
-        },
-        data,
-      });
-      if (reversed.count === 1) {
-        reversedCents = refund.amount;
-      }
-    }
-    if (reversedCents === 0) {
-      await store.paymentRefund.update({
-        where: { stripeRefundId: refund.id },
-        data,
-      });
+    // The refresh is guarded on the row still being COUNTED, for two reasons:
+    //
+    // - Stripe's `failed` and `canceled` are final, so a row in either is never
+    //   moved back. An idempotent retry of the inline refund gets Stripe's
+    //   ORIGINAL response for 24 hours - a stale `succeeded` - and an unguarded
+    //   write resurrected the failed row, so the next sync saw it fail again
+    //   and subtracted it twice (#3640 delta review, D3).
+    // - When the incoming status is failed or cancelled, this write IS the
+    //   counted -> excluded transition, so exactly one writer sees it and the
+    //   mirror takes that refund back out once.
+    const refreshed = await store.paymentRefund.updateMany({
+      where: {
+        stripeRefundId: refund.id,
+        status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES },
+      },
+      data,
+    });
+    if (refreshed.count === 1 && !isRecordedRefundStatus(data.status)) {
+      reversedCents = refund.amount;
     }
   }
 
@@ -628,6 +630,70 @@ async function addWithinHeadroom(
 const REFUND_LEDGER_WRITERS_MIGRATION = "20260509090000_enrich_payment_refund_ledger";
 
 const REFUND_LEDGER_START_ROW = z.object({ finished_at: z.date() });
+const REFUND_LEDGER_HISTORY_PRESENT_ROW = z.object({ present: z.boolean() });
+
+/**
+ * #3640: THE lock order for a payment's refunded total - the `Payment` row
+ * FIRST, then its `PaymentRefund` rows, then its `PaymentTransaction` row(s).
+ * Every writer of the transaction mirror takes it here before touching
+ * anything else: the card-refund writer, `applyLocalRefundAllocation`, and the
+ * cancel claim (before #1491's fold). Without it the writer took transaction
+ * row -> Payment row (its aggregate) while a cancel with an unpaid top-up took
+ * Payment row -> transaction row (#3640 delta review, D1): a deadlock.
+ *
+ * `FOR NO KEY UPDATE` - the strength an ordinary UPDATE of the row takes - so
+ * it does not block a `PaymentRefund` insert's foreign-key check (`FOR KEY
+ * SHARE`) on the same payment. "Lock raw, read typed" (`INV-OPS-001`): nothing
+ * is read back here.
+ */
+export async function lockPaymentForRefundedTotal(
+  db: PaymentStore,
+  paymentId: string
+): Promise<void> {
+  await db.$executeRaw`SELECT 1 FROM "Payment" WHERE "id" = ${paymentId} FOR NO KEY UPDATE`;
+}
+
+/**
+ * #3640 (delta review, D2): the lowest a counted -> failed subtraction may take
+ * one transaction's mirror to. The payment as a whole must still hold its
+ * account-credit dispositions plus the card refunds still counted - the same
+ * floor the refunded-total audit reports against (`expectedRefundedFloorCents`)
+ * - less what its other transactions already carry.
+ *
+ * Why it is needed. A card refund recorded by the OLD max-based arithmetic on a
+ * transaction that also held a credit never entered the mirror ($100 credit,
+ * $50 card refund, mirror $100). If that refund later fails, subtracting it
+ * would take the mirror to $50 and overstate the headroom by $50 - the over-
+ * refund #3640 closes. The floor keeps it at $100.
+ */
+async function reversalFloorForTransaction(
+  db: PaymentStore,
+  paymentId: string,
+  paymentTransactionId: string
+): Promise<number> {
+  const payment = await loadPaymentWithTransactions(db, paymentId);
+  if (!payment) {
+    return 0;
+  }
+  const counted = await db.paymentRefund.aggregate({
+    where: {
+      paymentId,
+      status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES },
+    },
+    _sum: { amountCents: true },
+  });
+  const paymentFloorCents = expectedRefundedFloorCents({
+    amountCents: payment.transactions
+      .filter((transaction) => isCapturedTransactionStatus(transaction.status))
+      .reduce((sum, transaction) => sum + transaction.amountCents, 0),
+    cardRefundCents: counted._sum.amountCents ?? 0,
+    accountCreditCents: await accountCreditDispositionCents(db, payment.bookingId),
+  });
+  const otherTransactionsCents = payment.transactions
+    .filter((transaction) => transaction.id !== paymentTransactionId)
+    .reduce((sum, transaction) => sum + transaction.refundedAmountCents, 0);
+  return Math.max(paymentFloorCents - otherTransactionsCents, 0);
+}
 
 /**
  * When the refund ledger's writers arrived on THIS install, in whole seconds
@@ -654,6 +720,22 @@ const REFUND_LEDGER_START_ROW = z.object({ finished_at: z.date() });
  * (`INV-OPS-001`: the row is decoded, never cast).
  */
 async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null> {
+  // A database built with `prisma db push` (a dev convenience) has no
+  // `_prisma_migrations` table, and naming a missing table aborts the whole
+  // transaction - every card-refund write with it. Such a database never ran
+  // pre-ledger code either, so a missing table reads like a missing row
+  // (#3640 delta review, D4). Production, CI and e2e all `migrate deploy`.
+  const presence = decodeRawRows(
+    await db.$queryRaw`SELECT to_regclass('"_prisma_migrations"') IS NOT NULL AS "present"`,
+    REFUND_LEDGER_HISTORY_PRESENT_ROW,
+    "refund ledger history present"
+  );
+  if (!presence[0]?.present) {
+    logger.warn(
+      "No _prisma_migrations table: treating every card refund as made since the refund ledger started (#3640)"
+    );
+    return null;
+  }
   const rows = await db.$queryRaw`
     SELECT "finished_at" FROM "_prisma_migrations"
     WHERE "migration_name" = ${REFUND_LEDGER_WRITERS_MIGRATION}
@@ -687,9 +769,10 @@ async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null
  *   nothing; a pre-ledger refund getting its first row adds nothing.
  * - a counted refund this call sees move to failed or cancelled is SUBTRACTED:
  *   no money went back after all. Exactly one writer sees the transition (a
- *   guarded write in `recordStripeRefundLedgerEntry`). Limit: where card plus
- *   credit had exceeded the captured amount the mirror was capped, and the
- *   subtraction can take it below the credit left; the audit lists such rows.
+ *   guarded write in `recordStripeRefundLedgerEntry`), and the subtraction never
+ *   takes the payment below its account credit plus the card refunds still
+ *   counted (`reversalFloorForTransaction`) - so a refund the OLD arithmetic
+ *   never added cannot be taken out of money that was never its.
  *
  * The card refunds on record - and, from the webhook, Stripe's own
  * `amount_refunded` - remain a FLOOR, never the value: the mirror never reads
@@ -706,9 +789,9 @@ async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null
  * - The ledger rows, the mirror, AND the payment aggregate with its booking-
  *   ledger lines commit TOGETHER (`withStoreTransaction`): a crash before the
  *   aggregate would otherwise leave a retry that records nothing new, reports
- *   no delta and queues no Xero note. Lock order: refund rows, then the
- *   transaction row, then the payment row - the order every other writer of the
- *   two rows takes.
+ *   no delta and queues no Xero note. Lock order: the Payment row FIRST
+ *   (`lockPaymentForRefundedTotal`), then refund rows, then the transaction
+ *   row - the one order every writer of the mirror takes.
  * - Refunds are inserted in id order, so two writers inserting overlapping sets
  *   take the unique-index locks in one order.
  *
@@ -734,6 +817,7 @@ export async function recordStripeRefundsAgainstTransaction({
   store?: PaymentStore;
 }) {
   return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
     const ledgerStartSeconds = await refundLedgerStartSeconds(db);
     let createdRefundsCount = 0;
     let createdRefundAmountCents = 0;
@@ -769,6 +853,11 @@ export async function recordStripeRefundsAgainstTransaction({
       paymentTransactionId
     );
 
+    const reversalFloorCents =
+      reversedCents > 0
+        ? await reversalFloorForTransaction(db, paymentId, paymentTransactionId)
+        : 0;
+
     const { previousCents, nextCents } = await compareAndSetRefundedAmount(
       db,
       paymentTransactionId,
@@ -779,6 +868,10 @@ export async function recordStripeRefundsAgainstTransaction({
             row.refundedAmountCents + newlyCountedCents - reversedCents,
             ledgerRefundedAmountCents,
             stripeRefundedAmountCents,
+            // A subtraction never goes below the payment's floor - and the
+            // floor never RAISES a mirror (that would be the repair the audit
+            // leaves to a person).
+            Math.min(row.refundedAmountCents, reversalFloorCents),
             0
           )
         ),
@@ -1373,6 +1466,7 @@ export async function applyLocalRefundAllocation({
   store?: PaymentStore;
 }) {
   await withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
     const payment = await ensurePaymentTransactionsBackfilled(db, paymentId);
     if (!payment) {
       throw new Error("Payment not found");

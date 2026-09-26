@@ -60,3 +60,18 @@ export const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
 export function isRecordedRefundStatus(status: string): boolean {
   return !EXCLUDED_LEDGER_REFUND_STATUSES.includes(status);
 }
+
+/**
+ * The least a payment's refunded total can truthfully be (#3640): what it
+ * captured, or - if less - its card refunds still counted plus the account
+ * credit its booking issued. One home for two readers that must agree: the
+ * card-refund writer's floor on a failed refund's subtraction, and the
+ * refunded-total audit's expected figure.
+ */
+export function expectedRefundedFloorCents(input: {
+  amountCents: number;
+  cardRefundCents: number;
+  accountCreditCents: number;
+}): number {
+  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents);
+}

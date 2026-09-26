@@ -3,6 +3,16 @@ import { PaymentSource, PaymentStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
+  loggerWarn: vi.fn(),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: {
+    warn: mocks.loggerWarn,
+    info: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -80,15 +90,30 @@ function createRefundStore() {
   // `_prisma_migrations`. A refund Stripe made before it that arrives without a
   // row is pre-ledger history the mirror already counts. `null` models an
   // install whose history has no such row (it never ran pre-ledger code).
-  const ledger = { startedAt: new Date("2026-01-01T00:00:00.000Z") as Date | null };
+  const ledger = {
+    startedAt: new Date("2026-01-01T00:00:00.000Z") as Date | null,
+    // #3640 D4: a `db push` database has no `_prisma_migrations` table at all.
+    historyTablePresent: true,
+  };
+  // #3640 D2: the account credit this booking issued (MemberCredit
+  // dispositions), which the failed-refund floor reads.
+  const credit = { dispositionCents: 0 };
 
   const store = {
     // #3640: the one raw read the card-refund writer makes - the ledger
     // writers' migration row. Answered in the physical shape PostgreSQL
     // returns, so the writer's row decoder runs for real.
-    $queryRaw: vi.fn(async () =>
-      ledger.startedAt ? [{ finished_at: ledger.startedAt }] : [],
-    ),
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray) => {
+      if (strings.join("?").includes("to_regclass")) {
+        return [{ present: ledger.historyTablePresent }];
+      }
+      return ledger.startedAt ? [{ finished_at: ledger.startedAt }] : [];
+    }),
+    // #3640 D1: the Payment row lock every writer takes first.
+    $executeRaw: vi.fn(async () => 1),
+    memberCredit: {
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: credit.dispositionCents } })),
+    },
     // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
     // ledger's settlement lines from the same rows, so it reads and writes here.
     bookingLedgerLine: {
@@ -252,7 +277,13 @@ function createRefundStore() {
         let amountCents = 0;
 
         for (const refund of refunds.values()) {
-          if (refund.paymentTransactionId !== where.paymentTransactionId) {
+          if (
+            where.paymentTransactionId !== undefined &&
+            refund.paymentTransactionId !== where.paymentTransactionId
+          ) {
+            continue;
+          }
+          if (where.paymentId !== undefined && refund.paymentId !== where.paymentId) {
             continue;
           }
 
@@ -268,7 +299,7 @@ function createRefundStore() {
     },
   };
 
-  return { store, payment, transaction, transactions, refunds, ledger };
+  return { store, payment, transaction, transactions, refunds, ledger, credit };
 }
 
 describe("payment refund ledger", () => {
@@ -429,10 +460,15 @@ describe("payment refund ledger", () => {
     // row by its Stripe refund ID instead.
     expect(store.paymentRefund.createMany).toHaveBeenCalledTimes(2);
     expect(refunds.size).toBe(1);
-    expect(store.paymentRefund.update).toHaveBeenCalledTimes(1);
-    expect(store.paymentRefund.update).toHaveBeenLastCalledWith(
+    // Guarded on the row still being counted (#3640 D3): a failed or cancelled
+    // row is final and never moved back.
+    expect(store.paymentRefund.updateMany).toHaveBeenCalledTimes(1);
+    expect(store.paymentRefund.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { stripeRefundId: "re_webhook_1" },
+        where: {
+          stripeRefundId: "re_webhook_1",
+          status: { notIn: ["failed", "canceled"] },
+        },
         data: expect.objectContaining({
           stripeChargeId: "ch_1",
           stripePaymentIntentId: "pi_1",
@@ -1285,6 +1321,8 @@ describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () =>
       amountCents,
       store: ctx.store as never,
     });
+    // The MemberCredit row the real credit writers mint alongside.
+    ctx.credit.dispositionCents += amountCents;
   }
 
   describe.each([
@@ -1754,6 +1792,107 @@ describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () =>
 
       expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
     });
+  });
+
+  describe("a failed refund's subtraction has a floor (#3640 delta review, D2)", () => {
+    it("a refund the OLD arithmetic never added, failing now, leaves the credit in the total", async () => {
+      // $400 paid, $100 credit (mirror $100), then a $50 card refund recorded by
+      // the old max rule: row written, mirror left at max(100, 50) = 100.
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      ctx.refunds.set("re_old", {
+        id: "payment_refund_old",
+        paymentId: "payment_1",
+        paymentTransactionId: "txn_1",
+        stripeRefundId: "re_old",
+        amountCents: CARD_REFUND_CENTS,
+        status: "succeeded",
+      });
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+
+      const delta = await webhookSync(ctx, cardRefund("re_old", CARD_REFUND_CENTS, "failed"));
+
+      // Unfloored it would read $50 and offer $50 of headroom that is not there.
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+      expect(delta).toBe(0);
+    });
+
+    it("the floor never RAISES a total - it only bounds the subtraction", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await webhookSync(ctx);
+      // Something outside the writer left the mirror below the floor.
+      ctx.transaction.refundedAmountCents = 12000;
+
+      await webhookSync(ctx, cardRefund("re_1", CARD_REFUND_CENTS, "failed"));
+
+      // 12000 - 5000 = 7000, floored at min(12000, credit 10000) = 10000.
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+    });
+  });
+
+  it("a replayed stale 'succeeded' never resurrects a failed row, so its failure is subtracted once (#3640 delta review, D3)", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+    const refund = cardRefund("re_1", CARD_REFUND_CENTS);
+    await inlineRefund(ctx, refund);
+    await webhookSync(ctx, cardRefund("re_1", CARD_REFUND_CENTS, "failed"));
+    expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+
+    // The officer retries: Stripe answers the idempotency key with its
+    // ORIGINAL response, a stale 'succeeded'.
+    await inlineRefund(ctx, refund);
+    expect(ctx.refunds.get("re_1")?.status).toBe("failed");
+    // The next sync lists it failed again.
+    await webhookSync(ctx, cardRefund("re_1", CARD_REFUND_CENTS, "failed"));
+
+    expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+  });
+
+  it("a database with no migration history (db push) treats nothing as pre-ledger, warns, and does not fail the write (#3640 delta review, D4)", async () => {
+    const ctx = paidStore();
+    ctx.ledger.historyTablePresent = false;
+    await settleCredit(ctx);
+
+    await webhookSync(ctx, {
+      ...cardRefund("re_1", CARD_REFUND_CENTS),
+      created: Date.parse("2020-01-01T00:00:00.000Z") / 1000,
+    });
+
+    expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(
+      expect.stringContaining("No _prisma_migrations table"),
+    );
+  });
+
+  it("takes the Payment row FIRST, before any refund row or transaction row (#3640 delta review, D1)", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+    ctx.store.$executeRaw.mockClear();
+    ctx.store.paymentRefund.createMany.mockClear();
+    ctx.store.paymentTransaction.updateMany.mockClear();
+
+    await webhookSync(ctx);
+
+    const [lockOrder] = ctx.store.$executeRaw.mock.invocationCallOrder;
+    const [insertOrder] = ctx.store.paymentRefund.createMany.mock.invocationCallOrder;
+    const casOrders = ctx.store.paymentTransaction.updateMany.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(insertOrder);
+    expect(lockOrder).toBeLessThan(Math.min(...casOrders));
+    const [strings, paymentId] = ctx.store.$executeRaw.mock.calls[0] as unknown as [TemplateStringsArray, string];
+    expect(strings.join("?")).toContain('FROM "Payment"');
+    expect(strings.join("?")).toContain("FOR NO KEY UPDATE");
+    expect(paymentId).toBe("payment_1");
+  });
+
+  it("the account-credit allocation takes the Payment row first too", async () => {
+    const ctx = paidStore();
+
+    await settleCredit(ctx);
+
+    const [lockOrder] = ctx.store.$executeRaw.mock.invocationCallOrder;
+    const [casOrder] = ctx.store.paymentTransaction.updateMany.mock.invocationCallOrder;
+    expect(lockOrder).toBeLessThan(casOrder);
   });
 
   it("a crash after the mirror and before the aggregate rolls back whole, so the webhook's retry still reports the delta", async () => {

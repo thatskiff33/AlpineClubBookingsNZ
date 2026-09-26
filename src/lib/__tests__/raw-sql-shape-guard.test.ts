@@ -98,8 +98,10 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // `finished_at` of the migration that shipped them. No Prisma model covers
   // `_prisma_migrations`, so it is read raw, and its one timestamp is
   // schema-decoded before the card-refund writer decides whether a refund
-  // predates the ledger (`INV-PAY-104`).
-  "src/lib/payment-transactions.ts": 1,
+  // predates the ledger (`INV-PAY-103`). TWO reads since the delta review
+  // (D4): a `to_regclass` boolean first, also decoded, because naming the
+  // table on a `db push` database that lacks it would abort the transaction.
+  "src/lib/payment-transactions.ts": 2,
 };
 
 /**

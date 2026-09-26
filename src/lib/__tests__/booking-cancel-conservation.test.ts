@@ -143,6 +143,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     completedRefundCents = 0;
   },
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
+  // #3640: the Payment row lock the paid-path claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,

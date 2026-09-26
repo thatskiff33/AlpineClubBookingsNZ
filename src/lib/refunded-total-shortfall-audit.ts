@@ -31,8 +31,12 @@
  * is attributed to it. Anything more is reported apart, as short for ANOTHER
  * reason: the credit rows are chosen by type, and some were never folded into
  * the mirror at all - a credit minted with no payment, or internet-banking cash
- * that landed on an already-cancelled booking and became credit. Those need a
- * person's reading, not the #3640 repair.
+ * that landed on an already-cancelled booking and became credit. The other
+ * cause: a card refund the old arithmetic never added (it met a credit) that
+ * later FAILED - its row no longer counts, so nothing card-side is left to
+ * attribute. Since #3640 the writer's floor stops such a subtraction going
+ * below the credit, so this can only predate the fix. Those need a person's
+ * reading, not the #3640 repair.
  *
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. It issues typed SELECTs
  * through Prisma (`INV-OPS-001`), and calls no provider.
@@ -40,7 +44,10 @@
 import { PaymentStatus } from "@prisma/client";
 
 import type { ClubFormat } from "@/lib/club-format";
-import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
+import {
+  expectedRefundedFloorCents,
+  isRecordedRefundStatus,
+} from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
 import { formatCents } from "@/lib/utils";
@@ -82,10 +89,7 @@ export interface RefundedTotalShortfallAuditResult {
 export function deriveRefundedTotalShortfall(
   row: RefundedTotalShortfallRow
 ): RefundedTotalShortfallFinding | null {
-  const expectedFloorCents = Math.min(
-    row.amountCents,
-    row.cardRefundCents + row.accountCreditCents
-  );
+  const expectedFloorCents = expectedRefundedFloorCents(row);
   const shortfallCents = expectedFloorCents - row.refundedAmountCents;
   if (shortfallCents <= 0) {
     return null;
@@ -209,8 +213,9 @@ export function formatRefundedTotalShortfallReport(
     lines.push(
       "",
       "## Short for another reason - read before acting",
-      "  The credit on these was never folded into the refunded total (for example a credit minted",
-      "  with no payment, or internet-banking cash that became credit on a cancelled booking)."
+      "  Either a credit here was never folded into the refunded total (a credit minted with no",
+      "  payment, or internet-banking cash that became credit on a cancelled booking), or a card",
+      "  refund the old arithmetic never added later failed and was taken out."
     );
     for (const finding of other) {
       lines.push(

@@ -78,6 +78,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: vi.fn(),
+  // #3640: the Payment row lock the paid-path claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   markPaymentIntentTransactionFailed: vi.fn(),
   refundPaymentTransactions: vi.fn(),
 }));

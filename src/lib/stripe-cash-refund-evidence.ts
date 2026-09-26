@@ -111,6 +111,18 @@ export const ACCOUNT_CREDIT_DISPOSITION_WHERE = {
   restoredFromBookingId: null,
 } satisfies Prisma.MemberCreditWhereInput;
 
+/** The booking's account-credit dispositions, in cents (never negative). */
+export async function accountCreditDispositionCents(
+  db: Prisma.TransactionClient,
+  bookingId: string
+): Promise<number> {
+  const credit = await db.memberCredit.aggregate({
+    where: { sourceBookingId: bookingId, ...ACCOUNT_CREDIT_DISPOSITION_WHERE },
+    _sum: { amountCents: true },
+  });
+  return Math.max(0, credit._sum.amountCents ?? 0);
+}
+
 /**
  * Resolve the cash-refund evidence for one Stripe-source payment. Accepts an
  * optional transaction client so tx-scoped callers see their own uncommitted
@@ -154,14 +166,7 @@ export async function resolveStripeCashRefundEvidence(
     };
   }
 
-  const credit = await db.memberCredit.aggregate({
-    where: {
-      sourceBookingId: payment.bookingId,
-      ...ACCOUNT_CREDIT_DISPOSITION_WHERE,
-    },
-    _sum: { amountCents: true },
-  });
-  const accountCreditCents = Math.max(0, credit._sum.amountCents ?? 0);
+  const accountCreditCents = await accountCreditDispositionCents(db, payment.bookingId);
 
   return {
     cashRefundCents: Math.max(0, mirrorCents - accountCreditCents),

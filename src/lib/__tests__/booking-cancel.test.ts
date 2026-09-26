@@ -64,6 +64,8 @@ const mocks = vi.hoisted(() => {
   txPaymentTransactionUpdate: vi.fn(),
   // #3640: the fold writes through the shared compare-and-set increment.
   foldIntoTransactionRefundedAmount: vi.fn(),
+  // #3640 (delta review, D1): the Payment row lock the paid claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(),
   // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
   paymentTransactionFindFirst: vi.fn(),
   // #1547: the under-lock Xero-linked applied-credit aggregate in the
@@ -180,6 +182,7 @@ vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: mocks.PartialRefundError,
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount: mocks.foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
@@ -872,6 +875,15 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.foldIntoTransactionRefundedAmount).toHaveBeenCalledWith(
       expect.objectContaining({ paymentTransactionId: "ptx_ibpr", amountCents: 3000 })
     );
+    // #3640 (delta review, D1): the Payment row is locked BEFORE the fold
+    // touches a transaction row - the one order every writer takes.
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(
+      expect.anything(),
+      "payment_ibpr"
+    );
+    expect(
+      mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.foldIntoTransactionRefundedAmount.mock.invocationCallOrder[0]);
     expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
