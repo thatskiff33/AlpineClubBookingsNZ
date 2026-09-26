@@ -1669,6 +1669,7 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
+      format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       reviewUpdate: guestPlan.reviewUpdate,

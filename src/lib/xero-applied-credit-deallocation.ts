@@ -740,6 +740,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       bookingId,
       booking.payment!.xeroInvoiceId!,
       tx,
+      format,
     );
     const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const rows = await tx.memberCreditNoteAllocation.findMany({

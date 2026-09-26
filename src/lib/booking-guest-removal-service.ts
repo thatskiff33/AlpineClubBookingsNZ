@@ -1038,6 +1038,7 @@ export async function removeBookingGuestInTransaction({
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
+    format,
     guestsForPricing,
     skipBookingLifecycleRules:
       actorRole === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status),

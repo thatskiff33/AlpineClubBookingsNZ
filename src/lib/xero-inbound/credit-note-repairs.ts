@@ -678,6 +678,8 @@ export async function repairAccountCreditAllocationBusinessState(
   creditNoteId: string,
   allocationTargets: AccountCreditAllocationTarget[]
 ): Promise<AccountCreditAllocationRepairResult> {
+  // Resolve once before the per-target transaction and credit-ledger lock.
+  const format = await getClubFormat();
   const providerTargets = await includeDeletedAppliedCreditAllocationTargets(
     creditNoteId,
     allocationTargets,
@@ -896,6 +898,7 @@ export async function repairAccountCreditAllocationBusinessState(
         payment.bookingId,
         target.invoiceId,
         tx,
+        format,
         {
           providerTarget: {
             xeroCreditNoteId: creditNoteId,
