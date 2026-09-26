@@ -1838,17 +1838,16 @@ async function processRefundSupersededPaymentOperation(
 
   // Idempotent by the ledger (#3640, the one writer every card refund uses):
   // a retry that Stripe answers with the same refund records nothing new and
-  // adds nothing. The ledger row and the transaction row now commit together;
-  // a row an older attempt left behind still lifts the mirror to at least the
-  // card refunds on record (the ledger floor).
+  // adds nothing. The ledger row, the transaction row and the payment aggregate
+  // commit together. A row an older attempt left behind still lifts a mirror
+  // with no credit on it to the card refunds on record (the ledger floor); with
+  // a credit it cannot, and the refunded-total audit lists it.
   await recordStripeRefundsAgainstTransaction({
     paymentId: operation.paymentId,
     paymentTransactionId: refreshedTransaction.id,
     refunds: [refund],
     fallbackPaymentIntentId: operation.paymentIntentId,
   });
-
-  await reconcilePaymentAggregates({ paymentId: operation.paymentId });
 
   /**
    * #3340: the club's own record of the refund, and the member's explanation.

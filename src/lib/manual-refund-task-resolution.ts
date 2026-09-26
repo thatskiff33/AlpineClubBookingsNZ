@@ -462,8 +462,9 @@ export async function resolveManualRefundTask(
         }
         // #3032: this completion holds no advisory lock, so a concurrent writer
         // on the same payment can move the ledger under it. The compare-and-set
-        // inside `applyLocalRefundAllocation` turns that into a loud failure
-        // instead of a lost update; the transaction rolls back, so the task is
+        // inside `applyLocalRefundAllocation` retries against the fresh total
+        // (#3640) and refuses loudly only when that writer used the headroom
+        // this completion needed; the transaction rolls back, so the task is
         // still OPEN and its money is still owed when the operator retries.
         if (error instanceof RefundAllocationRacedError) {
           throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);

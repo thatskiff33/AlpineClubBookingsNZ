@@ -9,7 +9,11 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { $transaction: mocks.$transaction },
 }));
 
-import { withOptionalTransaction } from "@/lib/db-transaction";
+import {
+  isRootPrismaClient,
+  withOptionalTransaction,
+  withStoreTransaction,
+} from "@/lib/db-transaction";
 
 describe("withOptionalTransaction", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -37,6 +41,37 @@ describe("withOptionalTransaction", () => {
       }),
     ).rejects.toBe(boom);
     expect(mocks.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// #3640: the one home for "root client or transaction client?", and the
+// sibling seam the payment-ledger writers use.
+describe("withStoreTransaction", () => {
+  const root = () => ({
+    $connect: vi.fn(),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn("OWN_TX")),
+  });
+  // An interactive transaction client carries `$transaction` too (Prisma 7
+  // nests) but not `$connect` - the measured distinction.
+  const txClient = () => ({ $transaction: vi.fn() });
+
+  it("tells the root client from a transaction client by $connect, not $transaction", () => {
+    expect(isRootPrismaClient(root() as never)).toBe(true);
+    expect(isRootPrismaClient(txClient() as never)).toBe(false);
+  });
+
+  it("opens its own transaction on the root client", async () => {
+    const client = root();
+    const result = await withStoreTransaction(client as never, async (tx) => `ran-with:${String(tx)}`);
+    expect(client.$transaction).toHaveBeenCalledTimes(1);
+    expect(result).toBe("ran-with:OWN_TX");
+  });
+
+  it("joins a transaction client and opens nothing", async () => {
+    const tx = txClient();
+    const result = await withStoreTransaction(tx as never, async (joined) => joined);
+    expect(result).toBe(tx);
+    expect(tx.$transaction).not.toHaveBeenCalled();
   });
 });
 

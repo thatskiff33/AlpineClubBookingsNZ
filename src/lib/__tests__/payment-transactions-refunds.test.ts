@@ -72,13 +72,20 @@ function createRefundStore() {
   };
   const transactions = [transaction];
   const refunds = new Map<string, Record<string, unknown>>();
-  // #3640: when this install's refund ledger started - its earliest row,
-  // standing in for rows on OTHER payments. A refund Stripe made before it that
-  // arrives without a row is pre-ledger history the mirror already counts.
-  // `null` models an install with no ledger row at all.
+  // #3640: when this install's refund ledger writers arrived - the
+  // `finished_at` of the migration that shipped them, read from
+  // `_prisma_migrations`. A refund Stripe made before it that arrives without a
+  // row is pre-ledger history the mirror already counts. `null` models an
+  // install whose history has no such row (it never ran pre-ledger code).
   const ledger = { startedAt: new Date("2026-01-01T00:00:00.000Z") as Date | null };
 
   const store = {
+    // #3640: the one raw read the card-refund writer makes - the ledger
+    // writers' migration row. Answered in the physical shape PostgreSQL
+    // returns, so the writer's row decoder runs for real.
+    $queryRaw: vi.fn(async () =>
+      ledger.startedAt ? [{ finished_at: ledger.startedAt }] : [],
+    ),
     // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
     // ledger's settlement lines from the same rows, so it reads and writes here.
     bookingLedgerLine: {
@@ -217,6 +224,17 @@ function createRefundStore() {
         }
         return { count };
       }),
+      // #3640: the guarded write that decides a counted -> failed/cancelled
+      // transition. Faithful to its `where`, so only a row still in a counted
+      // status matches.
+      updateMany: vi.fn(async ({ where, data }: any) => {
+        const existing = refunds.get(where.stripeRefundId);
+        if (!existing) return { count: 0 };
+        const excluded: string[] = where.status?.notIn ?? [];
+        if (excluded.includes(existing.status as string)) return { count: 0 };
+        refunds.set(where.stripeRefundId, { ...existing, ...data });
+        return { count: 1 };
+      }),
       update: vi.fn(async ({ where, data }: any) => {
         const existing = refunds.get(where.stripeRefundId);
         if (!existing) {
@@ -226,20 +244,7 @@ function createRefundStore() {
         refunds.set(where.stripeRefundId, nextRefund);
         return nextRefund;
       }),
-      aggregate: vi.fn(async ({ where, _min }: any) => {
-        if (_min?.createdAt) {
-          const times = [
-            ledger.startedAt,
-            ...[...refunds.values()].map((refund) => refund.createdAt as Date | undefined),
-          ].filter((value): value is Date => value instanceof Date);
-          return {
-            _min: {
-              createdAt: times.length
-                ? new Date(Math.min(...times.map((value) => value.getTime())))
-                : null,
-            },
-          };
-        }
+      aggregate: vi.fn(async ({ where }: any) => {
         const excludedStatuses = new Set(where.status?.notIn ?? []);
         let amountCents = 0;
 
@@ -848,34 +853,57 @@ describe("#3032 - applyLocalRefundAllocation cannot lose an update", () => {
     expect(payment.refundedAmountCents).toBe(2000);
   });
 
-  it("MUTATION: refuses - and keeps the other writer's value - when the row moved under it", async () => {
-    const { store, transaction } = createRefundStore();
-
-    // Another writer records a $30 refund on the same transaction between this
-    // call's read and its write. Simulated at the write itself so the two are
-    // guaranteed to interleave rather than raced for.
+  /**
+   * Another writer moves the row between this call's read and its write - in
+   * production, a card refund the lockless `charge.refunded` webhook records
+   * while a member's cancel settles its credit (#3640). Simulated at the write
+   * itself so the two interleave rather than race.
+   */
+  function interfereOnce(
+    ctx: ReturnType<typeof createRefundStore>,
+    movedToCents: number,
+  ) {
     let interfered = false;
-    const guardedUpdateMany = store.paymentTransaction.updateMany;
-    store.paymentTransaction.updateMany = vi.fn(async (args: any) => {
+    const guardedUpdateMany = ctx.store.paymentTransaction.updateMany;
+    ctx.store.paymentTransaction.updateMany = vi.fn(async (args: any) => {
       if (!interfered) {
         interfered = true;
-        transaction.refundedAmountCents = 3000;
+        ctx.transaction.refundedAmountCents = movedToCents;
       }
       return guardedUpdateMany(args);
-    }) as typeof store.paymentTransaction.updateMany;
+    }) as typeof ctx.store.paymentTransaction.updateMany;
+  }
+
+  it("absorbs a concurrent move that leaves enough headroom: retries against the fresh total and keeps both", async () => {
+    const ctx = createRefundStore();
+    interfereOnce(ctx, 3000);
+
+    await applyLocalRefundAllocation({
+      paymentId: "payment_1",
+      amountCents: 1000,
+      store: ctx.store as never,
+    });
+
+    // The other writer's $30 survives AND the $10 lands. An unguarded absolute
+    // write would have replaced the $30 with $10; the old single-shot guard
+    // threw and rolled the member's cancel back with a 500.
+    expect(ctx.transaction.refundedAmountCents).toBe(4000);
+    expect(ctx.store.paymentTransaction.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses loudly only when the concurrent writer used the headroom this allocation needed", async () => {
+    const ctx = createRefundStore();
+    interfereOnce(ctx, 4500);
 
     await expect(
       applyLocalRefundAllocation({
         paymentId: "payment_1",
         amountCents: 1000,
-        store: store as never,
+        store: ctx.store as never,
       }),
     ).rejects.toBeInstanceOf(RefundAllocationRacedError);
-
-    // The other writer's $30 survives. An unguarded absolute write would have
-    // replaced it with $10 - the whole $30 refund gone from the ledger, and $30
-    // of phantom headroom created.
-    expect(transaction.refundedAmountCents).toBe(3000);
+    // Never past what was captured.
+    expect(ctx.transaction.refundedAmountCents).toBeLessThanOrEqual(5000);
   });
 });
 
@@ -1511,20 +1539,94 @@ describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () =>
       );
     });
 
-    it("with no ledger row anywhere yet, a refund older than Stripe's three-day retry window is pre-ledger and a fresh one is not", async () => {
+    it("upgrade straight from pre-ledger code: a refund made the day before the migration is not counted again", async () => {
       const ctx = legacyStore();
-      ctx.ledger.startedAt = null;
       await settleCredit(ctx);
-      const nowSeconds = Math.floor(Date.now() / 1000);
 
       await syncListing(ctx, [
-        { ...preLedgerRefund, created: nowSeconds - 10 * 24 * 60 * 60 },
-        { ...cardRefund("re_new", CARD_REFUND_CENTS), created: nowSeconds - 60 },
+        { ...preLedgerRefund, created: Date.parse("2026-05-09T23:59:59.000Z") / 1000 },
+        freshRefund("re_new"),
       ]);
 
       expect(ctx.transaction.refundedAmountCents).toBe(
         PRE_LEDGER_CENTS + CREDIT_CENTS + CARD_REFUND_CENTS,
       );
+    });
+
+    it("compares in whole seconds: a refund in the same second the migration finished is counted", async () => {
+      const ctx = legacyStore();
+      ctx.ledger.startedAt = new Date("2026-05-10T00:00:00.700Z");
+      await settleCredit(ctx);
+
+      await syncListing(ctx, [
+        preLedgerRefund,
+        { ...freshRefund("re_new"), created: Date.parse("2026-05-10T00:00:00.000Z") / 1000 },
+      ]);
+
+      expect(ctx.transaction.refundedAmountCents).toBe(
+        PRE_LEDGER_CENTS + CREDIT_CENTS + CARD_REFUND_CENTS,
+      );
+    });
+
+    it("with no ledger-writers migration in the history, nothing is pre-ledger", async () => {
+      const ctx = paidStore();
+      ctx.ledger.startedAt = null;
+      await settleCredit(ctx);
+
+      await syncListing(ctx, [preLedgerRefund]);
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + PRE_LEDGER_CENTS);
+    });
+  });
+
+  // A fresh install: the ledger writers' migration finished at install time,
+  // so no refund the install ever saw is pre-ledger - whatever the ledger's
+  // own rows say. Each case is one the old data-guessed start got wrong
+  // (review of #3640, correctness F1), with a credit on the transaction so the
+  // floor cannot hide a skipped refund.
+  describe("a fresh install counts every refund it sees", () => {
+    const INSTALLED = new Date("2026-06-01T10:00:00.000Z");
+    const at = (iso: string) => Date.parse(iso) / 1000;
+
+    function freshInstall() {
+      const ctx = paidStore();
+      ctx.ledger.startedAt = INSTALLED;
+      return ctx;
+    }
+
+    it("the first-ever refund's second slice, made in the same second as the first row, counts", async () => {
+      const ctx = freshInstall();
+      await settleCredit(ctx);
+      // Two slices of one refund reach Stripe a fraction of a second apart and
+      // both carry the same whole-second `created`; the first writes the
+      // install's first ledger row. The old start - that row's createdAt, in
+      // milliseconds - made the second slice look older than the ledger.
+      const sameSecond = at("2026-06-02T09:00:00.000Z");
+
+      await inlineRefund(ctx, { ...cardRefund("re_slice_1", 3000), created: sameSecond });
+      await inlineRefund(ctx, { ...cardRefund("re_slice_2", 2000), created: sameSecond });
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + 3000 + 2000);
+    });
+
+    it("a dashboard refund made before the first app refund, delivered after it, counts", async () => {
+      const ctx = freshInstall();
+      await settleCredit(ctx);
+      // The app's first refund row, written first.
+      await inlineRefund(ctx, { ...cardRefund("re_app", 2000), created: at("2026-06-03T12:00:00.000Z") });
+
+      await webhookSync(ctx, { ...cardRefund("re_dashboard", 3000), created: at("2026-06-03T11:59:00.000Z") });
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + 2000 + 3000);
+    });
+
+    it("an empty ledger and a webhook delivered weeks late still counts the refund", async () => {
+      const ctx = freshInstall();
+      await settleCredit(ctx);
+
+      await webhookSync(ctx, { ...cardRefund("re_late", CARD_REFUND_CENTS), created: at("2026-06-02T00:00:00.000Z") });
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
     });
   });
 
@@ -1569,6 +1671,125 @@ describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () =>
       expect(ctx.transaction.refundedAmountCents).toBe(CARD_REFUND_CENTS + 3000);
       expect(ctx.store.paymentTransaction.updateMany).toHaveBeenCalledTimes(2);
     });
+  });
+
+  /**
+   * A root client whose `$transaction` really rolls back: the store's rows are
+   * snapshotted when the callback starts and restored if it throws, so a test
+   * can crash a writer part-way and see what a retry finds.
+   */
+  function asRootClientWithRollback(ctx: Ctx) {
+    const transactionSpy = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const rows = ctx.transactions.map((row) => ({ ...row }));
+      const refundRows = new Map(
+        [...ctx.refunds].map(([key, row]) => [key, { ...row }] as const),
+      );
+      const paymentRow = { ...ctx.payment };
+      try {
+        return await fn(ctx.store);
+      } catch (error) {
+        rows.forEach((row, index) => Object.assign(ctx.transactions[index], row));
+        ctx.refunds.clear();
+        refundRows.forEach((row, key) => ctx.refunds.set(key, row));
+        Object.assign(ctx.payment, paymentRow);
+        throw error;
+      }
+    });
+    return {
+      transactionSpy,
+      client: Object.assign(ctx.store, { $connect: vi.fn(), $transaction: transactionSpy }),
+    };
+  }
+
+  describe("a refund that later fails or is cancelled is taken back out", () => {
+    it("subtracts it once, through the same writer, when a sync sees it fail", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await webhookSync(ctx);
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
+
+      const failed = await webhookSync(ctx, cardRefund("re_1", CARD_REFUND_CENTS, "failed"));
+      // Replayed: the transition is already recorded, so nothing more comes off.
+      await webhookSync(ctx, cardRefund("re_1", CARD_REFUND_CENTS, "failed"));
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+      // Not a refund: no Xero note is queued for a negative move.
+      expect(failed).toBe(0);
+    });
+
+    it("a failed refund replaced by a new one counts once, not twice", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await webhookSync(ctx);
+
+      // R1 failed; the officer refunded the same amount again (R2). Stripe
+      // lists both on the next event.
+      await syncRefundsFromStripeCharge({
+        paymentIntentId: "pi_1",
+        stripeChargeId: "ch_1",
+        refundedAmountCents: CARD_REFUND_CENTS,
+        refunds: [
+          cardRefund("re_1", CARD_REFUND_CENTS, "failed"),
+          cardRefund("re_2", CARD_REFUND_CENTS),
+        ],
+        store: ctx.store as never,
+      });
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
+    });
+  });
+
+  it("a crash after the mirror and before the aggregate rolls back whole, so the webhook's retry still reports the delta", async () => {
+    const ctx = paidStore();
+    await settleCredit(ctx);
+    const { client } = asRootClientWithRollback(ctx);
+    const realUpdate = ctx.store.payment.update;
+    ctx.store.payment.update = vi.fn(async () => {
+      throw new Error("database went away");
+    }) as typeof ctx.store.payment.update;
+    const refund = cardRefund("re_1", CARD_REFUND_CENTS);
+    const sync = () =>
+      syncRefundsFromStripeCharge({
+        paymentIntentId: "pi_1",
+        stripeChargeId: "ch_1",
+        refundedAmountCents: CARD_REFUND_CENTS,
+        refunds: [refund],
+        store: client as never,
+      });
+
+    await expect(sync()).rejects.toThrow("database went away");
+    expect(ctx.refunds.size).toBe(0);
+    expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
+
+    ctx.store.payment.update = realUpdate;
+    const retried = await sync();
+
+    // Committed apart, the retry would record nothing new, report 0 and queue
+    // no Xero note.
+    expect(retried?.refundDeltaCents).toBe(CARD_REFUND_CENTS);
+    expect(ctx.payment.refundedAmountCents).toBe(CREDIT_CENTS + CARD_REFUND_CENTS);
+  });
+
+  it("a mirror that keeps moving fails LOUD after five attempts and commits nothing", async () => {
+    const ctx = paidStore();
+    const { client, transactionSpy } = asRootClientWithRollback(ctx);
+    ctx.store.paymentTransaction.updateMany = vi.fn(async () => ({
+      count: 0,
+    })) as typeof ctx.store.paymentTransaction.updateMany;
+
+    await expect(
+      syncRefundsFromStripeCharge({
+        paymentIntentId: "pi_1",
+        stripeChargeId: "ch_1",
+        refundedAmountCents: CARD_REFUND_CENTS,
+        refunds: [cardRefund("re_1", CARD_REFUND_CENTS)],
+        store: client as never,
+      }),
+    ).rejects.toThrow(/kept moving under 5 compare-and-set attempts/);
+
+    expect(ctx.store.paymentTransaction.updateMany).toHaveBeenCalledTimes(5);
+    await expect(transactionSpy.mock.results[0]?.value).rejects.toThrow();
+    expect(ctx.refunds.size).toBe(0);
   });
 
   it("lifts a mirror left below the card refunds on record (a pre-#3640 crash between the two writes)", async () => {
