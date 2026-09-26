@@ -400,7 +400,7 @@ generalised.
    shows the two guards a suite like that needs: it asserts up front that the
    UTC day and the club day really are different (a fixture that drifted out of
    the divergence window would otherwise pass vacuously), and it asserts that
-   `APP_TIME_ZONE` is still `Pacific/Auckland`, so a contributor doing what rule
+   the environment's zone is still `Pacific/Auckland`, so a contributor doing what rule
    6 below describes gets one clear environment failure instead of five that
    read like product bugs. A suite that keeps the DEFAULT instant but hard-codes
    fixture dates against it should assert that too — `night-occupancy-parity.test.ts`
@@ -470,25 +470,24 @@ generalised.
 
    **The chooser's own guard has a test, and it needs a mocked environment zone
    to have one.** `src/lib/__tests__/helpers/club-time-zone.test.ts` is the only
-   place that pins `APP_TIME_ZONE` through `vi.mock("@/config/operational")`, and
-   the reason is worth knowing before writing a similar guard: on a machine where
-   `TZ` is unset and the system zone is New Zealand, the host and `APP_TIME_ZONE`
-   resolve to the SAME zone, so the two halves of "differ from both rivals" are
-   the same assertion and dropping one changes nothing. Measured on #2870,
-   deleting the host half killed **0 of 124** across every importing suite. The
-   two rivals have to be made to disagree, and `APP_TIME_ZONE` is read once at
-   module load, so only a module mock moves it. Keep that mock in a file of its
-   own: group D's `club-zone-choice.ts` records that mocking that module inside a
-   COMPONENT suite changes what the file's other tests see, because `APP_LOCALE`
-   and `APP_CURRENCY` reach money and date formatting in the same render graph.
+   place that pins the environment's zone, by mocking the one-export
+   `helpers/environment-club-zone.ts` (it was `APP_TIME_ZONE` in the
+   `src/config/operational.ts` #3567 deleted), and the reason is worth knowing
+   before writing a similar guard: on a machine where `TZ` is unset and the
+   system zone is New Zealand, the host and the environment resolve to the SAME
+   zone, so the two halves of "differ from both rivals" are the same assertion
+   and dropping one changes nothing. Measured on #2870, deleting the host half
+   killed **0 of 124** across every importing suite. The two rivals have to be
+   made to disagree, and the value is read once at module load, so only a module
+   mock moves it.
 
    **A pin read at module load needs a re-imported graph, not `withTimeZone`.**
    `withTimeZone` moves the process's zone for the duration of a call, which
    catches arithmetic evaluated per call — but a module-level
    `Intl.DateTimeFormat` is built once at import, so a wrong `timeZone` pin on one
    survives it. `vi.resetModules()` plus a dynamic `import()` under a pinned `TZ`
-   re-evaluates `@/config/operational` and catches it; assert inside the block
-   that `APP_TIME_ZONE` really moved, or the test proves nothing. Both mechanisms
+   re-evaluates the module under test and catches it; assert inside the block
+   that the zone really moved, or the test proves nothing. Both mechanisms
    are used together in `calendar-client-club-time.test.ts` and
    `calendar-recurrence.test.ts`, and a review measured what happens when only one
    file has the second: the identical wrong pin killed 1 in the file that had it
@@ -525,11 +524,13 @@ generalised.
    `member-guest-probe-guard.test.ts` measures its privacy timing floor with
    `process.hrtime.bigint()` for exactly that reason: the guard itself reads
    `performance.now()`, so the test deliberately measures with a different API.
-6. **Remember `APP_TIME_ZONE` follows `process.env.TZ`**
-   (`src/config/operational.ts`). Setting `TZ=UTC` to simulate the CI runner
-   also moves the *club* zone to UTC, so a timezone bug can silently pass. To
-   reproduce a UTC runner with an NZ club, force
-   `timeZone = "Pacific/Auckland"` explicitly as well.
+6. **Remember the environment's zone follows `process.env.TZ`.** The seed
+   reader (`club-time-zone-env.ts`) answers `TZ || NEXT_PUBLIC_TZ ||
+   "Pacific/Auckland"` whenever no zone is stored — which is every unit test
+   that does not mock the stored zone. Setting `TZ=UTC` to simulate the CI runner
+   therefore also moves such a suite's *club* zone to UTC, so a timezone bug can
+   silently pass. To reproduce a UTC runner with an NZ club, supply
+   `"Pacific/Auckland"` as the club's zone explicitly as well.
 
    **Do not set `TZ` from Git Bash — it is a silent no-op, and this advice used
    to send you straight into it.** Measured independently by three lanes on epic
@@ -558,14 +559,13 @@ generalised.
    `browser-viewer-zone-matrix.test.ts` are the worked examples, and each asserts
    its rows really diverge before asserting anything else.
 
-   **Since CT-1 (#2989) that is true of `APP_TIME_ZONE` and NOT of the club
-   timezone itself**, and the difference is the whole point of the change. The
-   club's civil time is now the persisted `ClubTimeSettings.timeZone`, read
+   **Since CT-1 (#2989) that is true of the seed and NOT of a stored club
+   timezone**, and the difference is the whole point of the change. The
+   club's civil time is the persisted `ClubTimeSettings.timeZone`, read
    through `getClubTimeZone()` (`src/lib/club-time-zone-settings.ts`), and
    `process.env.TZ` cannot move it once a row exists — `INV-CONFIG-002`. So a
-   suite covering club-time behaviour sets the persisted value, and a suite
-   covering a *not-yet-migrated* display call site still has to force
-   `APP_TIME_ZONE` as above until CT-6 retires it. If you are writing a test that
+   suite covering club-time behaviour sets the persisted value; since #3567
+   there is no environment constant left for a display call site to read. If you are writing a test that
    proves the database beats the environment, **prove the environment read is
    live in the same file**: assert that with no persisted row the reader really
    does return the environment's zone. Without that leg the first assertion

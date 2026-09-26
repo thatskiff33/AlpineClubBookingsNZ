@@ -12,10 +12,9 @@ import "server-only";
  * EVERY DISPLAY READER NOW COMES HERE. Owner decision D1 on #3205: the
  * authority was created first (stage 1) and the readers moved behind it — the
  * browser seam (#3564), the money formatters (#3565) and the date locale and
- * remaining server readers (#3566) — so no module outside
- * `src/config/operational.ts` reads `APP_CURRENCY` / `APP_LOCALE` any more, the
- * seed reader aside, and #3567 retires the constants. A new reader comes here
- * (or to `club-format-server.ts` in a request), never to `@/config/operational`.
+ * remaining server readers (#3566) — and #3567 moved card charges onto it and
+ * deleted the old environment constants with `src/config/operational.ts`. A new
+ * reader comes here (or to `club-format-server.ts` in a request).
  *
  * WHY IT IS SERVER-OWNED. A viewer in London must see the same club currency as
  * a viewer in Ohakune, so it cannot come from the machine rendering the page,
@@ -118,8 +117,8 @@ export async function loadPersistedClubFormatSettings(): Promise<PersistedClubFo
 /**
  * The club's currency and locale, both validated. Always answers.
  *
- * Persisted row -> environment seed (`CURRENCY` / `LOCALE`, seed-only, retired
- * by #3567) -> `NZD` / `en-NZ`. Once the row exists the environment is not
+ * Persisted row -> environment seed (`CURRENCY` / `LOCALE`, seed-only) ->
+ * `NZD` / `en-NZ`. Once the row exists the environment is not
  * consulted, so editing `CURRENCY` on the server cannot change what this
  * returns — which is owner decision D3 on #3205, and is what the operator
  * documentation has to say plainly.

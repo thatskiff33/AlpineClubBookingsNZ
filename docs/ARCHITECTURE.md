@@ -3459,6 +3459,6 @@ maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot aft
 an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
 registered as **not** requiring a primary `config/club.json`, because the value it
 copies comes from the environment rather than from that file. The
-`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
-#2988's later children migrate the display call sites off it and CT-6 retires
-it.
+transitional `APP_TIME_ZONE` constant is gone: #3567 deleted
+`src/config/operational.ts` once its last readers (the AI metering month keys)
+moved onto the stored zone.
