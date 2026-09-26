@@ -172,6 +172,15 @@ vi.mock("@/lib/booking-payment-cleanup", () => ({
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 
+// #3639: the Xero correction a replayed late-capture approval refund queues.
+const mockQueueLateCaptureRefundCreditNote = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+vi.mock("@/lib/late-capture-refund-credit-note", () => ({
+  queueLateCaptureRefundCreditNote: (...args: unknown[]) =>
+    mockQueueLateCaptureRefundCreditNote(...args),
+}));
+
 vi.mock("@/lib/xero-operation-outbox", () => ({
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations: (
     ...args: unknown[]
@@ -1142,6 +1151,53 @@ describe("payment recovery worker", () => {
     ]);
   });
 
+  it("replays a treasurer-approved late-capture refund under the webhook's own prefix and body, then queues the Xero correction (#3639)", async () => {
+    // The approval persisted this debt inside its claim and the inline refund
+    // did not finish. The replay must send exactly what the webhook's automatic
+    // refund of the same capture sends, so whichever reached Stripe first, the
+    // other is answered with the original refund.
+    const crashed = makeOperation({
+      id: "recovery-late-approval",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 2500,
+      allocationPlan: [{ paymentTransactionId: "txn-late", amountCents: 2500 }],
+      idempotencyKey: "late_capture_approval_refund_recovery_pi_late",
+      stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      // The payment's representative intent, which is not the late capture's.
+      paymentIntentId: "pi_primary",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (isStaleWorkerSweep(args)) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+    mockPaymentFindUnique.mockResolvedValue({ xeroInvoiceId: "inv-1" });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "cancelled_booking_late_capture",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("late_cancel_refund_booking-1_pi_late");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-late", amountCents: 2500 },
+    ]);
+    expect(mockQueueLateCaptureRefundCreditNote).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentXeroInvoiceId: "inv-1",
+      paymentIntentId: "pi_late",
+      amountCents: 2500,
+    });
+  });
+
   it("replays a byte-identical refund-request Stripe body after a lost inline recording, so it converges instead of hitting idempotency_error (#1507)", async () => {
     // Regression for #1507 (refund_request half of the #1494 pattern). The admin
     // approve route creates the appeal refund under refund_request_<id>; if it
@@ -1203,6 +1259,10 @@ describe("payment recovery worker", () => {
     expect(
       bookingModificationRefundReasonForKeyPrefix("guest_remove_refund_bk_mod"),
     ).toBe("guest_removed_price_decrease");
+    // #3639: a treasurer-approved late-capture refund replays the webhook's body.
+    expect(
+      bookingModificationRefundReasonForKeyPrefix("late_cancel_refund_bk_pi"),
+    ).toBe("cancelled_booking_late_capture");
     // Legacy rows (pre-#1152, no stored prefix) keep the historical recovery
     // reason — they were never shared-key with the inline refund.
     expect(bookingModificationRefundReasonForKeyPrefix(null)).toBe(

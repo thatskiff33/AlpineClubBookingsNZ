@@ -30,6 +30,11 @@ const policySchema = z
     // a question about how the club treats its members, which does not differ
     // between its lodges.
     linkedMoveChargesBothChangeFees: z.boolean().optional(),
+    // #3639 (owner decision 26 Sep 2026): a genuine late capture on a cancelled
+    // booking is refunded automatically (false) or held for a treasurer to
+    // approve (true). Club-wide: it is how the club handles money, not a lodge's
+    // cancellation policy.
+    lateCaptureRefundNeedsApproval: z.boolean().optional(),
     // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
     // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
     // club-wide set at runtime; an empty rules array for a lodge removes the
@@ -73,6 +78,14 @@ const policySchema = z
           "The linked-move change-fee setting is club-wide and cannot be set per lodge",
       })
     }
+    if (data.lodgeId && data.lateCaptureRefundNeedsApproval !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lateCaptureRefundNeedsApproval"],
+        message:
+          "The late-payment refund setting is club-wide and cannot be set per lodge",
+      })
+    }
   })
 
 export async function GET(req: NextRequest) {
@@ -103,6 +116,11 @@ export async function GET(req: NextRequest) {
     linkedMoveChargesBothChangeFees:
       defaults?.linkedMoveChargesBothChangeFees ??
       DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+    // #3639: absent row means refund automatically, the behaviour before the
+    // setting existed.
+    lateCaptureRefundNeedsApproval:
+      defaults?.lateCaptureRefundNeedsApproval ??
+      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     lodgeId: lodgeId ?? null,
   })
 }
@@ -129,6 +147,7 @@ export async function PUT(req: NextRequest) {
     nonMemberHoldDays,
     waitlistCrossLodgeOrder,
     linkedMoveChargesBothChangeFees,
+    lateCaptureRefundNeedsApproval,
     lodgeId,
   } = parsed.data
 
@@ -183,7 +202,8 @@ export async function PUT(req: NextRequest) {
       nonMemberHoldDays !== undefined ||
       nonMemberHoldEnabled !== undefined ||
       waitlistCrossLodgeOrder !== undefined ||
-      linkedMoveChargesBothChangeFees !== undefined
+      linkedMoveChargesBothChangeFees !== undefined ||
+      lateCaptureRefundNeedsApproval !== undefined
     ) {
       await tx.bookingDefaults.upsert({
         where: { id: "default" },
@@ -193,6 +213,9 @@ export async function PUT(req: NextRequest) {
           ...(waitlistCrossLodgeOrder !== undefined ? { waitlistCrossLodgeOrder } : {}),
           ...(linkedMoveChargesBothChangeFees !== undefined
             ? { linkedMoveChargesBothChangeFees }
+            : {}),
+          ...(lateCaptureRefundNeedsApproval !== undefined
+            ? { lateCaptureRefundNeedsApproval }
             : {}),
         },
         create: {
@@ -205,6 +228,9 @@ export async function PUT(req: NextRequest) {
           // schema default supplies `true` on a create that omits it.
           ...(linkedMoveChargesBothChangeFees !== undefined
             ? { linkedMoveChargesBothChangeFees }
+            : {}),
+          ...(lateCaptureRefundNeedsApproval !== undefined
+            ? { lateCaptureRefundNeedsApproval }
             : {}),
         },
       })
@@ -227,6 +253,9 @@ export async function PUT(req: NextRequest) {
       linkedMoveChargesBothChangeFees:
         defaults?.linkedMoveChargesBothChangeFees ??
         DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+      lateCaptureRefundNeedsApproval:
+        defaults?.lateCaptureRefundNeedsApproval ??
+        DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     }
   }, { isolationLevel: "Serializable" })
 
@@ -234,7 +263,7 @@ export async function PUT(req: NextRequest) {
     action: "cancellation-policy.update",
     category: "booking",
     memberId: session.user.id,
-    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
+    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lateCaptureNeedsApproval=${lateCaptureRefundNeedsApproval ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
   })
 
   revalidatePublicPageContent()

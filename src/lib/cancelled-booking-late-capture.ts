@@ -61,7 +61,9 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * refund the member has already had by hand. Nor is #3639's
  * `classifyNoticeOnCancelledBooking`: it recognises money the cancellation had
  * already decided, or a capture already handed back, neither of which the
- * member is still owed by this path. The
+ * member is still owed by this path. The only gate on a genuine late capture is
+ * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-102`), which
+ * lives in `late-capture-refund-approval.ts`. The
  * `booking.payment.refunded_after_cancellation` audit entry also stays in each
  * handler: it carries handler-specific detail, and moving it would renumber census
  * ordinals for no gain.

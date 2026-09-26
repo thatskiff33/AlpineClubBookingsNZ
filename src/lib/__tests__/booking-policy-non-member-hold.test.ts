@@ -152,6 +152,63 @@ describe("non-member hold policy admin API", () => {
     expect(h.revalidatePublicPageContent).toHaveBeenCalledOnce();
   });
 
+  describe("the late-payment refund setting (#3639, owner decision 26 Sep 2026)", () => {
+    it("reads 'refund automatically' for a club that never saved it", async () => {
+      const res = await getDefaultPolicy(
+        new NextRequest("http://localhost/api/admin/booking-policies/cancellation"),
+      );
+      await expect(res.json()).resolves.toMatchObject({
+        lateCaptureRefundNeedsApproval: false,
+      });
+    });
+
+    it("stores treasurer approval, and audits the change", async () => {
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(h.defaultsUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { lateCaptureRefundNeedsApproval: true },
+          create: expect.objectContaining({ lateCaptureRefundNeedsApproval: true }),
+        }),
+      );
+      expect(h.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.stringContaining("lateCaptureNeedsApproval=true"),
+        }),
+      );
+    });
+
+    it("leaves the stored answer alone on a save that does not mention it", async () => {
+      await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          nonMemberHoldDays: 30,
+        }),
+      );
+      const [upsert] = h.defaultsUpsert.mock.calls[0];
+      expect(upsert.update).not.toHaveProperty("lateCaptureRefundNeedsApproval");
+      expect(upsert.create).not.toHaveProperty("lateCaptureRefundNeedsApproval");
+    });
+
+    it("refuses it per lodge: it is how the club handles money", async () => {
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lodgeId: "lodge-1",
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(h.transaction).not.toHaveBeenCalled();
+    });
+  });
+
   it("does not invalidate public content when the default policy update is rejected", async () => {
     const res = await putDefaultPolicy(
       request("https://example.test/api/admin/booking-policies/cancellation", {

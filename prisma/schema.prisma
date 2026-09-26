@@ -2983,6 +2983,15 @@ enum ManualRefundTaskKind {
   /// hand-back queue down with it. `uncollected-edit-review-share-expand.test.ts`
   /// fails the build if any writer starts producing it early.
   UNCOLLECTED_EDIT_REVIEW_SHARE
+  /// #3639 (owner decision 26 Sep 2026): a genuine late capture on a cancelled
+  /// booking that the club has chosen to have a treasurer approve rather than
+  /// refund automatically (`BookingDefaults.lateCaptureRefundNeedsApproval`).
+  /// Nothing has moved: completing it refunds the card through Stripe under the
+  /// same keys the automatic refund uses, and dismissing it keeps the money.
+  /// One per payment intent, by `occurrenceKey` (the CHECK in migration
+  /// 20261013010000). Written only once a club switches the setting on, which
+  /// only this release can do — see that migration's ledger row. `INV-PAY-102`.
+  LATE_CAPTURE_REFUND_APPROVAL
 }
 
 /// #3170 (epic #2797): WHICH WAY a completed task's money went.
@@ -3634,6 +3643,13 @@ model BookingDefaults {
   // later disagrees gets the per-lodge conversion every other singleton on this
   // model is already queued for.
   linkedMoveChargesBothChangeFees Boolean @default(true)
+  // #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): what happens to a genuine
+  // late capture on a cancelled booking — money Stripe took after the cancel.
+  // false (the default, and the behaviour before this column): the webhook refunds
+  // it automatically. true: nothing moves; an OPEN `LATE_CAPTURE_REFUND_APPROVAL`
+  // task waits for a treasurer, who refunds it from the finance queue or keeps it.
+  // Club-wide, because it is how the club handles money, not a lodge's policy.
+  lateCaptureRefundNeedsApproval Boolean @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?

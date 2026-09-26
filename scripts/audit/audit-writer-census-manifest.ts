@@ -570,7 +570,13 @@ export const AUDIT_CENSUS_TOTALS = {
   // `src/lib/cancelled-booking-late-capture.ts`, beside its #2774 sibling
   // `late_capture_refund_withheld`, categorised `payment` at the site.
   // RE-MEASURED with `npm run audit:census`, not incremented.
-  writeSites: 490,
+  // 490 -> 492 (#3639, owner decision 26 Sep 2026): the club setting for a
+  // genuine late capture. `booking.payment.late_capture_refund_held` (a capture
+  // held for a treasurer) and the `booking.payment.refunded_after_cancellation`
+  // a treasurer's approval writes, both `logAudit` in
+  // `src/lib/late-capture-refund-approval.ts`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  writeSites: 492,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -652,7 +658,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
     // 267 -> 268 (#3639): the late-notice acknowledgement, above.
-    logAudit: { total: 268, uncategorised: 0 },
+    // 268 -> 270 (#3639): the two late-capture approval writers, above.
+    logAudit: { total: 270, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -908,7 +915,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 48 -> 49 (#3639): the late-notice acknowledgement - a refund the
     // late-capture handler declined, beside the rows that record the ones it
     // made and withheld, read by the same people.
-    payment: 49,
+    // 49 -> 51 (#3639): the held late capture and its approved refund.
+    payment: 51,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

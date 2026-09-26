@@ -664,13 +664,20 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   The paid-path `CANCELLED` event commits inside the cancel's claim, so no notice
   finds the cancel without its decision. Not the gating `INV-ADDPAY-037` rules
   out: nothing the member is owed is held back.
+- **A genuine late capture follows the club's setting** (owner decision 26 Sep
+  2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)):
+  refunded automatically (the default) or held as one `OPEN`
+  `LATE_CAPTURE_REFUND_APPROVAL` task per intent. Approving it is the automatic
+  refund, under the same Stripe keys; a task, whatever its status, owns its
+  capture.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source (the Stripe-only list stays for Stripe actions, #668), and
   skips a payment already carrying a refund or account-credit note, or such an
   operation queued or failed (an internet-banking cancel; a hold released
   before #3535).
 - Pinned by `cancellation-settled-money.test.ts`, `booking-cancel.test.ts`,
-  `stripe-webhook-alerts.test.ts` and `xero-booking-repair.test.ts`.
+  `stripe-webhook-alerts.test.ts`, `manual-refund-task.test.ts` and
+  `xero-booking-repair.test.ts`.
 
 ## INV-PAY-019
 

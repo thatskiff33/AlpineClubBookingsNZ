@@ -1267,16 +1267,13 @@ left badges and the digest alone.
   payment was the mistake, the booking has to be made again and the member charged
   again, because the refund has already gone out.
 
-**The refund itself is deliberately NOT gated, and that is the decision this rule
-records.** Suppressing #1350's automatic refund while the booking is soft-deleted
-was considered and rejected: it leaves a member's money with the club until
-somebody acts, and it puts a new condition on a Critical webhook money path. The
-money returning to the member is the safe direction when nobody is watching, so
-visibility was added instead of the refund being held. **Do not gate it as a side
-effect of work in this area** — reversing this needs a fresh owner decision, a
-test pinning that the capture is not auto-refunded and the task stays `OPEN`, and
-its own review of the webhook path. Nothing here changes what money moves, when,
-or by how much.
+**The refund is NOT gated by default, and that is the decision this rule
+records.** Holding #1350's automatic refund leaves a member's money with the club
+until somebody acts, and the money returning is the safe direction when nobody is
+watching, so visibility was added instead. **Do not gate it as a side effect of
+work in this area.** The one gate is the club's own choice: owner decision 26 Sep
+2026 ([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
+made treasurer approval a club setting, off by default, stated in `INV-PAY-102`.
 
 ### INV-ADDPAY-038
 

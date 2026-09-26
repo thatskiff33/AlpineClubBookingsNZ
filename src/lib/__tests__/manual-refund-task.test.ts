@@ -53,6 +53,14 @@ const mocks = vi.hoisted(() => ({
   // cancellation hand-back raises, which no edit-settlement dispatch covers.
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
+  // #3639: the treasurer-approved late-capture refund - its capture row, its
+  // refund debt, the happy-path close, the Xero correction and its audit entry.
+  paymentTransactionFindUnique: vi.fn(),
+  paymentFindUnique: vi.fn(),
+  enqueueLateCaptureApprovalRefundRecovery: vi.fn(),
+  markLateCaptureApprovalRefundRecoverySucceeded: vi.fn(),
+  queueLateCaptureRefundCreditNote: vi.fn(),
+  logAudit: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -66,7 +74,14 @@ vi.mock("@/lib/booking-ledger-hand-back", () => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { $transaction: (...a: unknown[]) => mocks.transaction(...a) },
+  prisma: {
+    $transaction: (...a: unknown[]) => mocks.transaction(...a),
+    payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
+  },
+}));
+vi.mock("@/lib/late-capture-refund-credit-note", () => ({
+  queueLateCaptureRefundCreditNote: (...a: unknown[]) =>
+    mocks.queueLateCaptureRefundCreditNote(...a),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: (...a: unknown[]) =>
@@ -78,6 +93,8 @@ vi.mock("@/lib/payment-transactions", () => ({
   // The real class, re-declared: the module under test compares with
   // `instanceof` against this same mocked module, so the identity matches.
   RefundAllocationRacedError: class RefundAllocationRacedError extends Error {},
+  isCapturedTransactionStatus: (status: string) =>
+    ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   // Pure and shared with the recovery replay (#1507), so it is reproduced rather
@@ -91,6 +108,10 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueEditFinancialReviewRefundRecovery(...a),
   markEditFinancialReviewRefundRecoverySucceeded: (...a: unknown[]) =>
     mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
+  enqueueLateCaptureApprovalRefundRecovery: (...a: unknown[]) =>
+    mocks.enqueueLateCaptureApprovalRefundRecovery(...a),
+  markLateCaptureApprovalRefundRecoverySucceeded: (...a: unknown[]) =>
+    mocks.markLateCaptureApprovalRefundRecoverySucceeded(...a),
 }));
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: (...a: unknown[]) =>
@@ -104,6 +125,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...a: unknown[]) => mocks.createAuditLog(...a),
+  logAudit: (...a: unknown[]) => mocks.logAudit(...a),
 }));
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
@@ -169,6 +191,10 @@ import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-rec
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
+  // #3639: the late capture a treasurer-approval task refunds, read before the claim.
+  paymentTransaction: {
+    findUnique: (...a: unknown[]) => mocks.paymentTransactionFindUnique(...a),
+  },
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
@@ -2978,5 +3004,148 @@ describe("#3213 - a withheld review share is dismiss-only", () => {
       recordedNightPrices: null,
     }, CLUB_FORMAT_TEST);
     expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #3639 (owner decision 26 Sep 2026): a treasurer approving the refund of a late
+ * capture on a cancelled booking. Approving it IS the automatic refund, pressed
+ * by a person: the same transaction, amount, Stripe prefix and body the webhook
+ * uses, so the two can never pay one capture twice. Dismissing keeps the money.
+ */
+describe("#3639 - approving a held late-capture refund", () => {
+  function armHeldLateCapture(transaction?: Record<string, unknown>) {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-late",
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: 2500,
+      raisedAmountCents: 2500,
+      kind: "LATE_CAPTURE_REFUND_APPROVAL",
+      occurrenceKey: "late-capture-refund-approval:v1:pi_late",
+      status: ManualRefundTaskStatus.OPEN,
+      booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
+    });
+    mocks.paymentTransactionFindUnique.mockResolvedValue({
+      id: "txn-late",
+      paymentId: "payment-1",
+      kind: "ADDITIONAL",
+      source: PaymentSource.STRIPE,
+      status: "SUCCEEDED",
+      amountCents: 2500,
+      refundedAmountCents: 0,
+      ...transaction,
+    });
+    mocks.paymentFindUnique.mockResolvedValue({ xeroInvoiceId: "inv-1" });
+    mocks.enqueueLateCaptureApprovalRefundRecovery.mockResolvedValue({ id: "rec-late" });
+    mocks.markLateCaptureApprovalRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
+    mocks.queueLateCaptureRefundCreditNote.mockResolvedValue(undefined);
+    mocks.refundPaymentTransactions.mockResolvedValue({
+      refunds: [{ paymentIntentId: "pi_late", refundId: "re_late", amountCents: 2500 }],
+      totalRefundedAmountCents: 2500,
+    });
+  }
+
+  function approve() {
+    return resolveManualRefundTask({
+      taskId: "task-late",
+      resolution: "completed",
+      note: null,
+      actingMemberId: "treasurer-1",
+      confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+  }
+
+  it("refunds the card under the webhook's own keys, after persisting the debt inside the claim", async () => {
+    armHeldLateCapture();
+
+    const result = await approve();
+
+    const slice = [{ paymentTransactionId: "txn-late", amountCents: 2500 }];
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      paymentIntentId: "pi_late",
+      amountCents: 2500,
+      allocationPlan: slice,
+      store: tx,
+    });
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
+      format: CLUB_FORMAT_TEST,
+      paymentId: "payment-1",
+      amountCents: 2500,
+      allocation: slice,
+      metadata: { bookingId: "booking-1", reason: "cancelled_booking_late_capture" },
+      idempotencyKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+    });
+    // The debt is durable BEFORE Stripe is asked, and the claim came first.
+    expect(
+      mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]);
+    expect(
+      mocks.enqueueLateCaptureApprovalRefundRecovery.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]);
+    expect(mocks.markLateCaptureApprovalRefundRecoverySucceeded).toHaveBeenCalledWith("pi_late");
+    // Never a hand-back ledger mirror, and no member-facing REFUNDED event -
+    // exactly what the automatic refund of the same money writes.
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.payment.refunded_after_cancellation",
+        details: expect.stringContaining('"approvedByMemberId":"treasurer-1"'),
+      }),
+    );
+    expect(mocks.queueLateCaptureRefundCreditNote).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentXeroInvoiceId: "inv-1",
+      paymentIntentId: "pi_late",
+      amountCents: 2500,
+    });
+    expect(result.stripeRefundId).toBe("re_late");
+    expect(result.settlementRoute).toMatchObject({ kind: "late-capture-refund" });
+  });
+
+  it("refuses, before the claim, a capture already refunded outside the task - the task stays OPEN", async () => {
+    // A dashboard refund, synced onto the row by `charge.refunded`.
+    armHeldLateCapture({ status: "REFUNDED", refundedAmountCents: 2500 });
+
+    await expect(approve()).rejects.toMatchObject({ status: 409 });
+
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("leaves a failed refund to the recovery cron: no close, no refund record", async () => {
+    armHeldLateCapture();
+    mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+
+    const result = await approve();
+
+    expect(result.stripeRefundId).toBeNull();
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).toHaveBeenCalled();
+    expect(mocks.markLateCaptureApprovalRefundRecoverySucceeded).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "booking.payment.refunded_after_cancellation" }),
+    );
+  });
+
+  it("keeping the payment moves nothing", async () => {
+    armHeldLateCapture();
+
+    await resolveManualRefundTask({
+      taskId: "task-late",
+      resolution: "dismissed",
+      note: "cancellation was a mistake; booking reinstated",
+      actingMemberId: "treasurer-1",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.enqueueLateCaptureApprovalRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 });

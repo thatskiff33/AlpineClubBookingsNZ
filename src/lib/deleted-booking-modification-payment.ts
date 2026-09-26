@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { lateCaptureRefundApprovalOccurrenceKey } from "@/lib/late-capture-refund-approval-key";
 
 /**
  * What happens when a booking modification payment lands on a booking the club
@@ -378,10 +379,16 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       // booking may have been deleted afterwards. Matching only this path's own
       // sentence would then miss that row and raise a duplicate — an OPEN task
       // asking an operator to hand back money Stripe has already returned.
+      //
+      // #3639: and the webhook's treasurer-approval task for this capture, which
+      // is already the human decision this raise would ask for.
       where: {
         bookingId,
         paymentId,
-        reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) },
+        OR: [
+          { reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) } },
+          { occurrenceKey: lateCaptureRefundApprovalOccurrenceKey(paymentIntentId) },
+        ],
       },
       select: { id: true },
     });

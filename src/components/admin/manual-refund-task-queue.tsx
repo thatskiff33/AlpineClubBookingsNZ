@@ -201,6 +201,18 @@ function isWithheldShare(task: ManualRefundTask): boolean {
 }
 
 /**
+ * #3639 (owner decision 26 Sep 2026): a card payment captured after its booking
+ * was cancelled, held for a treasurer because the club asked for approval
+ * instead of an automatic refund. Completing it refunds the CARD through Stripe
+ * - nothing is paid back by hand - so none of the hand-back wording fits it.
+ */
+const LATE_CAPTURE_APPROVAL_KIND: ManualRefundTaskKind = "LATE_CAPTURE_REFUND_APPROVAL";
+
+function isLateCaptureApproval(task: ManualRefundTask): boolean {
+  return task.kind === LATE_CAPTURE_APPROVAL_KIND;
+}
+
+/**
  * #2797: how a task's amount reads in the queue. A priced task shows the money;
  * an unpriced EDIT_FINANCIAL_REVIEW task shows that it is waiting for the club
  * to price it, so nobody mistakes an unknown amount for a settled $0.00.
@@ -540,9 +552,16 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
       // Xero, billed anything missing - and is recording that they did.
       return `Close this uncollected amount for ${task.memberName}?`;
     }
+    if (isLateCaptureApproval(task)) {
+      return `Keep this payment from ${task.memberName} instead of refunding it?`;
+    }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
       : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (isLateCaptureApproval(task) && task.amountCents !== null) {
+    return `Refund ${formatCents(task.amountCents, format)} to ${task.memberName}'s card?`;
   }
 
   if (isFinancialReview(task)) {
@@ -568,6 +587,9 @@ function resolutionDescription({
     if (isWithheldShare(task)) {
       return "This closes the item as dealt with. It moves no money and raises no invoice — closing it never has. Say what the booking's Xero invoices actually showed and what you billed by hand, if anything, because that note is the only record of how this amount was settled.";
     }
+    if (isLateCaptureApproval(task)) {
+      return "The club keeps the payment and nothing is refunded. Say why - for example, the cancellation was a mistake and the booking is being put back - so the record makes sense later.";
+    }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
@@ -575,6 +597,10 @@ function resolutionDescription({
 
   if (isFinancialReview(task)) {
     return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. If the club owes the member it is paid back or held as account credit; if the member owes the club they are asked to pay it on this booking. If nothing is owed either way, close the review with no adjustment instead.";
+  }
+
+  if (isLateCaptureApproval(task)) {
+    return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, dismiss this instead, saying so.";
   }
 
   return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
@@ -594,8 +620,11 @@ function confirmButtonLabel(
   direction: SettlementDirection | null,
 ): string {
   if (resolution === "dismissed") {
+    if (isLateCaptureApproval(task)) return "Keep the payment";
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
+
+  if (isLateCaptureApproval(task)) return "Refund to card";
 
   if (isFinancialReview(task)) {
     if (direction === "CHARGE_TO_MEMBER") return "Ask the member to pay";
@@ -1385,8 +1414,12 @@ export function ManualRefundTaskQueue() {
     the same sentence wrong about reviews before #3033, and this is the same
     mistake waiting one kind along.
   */
+  const hasLateCaptureRows = openTasks.some(isLateCaptureApproval);
   const hasHandBackRows = openTasks.some(
-    (task) => !isFinancialReview(task) && !isWithheldShare(task),
+    (task) =>
+      !isFinancialReview(task) &&
+      !isWithheldShare(task) &&
+      !isLateCaptureApproval(task),
   );
   if (
     !showQueue &&
@@ -1470,6 +1503,19 @@ export function ManualRefundTaskQueue() {
                 raised now could bill the member twice. Check the booking&apos;s
                 invoices in Xero first — if they already come to the settled
                 total, nothing is owed and you can close the item saying so.
+              </p>
+            ) : null}
+            {hasLateCaptureRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-late-capture-intro"
+              >
+                Some of these are card payments that went through after their
+                booking had been cancelled. Your club has chosen to have a
+                treasurer approve these refunds rather than refund them
+                automatically, so the money is still with the club. Refund one
+                to send it back to the card, or keep it with a note — for
+                example, when the cancellation was a mistake.
               </p>
             ) : null}
             {tasks === null ? (
@@ -1666,7 +1712,9 @@ export function ManualRefundTaskQueue() {
                         */}
                         {isFinancialReview(task)
                           ? "Record the adjustment"
-                          : "Mark paid back"}
+                          : isLateCaptureApproval(task)
+                            ? "Refund to card"
+                            : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
                       <ViewOnlyActionButton
@@ -1686,7 +1734,9 @@ export function ManualRefundTaskQueue() {
                           ? "No adjustment"
                           : isWithheldShare(task)
                             ? "Close this item"
-                            : "Dismiss"}
+                            : isLateCaptureApproval(task)
+                              ? "Keep the payment"
+                              : "Dismiss"}
                       </ViewOnlyActionButton>
                     </div>
                   </li>

@@ -54,8 +54,19 @@ const {
   mockMemberCreditFindMany,
   mockPaymentRecoveryOperationFindUnique,
   mockPaymentRecoveryOperationFindFirst,
+  mockManualRefundTaskFindUnique,
+  mockManualRefundTaskFindFirst,
+  mockManualRefundTaskCreate,
+  mockBookingDefaultsFindUnique,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryOperationFindFirst: vi.fn().mockResolvedValue(null),
+  // #3639: the treasurer-approval task and the club's setting. Null is "no task
+  // owns this capture" and "the club never saved the setting", which is the
+  // automatic refund every test below this block was written against.
+  mockManualRefundTaskFindUnique: vi.fn().mockResolvedValue(null),
+  mockManualRefundTaskFindFirst: vi.fn().mockResolvedValue(null),
+  mockManualRefundTaskCreate: vi.fn().mockResolvedValue({ id: "task-held" }),
+  mockBookingDefaultsFindUnique: vi.fn().mockResolvedValue(null),
   // #3639: the #1491 decision artefacts the late-capture handler reads before
   // it refunds (`loadCancellationRefundDecisionEvidence`, left REAL).
   mockBookingEventFindMany: vi.fn().mockResolvedValue([]),
@@ -175,6 +186,10 @@ vi.mock("@/lib/deleted-booking-modification-payment", () => ({
     mockRecordAutomaticCancelledBookingRefundTask(...args),
   findCompletedHandBackForLateCapture: (...args: unknown[]) =>
     mockFindCompletedHandBackForLateCapture(...args),
+  // #3639: the approval raise looks for the confirm route's open question by it.
+  automaticCancelledBookingRefundTaskReasons: (paymentIntentId: string) => [
+    `reason-for-${paymentIntentId}`,
+  ],
 }));
 
 vi.mock("@/lib/stripe", () => ({
@@ -267,6 +282,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     groupBooking: {
       findUnique: (...args: unknown[]) => mockGroupBookingFindUnique(...args),
+    },
+    manualRefundTask: {
+      findUnique: (...args: unknown[]) => mockManualRefundTaskFindUnique(...args),
+    },
+    bookingDefaults: {
+      findUnique: (...args: unknown[]) => mockBookingDefaultsFindUnique(...args),
     },
     // #3267: the attempt-row adoption for an intent the ledger does not know.
     paymentTransaction: {
@@ -382,14 +403,25 @@ describe("Stripe webhook Xero alerting", () => {
     mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(
       false,
     );
+    mockManualRefundTaskFindUnique.mockResolvedValue(null);
+    mockManualRefundTaskFindFirst.mockResolvedValue(null);
+    mockManualRefundTaskCreate.mockResolvedValue({ id: "task-held" });
+    mockBookingDefaultsFindUnique.mockResolvedValue(null);
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
+        $executeRaw: vi.fn().mockResolvedValue(1),
         payment: {
           update: (...args: unknown[]) => mockPaymentUpdate(...args),
         },
         booking: {
           updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
           findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
+        },
+        // #3639: the approval raise's own reads and write, under lock(1).
+        manualRefundTask: {
+          findUnique: (...args: unknown[]) => mockManualRefundTaskFindUnique(...args),
+          findFirst: (...args: unknown[]) => mockManualRefundTaskFindFirst(...args),
+          create: (...args: unknown[]) => mockManualRefundTaskCreate(...args),
         },
       })
     );
@@ -1961,6 +1993,134 @@ describe("Stripe webhook Xero alerting", () => {
     });
 
 
+    describe("when the club has a treasurer approve these refunds (#3639, owner decision 26 Sep 2026)", () => {
+      function armLateChangeCapture() {
+        mockConstructWebhookEvent.mockReturnValue(
+          additionalSucceededEvent("evt_add_late_held"),
+        );
+        mockFindPaymentTransactionByIntentId.mockResolvedValue({
+          id: "txn-9",
+          paymentId: "payment-9",
+          kind: "ADDITIONAL",
+          amountCents: 2500,
+          status: "FAILED",
+        });
+        armCancelledBooking("inv-9", null);
+      }
+
+      it("holds a genuine late capture as one OPEN task: the capture is recorded, nothing is refunded, alerted or credited", async () => {
+        armLateChangeCapture();
+        mockBookingDefaultsFindUnique.mockResolvedValue({
+          lateCaptureRefundNeedsApproval: true,
+        });
+
+        const response = await POST(makeRequest());
+
+        expect(response.status).toBe(200);
+        // Stripe holds the money, so the row still says so.
+        expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalled();
+        expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+        expect(mockManualRefundTaskCreate).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            bookingId: "booking-9",
+            paymentId: "payment-9",
+            amountCents: 2500,
+            raisedAmountCents: 2500,
+            kind: "LATE_CAPTURE_REFUND_APPROVAL",
+            occurrenceKey: "late-capture-refund-approval:v1:pi_additional_late",
+            status: "OPEN",
+            reason: expect.stringContaining("A payment for a change to the booking"),
+          }),
+          select: { id: true },
+        });
+        expect(mockLogAudit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: "booking.payment.late_capture_refund_held",
+            details: expect.stringContaining('"refundSent":false'),
+          }),
+        );
+        expect(mockRecordAutomaticCancelledBookingRefundTask).not.toHaveBeenCalled();
+        expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+        expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+        expect(mockLogAudit).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: "booking.payment.refunded_after_cancellation",
+          }),
+        );
+      });
+
+      it("raises nothing on a replay: the task already owns the capture, whatever the setting says now", async () => {
+        armLateChangeCapture();
+        // A club that has since switched back to automatic refunds.
+        mockBookingDefaultsFindUnique.mockResolvedValue({
+          lateCaptureRefundNeedsApproval: false,
+        });
+        mockManualRefundTaskFindUnique.mockResolvedValue({
+          id: "task-held",
+          status: "OPEN",
+        });
+
+        const response = await POST(makeRequest());
+
+        expect(response.status).toBe(200);
+        expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+        expect(mockManualRefundTaskCreate).not.toHaveBeenCalled();
+        expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+      });
+
+      it("keeps a capture a treasurer chose to keep: a DISMISSED task still owns it", async () => {
+        armLateChangeCapture();
+        mockManualRefundTaskFindUnique.mockResolvedValue({
+          id: "task-held",
+          status: "DISMISSED",
+        });
+
+        const response = await POST(makeRequest());
+
+        expect(response.status).toBe(200);
+        expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      });
+
+      it("asks nothing twice: the confirm route's open #2700 question is the decision", async () => {
+        armLateChangeCapture();
+        mockBookingDefaultsFindUnique.mockResolvedValue({
+          lateCaptureRefundNeedsApproval: true,
+        });
+        mockManualRefundTaskFindFirst.mockResolvedValue({ id: "task-2700" });
+
+        const response = await POST(makeRequest());
+
+        expect(response.status).toBe(200);
+        expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+        expect(mockManualRefundTaskCreate).not.toHaveBeenCalled();
+        expect(mockLogAudit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            action: "booking.payment.late_capture_refund_held",
+            details: expect.stringContaining('"manualRefundTaskId":"task-2700"'),
+          }),
+        );
+      });
+
+      it("refunds automatically when the club chose that, and when it never saved the setting (the default)", async () => {
+        for (const saved of [null, { lateCaptureRefundNeedsApproval: false }]) {
+          mockRefundPaymentTransactions.mockClear();
+          mockManualRefundTaskCreate.mockClear();
+          armLateChangeCapture();
+          mockBookingDefaultsFindUnique.mockResolvedValue(saved);
+
+          const response = await POST(makeRequest());
+
+          expect(response.status).toBe(200);
+          expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+            expect.objectContaining({
+              idempotencyKeyPrefix: "late_cancel_refund_booking-9_pi_additional_late",
+            }),
+          );
+          expect(mockManualRefundTaskCreate).not.toHaveBeenCalled();
+        }
+      });
+    });
+
     it("enqueues the corrective refund credit note when the supplementary invoice was already released in a race", async () => {
       mockConstructWebhookEvent.mockReturnValue(
         additionalSucceededEvent("evt_add_cancelled_raced"),
@@ -2376,6 +2536,62 @@ describe("Stripe webhook Xero alerting", () => {
           details: expect.stringContaining('"kind":"primary"'),
         }),
       );
+    });
+
+    it("holds the booking's own late payment for a treasurer when the club asks for approval (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_held"),
+      );
+      armCancelledBooking("inv-7", null);
+      mockBookingDefaultsFindUnique.mockResolvedValue({
+        lateCaptureRefundNeedsApproval: true,
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      // The capture is still recorded, with this handler's own marker, so a
+      // crash-and-retry is still read as a late capture and finds its task.
+      expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentIntentId: "pi_primary_late",
+          status: "SUCCEEDED",
+          reason: "cancelled_booking_late_capture",
+        }),
+      );
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockManualRefundTaskCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          kind: "LATE_CAPTURE_REFUND_APPROVAL",
+          occurrenceKey: "late-capture-refund-approval:v1:pi_primary_late",
+          amountCents: 12000,
+          status: "OPEN",
+          reason: expect.stringContaining("The booking's own payment pi_primary_late"),
+        }),
+        select: { id: true },
+      });
+      expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("acknowledges a replay of a held primary capture without refunding or raising again (#3639)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        primarySucceededEvent("evt_primary_held_replay"),
+      );
+      armCancelledBooking(null, null);
+      mockBookingDefaultsFindUnique.mockResolvedValue({
+        lateCaptureRefundNeedsApproval: true,
+      });
+      mockManualRefundTaskFindUnique.mockResolvedValue({
+        id: "task-held",
+        status: "OPEN",
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockManualRefundTaskCreate).not.toHaveBeenCalled();
     });
 
     it("records the cancelled-but-not-deleted population too (#2773)", async () => {

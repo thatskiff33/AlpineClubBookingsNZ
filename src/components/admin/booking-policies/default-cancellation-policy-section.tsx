@@ -76,6 +76,11 @@ interface CancellationDraft {
   /** #3232 D2: charge the change fee on BOTH bookings of a linked move. */
   linkedMoveBothFees: boolean
   /**
+   * #3639: a payment Stripe takes after a booking was cancelled is held for a
+   * treasurer to approve (true) rather than refunded automatically (false).
+   */
+  lateCaptureNeedsApproval: boolean
+  /**
    * Whether this partition actually has persisted rules, as reported by the GET
    * (#2142). A partition with no rows yet gets `FALLBACK_RULES` seeded into
    * BOTH the draft and the snapshot, so without this flag the #2143 dirty gate
@@ -122,12 +127,14 @@ const CANCELLATION_DEFAULTS: CancellationDraft = {
   waitlistOrder: "OWN_LODGE_FIRST",
   // Charging both is the club's default answer; waiving is the exception.
   linkedMoveBothFees: true,
+  lateCaptureNeedsApproval: DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
 }
 
 function toDraft(
   data: {
     rules?: PolicyRule[]
     linkedMoveChargesBothChangeFees?: boolean
+    lateCaptureRefundNeedsApproval?: boolean
     nonMemberHoldEnabled?: boolean
     nonMemberHoldDays?: number
     waitlistCrossLodgeOrder?: string
@@ -150,6 +157,9 @@ function toDraft(
     linkedMoveBothFees:
       data.linkedMoveChargesBothChangeFees ??
       DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+    lateCaptureNeedsApproval:
+      data.lateCaptureRefundNeedsApproval ??
+      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
     configured: fetchedRules.length > 0,
@@ -231,6 +241,7 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
                 linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
+                lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
               }),
         }),
       })
@@ -272,6 +283,7 @@ export function DefaultCancellationPolicySection() {
         draft.holdDays !== saved.holdDays ||
         draft.waitlistOrder !== saved.waitlistOrder ||
         draft.linkedMoveBothFees !== saved.linkedMoveBothFees ||
+        draft.lateCaptureNeedsApproval !== saved.lateCaptureNeedsApproval ||
         !cancellationRuleSetsEqual(draft.rules, saved.rules)
       )
     },
@@ -590,6 +602,38 @@ export function DefaultCancellationPolicySection() {
                         that made the second move necessary.
                       </p>
                     </div>
+                  </div>
+                  {/*
+                    #3639 (owner decision 26 Sep 2026). Here because it is what
+                    happens to money after a cancellation, and club-wide because
+                    it is how the club handles money, not a lodge's policy.
+                  */}
+                  <div className="space-y-1 rounded-md border p-3">
+                    <Label htmlFor="lateCaptureRefund">
+                      Payments that arrive after a booking was cancelled
+                    </Label>
+                    <select
+                      id="lateCaptureRefund"
+                      value={draft.lateCaptureNeedsApproval ? "approve" : "automatic"}
+                      onChange={(e) =>
+                        section.setDraft({
+                          lateCaptureNeedsApproval: e.target.value === "approve",
+                        })
+                      }
+                      disabled={!editing}
+                      className={`w-full max-w-md rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-muted text-muted-foreground" : "bg-background"}`}
+                    >
+                      <option value="automatic">Refund them automatically</option>
+                      <option value="approve">A treasurer approves each refund</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Now and then a card payment goes through after its booking
+                      was cancelled. By default it is refunded to the card straight
+                      away. Choose treasurer approval to hold it instead: it waits
+                      under Payments, in the refund tasks, until someone with
+                      finance access refunds it to the card or keeps it with a
+                      note. This does not change what a cancellation refunds.
+                    </p>
                   </div>
                 </div>
               ) : null}

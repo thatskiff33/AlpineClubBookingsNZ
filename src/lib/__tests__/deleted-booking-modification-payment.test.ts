@@ -271,7 +271,12 @@ describe("raiseDeletedBookingModificationRefundTask (#2700)", () => {
         // the cancelled-population row for this capture and the booking may have
         // been deleted afterwards, so matching only this path's own sentence
         // would raise a duplicate OPEN task for money already returned.
-        reason: { in: automaticCancelledBookingRefundTaskReasons(INTENT_ID) },
+        // #3639: and the webhook's treasurer-approval task for the same capture,
+        // which is already the human decision this raise would ask for.
+        OR: [
+          { reason: { in: automaticCancelledBookingRefundTaskReasons(INTENT_ID) } },
+          { occurrenceKey: `late-capture-refund-approval:v1:${INTENT_ID}` },
+        ],
       },
       select: { id: true },
     });

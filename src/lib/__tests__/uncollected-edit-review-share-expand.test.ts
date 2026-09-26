@@ -128,6 +128,8 @@ describe("INV-PAY-051: the withheld-share item type is registered, not yet writt
       "AUTOMATIC_LATE_CAPTURE_RECORD",
       "EDIT_FINANCIAL_REVIEW",
       PENDING_KIND,
+      // #3639: appended after it, by migration 20261013010000.
+      "LATE_CAPTURE_REFUND_APPROVAL",
     ]);
   });
 

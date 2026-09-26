@@ -79,6 +79,14 @@ const OCCURRENCE_KEY_MIGRATION =
  */
 const WITHHELD_SHARE_MIGRATION =
   "prisma/migrations/20260910010000_register_uncollected_edit_review_share_kind/migration.sql";
+/**
+ * #3639: registers `LATE_CAPTURE_REFUND_APPROVAL` and restates the occurrence-key
+ * CHECK so that label may NOT carry a null key - one treasurer-approval item per
+ * late capture. Its `BookingDefaults` column is filtered out with every other
+ * statement that names another table.
+ */
+const LATE_CAPTURE_APPROVAL_MIGRATION =
+  "prisma/migrations/20261013010000_add_late_capture_refund_approval/migration.sql";
 
 /**
  * The foundation migration also constrains `BookingGuest` and
@@ -154,6 +162,7 @@ async function withManualRefundTaskSchema(
       FOUNDATION_MIGRATION,
       OCCURRENCE_KEY_MIGRATION,
       WITHHELD_SHARE_MIGRATION,
+      LATE_CAPTURE_APPROVAL_MIGRATION,
     ]) {
       for (const statement of await manualRefundTaskStatements(migrationPath)) {
         await client.query(statement);
@@ -393,6 +402,45 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         code: "23514",
         constraint: "ManualRefundTask_edit_review_occurrence_key_present",
       });
+    });
+  });
+
+  it("refuses a LATE_CAPTURE_REFUND_APPROVAL row with no occurrence key, so one late capture cannot be refunded twice from two items (#3639)", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      await expect(
+        insert(client, {
+          id: "late-no-key",
+          kind: "LATE_CAPTURE_REFUND_APPROVAL",
+          occurrenceKey: null,
+          amountCents: 2500,
+          raisedAmountCents: 2500,
+          paymentId: "payment-1",
+        }),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_edit_review_occurrence_key_present",
+      });
+      // And the unique index then makes a second item for the same capture
+      // unrepresentable, which is the fence the CHECK exists to arm.
+      const occurrenceKey = "late-capture-refund-approval:v1:pi_late";
+      await insert(client, {
+        id: "late-first",
+        kind: "LATE_CAPTURE_REFUND_APPROVAL",
+        occurrenceKey,
+        amountCents: 2500,
+        raisedAmountCents: 2500,
+        paymentId: "payment-1",
+      });
+      await expect(
+        insert(client, {
+          id: "late-second",
+          kind: "LATE_CAPTURE_REFUND_APPROVAL",
+          occurrenceKey,
+          amountCents: 2500,
+          raisedAmountCents: 2500,
+          paymentId: "payment-1",
+        }),
+      ).rejects.toMatchObject({ code: "23505" });
     });
   });
 
