@@ -68,6 +68,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-workflow-suite-checkout-depth.test.mjs",
   "scripts/ci/filter-suppressed-sarif.test.mjs",
   "scripts/ci/render-epic-sync-pr-body.test.mjs",
+  "scripts/ci/require-test-shards.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/issue-thread.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
