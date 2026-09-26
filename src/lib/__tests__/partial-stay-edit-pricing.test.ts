@@ -30,6 +30,9 @@ vi.mock("@/lib/prisma", () => ({
       means exactly what it meant before.
     */
     manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3341: the REAL supersede reads the live ADDITIONAL asks a mint retires.
+    // The fixture payment carries none, so the ledger holds none.
+    paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);
@@ -164,8 +167,11 @@ vi.mock("@/lib/payment-recovery", () => ({
   queueRefundRecoveryOperation: vi.fn().mockResolvedValue(undefined),
   getStripePaymentMethodId: vi.fn().mockReturnValue(null),
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: vi.fn().mockResolvedValue([]),
+// #3341 (`INV-OPS-015`): the ADDITIONAL supersede stays REAL. The price
+// increases here mint an ask, so it runs - over a ledger that, like the fixture
+// payment, holds no earlier live ask, which the prisma double above answers.
+vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/chore-cleanup", () => ({
