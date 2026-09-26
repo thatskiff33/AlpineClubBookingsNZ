@@ -33,6 +33,7 @@ import {
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
@@ -143,12 +144,15 @@ function releaseOneHold(paymentId: string, now: Date) {
       // `fresh.amountCents` (= effectivePriceCents) under-clears the invoice by
       // exactly the applied credit and leaves that slice open forever. The true
       // outstanding is finalPrice + changeFee minus only the credit already
-      // allocated to the invoice AS A XERO CREDIT NOTE (BOOKING_APPLIED rows
-      // carrying xeroCreditNoteId). Locally-applied credit never reduced the
-      // Xero invoice balance, so it is NOT subtracted here — the 100% local
+      // allocated to the invoice AS A XERO CREDIT NOTE (the
+      // MemberCreditNoteAllocation slices). Locally-applied credit never reduced
+      // the Xero invoice balance, so it is NOT subtracted here — the 100% local
       // restore above and this full-invoice clearing note do not double-count.
-      // changeFeeCents is 0 for a never-captured hold; it is kept for exact
-      // parity with the cancel formula.
+      // changeFeeCents is NOT always 0 on an unpaid hold: an edit with a change
+      // fee increments it whether or not money was captured
+      // (booking-modify-settlement.ts), and that fee is billed on the edit's
+      // supplementary invoice, which the note also clears. The formula has one
+      // home, `unpaidInvoiceClearingAmountCents` (INV-PAY-017).
       //
       // The cancel path gates on `xeroInvoiceId && !freshPaymentCaptured`
       // (booking-cancel.ts:820); mirror BOTH clauses.
@@ -203,12 +207,11 @@ function releaseOneHold(paymentId: string, now: Date) {
             0,
             xeroAllocated._sum.amountCents ?? 0,
           );
-          xeroClearingAmountCents = Math.max(
-            0,
-            fresh.booking.finalPriceCents +
-              fresh.changeFeeCents -
-              xeroAllocatedAppliedCreditCents,
-          );
+          xeroClearingAmountCents = unpaidInvoiceClearingAmountCents({
+            finalPriceCents: fresh.booking.finalPriceCents,
+            changeFeeCents: fresh.changeFeeCents,
+            xeroAllocatedAppliedCreditCents,
+          });
         }
       }
 
@@ -228,11 +231,13 @@ function releaseOneHold(paymentId: string, now: Date) {
       // was the cash-refund note, which is never allocated and named a bank
       // transfer refund for money nobody paid. The wording now says the
       // invoice was cleared because the booking was not paid.
-      // Idempotency: this line runs once per hold (the guard set above), and
-      // the enqueue dedupes on `booking:<id>:mod-credit-note:<cents>:v1` plus
-      // the booking's active MODIFICATION_CREDIT_NOTE link — the key the cancel
-      // path and the repair tool's cancelled-open-invoice arm also use, so one
-      // booking gets one clearing note whichever of them gets there first.
+      // Idempotency: this line runs once per hold (the guard set above). The
+      // enqueue dedupes on the booking's active MODIFICATION_CREDIT_NOTE link
+      // and on a live operation with the same `booking:<id>:mod-credit-note:
+      // <cents>:v1` key. The cancel path and the repair tool's
+      // cancelled-open-invoice arm raise this same booking-anchored note, sized
+      // by the same helper; the repair arm also stands down while any clearing
+      // operation for the booking exists, whatever its cents.
       let queueOperationId: string | null = null;
       if (xeroClearingAmountCents > 0) {
         const queued = await enqueueXeroModificationCreditNoteOperation(

@@ -203,6 +203,9 @@ function createDependencies(state: {
   // the webhook's release finds no operation to release because none exists
   // yet.
   onSupplementaryInvoiceEnqueue?: () => void;
+  // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
+  // allocation term). Empty for every pre-existing test.
+  allocatedAppliedCreditByBookingId?: Record<string, number>;
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -368,6 +371,18 @@ function createDependencies(state: {
               statuses.includes(operation.status)
           );
         }),
+      },
+      memberCreditNoteAllocation: {
+        groupBy: vi.fn().mockImplementation(async ({ where }: any) =>
+          (where?.appliedToBookingId?.in ?? [])
+            .filter((bookingId: string) =>
+              bookingId in (state.allocatedAppliedCreditByBookingId ?? {})
+            )
+            .map((bookingId: string) => ({
+              appliedToBookingId: bookingId,
+              _sum: { amountCents: state.allocatedAppliedCreditByBookingId![bookingId] },
+            }))
+        ),
       },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
@@ -549,6 +564,47 @@ describe("runBookingXeroRepair", () => {
     const [params] = (deps.enqueueXeroModificationCreditNoteOperation as ReturnType<typeof vi.fn>)
       .mock.calls[0]!;
     expect(params).not.toHaveProperty("refundMethod");
+  });
+
+  // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
+  // cancel path's own helper — applied credit already allocated to the invoice
+  // is not cleared twice, and a fully allocated invoice needs no note at all.
+  it("sizes a cancelled unpaid booking's clearing note net of applied credit already allocated (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED", changeFeeCents: 500 },
+      });
+
+    const partly = cancelledUnpaid();
+    const partlyReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [partly],
+        allocatedAppliedCreditByBookingId: { [partly.id]: 4000 },
+      }),
+      scope: { all: true },
+    });
+    expect(
+      partlyReport.passes[0].bookings[0].actions.find(
+        (candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE"
+      )?.payload
+    ).toMatchObject({ refundAmountCents: 10000 + 500 - 4000 });
+
+    const fully = cancelledUnpaid();
+    const fullyReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [fully],
+        allocatedAppliedCreditByBookingId: { [fully.id]: 10500 },
+      }),
+      scope: { all: true },
+    });
+    const fullyBooking = fullyReport.passes[0].bookings[0];
+    expect(fullyBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(fullyBooking.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
   });
 
   it("classifies missing supplementary invoices for positive booking modifications", async () => {

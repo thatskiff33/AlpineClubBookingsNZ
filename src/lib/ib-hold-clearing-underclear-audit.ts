@@ -29,6 +29,7 @@ import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { asRecord, readNumber } from "@/lib/xero-json";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import {
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -114,10 +115,11 @@ export function deriveIbHoldClearingFinding(
     0,
     row.xeroAllocatedAppliedCreditCents,
   );
-  const expectedClearingCents = Math.max(
-    0,
-    row.finalPriceCents + row.changeFeeCents - xeroAllocatedAppliedCreditCents,
-  );
+  const expectedClearingCents = unpaidInvoiceClearingAmountCents({
+    finalPriceCents: row.finalPriceCents,
+    changeFeeCents: row.changeFeeCents,
+    xeroAllocatedAppliedCreditCents,
+  });
   const enqueuedClearingCents = row.clearingNotes.reduce(
     (sum, note) => sum + (note.amountCents ?? row.paymentAmountCents),
     0,

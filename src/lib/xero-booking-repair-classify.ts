@@ -1280,7 +1280,10 @@ export function classifyBookingContext(
     capturedPaymentTransactions.length === 0 &&
     primaryInvoice
   ) {
-    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
+    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
+      booking,
+      context.xeroAllocatedAppliedCreditCents
+    );
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
