@@ -104,7 +104,7 @@ in. Cite rules by id, never by line number.
   non-production browser and Lighthouse checks.
 - [`../LOAD_TESTING.md`](../LOAD_TESTING.md) — the k6 HTTP load harness in
   [`../../load/`](../../load/README.md), its thresholds, and its safety rails.
-- [`../reviews/2026-05-06-money-path-sweep.md`](../reviews/2026-05-06-money-path-sweep.md)
+- [`../reviews/2026-09-26-money-path-sweep-may-june-2026.md`](../reviews/2026-09-26-money-path-sweep-may-june-2026.md)
   — the #3341 sweep of the unreviewed May–June 2026 money-path pull requests:
   the defect class, a verdict per PR, and the defects it filed.
 
