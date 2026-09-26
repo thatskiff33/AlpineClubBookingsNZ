@@ -1608,18 +1608,29 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
-The rule binds sections that are NEW
-or MODIFIED, so four pre-existing surfaces are acknowledged divergents it does
-not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
-older staged-but-ungated settings forms, and the age-tier and notification
-settings panels — the last two were previously written up as blanket exemptions
-"because they are list sections", which is no longer the reason: list sections
-are in scope (see the per-row shape below), those two simply have not been
-touched since. Booking Policies has NO divergent left. Every settings control in
-the area now stages behind a per-card Edit → Save/Cancel: the **Show indicative
-pricing** checkbox in `public-booking-requests-section.tsx` stopped persisting on
-change in #2162, and the two timing cards beside it (quote window / reminder
-lead, and the school-attendee prompts) — always editable with a dirty-gated Save
+The rule binds sections that are NEW or MODIFIED. Known departures that this
+rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
+toggles), the older staged-but-ungated settings forms, the age-tier and
+notification settings panels, and two capacity cards. The last two panels were
+previously written up as blanket exemptions "because they are list sections";
+that is no longer the reason: list sections are in scope (see the per-row shape
+below), and these panels have not yet been brought onto the pattern. The
+capacity cards were touched in #2724 but remain explicit, owner-accepted
+departures under #3441: `/admin/lodges/[id]` edits one per-lodge capacity field
+without Edit/Cancel and enables Save only when the value differs from the saved
+value; the setup `LodgeCapacityCard` edits capacity, hut-leader lookahead and
+school soft-cap fields without Edit/Cancel, and its Save is not dirty-gated.
+Once a lodge is selected, its own disabled prop checks loading or saving.
+Both retain a view-only banner and a permission-gated Save button. This
+inventory names known departures; it is not a measured assertion that the
+entire admin tree has no others. New or modified
+settings sections still owe the staged pattern unless an explicit decision
+records an exception. Booking Policies has NO divergent left. Every settings
+control in that area now stages behind a per-card Edit → Save/Cancel: the
+**Show indicative pricing** checkbox in `public-booking-requests-section.tsx`
+stopped persisting on change in #2162, and the two timing cards beside it
+(quote window / reminder lead, and the school-attendee prompts) — always
+editable with a dirty-gated Save
 and no Edit or Cancel until then — were Edit-gated in #2166 on the owner's
 decision. The only direct writes left in the area are discrete ACTIONS rather
 than staged fields: row-level Activate/Deactivate and Delete on the
