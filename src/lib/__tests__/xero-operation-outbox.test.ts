@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   findManyOperations: vi.fn(),
   countOperations: vi.fn(),
   sendAdminXeroSyncErrorAlert: vi.fn(),
+  getPaymentIntent: vi.fn(),
   updateManyOperation: vi.fn(),
   updateOperation: vi.fn(),
   startXeroSyncOperation: vi.fn(),
@@ -207,6 +208,12 @@ vi.mock("@/lib/xero-supplementary-invoices", () => ({
 
 vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
+}));
+
+// #3641: the reaper asks Stripe whether an ask the pay door still hands out
+// was cancelled at the provider (locally a cancel and a decline are both FAILED).
+vi.mock("@/lib/stripe", () => ({
+  getPaymentIntent: mocks.getPaymentIntent,
 }));
 
 // #3641: the late-capture re-queue alerts an officer where re-issuing a retired
@@ -2591,6 +2598,8 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
     mocks.findUniquePayment.mockResolvedValue(null);
+    mocks.getPaymentIntent.mockReset();
+    mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
   });
 
   it("reaps WAITING_PAYMENT operations whose linked PaymentTransaction has been FAILED past the grace window", async () => {
@@ -2839,6 +2848,46 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       expect(result.reaped).toBe(2);
     },
   );
+
+  it("retires an ask the door still hands out once Stripe reports its intent cancelled (#3641)", async () => {
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_cancelled_at_stripe",
+        createdAt: sixteenDaysAgo,
+        requestPayload: { paymentIntentId: "pi_cancelled" },
+      },
+    ]);
+    // Locally indistinguishable from a decline: FAILED, still the latest ask.
+    mocks.findUniquePayment.mockResolvedValue(
+      payableAsk("pi_cancelled", { additionalPaymentStatus: "FAILED" }),
+    );
+    mocks.getPaymentIntent.mockResolvedValue({ status: "canceled" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_cancelled");
+    expect(result.reaped).toBe(1);
+  });
+
+  it("keeps a payable ask when Stripe cannot be read (#3641)", async () => {
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_stripe_down",
+        createdAt: sixteenDaysAgo,
+        requestPayload: { paymentIntentId: "pi_unknown" },
+      },
+    ]);
+    mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_unknown"));
+    mocks.getPaymentIntent.mockRejectedValue(new Error("stripe unavailable"));
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(result.reaped).toBe(0);
+  });
 
   it("retires an aged waiting invoice with no payment request without reading any payment (#3641)", async () => {
     const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);

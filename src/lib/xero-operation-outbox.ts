@@ -85,6 +85,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { payableAdditionalPaymentIntentId } from "@/lib/additional-payment-chase";
+import { getPaymentIntent } from "@/lib/stripe";
 
 /**
  * Was this operation REFUSED by a process-global Xero cooldown BEFORE any HTTP
@@ -2074,6 +2075,16 @@ const FAILED_TRANSACTION_REAP_GRACE_HOURS = 24;
  * case: the door is closed and the operation is retired as before. That keeps
  * #3403's supersession path exactly as it was, which is deliberate: that
  * trigger is an open owner decision, not this change.
+ *
+ * WHY STRIPE IS ASKED TOO. The door reads local rows, and a PaymentIntent
+ * cancelled at the provider is recorded FAILED exactly like a declined card
+ * (`markPaymentIntentTransactionFailed` writes the same status for both). When
+ * the cancelled intent is still the booking's latest ask, which is the shape a
+ * recovery-cancelled intent with no replacement leaves, only Stripe can tell
+ * "declined, still payable" from "cancelled, never payable again". So an ask
+ * the door still hands out is kept unless Stripe says it is `canceled`. A
+ * Stripe error keeps it too: keeping costs a warning in the repair report,
+ * retiring a live ask is the bug this rule removes.
  */
 async function isWaitingInvoiceAskStillPayable(
   paymentIntentId: string,
@@ -2087,13 +2098,24 @@ async function isWaitingInvoiceAskStillPayable(
     },
   });
   if (!payment) return false;
-  return (
+  const doorOpen =
     payableAdditionalPaymentIntentId({
       bookingStatus: payment.booking.status,
       bookingDeletedAt: payment.booking.deletedAt,
       payment,
-    }) === paymentIntentId
-  );
+    }) === paymentIntentId;
+  if (!doorOpen) return false;
+
+  try {
+    const intent = await getPaymentIntent(paymentIntentId);
+    return intent.status !== "canceled";
+  } catch (err) {
+    logger.warn(
+      { err, paymentIntentId },
+      "Could not read a waiting Xero invoice's PaymentIntent from Stripe; keeping the invoice waiting",
+    );
+    return true;
+  }
 }
 
 export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {

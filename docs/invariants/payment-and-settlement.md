@@ -958,9 +958,11 @@ it was).
   `payableAdditionalPaymentIntentId` (`additional-payment-chase.ts`), which the
   additional-payment-secret route also uses: the booking still names that
   intent, the ask is uncollected, and the booking is neither deleted nor
-  outside `ADDITIONAL_PAYABLE_BOOKING_STATUSES`. Superseded, withdrawn,
-  collected and cancelled asks are still retired. An op with no intent keeps
-  the plain age arm.
+  outside `ADDITIONAL_PAYABLE_BOOKING_STATUSES`. Where the door is open, Stripe
+  is asked too: a provider-cancelled intent is recorded FAILED exactly like a
+  decline, so only a `canceled` answer retires it, and a Stripe error keeps it.
+  Superseded, withdrawn, collected and cancelled asks are still retired. An op
+  with no intent keeps the plain age arm.
 - **A capture never silently releases nothing.** Every late-success caller
   (the Stripe webhook's two arms, the confirm route's two arms) calls
   `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`
