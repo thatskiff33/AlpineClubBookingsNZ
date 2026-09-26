@@ -25,12 +25,7 @@ export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 type StripeRefundLedgerInput = {
   id: string;
   amount: number;
-  /**
-   * The currency Stripe refunded in, which is the charge's own. REQUIRED, with no
-   * fallback (owner decision D4 on #3567): Stripe always sets it, and a row
-   * that invented one would record a currency nobody refunded in.
-   */
-  currency: string;
+  currency: string; // Stripe's, always set; no fallback (#3567 D4)
   status?: string | null;
   reason?: string | null;
   created?: number | null;
@@ -39,24 +34,15 @@ type StripeRefundLedgerInput = {
 };
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
-  if (!created) {
-    return null;
-  }
-
-  return new Date(created * 1000);
+  return created ? new Date(created * 1000) : null;
 }
 
-/**
- * Stripe's refund currency as the ledger stores it, lower-cased. An empty value
- * fails loudly rather than being guessed: `PaymentRefund.currency` has no
- * database default either since #3567, and a refund recorded in the wrong
- * currency would falsify the payments history reconciled against Stripe and Xero.
- */
+// Stripe's refund currency, lower-cased. Missing fails loudly rather than being
+// guessed: the column has no default since #3567, and a guessed currency would
+// falsify the history reconciled against Stripe and Xero.
 function normalizeRefundCurrency(refundId: string, currency: string) {
   const code = typeof currency === "string" ? currency.trim().toLowerCase() : "";
-  if (!code) {
-    throw new Error(`Stripe refund ${refundId} carries no currency; refusing to record it without one.`);
-  }
+  if (!code) throw new Error(`Stripe refund ${refundId} carries no currency; refusing to record it without one.`);
   return code;
 }
 

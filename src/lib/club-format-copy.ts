@@ -24,14 +24,33 @@ export const CLUB_FORMAT_REACH =
 export const CLUB_FORMAT_AI_RATE_CLEARED =
   "Changing the CURRENCY clears the AI spend conversion rate, because it was set for the old currency: enter the rate for the new one on the AI settings page afterwards. Changing only the number and date format leaves it alone.";
 
-/** What the server's CURRENCY and LOCALE still do. */
+/** What the server's CURRENCY and LOCALE still do: nothing, once recorded. */
 export const CLUB_FORMAT_SERVER_SETTINGS =
-  "CURRENCY and LOCALE on the server seeded this setting once and no longer change anything a club sees; editing them will not change it back. The one thing still taken from the server's CURRENCY is the currency card payments are charged in.";
+  "CURRENCY and LOCALE on the server seeded this setting once, on the first start after upgrading, and no longer change anything — not what a club sees and not what cards are charged in. Editing them will not change it back.";
 
 /** Nothing recorded is rewritten. */
 export const CLUB_FORMAT_NOTHING_REWRITTEN =
   "No amount already recorded is rewritten or re-converted. A payment of 8450 cents is still 8450 cents; only the way an amount is written follows this setting, never what it is worth.";
 
-/** Card payments are a separate, server-side decision. */
+/**
+ * Card payments follow the setting (#3567, owner decision D1), and what a
+ * change does to a payment already under way.
+ */
 export const CLUB_FORMAT_CARD_PAYMENTS =
-  "Card payments are still charged in the currency the deployment is configured with. Moving the club to a different currency is a conversation with the payment provider and the club's accountant before it is a setting here.";
+  "Card payments are charged in this currency. Saving a different one changes what cards are charged in straight away: a card payment already started stays in the currency it was started in, a saved card charged later is charged in the new currency, and a payment-recovery retry that began before the change is refused by the payment provider. Currencies without two decimal places, such as JPY or KWD, cannot be chosen, because every amount here is kept in hundredths.";
+
+/**
+ * Xero's base currency must match (#3567, owner decision D8). Invoices sent to
+ * Xero carry no currency of their own, so Xero books them in the organisation's
+ * base currency; the check that compares the two is #3633.
+ */
+export const CLUB_FORMAT_PROVIDER_CURRENCIES =
+  "The club's Stripe account and its Xero organisation's base currency must both be this currency. Xero books every invoice this site sends in its base currency, and Stripe converts a charge in any other currency before paying it out, at a fee. Change them to match before saving here, not after.";
+
+/**
+ * The acknowledgement a CURRENCY change needs on top of the ordinary one
+ * (owner decision D2). The route refuses a currency change without it.
+ */
+export function clubFormatCurrencyChangeAcknowledgement(currencyCode: string): string {
+  return `I have checked that the club's Stripe account and its Xero base currency are both ${currencyCode}, and I understand card payments are charged in ${currencyCode} from the moment I save.`;
+}
