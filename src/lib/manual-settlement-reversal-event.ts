@@ -214,6 +214,58 @@ export function settlementMarkerOf(event: {
 }
 
 /**
+ * A settlement marker as the STAFF booking timeline shows it (#3638). Pure, so
+ * the page's data loader can map its events without a query of its own.
+ */
+export interface SettlementMarkerTimelineEntry {
+  id: string;
+  occurredAt: Date;
+  amountCents: number | null;
+  title: string;
+  detail: string;
+  tone: SettlementMarker["tone"];
+}
+
+/**
+ * Every settlement marker among a booking's events, for the staff timeline.
+ * The detail is the reason stored on the event row (self-describing history),
+ * with the Xero invoice number when the marker carries one. Callers gate this
+ * on staff access: the markers name money the member may not have been told
+ * about yet.
+ */
+export function settlementMarkerTimelineEntries(
+  events: readonly {
+    id: string;
+    type: BookingEventType;
+    occurredAt: Date;
+    amountCents: number | null;
+    reason: string | null;
+    snapshot: unknown;
+  }[],
+): SettlementMarkerTimelineEntry[] {
+  return events.flatMap((event) => {
+    const marker = settlementMarkerOf(event);
+    if (!marker) return [];
+    const invoiceNumber = (event.snapshot as { invoiceNumber?: unknown })
+      .invoiceNumber;
+    const invoiceClause =
+      typeof invoiceNumber === "string" && invoiceNumber
+        ? ` Xero invoice ${invoiceNumber}.`
+        : "";
+    return [
+      {
+        id: event.id,
+        occurredAt: event.occurredAt,
+        amountCents: event.amountCents,
+        title: marker.adminTitle,
+        detail: (event.reason ?? marker.reason) + invoiceClause,
+        tone: marker.tone,
+      },
+    ];
+  });
+}
+
+/**
  * True when a durable CANCELLED event is one of the admin-only settlement
  * markers in `SETTLEMENT_MARKERS`. NONE cancels the booking, so every consumer
  * that pattern-matches CANCELLED events must exclude them.

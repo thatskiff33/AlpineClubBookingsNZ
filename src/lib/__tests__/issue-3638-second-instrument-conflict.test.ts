@@ -136,9 +136,11 @@ import * as settlementMarkerModule from "@/lib/manual-settlement-reversal-event"
 import {
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+  MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND,
   SETTLEMENT_MARKERS,
   SETTLEMENT_MARKER_EVENT_REASONS,
   isManualSettlementMarkerEvent,
+  settlementMarkerTimelineEntries,
 } from "@/lib/manual-settlement-reversal-event";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -753,5 +755,60 @@ describe("the marker is admin-only (#3638)", () => {
         snapshot: { kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND },
       }),
     ).toBe(false);
+  });
+
+  // #3638 review (SSOT F9): the staff timeline's entries come from the same
+  // registry, titled for staff, with the reason the event row stores.
+  it("maps every marker, and only markers, to a staff timeline entry", () => {
+    const occurredAt = new Date("2026-08-04T00:00:00.000Z");
+    const entries = settlementMarkerTimelineEntries([
+      {
+        id: "ev-second",
+        type: BookingEventType.CANCELLED,
+        occurredAt,
+        amountCents: 27000,
+        reason: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+        snapshot: {
+          kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+          invoiceNumber: "INV-3638",
+        },
+      },
+      {
+        id: "ev-reversal",
+        type: BookingEventType.CANCELLED,
+        occurredAt,
+        amountCents: null,
+        reason: null,
+        snapshot: { kind: MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND },
+      },
+      {
+        id: "ev-genuine-cancel",
+        type: BookingEventType.CANCELLED,
+        occurredAt,
+        amountCents: 0,
+        reason: "Cancelled by member",
+        snapshot: { policySummary: "Full refund" },
+      },
+    ]);
+
+    expect(entries).toEqual([
+      {
+        id: "ev-second",
+        occurredAt,
+        amountCents: 27000,
+        title: "May have been paid twice (card and Xero)",
+        detail: `${SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON} Xero invoice INV-3638.`,
+        tone: "danger",
+      },
+      {
+        id: "ev-reversal",
+        occurredAt,
+        amountCents: null,
+        title: "Manual payment reversed",
+        // No stored reason: the registry's own.
+        detail: SETTLEMENT_MARKERS[0].reason,
+        tone: "warning",
+      },
+    ]);
   });
 });
