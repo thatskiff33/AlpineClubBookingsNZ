@@ -691,6 +691,143 @@ describe("runBookingXeroRepair", () => {
     ).toBe(true);
   });
 
+  // #3535 delta D1: a PARTIAL clearing row stays PARTIAL after its repair, so
+  // the arm must stop once every planned invoice has an allocation link.
+  it("stands down on a partial clearing note whose planned allocations have all landed (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const link = (overrides: Record<string, unknown>) => ({
+      localModel: "Booking",
+      localId: "booking_1",
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      active: true,
+      metadata: null,
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+      ...overrides,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          link({ id: "l_note", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_clear", role: "MODIFICATION_CREDIT_NOTE" }),
+          link({
+            id: "l_a1",
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: "alloc_1",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 6000 },
+          }),
+          link({
+            id: "l_a2",
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: "alloc_2",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 4000 },
+          }),
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_partial_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PARTIAL",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [
+                { invoiceId: "inv_primary", amountCents: 6000 },
+                { invoiceId: "inv_supp", amountCents: 4000 },
+              ],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "MISSING_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(
+      bookingReport.actions.some((action) =>
+        JSON.stringify(action.payload).includes("operation_partial_clearing")
+      )
+    ).toBe(false);
+  });
+
+  // #3535 delta D4: a note the late-cash arm retired means the member paid; and
+  // a note refused for a shortfall is a person's to look at, never auto-retried.
+  it("proposes no clearing note after cash retired one, and never auto-retries a shortfall (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const clearingOp = (overrides: Record<string, unknown>) =>
+      makeOperation({
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_1", refundAmountCents: 10000 },
+        ...overrides,
+      });
+
+    const retired = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [clearingOp({ id: "op_retired", status: "CANCELLED" })],
+      }),
+      scope: { all: true },
+    });
+    const retiredBooking = retired.passes[0].bookings[0];
+    expect(retiredBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(retiredBooking.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+    expect(retiredBooking.findings).toContainEqual(
+      expect.objectContaining({ severity: "info", safeToAutoApply: false })
+    );
+
+    const shortfall = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [
+          clearingOp({
+            id: "op_shortfall",
+            status: "FAILED",
+            lastErrorMessage:
+              "The booking's open Xero invoices owe $0.00, less than this $100.00 invoice-clearing credit note; nothing was created.",
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const shortfallBooking = shortfall.passes[0].bookings[0];
+    expect(shortfallBooking.findings).toContainEqual(
+      expect.objectContaining({ code: "MANUAL_REVIEW_REQUIRED", safeToAutoApply: false })
+    );
+    expect(shortfallBooking.actions.map((action) => action.type)).not.toContain(
+      "REQUEUE_XERO_OPERATION"
+    );
+    expect(shortfallBooking.actions.some((action) => action.safeToAutoApply && action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")).toBe(false);
+  });
+
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
   // cancel path's own helper — applied credit already allocated to the invoice
   // is not cleared twice, and a fully allocated invoice needs no note at all.

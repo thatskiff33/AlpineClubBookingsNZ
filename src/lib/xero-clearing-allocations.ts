@@ -39,10 +39,22 @@ export interface ClearingAllocationTarget {
   amountCents: number;
 }
 
+/** The fixed opening of the shortfall message, which the repair tool reads back. */
+const CLEARING_ALLOCATION_SHORTFALL_MARKER = "The booking's open Xero invoices owe ";
+
+/**
+ * A FAILED clearing row whose error is the shortfall: the invoices owe less
+ * than the note, so retrying it changes nothing until a person looks. The
+ * repair tool never offers it as a safe auto-retry.
+ */
+export function isClearingAllocationShortfall(message: string | null | undefined): boolean {
+  return typeof message === "string" && message.startsWith(CLEARING_ALLOCATION_SHORTFALL_MARKER);
+}
+
 export class ClearingAllocationShortfallError extends Error {
   constructor(noteCents: number, owedCents: number, format: ClubFormat) {
     super(
-      `The booking's open Xero invoices owe ${formatCents(owedCents, format)}, less than this ${formatCents(noteCents, format)} invoice-clearing credit note; nothing was created. Part of the booking may have been paid, or an invoice the note is sized for was never raised - review it by hand.`
+      `${CLEARING_ALLOCATION_SHORTFALL_MARKER}${formatCents(owedCents, format)}, less than this ${formatCents(noteCents, format)} invoice-clearing credit note; nothing was created. Part of the booking may have been paid, or an invoice the note is sized for was never raised - review it by hand.`
     );
     this.name = "ClearingAllocationShortfallError";
   }
@@ -195,6 +207,62 @@ export function readBookingClearingNoteRetryInput(operation: {
 }
 
 /**
+ * Pure: the planned targets that have no allocation link from this note yet.
+ * The one predicate the PARTIAL repair and the repair tool's PARTIAL check
+ * share, so a repaired note stops being reported the moment it is whole.
+ */
+export function targetsWithoutAllocation(
+  targets: ClearingAllocationTarget[],
+  creditNoteId: string,
+  allocationLinks: Array<{ metadata: unknown }>
+): ClearingAllocationTarget[] {
+  const allocated = new Set(
+    allocationLinks
+      .map((link) => asRecord(link.metadata))
+      .filter((metadata) => readString(metadata?.creditNoteId) === creditNoteId)
+      .map((metadata) => readString(metadata?.invoiceId))
+  );
+  return targets.filter((target) => !allocated.has(target.invoiceId));
+}
+
+/**
+ * The targets a note's operation planned: its recorded plan, or (an edit's
+ * note, or a row from before plans were recorded) its single invoice and
+ * amount. Null when neither is readable; throws `RedactedClearingPlanError`
+ * for a redacted plan.
+ */
+export function recordedClearingTargets(
+  requestPayload: unknown
+): ClearingAllocationTarget[] | null {
+  const recorded = readRecordedClearingAllocations(requestPayload);
+  if (recorded) return recorded;
+  const payload = asRecord(requestPayload);
+  const invoiceId = readString(payload?.invoiceId);
+  const amountCents = readNumber(payload?.refundAmountCents);
+  return invoiceId && amountCents !== null ? [{ invoiceId, amountCents }] : null;
+}
+
+/**
+ * Does a PARTIAL note still have a planned invoice with no allocation link from
+ * it? The repair tool's PARTIAL check; a repaired row stays PARTIAL, so status
+ * alone would report a whole note as broken forever. An unreadable (or
+ * redacted) plan counts as incomplete; the retry meta then decides whether it
+ * can be replayed.
+ */
+export function partialClearingNoteIsIncomplete(
+  requestPayload: unknown,
+  creditNoteId: string,
+  allocationLinks: Array<{ metadata: unknown }>
+): boolean {
+  try {
+    const targets = recordedClearingTargets(requestPayload);
+    return !targets || targetsWithoutAllocation(targets, creditNoteId, allocationLinks).length > 0;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * The planned targets a PARTIAL note has not yet allocated: one whose
  * allocation link already exists is skipped, since re-allocating it would
  * exceed what that invoice now owes.
@@ -216,11 +284,5 @@ export async function unallocatedClearingTargets(input: {
     },
     select: { metadata: true },
   });
-  const allocated = new Set(
-    links
-      .map((link) => asRecord(link.metadata))
-      .filter((metadata) => readString(metadata?.creditNoteId) === input.creditNoteId)
-      .map((metadata) => readString(metadata?.invoiceId))
-  );
-  return input.targets.filter((target) => !allocated.has(target.invoiceId));
+  return targetsWithoutAllocation(input.targets, input.creditNoteId, links);
 }

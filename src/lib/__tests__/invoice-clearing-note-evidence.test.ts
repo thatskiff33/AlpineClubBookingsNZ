@@ -56,11 +56,13 @@ describe("hasInvoiceClearingNote (#3535)", () => {
         where: expect.objectContaining({
           localModel: "Booking",
           localId: "b1",
-          queueType: "MODIFICATION_CREDIT_NOTE",
           status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] },
         }),
       }),
     );
+    // No queue-type filter: a retry row written before the builder stamped the
+    // column carries none, and a running retry must still count.
+    expect(queued.operationFindFirst.mock.calls[0]![0].where).not.toHaveProperty("queueType");
     const none = db(null, null);
     await expect(
       hasInvoiceClearingNote(none.client, { bookingId: "b1", xeroRefundCreditNoteId: null }),

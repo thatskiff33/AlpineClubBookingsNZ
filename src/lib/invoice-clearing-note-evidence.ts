@@ -39,10 +39,37 @@ export async function hasInvoiceClearingNote(
       localId: payment.bookingId,
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
-      queueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+      // No queueType filter: only the modification-note builder anchors a
+      // CREDIT_NOTE create on a Booking, and a retry row written before the
+      // builder stamped the column carries none.
       status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] },
     },
     select: { id: true },
   });
   return Boolean(operation);
+}
+
+/**
+ * Real cash arrived for a cancelled booking, so a still-PENDING clearing note
+ * (which would say the booking was not paid) is obsolete: retire it in the
+ * caller's transaction. Only a pending one - a note already sent is the late
+ * payment alert's to call out. The repair tool reads a CANCELLED clearing row
+ * as "cash arrived; no note is owed" and does not propose another.
+ */
+export async function retirePendingClearingNote(
+  db: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<void> {
+  await db.xeroSyncOperation.updateMany({
+    where: {
+      localModel: "Booking",
+      localId: bookingId,
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      status: "PENDING",
+      queueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+    },
+    data: { status: "CANCELLED" },
+  });
 }

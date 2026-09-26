@@ -7,6 +7,10 @@
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import {
+  isClearingAllocationShortfall,
+  partialClearingNoteIsIncomplete,
+} from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingClassificationContext,
@@ -1301,7 +1305,52 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        // #3535: a clearing row CANCELLED by the late-cash arm means the
+        // member's cash arrived after the release - no clearing note is owed.
+        // (#3639 makes the arm's own "was it paid" test source-agnostic; this
+        // reads only the retired note.)
+        const clearingNoteRetiredByCash = bookingOperations.some(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "CANCELLED"
+        );
+        if (
+          blockingOperation &&
+          isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
+        ) {
+          // #3535: the invoices owe less than the note - retrying changes
+          // nothing until a person looks, so it is never a safe auto-retry.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "The invoice-clearing credit note was refused because the booking's invoices owe less than it (part of the booking may have been paid) - review it by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "An invoice-clearing credit note was refused because the booking's invoices owe less than it - review by hand; it is not retried automatically.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!blockingOperation && clearingNoteRetiredByCash) {
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "info",
+            summary:
+              "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
+            safeToAutoApply: false,
+            details: { paymentId: payment?.id ?? null, invoiceId: primaryInvoice.objectId },
+            actionKeys: [],
+          });
+        } else if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
             actionMap,
             buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
@@ -1380,9 +1429,22 @@ export function classifyBookingContext(
             operation.status === "PARTIAL" &&
             operation.xeroObjectId === cancellationCreditNote.objectId
         );
-        const partialNoteRetryMeta = partialNoteOperation
-          ? getXeroOperationRetryMeta(partialNoteOperation)
-          : null;
+        // Only while a planned invoice still has no allocation link from this
+        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
+        // would report a whole note as broken forever.
+        const partialNoteRetryMeta =
+          partialNoteOperation &&
+          partialClearingNoteIsIncomplete(
+            partialNoteOperation.requestPayload,
+            cancellationCreditNote.objectId,
+            bookingLinks.filter(
+              (link) =>
+                link.xeroObjectType === "ALLOCATION" &&
+                link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+            )
+          )
+            ? getXeroOperationRetryMeta(partialNoteOperation)
+            : null;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,

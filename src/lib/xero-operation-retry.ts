@@ -26,7 +26,7 @@ import {
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
-  readRecordedClearingAllocations,
+  recordedClearingTargets,
   RedactedClearingPlanError,
   unallocatedClearingTargets,
   type ClearingAllocationTarget,
@@ -668,19 +668,16 @@ function parseModificationCreditNoteRepairInput(
     return null;
   }
 
-  const payload = asRecord(operation.requestPayload);
   // #3535: a clearing note records the invoices it was planned across; replay
   // exactly those. An edit's note (and any row from before) has one target.
-  const recorded = readRecordedClearingAllocations(payload);
-  const invoiceId = readString(payload?.invoiceId);
-  const amountCents = readNumber(payload?.refundAmountCents);
-  if (!recorded && (!invoiceId || amountCents === null)) {
+  const targets = recordedClearingTargets(operation.requestPayload);
+  if (!targets) {
     return null;
   }
 
   return {
     creditNoteId: operation.xeroObjectId,
-    targets: recorded ?? [{ invoiceId: invoiceId!, amountCents: amountCents! }],
+    targets,
     allocationRole: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
   };
 }

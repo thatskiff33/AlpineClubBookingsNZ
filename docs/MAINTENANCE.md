@@ -1608,8 +1608,16 @@ delta. It reads only local rows (no Xero calls). Only allocations count — the
 allocation links the builder and the inbound reconcile write — so a FAILED
 clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
 (never allocated by the system) all show as not clearing. A refund note someone
-allocated by hand in Xero counts as far as it was allocated. Each note's line
-says which shape it is and whether it was created and allocated.
+allocated by hand in Xero counts as far as it was allocated; every clearing
+note on the booking counts, including one a retry created after the release's
+own operation FAILED. Each note's line says which shape it is and whether it
+was created and allocated.
+
+A hold whose invoice received the member's cash after the release is **not** an
+under-clear and is listed apart as "paid in cash after release, note retired".
+The late payment retired the pending note and credited the member, so a credit
+note now would credit an invoice the member paid: take no action on those rows
+(a part payment is #3643's to decide).
 
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
@@ -1626,7 +1634,11 @@ allocate the existing refund note to the invoice where it is unallocated, or
 issue a credit note for exactly the reported open delta, then confirm the
 invoice reaches a zero balance in Xero. A FAILED or PARTIAL clearing note on a
 hold released since #3535 is retried from the Xero operations screen (or by the
-repair CLI), which replays its recorded amount, wording and allocation plan.
+repair CLI). A FAILED note replays its recorded amount and wording and plans
+its allocations again from what the invoices owe now; only a PARTIAL note
+replays its recorded allocation plan. A note that failed because the invoices
+owe less than it (part of the booking was paid) is never retried
+automatically: resolve it by hand.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either

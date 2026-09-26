@@ -611,9 +611,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   subtracted; the 100% local restore does not double-count. Gated on an ISSUED
   invoice.
 - One note per booking: the enqueue stands down on the booking's active
-  clearing-note link or a live operation with its key, the repair arm on any
-  clearing operation. The cron never re-selects a released hold, including one
-  released before #3535 with a refund note; the repair tool still can (#3639).
+  clearing-note link or a live operation with its key; the repair arm while a
+  clearing operation is live or failed, proposes none once late cash retired
+  one, and never auto-retries a shortfall. The cron never re-selects a released
+  hold, including one released before #3535 with a refund note; the repair tool
+  still can (#3639).
   `scripts/audit-ib-hold-clearing.ts` counts only allocated clearing
   (read-only).
 - Pinned by `internet-banking-payment-cron.test.ts`,

@@ -2155,6 +2155,7 @@ describe("processStoredXeroInboundEvents", () => {
       xero: { accountingApi },
       tenantId: "tenant_1",
     });
+    return { txOperationUpdateMany };
   }
 
   it("routes a booking cancelled inside the lodge-lock window into the credit-mint arm instead of resurrecting it to PAID (#1587)", async () => {
@@ -2222,7 +2223,7 @@ describe("processStoredXeroInboundEvents", () => {
     // visible, actionable line": no task, nothing on the stuck-state dashboard,
     // and a caller that treats the outcome as ordinary. The money became a log
     // line.
-    mockPostLockReconcileEvent({
+    const { txOperationUpdateMany } = mockPostLockReconcileEvent({
       lockedBookingStatus: "CANCELLED",
       capacityAvailable: true,
       owner: "organisation",
@@ -2238,6 +2239,17 @@ describe("processStoredXeroInboundEvents", () => {
 
     // No credit, because there is no account to mint into.
     expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    // #3535: cash arrived, so a pending clearing note is retired here too, as
+    // in the member arm.
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localModel: "Booking",
+        localId: "booking_ib_pl",
+        status: "PENDING",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+      }),
+      data: { status: "CANCELLED" },
+    });
 
     // The money is carried by a durable record on the payments board instead,
     // sized at the invoice's quantified cash rather than the payment's face

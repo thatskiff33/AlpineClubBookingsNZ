@@ -38,8 +38,10 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { hasInvoiceClearingNote } from "@/lib/invoice-clearing-note-evidence";
-import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  hasInvoiceClearingNote,
+  retirePendingClearingNote,
+} from "@/lib/invoice-clearing-note-evidence";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -776,6 +778,13 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 select: { id: true },
               })
             : null;
+          // #3535: cash arrived, so the pending clearing note is retired here
+          // too, as in the member arm - left to run, the worker would refuse it
+          // (the invoice owes less than the note), and the alert would claim a
+          // note "was ALREADY issued" when none will be.
+          if (shouldHandBack) {
+            await retirePendingClearingNote(tx, settlementPayment.bookingId);
+          }
           if (shouldHandBack && !alreadyRaised) {
             await tx.manualRefundTask.create({
               data: {
@@ -938,23 +947,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             },
           });
           // #3535: a hold released since then queued the booking-anchored
-          // clearing note instead, which says the booking was not paid — just
-          // as obsolete once cash arrived. Retired the same way, still pending
-          // only.
-          await tx.xeroSyncOperation.updateMany({
-            where: {
-              localModel: "Booking",
-              localId: settlementPayment.bookingId,
-              direction: "OUTBOUND",
-              entityType: "CREDIT_NOTE",
-              operationType: "CREATE",
-              status: "PENDING",
-              queueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-            },
-            data: {
-              status: "CANCELLED",
-            },
-          });
+          // clearing note instead, just as obsolete once cash arrived.
+          await retirePendingClearingNote(tx, settlementPayment.bookingId);
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
             mintableCents,

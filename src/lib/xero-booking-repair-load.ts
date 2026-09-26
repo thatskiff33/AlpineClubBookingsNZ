@@ -357,7 +357,13 @@ export async function loadAuditData(
         })
       : Promise.resolve([] as EditReviewChargeIntentRecoveryRecord[]),
     // #3535: INV-PAY-017's allocation term, per booking, for the
-    // cancelled-open-invoice arm's clearing-note size.
+    // cancelled-open-invoice arm's clearing-note size. The release and the
+    // cancel path first run `repairLegacyAppliedCreditNoteAllocationsForBooking`,
+    // a write this read-only loader does not make; on a legacy booking whose
+    // stamp-era allocations have no slices yet the sum can read low and size
+    // the note above the release's. That fails safe: the builder's live
+    // AmountDue read refuses an oversize note (a shortfall, reported for a
+    // person, never auto-retried).
     bookingIds.length > 0
       ? deps.prisma.memberCreditNoteAllocation.groupBy({
           by: ["appliedToBookingId"],
