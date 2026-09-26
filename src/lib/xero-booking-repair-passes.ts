@@ -18,6 +18,7 @@ import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -498,9 +499,7 @@ async function applyQueuedAction(
         refundAmountCents: Number(action.payload.refundAmountCents),
         // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
         // edit's note keeps the default (method) wording.
-        ...(action.payload.clearsUnpaidInvoice === true
-          ? { clearsUnpaidInvoice: true as const }
-          : {}),
+        ...readModificationNoteWording(action.payload),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

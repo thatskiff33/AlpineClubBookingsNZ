@@ -34,7 +34,11 @@ import {
   createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
-import type { CashRefundMethod, ModificationNoteWording } from "@/lib/xero-refund-method";
+import {
+  readModificationNoteWording,
+  type CashRefundMethod,
+  type ModificationNoteWording,
+} from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
@@ -2250,8 +2254,6 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId,
     refundAmountCents,
     bookingModificationId,
-    refundMethod,
-    clearsUnpaidInvoice,
   } = params;
   const db = options?.store ?? prisma;
 
@@ -2352,11 +2354,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       bookingId,
       refundAmountCents,
       bookingModificationId: bookingModificationId ?? null,
-      ...(clearsUnpaidInvoice
-        ? { clearsUnpaidInvoice: true }
-        : refundMethod
-          ? { refundMethod }
-          : {}),
+      ...readModificationNoteWording(params),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -3093,9 +3091,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingId: payload.bookingId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
-          ...(payload.clearsUnpaidInvoice
-            ? { clearsUnpaidInvoice: true as const }
-            : { refundMethod: payload.refundMethod }),
+          ...readModificationNoteWording(payload),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,

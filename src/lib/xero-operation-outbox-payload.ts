@@ -2,6 +2,7 @@ import type { EntranceFeeCategory } from "@prisma/client";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   parseRefundMethod,
+  readModificationNoteWording,
   type ModificationNoteWording,
   type RefundMethod,
 } from "@/lib/xero-refund-method";
@@ -357,9 +358,7 @@ export function readQueuedOutboxPayload(
       refundAmountCents,
       bookingModificationId:
         readString(payload.bookingModificationId) ?? undefined,
-      ...(payload.clearsUnpaidInvoice === true
-        ? { clearsUnpaidInvoice: true as const }
-        : { refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined }),
+      ...readModificationNoteWording(payload),
     };
   }
 

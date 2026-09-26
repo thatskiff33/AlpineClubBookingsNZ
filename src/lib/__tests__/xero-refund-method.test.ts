@@ -16,10 +16,12 @@ import {
   describeRefundMethod,
   modificationNoteWording,
   parseRefundMethod,
+  readModificationNoteWording,
   REFUND_METHOD_WORDING,
   REFUND_METHODS,
   refundMethodForSettlementMethod,
   refundSettlementMappingKey,
+  settledModificationNoteWording,
   UNPAID_INVOICE_CLEARING_WORDING,
 } from "@/lib/xero-refund-method";
 
@@ -82,6 +84,23 @@ describe("the unpaid-invoice clearing wording (INV-PAY-017)", () => {
     expect(modificationNoteWording({ clearsUnpaidInvoice: true })).toBe("unpaid-invoice-clearing");
     expect(modificationNoteWording({ refundMethod: "internet-banking" })).toBe("internet-banking");
     expect(modificationNoteWording({})).toBe("card");
+  });
+
+  it("is read from any source by one rule: only a literal true clears, and then no method rides along", () => {
+    expect(readModificationNoteWording({ clearsUnpaidInvoice: true, refundMethod: "card" })).toEqual({
+      clearsUnpaidInvoice: true,
+    });
+    // A stored string is not the flag; an unknown method is not a method.
+    expect(readModificationNoteWording({ clearsUnpaidInvoice: "true", refundMethod: "bank" })).toEqual({});
+    expect(readModificationNoteWording({ refundMethod: "account-credit" })).toEqual({
+      refundMethod: "account-credit",
+    });
+    expect(readModificationNoteWording(null)).toEqual({});
+    // The default is applied in one place, for what a built note records.
+    expect(settledModificationNoteWording({})).toEqual({ refundMethod: "card" });
+    expect(settledModificationNoteWording({ clearsUnpaidInvoice: true })).toEqual({
+      clearsUnpaidInvoice: true,
+    });
   });
 });
 

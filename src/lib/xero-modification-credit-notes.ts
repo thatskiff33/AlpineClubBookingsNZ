@@ -35,6 +35,7 @@ import {
   buildRefundDocumentDescription,
   buildRefundDocumentReference,
   modificationNoteWording,
+  settledModificationNoteWording,
   type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
@@ -74,9 +75,7 @@ export async function createXeroCreditNoteForModification(params: {
   const wording = modificationNoteWording(params);
   // Recorded on the operation so the treasurer's audit trail and any repair
   // read the same choice the note was built with.
-  const recordedWording = params.clearsUnpaidInvoice
-    ? { clearsUnpaidInvoice: true as const }
-    : { refundMethod: params.refundMethod ?? "card" };
+  const recordedWording = settledModificationNoteWording(params);
 
   if (refundAmountCents <= 0) {
     if (syncOperationId) {
