@@ -1599,11 +1599,16 @@ exactly the applied-credit slice. #1597 fixed the sizing going forward (it now
 clears `max(0, finalPrice + changeFee − Xero-allocated applied credit)` and skips
 entirely when the payment has no issued invoice).
 
-The script scans every released IB hold, mirrors the corrected #1597 formula, and
-lists each booking whose clearing note was under-sized: booking id, invoice ref,
-expected clearing, actual (enqueued) clearing, and the open delta. It reads only
-local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
-hold released, which is exactly what the pre-fix release enqueued.
+The script scans every released IB hold, mirrors the INV-PAY-017 formula (Xero-
+allocated applied credit read from the same allocation ledger the release
+reads), and lists each booking whose clearing notes add up to less than that:
+booking id, invoice ref, the notes raised, expected clearing, actual clearing,
+and the open delta. It reads only local rows (no Xero calls). "Actual" is what
+the notes' own operation rows recorded, in either shape: the booking-anchored
+allocated clearing note a hold released since #3535 carries, or the payment's
+refund note an older hold carries. Only a refund note known from the payment's
+link field with no operation row falls back to `payment.amountCents` — the
+pre-#1597 sizing — and the report says so.
 
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
