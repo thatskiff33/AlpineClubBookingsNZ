@@ -2003,7 +2003,11 @@ describe("processStoredXeroInboundEvents", () => {
             updateMany: mocks.paymentTransactionUpdateMany,
             findFirst: vi.fn().mockResolvedValue({ id: "ptx_primary" }),
             create: mocks.paymentTransactionCreate,
+            // #3638: no card PRIMARY row, so no second instrument.
+            findMany: vi.fn().mockResolvedValue([]),
           },
+          // #3638: the cancelled case reads this invoice's conflict marker.
+          bookingEvent: { findFirst: vi.fn().mockResolvedValue(null) },
           booking: {
             update: mocks.bookingUpdate,
             updateMany: mocks.bookingUpdateMany,
@@ -2415,7 +2419,11 @@ describe("processStoredXeroInboundEvents", () => {
             updateMany: mocks.paymentTransactionUpdateMany,
             findFirst: vi.fn().mockResolvedValue({ id: "ptx_primary" }),
             create: mocks.paymentTransactionCreate,
+            // #3638: no card PRIMARY row, so no second instrument.
+            findMany: vi.fn().mockResolvedValue([]),
           },
+          // #3638: the cancelled case reads this invoice's conflict marker.
+          bookingEvent: { findFirst: vi.fn().mockResolvedValue(null) },
           booking: { update: mocks.bookingUpdate },
           memberCredit: {
             findFirst: mocks.memberCreditFindFirst,
@@ -3098,7 +3106,11 @@ describe("processStoredXeroInboundEvents", () => {
             updateMany: mocks.paymentTransactionUpdateMany,
             findFirst: vi.fn().mockResolvedValue({ id: "ptx_primary" }),
             create: mocks.paymentTransactionCreate,
+            // #3638: no card PRIMARY row, so no second instrument.
+            findMany: vi.fn().mockResolvedValue([]),
           },
+          // #3638: the cancelled case reads this invoice's conflict marker.
+          bookingEvent: { findFirst: vi.fn().mockResolvedValue(null) },
           booking: { update: mocks.bookingUpdate },
           memberCredit: {
             findFirst: mocks.memberCreditFindFirst,

@@ -490,12 +490,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
 
       // #3638 — read BEFORE the receipt below is written: for a CANCELLED
-      // booking the test asks whether this bank cash is new. Acted on after
-      // the receipt, which is recorded either way.
+      // booking the test asks whether this bank cash is new (and, when it is
+      // not, whether this invoice's conflict was already recorded). Acted on
+      // after the receipt, which is recorded either way.
       const secondInstrument = await findSecondInstrumentSettlement(tx, {
         paymentId: fresh.id,
         bookingId: fresh.bookingId,
         bookingStatus: fresh.booking.status,
+        invoiceId,
         includeCancelled: true,
       });
 
@@ -922,14 +924,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         );
       }
       // #3638: the same second-instrument test against the post-lodge-lock
-      // snapshot, for a booking that became settled inside the wait.
+      // snapshot. Defence in depth, not a second chance: lock(1) has been held
+      // since the read above, and card settlement and cancellation both take
+      // lock(1), so the booking's status cannot have changed during the
+      // lodge-lock wait. The CANCELLED question is not asked here because the
+      // receipt is already written — the read above is where it is answered.
       const lockedSecondInstrument = await findSecondInstrumentSettlement(tx, {
         paymentId: locked.id,
         bookingId: locked.bookingId,
         bookingStatus: locked.booking.status,
-        // The receipt is already written, so "is this bank cash new" can no
-        // longer be read here; a booking cancelled inside the wait was not
-        // card-settled before it (the read above would have caught that).
+        invoiceId,
         includeCancelled: false,
       });
       if (lockedSecondInstrument) {

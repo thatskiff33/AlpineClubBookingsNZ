@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindFirst: vi.fn(),
   paymentTransactionCreate: vi.fn(),
   paymentRecoveryOperationFindMany: vi.fn(),
+  paymentRefundFindMany: vi.fn(),
+  txBookingEventFindFirst: vi.fn(),
   memberCreditFindFirst: vi.fn(),
   memberCreditAggregate: vi.fn(),
   bookingUpdateMany: vi.fn(),
@@ -162,6 +164,14 @@ const tx = {
   paymentRecoveryOperation: {
     findMany: (...a: unknown[]) => mocks.paymentRecoveryOperationFindMany(...a),
   },
+  paymentRefund: {
+    findMany: (...a: unknown[]) => mocks.paymentRefundFindMany(...a),
+  },
+  // The cancelled case's idempotency read: this invoice's marker, in the
+  // settle loop's transaction.
+  bookingEvent: {
+    findFirst: (...a: unknown[]) => mocks.txBookingEventFindFirst(...a),
+  },
 };
 
 function invoice() {
@@ -207,6 +217,7 @@ function switchedPayment(bookingStatus: BookingStatus, overrides = {}) {
 }
 
 const CARD_PRIMARY = {
+  id: "card-row",
   source: PaymentSource.STRIPE,
   stripePaymentIntentId: "pi_card_3638",
   amountCents: 27000,
@@ -224,6 +235,8 @@ beforeEach(() => {
   // No captured Internet Banking row yet: this bank cash is new.
   mocks.paymentTransactionFindFirst.mockResolvedValue(null);
   mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+  mocks.paymentRefundFindMany.mockResolvedValue([]);
+  mocks.txBookingEventFindFirst.mockResolvedValue(null);
   mocks.memberCreditFindFirst.mockResolvedValue(null);
   mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
   mocks.paymentUpdate.mockResolvedValue({});
@@ -463,17 +476,166 @@ describe("card first, then cancelled, then bank (#3638)", () => {
     );
   });
 
-  it("stays out of the way when the bank cash was already recorded (a replay, or bank first)", async () => {
+  it("stays out of the way on a replay once this invoice's conflict is recorded", async () => {
     primePayment(
       switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
     );
     mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
+    mocks.txBookingEventFindFirst.mockResolvedValue({ id: "marker-1" });
 
     const result = await sync();
 
     expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    // The marker is looked up for THIS invoice, inside the settle transaction.
+    expect(mocks.txBookingEventFindFirst).toHaveBeenCalledWith({
+      where: {
+        bookingId: "booking-1",
+        type: BookingEventType.CANCELLED,
+        snapshot: { path: ["kind"], equals: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND },
+        AND: [{ snapshot: { path: ["invoiceId"], equals: INVOICE_ID } }],
+      },
+      select: { id: true },
+    });
     expect(mocks.paymentTransactionFindMany).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  // #3638 review (concurrency F2): the receipt commits BEFORE the marker is
+  // written. A process that dies in between used to leave a receipt that made
+  // every retry read "this bank cash is not new" and stay silent: the club
+  // held the money with no record anyone could see.
+  it("raises the conflict on the retry when the process died between the receipt's commit and the marker", async () => {
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+
+    // Delivery 1: new bank cash, the receipt commits, then the process dies
+    // before the marker (the throw stands in for the kill).
+    mocks.recordBookingEvent.mockRejectedValueOnce(new Error("process killed"));
+    await expect(sync()).rejects.toThrow("process killed");
+    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalled();
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+
+    // Delivery 2, the retry: the receipt is on file and no marker exists.
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ib-primary" });
+    const retry = await sync();
+
+    expect(retry.secondInstrumentSettlementConflicts).toBe(1);
+    expect(mocks.recordBookingEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+          invoiceId: INVOICE_ID,
+          bookingStatus: BookingStatus.CANCELLED,
+        }),
+      })
+    );
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+
+    // Delivery 3: the marker now exists, so the conflict is not raised again.
+    mocks.txBookingEventFindFirst.mockResolvedValue({ id: "marker-1" });
+    const replay = await sync();
+
+    expect(replay.secondInstrumentSettlementConflicts).toBe(0);
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not raise a bank-first replay whose card row is #1765 refund history", async () => {
+    // A repay-after-refund booking: card paid and refunded, switched to
+    // Internet Banking, repaid by bank (PAID), then cancelled. Its bank cash is
+    // recorded and no conflict was ever raised, so the marker is absent — the
+    // refund recorded BEFORE the switch is what says this is not one.
+    const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+    primePayment(
+      switchedPayment(BookingStatus.CANCELLED, { status: PaymentStatus.REFUNDED })
+    );
+    mocks.paymentTransactionFindFirst.mockImplementation(
+      async ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy ? { createdAt: switchedAt } : { id: "ib-primary" }
+    );
+    mocks.paymentTransactionFindMany.mockResolvedValue([
+      { ...CARD_PRIMARY, refundedAmountCents: 27000 },
+    ]);
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "card-row" }]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(mocks.paymentRefundFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentTransactionId: { in: ["card-row"] },
+          createdAt: { lt: switchedAt },
+        }),
+      })
+    );
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3638 review (correctness F3): #1765's repay-after-refund booking is paid by
+ * card, refunded in part, repriced back to PAYMENT_PENDING and — now that the
+ * switch lets a refunded intent through — repaid by Internet Banking. The old
+ * card row still holds net cash, but it is settled history, not a second
+ * instrument: its refund was recorded before the booking moved to Internet
+ * Banking. A refund recorded after the switch is somebody acting on a live
+ * card payment, and is still raised.
+ */
+describe("#1765 refund history is not a second instrument (#3638)", () => {
+  const switchedAt = new Date("2026-07-10T00:00:00.000Z");
+  const partlyRefundedCard = {
+    ...CARD_PRIMARY,
+    amountCents: 27000,
+    refundedAmountCents: 9000,
+  };
+
+  beforeEach(() => {
+    mocks.paymentTransactionFindMany.mockResolvedValue([partlyRefundedCard]);
+    mocks.paymentTransactionFindFirst.mockImplementation(
+      async ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy ? { createdAt: switchedAt } : null
+    );
+  });
+
+  it("settles a repay-after-partial-refund booking quietly when the refund predates the switch", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID));
+    mocks.paymentRefundFindMany.mockResolvedValue([{ paymentTransactionId: "card-row" }]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(0);
+    expect(result.skippedAlreadyPaidBookings).toBe(1);
+    expect(mocks.paymentRefundFindMany).toHaveBeenCalledWith({
+      where: {
+        paymentTransactionId: { in: ["card-row"] },
+        createdAt: { lt: switchedAt },
+        status: { notIn: ["failed", "canceled"] },
+      },
+      select: { paymentTransactionId: true },
+    });
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("still raises a card payment refunded in part after the switch", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID));
+    mocks.paymentRefundFindMany.mockResolvedValue([]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(1);
+  });
+
+  it("never asks about refunds for a card row that has none", async () => {
+    primePayment(switchedPayment(BookingStatus.PAID));
+    mocks.paymentTransactionFindMany.mockResolvedValue([CARD_PRIMARY]);
+
+    const result = await sync();
+
+    expect(result.secondInstrumentSettlementConflicts).toBe(1);
+    expect(mocks.paymentRefundFindMany).not.toHaveBeenCalled();
   });
 });
 

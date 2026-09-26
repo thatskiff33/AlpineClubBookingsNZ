@@ -23,6 +23,7 @@ import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import {
   CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST,
   CAPTURED_TRANSACTION_STATUS_LIST,
+  EXCLUDED_LEDGER_REFUND_STATUSES,
 } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -54,6 +55,27 @@ import type { ClubFormat } from "@/lib/club-format";
 const MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The marker already recorded for (booking, conflict kind, invoice), if any.
+ * The dedupe read before a marker is written, and — for #3638's cancelled
+ * case — the idempotency record the detector itself reads (see
+ * `findSecondInstrumentSettlement`).
+ */
+function findSettlementConflictMarker(
+  store: Pick<Prisma.TransactionClient, "bookingEvent">,
+  { bookingId, kind, invoiceId }: { bookingId: string; kind: string; invoiceId: string },
+) {
+  return store.bookingEvent.findFirst({
+    where: {
+      bookingId,
+      type: BookingEventType.CANCELLED,
+      snapshot: { path: ["kind"], equals: kind },
+      AND: [{ snapshot: { path: ["invoiceId"], equals: invoiceId } }],
+    },
+    select: { id: true },
+  });
+}
+
+/**
  * The durable half shared by both inbound settlement conflicts — B5 (#2262)'s
  * reciprocal fence and #3638's second instrument. Records ONE admin-only
  * marker BookingEvent per (booking, conflict kind, invoice), then claims the
@@ -62,9 +84,12 @@ const MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
  * must never sit inside a transaction (see booking-events.ts), and the alert
  * the caller then sends is a provider call. Never changes money state.
  *
- * Self-healing rather than atomic: each conflict is DETECTED from committed
- * state under lock(1) on every delivery, so a crash between the commit and this
- * write is re-detected, and the event recorded, on the retry or replay.
+ * Self-healing rather than atomic: a crash between the commit and this write
+ * leaves no marker, and the conflict is detected again on the retry or replay
+ * — the #2262 fence and the PAID / COMPLETED arms from the committed state
+ * itself, #3638's cancelled case because the missing marker is what it reads.
+ * Best-effort still: a marker write that fails on its own (the event helper
+ * swallows it) is not retried unless the invoice event is delivered again.
  */
 async function recordSettlementConflictMarker({
   bookingId,
@@ -90,23 +115,17 @@ async function recordSettlementConflictMarker({
   // cross-instance cooldown, and no money state keys off the event — so a
   // unique constraint is deliberately not added. A DIFFERENT invoice reporting
   // paid against the same payment still records its own conflict.
-  const alreadyRecorded = await prisma.bookingEvent
-    .findFirst({
-      where: {
-        bookingId,
-        type: BookingEventType.CANCELLED,
-        snapshot: { path: ["kind"], equals: snapshot.kind },
-        AND: [{ snapshot: { path: ["invoiceId"], equals: invoiceId } }],
-      },
-      select: { id: true },
-    })
-    .catch((err) => {
-      logger.error(
-        { err, bookingId, invoiceId, kind: snapshot.kind },
-        "Failed to look up an existing settlement-conflict event; recording a fresh one"
-      );
-      return null;
-    });
+  const alreadyRecorded = await findSettlementConflictMarker(prisma, {
+    bookingId,
+    kind: snapshot.kind,
+    invoiceId,
+  }).catch((err) => {
+    logger.error(
+      { err, bookingId, invoiceId, kind: snapshot.kind },
+      "Failed to look up an existing settlement-conflict event; recording a fresh one"
+    );
+    return null;
+  });
 
   if (!alreadyRecorded) {
     await recordBookingEvent({
@@ -203,14 +222,23 @@ export async function recordManualSettlementConflict({
  * - CANCELLED (only with `includeCancelled`, the pre-settlement read): any
  *   capture, refunded or not, because the cancellation already settled the
  *   card money under its own policy and this bank cash has nowhere to go —
- *   the credit-mint arm mints only for a payment that never settled. Counted
- *   only while the bank cash is NEW (no captured Internet Banking PRIMARY row
- *   yet), so a replay of a bank payment that settled the booking FIRST, on a
- *   booking a stray card capture later hit, is not mistaken for one.
+ *   the credit-mint arm mints only for a payment that never settled. Once the
+ *   bank cash is RECORDED (a captured Internet Banking PRIMARY row exists) it
+ *   stays a conflict until this invoice's marker exists: the marker is written
+ *   after the receipt commits, so a crash in between must be raised on the
+ *   retry, and a replay after the marker is not raised again.
  *
- * Never a capture the #1992 duplicate-capture refund owns: that is the
- * opposite order (bank first, card second), and its durable refund operation
- * already says which side goes back (`INV-PAY-043`).
+ * Never these, which are not a second instrument:
+ * - a capture the #1992 duplicate-capture refund owns: the opposite order
+ *   (bank first, card second), whose durable refund operation already says
+ *   which side goes back (`INV-PAY-043`);
+ * - #1765 refund history, where the booking is not cancelled or the bank cash
+ *   is already recorded: a card row with a refund recorded before the booking
+ *   moved to Internet Banking. That is a repay-after-refund booking — the
+ *   switch lets it through because the card can no longer charge — and the
+ *   bank transfer is its repayment, not a second payment. A refund recorded
+ *   after the switch is not history: someone was already acting on a live card
+ *   payment, and it is raised.
  *
  * Read under the lock(1) the settle loop already holds, which the card
  * settlement takes too, so the settlement it looks for has either committed or
@@ -223,11 +251,13 @@ export async function findSecondInstrumentSettlement(
     paymentId,
     bookingId,
     bookingStatus,
+    invoiceId,
     includeCancelled,
   }: {
     paymentId: string;
     bookingId: string;
     bookingStatus: BookingStatus;
+    invoiceId: string;
     includeCancelled: boolean;
   },
 ) {
@@ -236,17 +266,28 @@ export async function findSecondInstrumentSettlement(
   if (!cancelled && !isPaidLikeBookingStatus(bookingStatus)) {
     return null;
   }
+  let bankCashRecorded = false;
   if (cancelled) {
-    const bankCashAlreadyRecorded = await tx.paymentTransaction.findFirst({
-      where: {
-        paymentId,
-        kind: PaymentTransactionKind.PRIMARY,
-        source: PaymentSource.INTERNET_BANKING,
-        status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] },
-      },
-      select: { id: true },
-    });
-    if (bankCashAlreadyRecorded) return null;
+    bankCashRecorded =
+      (await tx.paymentTransaction.findFirst({
+        where: {
+          paymentId,
+          kind: PaymentTransactionKind.PRIMARY,
+          source: PaymentSource.INTERNET_BANKING,
+          status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] },
+        },
+        select: { id: true },
+      })) !== null;
+    if (
+      bankCashRecorded &&
+      (await findSettlementConflictMarker(tx, {
+        bookingId,
+        kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+        invoiceId,
+      }))
+    ) {
+      return null;
+    }
   }
   const captured = await tx.paymentTransaction.findMany({
     where: {
@@ -260,17 +301,22 @@ export async function findSecondInstrumentSettlement(
       },
     },
     select: {
+      id: true,
       source: true,
       stripePaymentIntentId: true,
       amountCents: true,
       refundedAmountCents: true,
     },
   });
-  const candidates = cancelled
+  const holding = cancelled
     ? captured
     : captured.filter(
         (transaction) => transaction.amountCents > transaction.refundedAmountCents
       );
+  const candidates =
+    !cancelled || bankCashRecorded
+      ? await withoutRefundHistory(tx, paymentId, holding)
+      : holding;
   if (candidates.length === 0) return null;
 
   const duplicateKeys = candidates.flatMap((transaction) =>
@@ -305,6 +351,38 @@ export async function findSecondInstrumentSettlement(
         )
     ) ?? null
   );
+}
+
+/**
+ * Drop #1765 refund history: card rows with a counted refund recorded before
+ * the payment's first Internet Banking PRIMARY row — the moment the booking
+ * moved to Internet Banking. With no Internet Banking row nothing is dropped.
+ */
+async function withoutRefundHistory<
+  T extends { id: string; refundedAmountCents: number },
+>(tx: Prisma.TransactionClient, paymentId: string, rows: T[]): Promise<T[]> {
+  const refunded = rows.filter((row) => row.refundedAmountCents > 0);
+  if (refunded.length === 0) return rows;
+  const movedToBank = await tx.paymentTransaction.findFirst({
+    where: {
+      paymentId,
+      kind: PaymentTransactionKind.PRIMARY,
+      source: PaymentSource.INTERNET_BANKING,
+    },
+    orderBy: { createdAt: "asc" },
+    select: { createdAt: true },
+  });
+  if (!movedToBank) return rows;
+  const earlierRefunds = await tx.paymentRefund.findMany({
+    where: {
+      paymentTransactionId: { in: refunded.map((row) => row.id) },
+      createdAt: { lt: movedToBank.createdAt },
+      status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES },
+    },
+    select: { paymentTransactionId: true },
+  });
+  const history = new Set(earlierRefunds.map((refund) => refund.paymentTransactionId));
+  return rows.filter((row) => !history.has(row.id));
 }
 
 type SecondInstrumentSettlement = NonNullable<
