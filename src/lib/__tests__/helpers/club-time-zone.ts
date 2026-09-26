@@ -8,15 +8,15 @@
  */
 import { expect } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "./environment-club-zone";
 import { asClubTimeZone, type ClubTimeZone } from "@/lib/club-time";
 
 /**
  * The premise guard for a suite whose subject is "the club's calendar day is
  * NOT the UTC day" (#2834, INV-DATE-019).
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`
- * (`src/config/operational.ts`), so setting `TZ=UTC` to imitate the CI runner
+ * `ENVIRONMENT_CLUB_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`
+ * (`./environment-club-zone.ts`), so setting `TZ=UTC` to imitate the CI runner
  * ALSO moves the club's zone to UTC — docs/TESTING.md rule 6. Every assertion in
  * a suite like this then goes red with a bare `expected '2026-06-14' to be
  * '2026-06-15'`, which reads exactly like the product bug the suite exists to
@@ -28,8 +28,8 @@ import { asClubTimeZone, type ClubTimeZone } from "@/lib/club-time";
  */
 export function expectClubTimeZonePremise(): void {
   expect(
-    APP_TIME_ZONE,
-    "This assertion proves the club's calendar day differs from the UTC day, so it needs the club zone to be New Zealand. APP_TIME_ZONE is being overridden by TZ (or NEXT_PUBLIC_TZ) — see docs/TESTING.md rule 6. This is an environment problem, not the dating bug these tests describe.",
+    ENVIRONMENT_CLUB_ZONE,
+    "This assertion proves the club's calendar day differs from the UTC day, so it needs the club zone to be New Zealand. ENVIRONMENT_CLUB_ZONE is being overridden by TZ (or NEXT_PUBLIC_TZ) — see docs/TESTING.md rule 6. This is an environment problem, not the dating bug these tests describe.",
   ).toBe("Pacific/Auckland");
 }
 
@@ -38,7 +38,7 @@ export function expectClubTimeZonePremise(): void {
  * spread first so the search below terminates on the first candidate for almost
  * every host.
  *
- * `Pacific/Auckland` is deliberately ABSENT. It is what `APP_TIME_ZONE` falls
+ * `Pacific/Auckland` is deliberately ABSENT. It is what `ENVIRONMENT_CLUB_ZONE` falls
  * back to and what `CLUB_TIME_TEST_ZONE` hands the shared render harness, so a
  * suite that ended up on it would be back to the blind default this helper
  * exists to escape.
@@ -46,7 +46,7 @@ export function expectClubTimeZonePremise(): void {
  * BOTH OFFSET EXTREMES ARE REQUIRED, not a nice spread. A calendar-day
  * derivation has only two or three possible answers on the whole planet at any
  * instant (see "Choosing the instant" below), and two of them can already be
- * taken — one by `APP_TIME_ZONE`, one by the host. So the list has to be able to
+ * taken — one by `ENVIRONMENT_CLUB_ZONE`, one by the host. So the list has to be able to
  * reach the remaining day from either end: `Pacific/Kiritimati` is UTC+14 and
  * `Pacific/Pago_Pago` is UTC-11, with the rest in the middle. Dropping an
  * extreme turns "a divergent zone always exists" into
@@ -68,7 +68,7 @@ export interface DivergentClubZone<T> {
   readonly zone: ClubTimeZone;
   /** `derive(zone)` — the ORACLE, computed from the chosen zone. */
   readonly expected: T;
-  /** `derive(APP_TIME_ZONE)` — proven to differ from {@link expected}. */
+  /** `derive(ENVIRONMENT_CLUB_ZONE)` — proven to differ from {@link expected}. */
   readonly environmentAnswer: T;
   /** `derive(the host's own resolved zone)` — proven to differ too. */
   readonly hostAnswer: T;
@@ -83,8 +83,8 @@ export interface DivergentClubZone<T> {
  * `INV-CONFIG-002` forbids is a CLIENT deciding club time from the viewer's
  * clock; a test asserting that no such decision is being made is the opposite.
  *
- * It is deliberately NOT `APP_TIME_ZONE`. On the CI runner those two are
- * DIFFERENT — the host resolves `UTC` while `APP_TIME_ZONE` falls back to
+ * It is deliberately NOT `ENVIRONMENT_CLUB_ZONE`. On the CI runner those two are
+ * DIFFERENT — the host resolves `UTC` while `ENVIRONMENT_CLUB_ZONE` falls back to
  * `Pacific/Auckland` — so a suite that checked only one of them still could not
  * tell a host-local-getter implementation from a correct one.
  */
@@ -100,7 +100,7 @@ function hostResolvedZone(): string {
  * would have turned every importing suite red on CI and green here. CT-1's
  * validator refuses `"UTC"` on purpose — it is not a named region zone and no
  * club may choose it — and the CI runner's own host resolves EXACTLY `"UTC"`.
- * `APP_TIME_ZONE` is a raw `process.env` string too, which a deployment can
+ * `ENVIRONMENT_CLUB_ZONE` is a raw `process.env` string too, which a deployment can
  * legitimately set to `UTC`, `NZ` or `EST`; `club-time/zone.ts` brands it
  * unvalidated for the legacy adapters for the same reason.
  *
@@ -120,7 +120,7 @@ function probeZone(id: string): ClubTimeZone {
  *
  * `src/lib/__tests__/support/club-time-render.tsx` sets
  * `CLUB_TIME_TEST_ZONE = "Pacific/Auckland"`, deliberately equal to what
- * `APP_TIME_ZONE` resolves to under test, so that moving 37 suites onto the
+ * `ENVIRONMENT_CLUB_ZONE` resolves to under test, so that moving 37 suites onto the
  * shared renderer changed no expected string. The consequence is stated in that
  * file and is worth restating: **a suite on the default wrapper cannot tell the
  * persisted zone from the environment, whatever it asserts.** Measured on this
@@ -136,7 +136,7 @@ function probeZone(id: string): ClubTimeZone {
  * ## It defeats BOTH mutant classes, not one
  *
  * There are two ways to get this wrong and they read differently in the source:
- * an implementation that formats through `APP_TIME_ZONE` (the ENVIRONMENT's
+ * an implementation that formats through `ENVIRONMENT_CLUB_ZONE` (the ENVIRONMENT's
  * claim), and one that uses `getFullYear`/`getMonth`/`getDate` (the HOST's own
  * clock). Under test with `TZ` unset those two answer differently from each
  * other — `Pacific/Auckland` against `UTC` — so a chosen zone is only safe when
@@ -166,11 +166,11 @@ function probeZone(id: string): ClubTimeZone {
  * simultaneously on earth only while the UTC hour is 10: `UTC+14` has turned
  * over while `UTC-11` has not. At every other hour there are only TWO. So
  * outside that window a calendar-day derivation has at most two possible
- * answers, and both can already be taken — one by `APP_TIME_ZONE`, one by the
+ * answers, and both can already be taken — one by `ENVIRONMENT_CLUB_ZONE`, one by the
  * host — in which case no divergent zone exists at all and this helper can only
  * fail.
  *
- * Measured on the CI shape (host `UTC`, `APP_TIME_ZONE` `Pacific/Auckland`): a
+ * Measured on the CI shape (host `UTC`, `ENVIRONMENT_CLUB_ZONE` `Pacific/Auckland`): a
  * fixture at 21:00 UTC leaves no third day and every candidate above is refused;
  * the same fixture at 10:30 UTC resolves on the first candidate. The three-days
  * fact is therefore not a curiosity to steer around — it is the property that
@@ -202,12 +202,12 @@ export function divergentClubZone<T>(
     return { value, json: JSON.stringify(value) };
   };
 
-  const environment = answerFor(APP_TIME_ZONE, "APP_TIME_ZONE");
+  const environment = answerFor(ENVIRONMENT_CLUB_ZONE, "ENVIRONMENT_CLUB_ZONE");
   const host = answerFor(hostZoneId, "the host's resolved zone");
 
   const tried: string[] = [];
   for (const candidate of CANDIDATE_CLUB_ZONES) {
-    if (candidate === APP_TIME_ZONE || candidate === hostZoneId) continue;
+    if (candidate === ENVIRONMENT_CLUB_ZONE || candidate === hostZoneId) continue;
     const zone = asClubTimeZone(candidate);
     if (zone === null) continue;
     const expected = derive(zone);
@@ -225,10 +225,10 @@ export function divergentClubZone<T>(
 
   throw new Error(
     "No candidate club zone gives an answer different from BOTH the environment's " +
-      `(APP_TIME_ZONE ${APP_TIME_ZONE} -> ${environment.json}) and the host's ` +
+      `(ENVIRONMENT_CLUB_ZONE ${ENVIRONMENT_CLUB_ZONE} -> ${environment.json}) and the host's ` +
       `(${hostZoneId} -> ${host.json}); tried ${tried.join(", ") || "none"}. ` +
       "Without a zone that diverges from both, this assertion cannot tell the club's persisted zone " +
-      "from an implementation that formats through APP_TIME_ZONE or one that reads the host's own " +
+      "from an implementation that formats through ENVIRONMENT_CLUB_ZONE or one that reads the host's own " +
       "Date getters, so it would pass for either. Either the derivation is zone-independent — in which " +
       "case it needs no zone and should not be using this helper — or the fixture instant needs moving " +
       "to a time of day at which the candidates disagree.",
@@ -300,13 +300,13 @@ export interface ChooseDivergentClubZoneOptions<
    * OPT IN to the stronger guarantee: the chosen answer must also differ from
    * the answer THIS PROCESS's own resolved zone gives, so the assertion
    * discriminates a host-local `getFullYear`/`getMonth`/`getDate`
-   * implementation as well as an `APP_TIME_ZONE` one.
+   * implementation as well as an `ENVIRONMENT_CLUB_ZONE` one.
    *
    * Pass the instant the suite's `answerFor` reads. It is not decoration: for a
    * CALENDAR-DAY answer the helper asserts the instant can actually produce a
    * third distinct day, because outside the 10:00-10:59 UTC hour only two
    * calendar days exist on earth and both can already be taken — one by
-   * `APP_TIME_ZONE`, one by the host. Documenting that constraint was the
+   * `ENVIRONMENT_CLUB_ZONE`, one by the host. Documenting that constraint was the
    * previous arrangement and it degrades quietly: a suite whose host and
    * environment happen to coincide (a New Zealand developer with `TZ` unset)
    * passes locally at any hour and then finds no candidate at all on a CI
@@ -356,7 +356,7 @@ export function chooseDivergentClubZone<
   const hostZoneId = hostResolvedZone();
   const rivalZones = [
     ...new Set([
-      APP_TIME_ZONE,
+      ENVIRONMENT_CLUB_ZONE,
       ...alsoDifferFrom,
       ...(alsoDifferFromHostAt === undefined ? [] : [hostZoneId]),
     ]),
@@ -364,7 +364,7 @@ export function chooseDivergentClubZone<
   const rivals = rivalZones.map((zone) => ({
     zone,
     /*
-     * `APP_TIME_ZONE` is an unvalidated `process.env.TZ` passthrough, so it can
+     * `ENVIRONMENT_CLUB_ZONE` is an unvalidated `process.env.TZ` passthrough, so it can
      * be a Windows zone name ("New Zealand Standard Time") or a POSIX TZ string
      * ("NZST-12NZDT,M9.5.0,M4.1.0/3"), and `Intl` answers either with a bare
      * `RangeError: Invalid time zone specified`. Unwrapped, that surfaces as a
@@ -459,7 +459,7 @@ function assertThirdCalendarDayIsReachable({
         `${String(utcHour).padStart(2, "0")}:xx UTC, and THREE calendar days exist on ` +
         `earth only while the UTC hour is ${THREE_CALENDAR_DAYS_UTC_HOUR} (offsets span ` +
         `UTC-11 to UTC+14, twenty-five hours). At every other hour there are two, and ` +
-        `both can already be taken — one by APP_TIME_ZONE, one by the host — so no ` +
+        `both can already be taken — one by ENVIRONMENT_CLUB_ZONE, one by the host — so no ` +
         `candidate can differ from both and this chooser could only fail (CT-6, #2991). ` +
         `Move the fixture into the 10:00-10:59 UTC hour, or drop alsoDifferFromHostAt ` +
         `and rely on the environment rival alone.\n${describeEnvironment()}, host ` +
@@ -493,7 +493,7 @@ function shiftUtcDay(instant: Date, offsetDays: number): string {
 
 function describeEnvironment(): string {
   return (
-    `APP_TIME_ZONE is ${JSON.stringify(APP_TIME_ZONE)} (process.env.TZ = ` +
+    `ENVIRONMENT_CLUB_ZONE is ${JSON.stringify(ENVIRONMENT_CLUB_ZONE)} (process.env.TZ = ` +
     `${JSON.stringify(process.env.TZ)}, host resolves ` +
     `${JSON.stringify(hostResolvedZone())})`
   );

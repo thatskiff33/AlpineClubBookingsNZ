@@ -6,17 +6,20 @@
  *
  * It claims one thing about one directory, and it now claims it WITH NO
  * EXCEPTIONS: no file under `src/app/**` outside `api/` and `(admin)/` takes the
- * club's civil time from anywhere but the club's own configuration. Four shapes
+ * club's civil time from anywhere but the club's own configuration. Three shapes
  * are banned, and each one is a rule the scan really runs — `offendersIn` is the
  * single entry point, and the wiring test at the bottom drives a synthetic
  * offender through it for every one of them:
  *
  *  1. a named import of a zone-bearing legacy helper (`ENVIRONMENT_ZONE_HELPERS`);
- *  2. a namespace or dynamic import that hides which of those — or which of
- *     `@/config/operational`'s exports — a file reads;
- *  3. a named import of `APP_TIME_ZONE` itself;
- *  4. the three reads that reach no module at all: `process.env.TZ`, the
+ *  2. a namespace or dynamic import that hides which of those a file reads;
+ *  3. the three reads that reach no module at all: `process.env.TZ`, the
  *     VIEWER's clock via `resolvedOptions()`, and a zone typed in as a literal.
+ *
+ * A fourth rule — a named import of the environment zone constant, plus the
+ * namespace and dynamic reads of the module that held it — went when #3567
+ * deleted that module: a rule for a module that cannot be imported can never
+ * fire.
  *
  * That is a property of these files, and it is what stops the next page copying
  * its neighbour's environment read.
@@ -56,10 +59,10 @@
  * exemption has to write the mechanism back, in a diff a reviewer can see.
  *
  * IT IS NOT the claim that these surfaces no longer touch the environment zone
- * at all. Measured by transitive import closure on this branch, most of them
- * still reach `APP_TIME_ZONE` through a `src/lib` wrapper — the capacity,
- * pricing, consent and calendar layers among them — which is group F's work and
- * which CT-6 (#2991) finishes by retiring the modules. `docs/CLUB_TIME_KERNEL.md`
+ * at all. Measured by transitive import closure when this census was written,
+ * most of them still reached `APP_TIME_ZONE` through a `src/lib` wrapper — the
+ * capacity, pricing, consent and calendar layers among them — which was group
+ * F's work; CT-6 (#2991) and #3567 retired the constant. `docs/CLUB_TIME_KERNEL.md`
  * warns specifically against a guard whose headline is "false and green", and a
  * layer-wide claim backed by a directory scan would be exactly that.
  *
@@ -87,10 +90,8 @@
  * the `type` modifier and a rename, and it resolves a specifier by BASENAME so a
  * relative path reaches the same verdict as the `@/lib/...` alias. A namespace
  * import and a dynamic `import()` hide WHICH helpers a file reads, so both are
- * banned outright rather than documented — for `@/config/operational` as well as
- * for the legacy adapter, which is a gap this census carried until the
- * #2870 fix round: the headline said "WITH NO EXCEPTIONS", and
- * `import * as ops from "@/config/operational"` walked straight past it.
+ * banned outright rather than documented. (The environment-constant module was
+ * covered the same way until #3567 deleted it.)
  *
  * Still open, and the accepted class any path-matching import check carries: a
  * specifier built by concatenation, a re-export chain that launders a helper
@@ -156,9 +157,9 @@
  * ## Comments are stripped first, and what that shares with every other census
  *
  * These three are scanned over `stripComments(source)` — the one shared
- * implementation in `src/lib/__tests__/support/strip-comments.ts`, for the reason
- * `importsEnvironmentZone` gives below: twenty-nine of the forty-one files this
- * group migrated name `APP_TIME_ZONE` in a comment explaining what they no
+ * implementation in `src/lib/__tests__/support/strip-comments.ts`, because
+ * twenty-nine of the forty-one files this group migrated name `APP_TIME_ZONE` in
+ * a comment explaining what they no
  * longer do, and a census that could not tell an explanation from a call would
  * force every explanation to be deleted. For these three patterns the strip is a
  * PRECAUTION rather than a fix: measured on this branch, no in-scope file
@@ -234,14 +235,11 @@ const LEGACY_MODULE_BASENAMES = new Set(["date-only"]);
 /**
  * Modules whose zone-bearing exports must be reached by NAME or not at all.
  *
- * `operational` joins the adapter because `APP_TIME_ZONE` lives there: a
- * namespace import of it hides an environment read exactly as effectively as a
- * namespace import of `date-only` hides `getTodayDateOnly`.
+ * `operational` was here too, for the environment zone constant it held, until
+ * #3567 deleted that module; a basename matching no file is a rule that can
+ * never fire, so it went rather than stay as decoration.
  */
-const OPAQUE_READ_BASENAMES = new Set([
-  ...LEGACY_MODULE_BASENAMES,
-  "operational",
-]);
+const OPAQUE_READ_BASENAMES = new Set([...LEGACY_MODULE_BASENAMES]);
 
 /**
  * Two of the three zone reads that reach no module, and therefore no import
@@ -327,10 +325,9 @@ function legacyImportedNames(source: string): string[] {
 /**
  * Reads of a zone-bearing module that hide WHICH exports are being read.
  *
- * Keyed on `OPAQUE_READ_BASENAMES`, so `@/config/operational` is covered
- * alongside the adapter: `import * as ops` hides `ops.APP_TIME_ZONE` exactly as
- * effectively as `import * as dates` hides `dates.getTodayDateOnly`, and
- * `importsEnvironmentZone` below can only see a named clause.
+ * Keyed on `OPAQUE_READ_BASENAMES`: `import * as dates` hides
+ * `dates.getTodayDateOnly`, and the named-import reader can only see a named
+ * clause.
  */
 function opaqueZoneModuleReads(source: string): string[] {
   const found: string[] = [];
@@ -378,22 +375,6 @@ function pinnedClubZoneLiterals(code: string): string[] {
 }
 
 /**
- * True when this file IMPORTS `APP_TIME_ZONE` — the container's `TZ`.
- *
- * Deliberately the import rather than any mention of the identifier: measured
- * on this branch, twenty-nine of the forty-one files this group migrated name it
- * in a comment explaining what they no longer do, and a census that could not
- * tell those apart would force every one of those explanations to be deleted.
- */
-function importsEnvironmentZone(source: string): boolean {
-  const clause = /import\s+\{([^}]*)\}\s*from\s*["'][^"']*config\/operational["']/g;
-  for (const match of source.matchAll(clause)) {
-    if (/\bAPP_TIME_ZONE\b/.test(match[1])) return true;
-  }
-  return false;
-}
-
-/**
  * Every rule this census enforces, applied to ONE file.
  *
  * Deliberately a function rather than a loop body: the wiring test below drives
@@ -413,15 +394,6 @@ function offendersIn(rel: string, source: string): string[] {
     offenders.push(
       `${rel} — ${shape}: import the names you need, so this census can see ` +
         "which zone-bearing exports the file reads",
-    );
-  }
-  if (importsEnvironmentZone(source)) {
-    offenders.push(
-      `${rel} — imports APP_TIME_ZONE: a formatter pinned to the container's ` +
-        "`TZ` is the club's zone only by accident. A CALENDAR DAY takes no " +
-        'zone (pin `"UTC"` over the UTC-midnight encoding, which is provably ' +
-        "the identity); an INSTANT takes the club's, from `clubTime()` on the " +
-        "server or a bound zone delivered as data on the client.",
     );
   }
 
@@ -472,8 +444,8 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
       offenders,
       "INV-CONFIG-002 (docs/invariants/product-configuration.md): a member, " +
         "lodge, finance or public page resolved the club's civil time from " +
-        "something that is not the club's configuration — the CONTAINER's `TZ` " +
-        "(`APP_TIME_ZONE`), the VIEWER's own clock, or a zone typed in as a " +
+        "something that is not the club's configuration — the CONTAINER's `TZ`, " +
+        "the VIEWER's own clock, or a zone typed in as a " +
         "literal. The club's civil time is the persisted " +
         "`ClubTimeSettings.timeZone`. All three agree with it on our own " +
         "deployment today, which is exactly why nothing catches any of them at " +
@@ -520,22 +492,6 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
       ).toHaveLength(1);
       expect(
         opaqueZoneModuleReads('const m = await import("@/lib/date-only");'),
-      ).toHaveLength(1);
-    });
-
-    it("covers `@/config/operational` with the same two shapes", () => {
-      // The gap this census carried until the #2870 fix round: the headline
-      // said "WITH NO EXCEPTIONS", `OPAQUE_READ_BASENAMES` was written to close
-      // it, and the reader went on consulting the adapters-only set — so
-      // `ops.APP_TIME_ZONE` walked straight past a check that named it.
-      expect(
-        opaqueZoneModuleReads('import * as ops from "@/config/operational";'),
-      ).toHaveLength(1);
-      expect(
-        opaqueZoneModuleReads('const m = await import("@/config/operational");'),
-      ).toHaveLength(1);
-      expect(
-        opaqueZoneModuleReads('import * as ops from "../../config/operational";'),
       ).toHaveLength(1);
     });
 
@@ -646,9 +602,6 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
       const cases: ReadonlyArray<readonly [string, string]> = [
         ["a zone-bearing legacy helper", 'import { getTodayDateOnly } from "@/lib/date-only";'],
         ["a namespace import of an adapter", 'import * as d from "@/lib/date-only";'],
-        ["a namespace import of the config module", 'import * as ops from "@/config/operational";'],
-        ["a dynamic import of the config module", 'const m = await import("@/config/operational");'],
-        ["an APP_TIME_ZONE import", 'import { APP_TIME_ZONE } from "@/config/operational";'],
         ["the container's zone", "const zone = process.env.TZ;"],
         ["the viewer's clock", "const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;"],
         ["a zone literal", 'const f = new Intl.DateTimeFormat("en-NZ", { timeZone: "Pacific/Auckland" });'],
@@ -664,24 +617,11 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
           "src/app/probe.tsx",
           [
             'import { formatDateOnly, parseDateOnly } from "@/lib/date-only";',
-            'import { APP_LOCALE } from "@/config/operational";',
             'const f = new Intl.DateTimeFormat("en-NZ", { timeZone: "UTC" });',
-            "// APP_TIME_ZONE is what this page used to read",
+            "// process.env.TZ is what this page used to read",
           ].join("\n"),
         ),
       ).toEqual([]);
-    });
-
-    it("tells an APP_TIME_ZONE import apart from a comment naming it", () => {
-      expect(
-        importsEnvironmentZone('import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";'),
-      ).toBe(true);
-      expect(
-        importsEnvironmentZone('import { APP_LOCALE } from "@/config/operational";'),
-      ).toBe(false);
-      expect(
-        importsEnvironmentZone("// it used to be pinned to APP_TIME_ZONE, and is not any more"),
-      ).toBe(false);
     });
   });
 });

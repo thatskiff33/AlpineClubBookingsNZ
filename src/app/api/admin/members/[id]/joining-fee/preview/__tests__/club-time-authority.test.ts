@@ -25,9 +25,10 @@ import { NextRequest } from "next/server";
  * midnight would be `2026-06-30T06:00Z` and Prisma narrows it against a DATE
  * column with nothing to warn you.
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer the replaced
- * default gave, and this codebase's own fallback, so it is the one value a wrong
- * fix could still pass under. The PERSISTED zone is `America/Denver`, behind
+ * `ENVIRONMENT_ZONE` is `Pacific/Auckland` — the answer the replaced default
+ * gave, and this codebase's own fallback, so it is the one value a wrong fix
+ * could still pass under. (It used to be pinned with a mock of the environment
+ * constant; #3567 deleted the constant, so the pin went with it.) The PERSISTED zone is `America/Denver`, behind
  * Greenwich. Under the frozen clock (`2026-07-01T00:00:00.000Z`) the club's day
  * is 30 June and the environment's is 1 July, so no assertion here can agree by
  * coincidence and no `vi.setSystemTime` is needed.
@@ -36,14 +37,6 @@ import { NextRequest } from "next/server";
  * `getClubTimeZone` degrades silently to the environment when the delegate is
  * missing, when the query throws, and when the row is absent.
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 const PERSISTED_ZONE = "America/Denver";
@@ -78,7 +71,6 @@ vi.mock("@/lib/membership-type-policy", () => ({
   resolveMembershipTypePolicyForMember: (...a: unknown[]) => mocks.resolvePolicy(...a),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { POST } from "@/app/api/admin/members/[id]/joining-fee/preview/route";
 
@@ -143,7 +135,6 @@ beforeEach(() => {
 
 describe("a joining fee's schedule window is evaluated on club time (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's disagree about the day", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(dayIn(PERSISTED_ZONE)).toBe("2026-06-30");
     expect(dayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
   });

@@ -10,8 +10,11 @@ import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
-import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  refuseBelowStripeMinimum,
+  stripeChargeCurrency,
+} from "@/lib/stripe-charge-currency";
 
 // DB-only credential resolution (#2082): the secret key lives in the encrypted
 // IntegrationCredential store, so client construction is now ASYNC. We memoize
@@ -37,51 +40,38 @@ export async function getStripe(): Promise<Stripe> {
 }
 
 /**
- * WHY `currency` IS REQUIRED ON BOTH WIRE CALLS BELOW, AND CARRIES NO DEFAULT
- * (INV-SSOT-003; owner decision D5 on #3563).
- *
- * Both took `currency = APP_STRIPE_CURRENCY`, and `INV-SSOT-003` excluded the
- * two currency names from its authority-default ban on a COST argument rather
- * than a kind one: no persisted club-currency setting competed with
- * `APP_CURRENCY`, so there was no wrong-source-of-two to pick, and deleting the
- * defaults would have spread the `@/config/operational` import to six modules
- * for no gain. The exclusion carried its own trigger — "the day a persisted
- * club-currency setting exists, both names join the list" — and #3563 is that
- * day. So the defaults are gone and every caller states the currency.
- *
- * WHAT THIS DOES AND DOES NOT CHANGE. Every caller passes exactly the value the
- * default supplied, so not one charge is denominated differently; nothing about
- * how money is CALCULATED moves. What changes is that the read is now visible
- * at the six call sites instead of hidden in a default, which is precisely the
- * remedy `INV-SSOT-003` states: delete the default and let the compiler
- * enumerate the call sites, because a required argument beats a lint rule. When
- * #3566 moves the remaining server readers onto `ClubFormatSettings`, that
- * enumerated list is the migration.
- *
+ * THE CHARGE CURRENCY IS THE CLUB'S STORED CURRENCY, AND NO CALLER STATES IT
+ * (#3567 D1; INV-SSOT-003, INV-CONFIG-006). Both wire calls below work it out
+ * from the `format` they require, through `stripeChargeCurrency`, and refuse a
+ * currency without two decimal places (D3) or an amount under the minimum (D7)
+ * before Stripe is called. The rule and its reasons live in
+ * `stripe-charge-currency.ts`, re-exported here for existing importers.
+ */
+export {
+  stripeChargeCurrency,
+  UnsupportedChargeCurrencyError,
+} from "@/lib/stripe-charge-currency";
+
+/**
  * Create a PaymentIntent for confirmed bookings (immediate charge).
  * Used when all guests are members OR check-in is <= 7 days away.
  */
-const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
-
 export async function createPaymentIntent({
   amountCents,
-  currency,
   format,
   customerId,
   metadata,
   idempotencyKey,
 }: {
   amountCents: number;
-  currency: string;
-  /** The club's format, for the below-minimum refusal (#3565). */
+  /** The club's format: the charge currency and the below-minimum refusal. */
   format: ClubFormat;
   customerId?: string;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${formatCents(amountCents, format)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS, format)})`);
-  }
+  const currency = stripeChargeCurrency(format);
+  refuseBelowStripeMinimum(amountCents, format);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
@@ -124,7 +114,6 @@ export async function createSetupIntent({
  */
 export async function chargePaymentMethod({
   amountCents,
-  currency,
   format,
   customerId,
   paymentMethodId,
@@ -132,17 +121,15 @@ export async function chargePaymentMethod({
   idempotencyKey,
 }: {
   amountCents: number;
-  currency: string;
-  /** The club's format, for the below-minimum refusal (#3565). */
+  /** The club's format: the charge currency and the below-minimum refusal. */
   format: ClubFormat;
   customerId: string;
   paymentMethodId: string;
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
-    throw new Error(`Amount ${formatCents(amountCents, format)} is below the Stripe minimum (${formatCents(STRIPE_MINIMUM_AMOUNT_CENTS, format)})`);
-  }
+  const currency = stripeChargeCurrency(format);
+  refuseBelowStripeMinimum(amountCents, format);
   const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
