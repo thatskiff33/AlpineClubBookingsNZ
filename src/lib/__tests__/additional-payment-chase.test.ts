@@ -133,7 +133,7 @@ describe("isAdditionalPayableBookingStatus", () => {
 });
 
 /*
-  #3641 (`INV-PAY-105`): the member's pay door. The additional-payment-secret
+  #3641 (`INV-PAY-104`): the member's pay door. The additional-payment-secret
   route and the Xero outbox reaper both ask it, so the reaper keeps a waiting
   invoice for exactly as long as the member can still pay the ask.
 */
@@ -185,7 +185,7 @@ describe("payableAdditionalPaymentIntentId", () => {
 });
 
 /**
- * #3641, `INV-PAY-105`: the whole pay door, Stripe's half included. The route
+ * #3641, `INV-PAY-104`: the whole pay door, Stripe's half included. The route
  * hands out a secret only on `payable`; the Xero reaper retires only on `closed`.
  */
 describe("resolveAdditionalPaymentDoor", () => {

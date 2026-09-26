@@ -1123,7 +1123,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // `edit-financial-review-races.realdb.test.ts`.
   "src/lib/xero-operation-outbox.ts": 1,
   //
-  // #3641 (`INV-PAY-105`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
+  // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
   // which both the enqueue and the late-capture re-queue
   // (`xero-supplementary-invoice-late-capture.ts`,
   // `requeueRetiredSupplementaryInvoiceOperation`) call, so the two cannot drift

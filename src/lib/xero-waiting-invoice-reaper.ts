@@ -1,5 +1,5 @@
 /**
- * THE WAITING-INVOICE REAPER (#3641, `INV-PAY-105`, `INV-PAY-029`), run by the
+ * THE WAITING-INVOICE REAPER (#3641, `INV-PAY-104`, `INV-PAY-029`), run by the
  * payments cron every 15 minutes. Split from `xero-operation-outbox.ts` so it
  * can hand a waiting invoice whose payment already arrived to the late-capture
  * release, which itself imports the outbox.

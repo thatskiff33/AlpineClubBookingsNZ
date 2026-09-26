@@ -1,6 +1,6 @@
 /**
  * WHAT A CAPTURED ADDITIONAL PAYMENT DOES TO ITS XERO SUPPLEMENTARY INVOICE
- * (#3641, `INV-PAY-105`), split from `xero-operation-outbox.ts`, which owns the
+ * (#3641, `INV-PAY-104`), split from `xero-operation-outbox.ts`, which owns the
  * queue, the release write and the per-anchor lock this module reuses. The
  * waiting-invoice reaper (`xero-waiting-invoice-reaper.ts`) sits above it.
  */
@@ -121,7 +121,7 @@ const SUPPLEMENTARY_INVOICE_CREATE = {
 } as const;
 
 /**
- * THE LATE-SUCCESS RELEASE (#3641, `INV-PAY-105`). Every caller that has seen
+ * THE LATE-SUCCESS RELEASE (#3641, `INV-PAY-104`). Every caller that has seen
  * an additional PaymentIntent captured calls this: the Stripe webhook's two
  * arms, the confirm route's two arms, and the reaper when it finds a waiting
  * invoice whose payment already arrived.

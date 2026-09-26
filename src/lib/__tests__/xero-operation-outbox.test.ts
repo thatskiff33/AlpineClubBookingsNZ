@@ -2596,7 +2596,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 });
 
 /**
- * #3641, `INV-PAY-105`: the waiting-invoice reaper. It releases an invoice whose
+ * #3641, `INV-PAY-104`: the waiting-invoice reaper. It releases an invoice whose
  * payment has arrived, keeps one the member can still pay, and retires only one
  * the member can no longer pay. Stripe is asked only for a FAILED ask, which is
  * the one case the local rows cannot answer, and at most 25 times a run.
@@ -2907,7 +2907,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
 });
 
 /**
- * #3641, `INV-PAY-105`: a capture never silently releases nothing. A waiting
+ * #3641, `INV-PAY-104`: a capture never silently releases nothing. A waiting
  * invoice is released or refused with an alert; a retired one is re-queued from
  * that same row, exactly once, or alerted where issuing it is unsafe.
  */

@@ -763,7 +763,7 @@ let observerClient: PrismaClient;
     });
 
     /**
-     * #3641 (`INV-PAY-105`): A REVIVED INVOICE AND A FRESH ENQUEUE NEVER BOTH GO
+     * #3641 (`INV-PAY-104`): A REVIVED INVOICE AND A FRESH ENQUEUE NEVER BOTH GO
      * OUT. A late capture re-queues the supplementary invoice the reaper retired
      * from that same row, while a settlement (or the repair tool) may be queueing
      * a fresh one for the same change. Both decide under the per-anchor key,
@@ -868,7 +868,7 @@ let observerClient: PrismaClient;
         2,
         "The late-capture re-queue and the enqueue did not both queue on the per-anchor supplementary-invoice " +
           "key, so a revived invoice and a fresh one could BOTH be sent for one booking edit " +
-          "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-105).",
+          "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-104).",
       );
 
       releaseLock.resolve();

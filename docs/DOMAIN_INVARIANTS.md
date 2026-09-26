@@ -303,7 +303,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-027` | Payment, refund and credit operations are idempotent across retries, replays and reruns |
 | `INV-PAY-028` | The Stripe webhook dedup claim is a processing lease, not "seen" |
 | `INV-PAY-029` | A FAILED Stripe payment keeps its WAITING_PAYMENT Xero op for 24h |
-| `INV-PAY-105` | Waiting invoice retired only when the pay door closes; captures never silent |
+| `INV-PAY-104` | Waiting invoice retired only when the pay door closes; captures never silent |
 | `INV-PAY-030` | External provider side effects require clear retry and idempotency behaviour |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |

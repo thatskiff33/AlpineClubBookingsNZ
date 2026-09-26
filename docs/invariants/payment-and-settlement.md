@@ -944,9 +944,9 @@ operations, and neither covers the other's ground. Change one, check the other.
   status=FAILED unconditionally, so `@updatedAt` bumps and the grace restarts.
   This can only DELAY a reap, never trigger one early, and the 14-day
   `createdAt` arm bounds it. Past the grace, whether the op is retired at all is
-  `INV-PAY-105`'s question: a decline is not abandonment.
+  `INV-PAY-104`'s question: a decline is not abandonment.
 
-## INV-PAY-105
+## INV-PAY-104
 
 **Related: `INV-PAY-029`** (when a failed ask is looked at) **and #3403** (the
 supersession trigger, an open owner decision this rule deliberately leaves as

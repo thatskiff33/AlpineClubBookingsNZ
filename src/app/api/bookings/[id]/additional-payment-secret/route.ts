@@ -55,7 +55,7 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // #3641 (`INV-PAY-105`): the member's pay door, shared with the Xero
+    // #3641 (`INV-PAY-104`): the member's pay door, shared with the Xero
     // outbox reaper, which keeps a supplementary invoice waiting for exactly as
     // long as this door answers `payable`. Stripe's half is part of it: an intent
     // cancelled at the provider still carries a client secret, and handing it

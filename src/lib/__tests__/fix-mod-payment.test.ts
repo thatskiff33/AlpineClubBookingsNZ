@@ -2093,7 +2093,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
   });
 
   /*
-    #3641 (`INV-PAY-105`): Stripe's half of the pay door. A cancelled intent
+    #3641 (`INV-PAY-104`): Stripe's half of the pay door. A cancelled intent
     still carries a client secret, so handing it out showed a form Stripe.js
     then rejected; money Stripe already took must not be offered a second form.
   */

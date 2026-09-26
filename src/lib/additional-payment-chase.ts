@@ -127,7 +127,7 @@ export function isAdditionalPayableBookingStatus(
 }
 
 /**
- * THE BOOKING HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`): may this
+ * THE BOOKING HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`): may this
  * booking still be shown, and take, a card payment for an outstanding addition
  * at all? Not deleted, and in `ADDITIONAL_PAYABLE_BOOKING_STATUSES`.
  *
@@ -177,7 +177,7 @@ export interface AdditionalPaymentDoorInput {
 }
 
 /**
- * THE LOCAL HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`): the
+ * THE LOCAL HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`): the
  * additional PaymentIntent the booking's own rows say the member can still pay,
  * or `null`. `resolveAdditionalPaymentDoor` below adds Stripe's half and is the
  * door itself; this is its first step, and the answer for any caller that has no
@@ -223,7 +223,7 @@ export type AdditionalPaymentDoorAnswer<Intent> =
   | { state: "closed" };
 
 /**
- * THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`). The additional-payment-secret
+ * THE MEMBER'S PAY DOOR (#3641, `INV-PAY-104`). The additional-payment-secret
  * route hands out a client secret only on `payable`, and the Xero outbox reaper
  * retires a waiting supplementary invoice only on `closed`, so an invoice is
  * kept for exactly as long as the member can be handed that intent's form.
