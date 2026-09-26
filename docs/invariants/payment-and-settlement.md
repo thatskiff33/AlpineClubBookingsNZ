@@ -592,30 +592,33 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 ## INV-PAY-017
 
-- The hold-expiry release and its invoice-clearing Xero credit-note outbox row
-  commit in ONE transaction (#1357): the release marks the hold consumed
-  (re-runs skip it), so an intent enqueued post-commit would ride a crash
-  window with no self-heal. The enqueue is a pure local insert; the Xero call
-  stays in the outbox worker, outside the transaction.
-- **The note clears the invoice; it is not a refund** (#3535). It is the
-  never-captured cancel path's booking-anchored modification credit note
-  (`clearsUnpaidInvoice`), ALLOCATED against the invoice so it closes, with no
-  credit-note payment, worded *Invoice cleared - booking not paid* (homed and
-  censused with the refund wordings in `src/lib/xero-refund-method.ts`). It
-  shares the cancel path's booking-anchored clearing key, so a booking gets one
-  clearing note; holds released before #3535 are never re-selected.
-- It is sized like the never-captured cancel path (#1597), NOT the
-  credit-reduced payment amount: the invoice is raised at the FULL finalPrice,
-  so the note is `max(0, finalPrice + changeFee − Xero-allocated applied
-  credit)`. Only credit already allocated to the invoice as a Xero credit note
-  is subtracted (non-zero since #1620), and the 100% local restore does not
-  double-count: the allocated note stays on the cancelled invoice while the
-  restore re-creates the credit locally. It is gated on an ISSUED invoice: the
-  create-time hold-slots shape reaches release with none and enqueues nothing.
-  `scripts/audit-ib-hold-clearing.ts` reports invoices under-cleared by the
-  pre-#1597 sizing (read-only).
+- The hold-expiry release and its invoice-clearing credit-note outbox row
+  commit in ONE transaction (#1357): the release marks the hold consumed, so a
+  post-commit enqueue would ride a crash window with no self-heal. The enqueue
+  is a local insert; the Xero call stays in the outbox worker.
+- **The note clears the booking's invoicing; it is not a refund** (#3535). It
+  is the booking-anchored modification credit note the never-captured cancel
+  path and the repair tool's cancelled-open-invoice arm also raise
+  (`clearsUnpaidInvoice`): no credit-note payment, worded *Invoice cleared -
+  booking not paid* (homed with the refund wordings, [INV-PAY-101]). The
+  builder allocates it across the primary and any supplementary invoice, each
+  up to what Xero says it owes, and creates nothing when they owe less
+  (`xero-clearing-allocations.ts`). A FAILED note is retried, and a PARTIAL one
+  re-allocated, from what its row recorded.
+- **One size**, `unpaidInvoiceClearingAmountCents`: `max(0, finalPrice +
+  changeFee − Xero-allocated applied credit)`, never the credit-reduced payment
+  amount (#1597). Only credit allocated to the invoice as a Xero credit note is
+  subtracted; the 100% local restore does not double-count. Gated on an ISSUED
+  invoice.
+- One note per booking: the enqueue stands down on the booking's active
+  clearing-note link or a live operation with its key, the repair arm on any
+  clearing operation. The cron never re-selects a released hold, including one
+  released before #3535 with a refund note; the repair tool still can (#3639).
+  `scripts/audit-ib-hold-clearing.ts` counts only allocated clearing
+  (read-only).
 - Pinned by `internet-banking-payment-cron.test.ts`,
-  `xero-refund-method-documents.test.ts` and `xero-operation-outbox.test.ts`.
+  `invoice-clearing-amount.test.ts`, `xero-refund-method-documents.test.ts`
+  and `xero-operation-retry.test.ts`.
 
 ## INV-PAY-018
 
@@ -1134,11 +1137,11 @@ one, check the other.
 
 - **A Xero refund or credit document names how the money went back, from the
   settlement decision — never inferred from the payment's source** (#3529;
-  owner wording, 20 September 2026). Exactly three wordings exist, each the
-  line description's and the reference's head: *Refund against original credit
-  card*, *Refund requested via internet banking*, *Account Credit*. The one
-  home is `src/lib/xero-refund-method.ts`; its test censuses `src/lib` so
-  nothing else spells them.
+  owner wording, 20 September 2026). Three refund wordings head the line
+  description and reference: *Refund against original credit card*, *Refund
+  requested via internet banking*, *Account Credit*; a fourth, [INV-PAY-017]'s
+  unpaid-invoice clearing, names no refund. Their one home is
+  `src/lib/xero-refund-method.ts`, censused over `src/lib`.
 - **The method travels with the decision.** The cancel path's `refundMethod`,
   the edit-review route (`refundMethodForEditReviewRoute`: card → card,
   hand-settled → internet banking, credit → account credit) and the hand-back

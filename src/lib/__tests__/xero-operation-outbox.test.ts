@@ -1363,8 +1363,9 @@ describe("enqueueXeroModificationCreditNoteOperation", () => {
         localModel: "Booking",
         localId: "booking_1",
         status: "PENDING",
-        // The booking-anchored clearing key the never-captured cancel path and
-        // the repair tool's cancelled-open-invoice arm also mint.
+        // The booking-anchored clearing key; the never-captured cancel path and
+        // the repair tool's cancelled-open-invoice arm mint the same one when
+        // they size the same booking alike (one helper, INV-PAY-017).
         idempotencyKey: "booking:booking_1:mod-credit-note:15000:v1",
         correlationKey: "booking:booking_1:mod-credit-note:15000:v1",
         requestPayload: {

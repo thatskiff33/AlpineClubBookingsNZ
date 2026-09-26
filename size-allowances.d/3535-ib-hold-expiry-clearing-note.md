@@ -9,8 +9,8 @@ file: src/lib/xero-operation-outbox.ts
 lines: 3311
 reason: the transaction-client option and the wording choice belong on the
   existing enqueue and its dispatch arm, beside the dedupe they change; a
-  second enqueue elsewhere would fork the booking-anchored clearing key that
-  the cancel path, the repair tool and the cron must share.
+  second enqueue elsewhere would fork the one booking-anchored clearing note
+  the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
 lines: 2527

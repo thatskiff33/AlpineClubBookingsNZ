@@ -427,11 +427,12 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  it("never selects a hold already released, including those the old refund-note path released (#3535)", async () => {
-    // A hold released before #3535 got its refund note in the SAME transaction
-    // that set internetBankingHoldReleasedAt and flipped the payment FAILED.
-    // The candidate query excludes both, so the new clearing note can never be
-    // enqueued on top of an old refund note for the same invoice.
+  it("asks only for pending holds with no release stamp, which every released hold lacks (#3535)", async () => {
+    // A query-shape pin, and all it can be: a hold released before #3535 got
+    // its refund note in the SAME transaction that set
+    // internetBankingHoldReleasedAt and flipped the payment FAILED, so this
+    // filter keeps the CRON from raising a clearing note beside it. The repair
+    // tool is another matter (#3639).
     mocks.paymentFindMany.mockResolvedValue([]);
 
     await releaseExpiredInternetBankingHolds(NOW);
