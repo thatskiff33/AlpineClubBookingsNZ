@@ -1,0 +1,52 @@
+# CODEOWNERS — the money surface only (#3341, owner decision 26 Sep 2026).
+#
+# A pull request touching any path below needs the owner's GitHub Approve once
+# "Require review from Code Owners" is on for `main` (CONTRIBUTING.md ->
+# "Branch protection"). Everything else keeps the ordinary merge path. This is
+# NOT a repo-wide review requirement; do not add paths outside money movement.
+#
+# Syntax is gitignore's: `*` does not cross `/`, so `src/lib/*credit*.ts`
+# matches `src/lib/member-credit.ts` and NOT `src/lib/__tests__/...`. Every
+# pattern must match a tracked file — `codeowners-census.test.ts` fails on one
+# that matches nothing.
+
+# Money movement — AGENTS.md requires explicit owner approval before merge.
+/src/lib/payment-*.ts                          @thatskiff33
+/src/lib/*settlement*.ts                       @thatskiff33
+/src/lib/booking-modification-*.ts             @thatskiff33
+/src/lib/booking-modify-*.ts                   @thatskiff33
+/src/lib/booking-batch-modification-*.ts       @thatskiff33
+/src/lib/booking-date-modification-*.ts        @thatskiff33
+/src/lib/booking-payment-*.ts                  @thatskiff33
+/src/lib/additional-payment-*.ts               @thatskiff33
+/src/lib/*refund*.ts                           @thatskiff33
+/src/lib/*credit*.ts                           @thatskiff33
+/src/lib/manual-*payment*.ts                   @thatskiff33
+/src/lib/group-settlement.ts                   @thatskiff33
+/src/lib/authoritative-fees.ts                 @thatskiff33
+/src/lib/pricing.ts                            @thatskiff33
+/src/lib/money-*.ts                            @thatskiff33
+/src/lib/booking-money-lines.ts                @thatskiff33
+/src/lib/required-price-cents.ts               @thatskiff33
+/src/lib/stripe.ts                             @thatskiff33
+/src/lib/xero-*payment*.ts                     @thatskiff33
+/src/lib/xero-*credit*.ts                      @thatskiff33
+/src/lib/xero-*settlement*.ts                  @thatskiff33
+/src/lib/xero-inbound/payment.ts               @thatskiff33
+/src/lib/xero-inbound/invoice-paid-effects.ts  @thatskiff33
+/src/app/api/webhooks/stripe/**                @thatskiff33
+/docs/invariants/money.md                      @thatskiff33
+/docs/invariants/payment-and-settlement.md     @thatskiff33
+/docs/invariants/additional-payment-chasing.md @thatskiff33
+/docs/invariants/booking-modifications.md      @thatskiff33
+
+# The guards themselves, and this file. The money globs above do NOT cover
+# `__tests__`, so without these lines a pull request could delete the seam
+# census (INV-OPS-015), its integration witness, or a CODEOWNERS line without
+# triggering code-owner review.
+/.github/CODEOWNERS                                               @thatskiff33
+/src/lib/__tests__/money-seam-mock-census.test.ts                 @thatskiff33
+/src/lib/__tests__/superseded-additional-ask-integration.test.ts  @thatskiff33
+/src/lib/__tests__/codeowners-census.test.ts                      @thatskiff33
+/src/lib/__tests__/*settlement*                                   @thatskiff33
+/src/lib/__tests__/*payment*                                      @thatskiff33
