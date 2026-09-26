@@ -18,12 +18,15 @@
  *     seam, whatever it puts there. A pass-through wrapper counts too: the
  *     census cannot tell a delegating stand-in from a lying one, and neither can
  *     a reviewer at a glance.
- *   - AUTOMOCK — `vi.mock(module)` with no factory, or an options object that is
- *     not `{ spy: true }`.
+ *   - AUTOMOCK — `vi.mock(module)` with no factory, or an options object.
  *   - OPAQUE — a factory whose returned value is not an object literal
- *     (`() => sharedFactory()`), so what it replaces cannot be read here. Counted
- *     as mocked: a helper must not be the way round this file.
- *   - SPY — `vi.spyOn(anything, "<seam>")`.
+ *     (`() => sharedFactory()`), or that spreads anything but the real module
+ *     (`...mocks` from `vi.hoisted`, `...overrides`), so what it replaces cannot
+ *     be read here. Counted as mocked: a helper must not be the way round this
+ *     file.
+ *   - SPY — `vi.spyOn(anything, "<seam>")`, or `vi.mock(module, { spy: true })`,
+ *     which keeps the implementation only until `vi.mocked(seam).mock…()`
+ *     replaces it.
  *   - ABSENT — a literal factory that neither names the seam nor spreads the
  *     real module. Vitest THROWS when a missing export is read, so for most seams
  *     that is a loud failure rather than a stand-in and is not counted. It IS
@@ -51,8 +54,17 @@
  *     witness check beside it is only a heuristic: a source-scanning census
  *     that names a seam in an `expect` satisfies it without running anything
  *     (`booking-ledger-census.test.ts` does, measured when this landed).
- *   - An assertion that pins the ask only through a figure spelled outside the
- *     seam's vocabulary, or an `expect` built in a helper in another file.
+ *   - ASSERTION STYLES THE STATEMENT-LOCAL READ MISSES (each measured clean
+ *     beside a keyed mock): an expected object held in a variable
+ *     (`expect(data).toEqual(expected)`); a file snapshot (`toMatchSnapshot()`)
+ *     or an `it.each` table; a mint-amount assertion that does not name the
+ *     ADDITIONAL instrument in the same statement — a bare
+ *     `objectContaining({ amountCents })` on `createPaymentIntent`, or
+ *     `mock.calls[0][0].amountCents`; a figure spelled outside the seam's
+ *     vocabulary; and an `expect` built in a helper in another file. The
+ *     ADDITIONAL-marker requirement is deliberate: without it every
+ *     primary-intent suite reads as a supersede suite.
+ *   - A `vi.mock` in a vitest setup file (none targets a seam today).
  *   - A module that re-exports a seam under another path. None exists today.
  *   - This file itself, which holds seeded offenders as string fixtures.
  */
@@ -212,24 +224,55 @@ function returnsObjectLiteral(factoryCode: string): boolean {
   return /=>\s*\(\s*\{/.test(factoryCode) || /\breturn\s*\(?\s*\{/.test(factoryCode);
 }
 
-/** Whether a factory spreads the real module into what it returns. */
-function spreadsOriginal(factoryCode: string, factoryText: string): boolean {
-  const bindings = ["vi\\s*\\.\\s*importActual"];
+/**
+ * The names a factory can hold the REAL module under: its first parameter
+ * (`importOriginal` / `importActual`), `vi.importActual`, and any binding
+ * assigned by awaiting either — with or without a type annotation.
+ */
+function originalBindings(factoryCode: string, factoryText: string): string[] {
+  const sources = ["vi\\s*\\.\\s*importActual"];
   const parameter = factoryCode.match(/^\s*(?:async\s*)?\(?\s*([A-Za-z_$][\w$]*)/)?.[1];
-  if (parameter && parameter !== "async") {
-    bindings.push(escape(parameter));
-    for (const assigned of factoryText.matchAll(
-      new RegExp(`(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[(\\s]*await\\s+${escape(parameter)}\\b`, "g"),
-    )) {
-      bindings.push(escape(assigned[1]));
-    }
-  }
+  if (parameter && parameter !== "async") sources.push(escape(parameter));
+  const bindings = [...sources];
   for (const assigned of factoryText.matchAll(
-    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[(\s]*await\s+vi\s*\.\s*importActual\b/g,
+    new RegExp(
+      `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*(?::[^=;]+)?=\\s*[(\\s]*await\\s+(?:${sources.join("|")})\\b`,
+      "g",
+    ),
   )) {
     bindings.push(escape(assigned[1]));
   }
-  return new RegExp(`\\.\\.\\.[\\s(]*(?:await\\s+)?[\\s(]*(?:${bindings.join("|")})\\b`).test(factoryText);
+  return bindings;
+}
+
+/**
+ * Every OBJECT spread in a factory — a `...` whose innermost open bracket is `{`;
+ * a rest parameter or a call spread sits inside `(` or `[` and is not one —
+ * counted as spreading the real module or spreading anything else.
+ */
+function objectSpreads(
+  factoryCode: string,
+  factoryText: string,
+): { original: number; foreign: number } {
+  const isOriginal = new RegExp(
+    `^[\\s(]*(?:await\\s+)?[\\s(]*(?:${originalBindings(factoryCode, factoryText).join("|")})\\b`,
+  );
+  const open: string[] = [];
+  let original = 0;
+  let foreign = 0;
+  for (let index = 0; index < factoryCode.length; index += 1) {
+    const char = factoryCode[index];
+    if (char === "(" || char === "[" || char === "{") open.push(char);
+    else if (char === ")" || char === "]" || char === "}") open.pop();
+    else if (factoryCode.startsWith("...", index)) {
+      if (open[open.length - 1] === "{") {
+        if (isOriginal.test(factoryText.slice(index + 3))) original += 1;
+        else foreign += 1;
+      }
+      index += 2;
+    }
+  }
+  return { original, foreign };
 }
 
 /**
@@ -263,16 +306,19 @@ export function seamMocks(
 
     for (const seam of seams) {
       let kind: MockKind | null = null;
+      const spreads = objectSpreads(factoryCode, factoryText);
       if (comma === -1 || factoryCode.trim() === "") kind = "automock";
       else if (/^\s*\{/.test(factoryCode)) {
-        kind = /\bspy\s*:\s*true\b/.test(factoryText) ? null : "automock";
+        // An options object. `{ spy: true }` keeps the implementation only until
+        // `vi.mocked(seam).mockResolvedValue(...)` replaces it, so it counts too.
+        kind = /\bspy\s*:\s*true\b/.test(factoryText) ? "spy" : "automock";
       } else if (new RegExp(`(?<![\\w$.])${escape(seam.name)}(?![\\w$])`).test(factoryText)) {
         kind = "keyed";
-      } else if (!returnsObjectLiteral(factoryCode)) kind = "opaque";
-      else if (
-        !spreadsOriginal(factoryCode, factoryText) &&
-        (seam.absentIsSilent || countAbsent === "all")
-      ) {
+      } else if (!returnsObjectLiteral(factoryCode) || spreads.foreign > 0) {
+        // A spread of anything but the real module (a `vi.hoisted` bag, an
+        // `overrides` object) can carry the seam where this file cannot read it.
+        kind = "opaque";
+      } else if (spreads.original === 0 && (seam.absentIsSilent || countAbsent === "all")) {
         kind = "absent";
       }
       if (kind) found.push({ seam: seam.name, kind, line });
@@ -490,12 +536,46 @@ describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
       opaqueHelper: `vi.mock("@/lib/booking-payment-cleanup", () => cleanupDouble());`,
       spy: `vi.spyOn(cleanup, "queueSupersededAdditionalIntentCancellations").mockResolvedValue([]);`,
       getter: `vi.mock("@/lib/booking-payment-cleanup", () => ({ get queueSupersededAdditionalIntentCancellations() { return vi.fn(); } }));`,
+      spyMode: `vi.mock("@/lib/booking-payment-cleanup", { spy: true });
+        vi.mocked(queueSupersededAdditionalIntentCancellations).mockResolvedValue([]);`,
+      spyModeNamespace: `vi.mock("@/lib/booking-payment-cleanup", { spy: true });
+        vi.mocked(cleanup.queueSupersededAdditionalIntentCancellations).mockResolvedValue([]);`,
+      hoistedBag: `const m = vi.hoisted(() => ({ queueSupersededAdditionalIntentCancellations: vi.fn() }));
+        vi.mock("@/lib/booking-payment-cleanup", () => ({ ...m }));`,
+      overridesAfterOriginal: `vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+          ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
+          ...overrides,
+        }));`,
     };
     for (const [spelling, mock] of Object.entries(spellings)) {
       expect(offenceSeams(`${mock}${ASSERTS_ASK}`), spelling).toEqual([
         "queueSupersededAdditionalIntentCancellations",
       ]);
     }
+  });
+
+  it("reads a spread bag as unreadable for the seams whose absence is loud, too", () => {
+    const minter = `const m = vi.hoisted(() => ({ createModificationAdditionalPaymentIntent: vi.fn() }));
+      vi.mock("@/lib/booking-modification-settlement", () => ({ ...m }));`;
+    expect(offenceSeams(`${minter}${ASSERTS_ASK}`)).toEqual(["createModificationAdditionalPaymentIntent"]);
+    const reconcile = `vi.mock("@/lib/payment-transactions", () => ({ ...transactionDoubles }));`;
+    expect(offenceSeams(`${reconcile}${ASSERTS_ASK}`)).toEqual(["reconcilePaymentAggregates"]);
+  });
+
+  it("does not read a rest parameter or a call spread as a factory spread", () => {
+    const factory = `vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+      ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
+      queueSupersededPrimaryIntentCancellations: (...args: unknown[]) => primary(...args),
+    }));`;
+    expect(offenceSeams(`${factory}${ASSERTS_ASK}`)).toEqual([]);
+  });
+
+  it("leaves a seam live when the real module is held in a TYPED binding and spread", () => {
+    const factory = `vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => {
+      const actual: typeof import("@/lib/booking-payment-cleanup") = await importOriginal();
+      return { ...actual, other: vi.fn() };
+    });`;
+    expect(offenceSeams(`${factory}${ASSERTS_ASK}`)).toEqual([]);
   });
 
   it("counts an ABSENT seam only where its caller swallows the missing-export throw", () => {
