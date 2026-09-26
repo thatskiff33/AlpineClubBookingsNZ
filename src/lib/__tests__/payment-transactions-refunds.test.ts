@@ -1170,7 +1170,7 @@ describe("#3528 - reconcilePaymentAggregates reads past a WITHDRAWN ask (INV-ADD
   writer now goes through `recordStripeRefundsAgainstTransaction`, which adds
   exactly the refund it newly recorded, through a compare-and-set.
 */
-describe("#3640 - a card refund adds to the refunded total", () => {
+describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

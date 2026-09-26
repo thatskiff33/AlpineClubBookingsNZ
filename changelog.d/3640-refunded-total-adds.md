@@ -15,5 +15,13 @@
   after a credit is now queued straight away instead of waiting for the daily
   reconciliation to notice it.
 
+  A refund made before the refund ledger existed on your installation is not
+  counted a second time when Stripe next lists it. Cancelling a payment whose
+  earlier refunds were recorded only in its total can no longer erase a card
+  refund that arrives at the same moment.
+
   Payments that already went through this sequence before the fix keep the
-  understated total they have; this change stops new ones.
+  understated total they have; this change stops new ones. Operators can list
+  them, with the amount each is short, with the read-only
+  `npm run payments:audit-refunded-total` (see the maintenance guide). It
+  repairs nothing.

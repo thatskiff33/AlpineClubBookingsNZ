@@ -362,6 +362,24 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `failed` counts as cash between those two events, bounded by the
   `refundedAmountCents` clamp and corrected by the next run.
 
+## INV-PAY-104
+
+- **A card refund ADDS to a transaction's `refundedAmountCents` exactly the
+  money it newly recorded, through one writer** (#3640). The mirror also counts
+  account-credit settlements, which leave no `PaymentRefund` row, so a
+  `max(stored, card refunds)` formula loses a card refund made after a credit
+  and lets a later cancel pay it out again. `recordStripeRefundsAgainstTransaction`
+  (`src/lib/payment-transactions.ts`) is the only card-refund writer — the
+  inline refund, the `charge.refunded` sync and the superseded-payment recovery
+  all use it. It adds a refund only when its own `ON CONFLICT DO NOTHING`
+  insert recorded it, in a counted status, made since the install's refund
+  ledger started (a pre-ledger refund was already in the mirror). The write is a
+  compare-and-set retried on a miss, committed with the rows; card refunds on
+  record stay a floor. #1491's fold increments through the same loop.
+- Pinned by `payment-transactions-refunds.test.ts` and
+  `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
+  are listed by `npm run payments:audit-refunded-total`, never repaired by code.
+
 ## INV-PAY-002
 
 - Account credit is consumed only by a booking that is actually reaching

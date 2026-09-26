@@ -100,7 +100,7 @@ let lockHolderClient: PrismaClient;
 let observerClient: PrismaClient;
 
 (RUN ? describe : describe.skip)(
-  "the card-refund writer adds each refund exactly once — real PostgreSQL (#3640)",
+  "the card-refund writer adds each refund exactly once — real PostgreSQL (#3640, INV-PAY-104)",
   { timeout: RACE_TEST_TIMEOUT_MS },
   () => {
     async function deleteFixtures() {
