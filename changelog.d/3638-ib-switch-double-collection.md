@@ -14,4 +14,11 @@
   conflict on the booking instead of passing over it. Nothing is refunded
   automatically: the admin alert explains how to check whether it is really
   a second payment, and deciding which payment to return is left to the
-  treasurer and the member.
+  treasurer and the member. The same alert covers a card-paid booking that
+  was cancelled before the bank transfer arrived, which used to be passed over
+  in the same way.
+  Two smaller fixes ride along. A card payment page opened in another tab while
+  the booking switched to internet banking can no longer attach a new card
+  payment to it; the member is told the booking has switched. And a repeated
+  Xero notice for a completed internet-banking booking no longer turns it back
+  into "paid" or re-sends the booking confirmation.
