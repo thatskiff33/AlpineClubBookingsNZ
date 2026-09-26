@@ -1325,6 +1325,8 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               refundAmountCents: clearingAmountCents,
+              // #3535 (`INV-PAY-017`): the note clears an unpaid invoice.
+              clearsUnpaidInvoice: true,
             },
           });
           addFinding(findings, {

@@ -1252,6 +1252,9 @@ async function performBookingCancellation(
           {
             bookingId,
             refundAmountCents: xeroClearingAmountCents,
+            // #3535 (`INV-PAY-017`): nobody paid this invoice, so the note
+            // says it was cleared, never that a card refund was made.
+            clearsUnpaidInvoice: true,
           },
           {
             createdByMemberId: sessionUserId,

@@ -496,6 +496,11 @@ async function applyQueuedAction(
             ? action.payload.bookingModificationId
             : undefined,
         refundAmountCents: Number(action.payload.refundAmountCents),
+        // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
+        // edit's note keeps the default (method) wording.
+        ...(action.payload.clearsUnpaidInvoice === true
+          ? { clearsUnpaidInvoice: true as const }
+          : {}),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

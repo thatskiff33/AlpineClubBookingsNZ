@@ -517,6 +517,40 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  // #3535 (`INV-PAY-017`): the note that clears a cancelled booking's unpaid
+  // invoice says so; it never carries the card-refund wording.
+  it("re-queues a cancelled unpaid booking's clearing note with the unpaid-invoice wording (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        status: "FAILED",
+      },
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const action = report.passes[0].bookings[0].actions.find(
+      (candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(action?.payload).toMatchObject({ clearsUnpaidInvoice: true });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: booking.id,
+        bookingModificationId: undefined,
+        clearsUnpaidInvoice: true,
+      })
+    );
+    const [params] = (deps.enqueueXeroModificationCreditNoteOperation as ReturnType<typeof vi.fn>)
+      .mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
+  });
+
   it("classifies missing supplementary invoices for positive booking modifications", async () => {
     const booking = makeBooking({
       modifications: [
@@ -872,6 +906,8 @@ describe("runBookingXeroRepair", () => {
         refundAmountCents: 3000,
       },
     });
+    // #3535: an edit's reduction is not an unpaid-invoice clearing.
+    expect(action?.payload).not.toHaveProperty("clearsUnpaidInvoice");
     const finding = bookingReport.findings.find(
       (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE"
     );
