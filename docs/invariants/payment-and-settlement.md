@@ -98,7 +98,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   cash-settled (or Xero-inbound-settled) booking is auto-refunded instead of
   silently kept.
 
-## INV-PAY-102
+## INV-PAY-103
 
 - **Card first, then bank: a booking is never collected by two instruments
   silently** (#3638). Two doors, one rule.

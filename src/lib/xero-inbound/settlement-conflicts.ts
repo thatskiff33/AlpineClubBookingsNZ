@@ -5,7 +5,7 @@
  * - B5 (#2262)'s reciprocal fence: Xero reports PAID on a booking an admin had
  *   already recorded as settled in cash / by an off-Xero bank transfer.
  * - #3638's second instrument: Xero reports PAID on a booking a card payment
- *   had already settled (`INV-PAY-102`).
+ *   had already settled (`INV-PAY-103`).
  *
  * Split out of `invoice-paid-effects.ts`, which calls these from its settle
  * loop: the detection runs inside that loop's lock(1) transaction, the record
