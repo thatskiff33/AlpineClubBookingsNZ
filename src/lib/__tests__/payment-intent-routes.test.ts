@@ -213,6 +213,10 @@ beforeEach(() => {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: mockPrisma.payment.upsert,
         },
+        // ...and the booking's status, which is still payable.
+        booking: {
+          findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+        },
       })
   );
 });
@@ -541,6 +545,9 @@ describe("payment intent routes", () => {
         fn({
           $executeRaw: txExecuteRaw,
           payment: { findUnique: txPaymentFindUnique, upsert: txPaymentUpsert },
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
         })
     );
     const cancel = vi.mocked(cancelPaymentIntentIfCancellableWithResult);
@@ -591,6 +598,25 @@ describe("payment intent routes", () => {
       amount: 12500,
     });
     mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-card" });
+    // Capture the transaction handle so the writes can be pinned to it: a
+    // transaction row written on the global client would commit outside the
+    // lock the source check relies on (and, on a real database, block on the
+    // payment row this transaction has just upserted).
+    const txExecuteRaw = vi.fn();
+    const txPaymentUpsert = vi.fn().mockResolvedValue({ id: "pay-card" });
+    const txHandle = {
+      $executeRaw: txExecuteRaw,
+      payment: {
+        findUnique: vi.fn().mockResolvedValue({ source: "STRIPE" }),
+        upsert: txPaymentUpsert,
+      },
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+      },
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(txHandle)
+    );
 
     const res = await createPaymentIntentRoute(
       new NextRequest("http://localhost/api/payments/create-payment-intent", {
@@ -604,7 +630,65 @@ describe("payment intent routes", () => {
     expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay-card", paymentIntentId: "pi_card" })
     );
+    // Both writes on the locked transaction's handle, after the lock.
+    expect(mocks.upsertPaymentIntentTransaction.mock.calls[0][0].store).toBe(txHandle);
+    expect(txPaymentUpsert).toHaveBeenCalled();
+    expect(txExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      txPaymentUpsert.mock.invocationCallOrder[0]
+    );
+    expect(mockPrisma.payment.upsert).not.toHaveBeenCalled();
     expect(cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+  });
+
+  it("refuses, and cancels the new intent, when the booking was cancelled during the mint (#3638)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_orphan",
+      client_secret: "cs_orphan",
+      amount: 12500,
+    });
+    const txPaymentUpsert = vi.fn();
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn({
+          $executeRaw: vi.fn(),
+          payment: { findUnique: vi.fn().mockResolvedValue(null), upsert: txPaymentUpsert },
+          booking: { findUnique: vi.fn().mockResolvedValue({ status: "CANCELLED" }) },
+        })
+    );
+    const cancel = vi.mocked(cancelPaymentIntentIfCancellableWithResult);
+    cancel.mockResolvedValue({ paymentIntent: {}, canceled: true } as never);
+
+    const res = await createPaymentIntentRoute(
+      new NextRequest("http://localhost/api/payments/create-payment-intent", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: "booking-1" }),
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.clientSecret).toBeUndefined();
+    expect(data.error).toContain("no longer payable");
+    expect(txPaymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledWith("pi_orphan");
   });
 
   it("does not disclose an existing payment intent client secret to a non-owner", async () => {

@@ -5,7 +5,7 @@
  * capacity revalidation as the session-gated payment-intent route. Token
  * resolution and the refusal vocabulary it throws stay in `payment-link.ts`.
  */
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentSource, PaymentStatus } from "@prisma/client";
 import {
   bookingOwner,
   bookingOwnerProviderMetadata,
@@ -18,7 +18,7 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { attachMintedCardIntent } from "@/lib/card-intent-attach";
 import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
@@ -66,6 +66,15 @@ export class PaymentLinkPaymentRecoveryError extends Error {
  * credit balance or how much of it they elected to spend. The operator alert
  * raised alongside carries the full detail.
  */
+/**
+ * #3638 (`INV-PAY-103`). The booking is being paid by Internet Banking — it was
+ * switched before this request, or while its intent was being minted — so the
+ * link will not take a card payment beside the emailed invoice. The pay page
+ * shows the bank-transfer details this points at.
+ */
+const PAYING_BY_INTERNET_BANKING_MESSAGE =
+  "This booking is being paid by Internet Banking, so it can't be paid by card here. Use the Internet Banking details on this page, or contact the club.";
+
 const CREDIT_ELECTION_PENDING_MESSAGE =
   "This booking has to be paid from the member's own account rather than through this link. Please contact the club and they'll sort it out.";
 
@@ -111,6 +120,14 @@ export async function createPaymentIntentForPaymentLink(
 
   if (!isPayableByLink(booking.status)) {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
+
+  // #3638 — a booking switched to Internet Banking has an emailed invoice; a
+  // card payment beside it is the double collection `INV-PAY-103` forbids.
+  // Checked here with no lock, and again under lock(1) where the intent is
+  // attached, for a switch that commits in between.
+  if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
+    throw new PaymentLinkError(PAYING_BY_INTERNET_BANKING_MESSAGE, 409);
   }
 
   // Reuse or reconcile an existing PaymentIntent before creating a new one
@@ -392,30 +409,34 @@ export async function createPaymentIntentForPaymentLink(
       : `pl_pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  const payment = await prisma.payment.upsert({
-    where: { bookingId: booking.id },
-    create: {
-      bookingId: booking.id,
+  // #3638 (`INV-PAY-103`): attached under lock(1) after re-reading the
+  // payment's source and the booking's status — see the shared helper. A
+  // refused intent is cancelled there and its secret never leaves the server.
+  const attached = await attachMintedCardIntent({
+    bookingId: booking.id,
+    paymentIntentId: paymentIntent.id,
+    isPayableStatus: isPayableByLink,
+    paymentCreate: {
       amountCents: booking.finalPriceCents,
       stripeCustomerId: customer.id,
-      status: PaymentStatus.PENDING,
     },
-    update: {
+    paymentUpdate: {
+      stripeCustomerId: customer.id,
+    },
+    transaction: {
+      amountCents: booking.finalPriceCents,
+      reason: repaySupersededIntentId
+        ? "payment_link_repay_after_refund"
+        : "payment_link_booking_payment",
       stripeCustomerId: customer.id,
     },
   });
-
-  await upsertPaymentIntentTransaction({
-    paymentId: payment.id,
-    kind: PaymentTransactionKind.PRIMARY,
-    paymentIntentId: paymentIntent.id,
-    amountCents: booking.finalPriceCents,
-    status: PaymentStatus.PROCESSING,
-    reason: repaySupersededIntentId
-      ? "payment_link_repay_after_refund"
-      : "payment_link_booking_payment",
-    stripeCustomerId: customer.id,
-  });
+  if (attached === "switchedToInternetBanking") {
+    throw new PaymentLinkError(PAYING_BY_INTERNET_BANKING_MESSAGE, 409);
+  }
+  if (attached === "notPayable") {
+    throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
 
   if (!paymentIntent.client_secret) {
     throw new PaymentLinkError("Unable to start the payment. Please try again.", 500);

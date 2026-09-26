@@ -44,6 +44,10 @@ vi.mock("@/lib/prisma", () => {
             findUnique: vi.fn().mockResolvedValue(null),
             upsert: payment.upsert,
           },
+          // ...and the booking's status, which is still payable.
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
         })
       ),
     },

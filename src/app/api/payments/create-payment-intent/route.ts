@@ -8,22 +8,27 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { cancelPaymentIntentIfCancellableWithResult, createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
+import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { BookingEventType, BookingStatus, PaymentSource } from "@prisma/client";
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
-import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
+import {
+  SWITCHED_TO_INTERNET_BANKING_CODE,
+  attachMintedCardIntent,
+} from "@/lib/card-intent-attach";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
-import { bookingHasCapacityOverride } from "@/lib/booking-status";
+import {
+  bookingHasCapacityOverride,
+  isImmediatePaymentBookingStatus,
+} from "@/lib/booking-status";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
@@ -80,6 +85,23 @@ class PaymentIntentReviewPendingError extends Error {
     super("This booking needs admin review before it can be paid.");
     this.name = "PaymentIntentReviewPendingError";
   }
+}
+
+/**
+ * #3638: the one refusal for a card payment on a booking being paid by
+ * Internet Banking — whether it was already switched when this request began,
+ * or switched while its intent was being minted. One body, so the pay page
+ * needs one arm for it.
+ */
+function switchedToInternetBankingResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "This booking is being paid by Internet Banking, so it can't be paid by card. Reload the booking to see the invoice details.",
+      code: SWITCHED_TO_INTERNET_BANKING_CODE,
+    },
+    { status: 409 }
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -181,13 +203,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-      return NextResponse.json(
-        {
-          error:
-            "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
-        },
-        { status: 400 }
-      );
+      return switchedToInternetBankingResponse();
     }
 
     // This is the point at which a draft becomes a real, capacity-holding,
@@ -699,75 +715,48 @@ export async function POST(request: NextRequest) {
         : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
-    // #3638 (`INV-PAY-103`) — the write that attaches this intent to the
-    // booking is serialised with the Internet Banking switch on lock(1), which
-    // the switch holds while it re-reads the intent and moves the payment to
-    // Internet Banking. The source check at the top of this route ran with no
-    // lock, so a switch can commit between it and here; without this, the new
-    // intent landed on an Internet Banking payment and its client secret went
-    // to the browser beside an emailed invoice. Whichever commits first wins:
-    // a switch first is seen here and refused; this write first leaves the
-    // switch a different intent from the one it cancelled, and it refuses.
-    const attached = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const current = await tx.payment.findUnique({
-        where: { bookingId: booking.id },
-        select: { source: true },
-      });
-      if (current?.source === PaymentSource.INTERNET_BANKING) {
-        return false;
-      }
-
-      // Mirror the effective split onto the Payment so the invariant
-      // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
-      // update branch also corrects a not-yet-paid legacy full-price payment
-      // forward to the effective amount when a fresh intent is minted here.
-      const payment = await tx.payment.upsert({
-        where: { bookingId: booking.id },
-        create: {
-          bookingId: booking.id,
-          amountCents: effectivePriceCents,
-          creditAppliedCents: appliedCreditCents,
-          stripeCustomerId: customer.id,
-          status: PaymentStatus.PENDING,
-        },
-        update: {
-          amountCents: effectivePriceCents,
-          creditAppliedCents: appliedCreditCents,
-          stripeCustomerId: customer.id,
-        },
-      });
-
-      await upsertPaymentIntentTransaction({
-        paymentId: payment.id,
-        kind: PaymentTransactionKind.PRIMARY,
-        paymentIntentId: paymentIntent.id,
+    // #3638 (`INV-PAY-103`) — attach under lock(1), after re-reading the
+    // payment's source and the booking's status: a switch to Internet Banking
+    // (or a cancel) that committed while the intent was being minted is seen
+    // there, and the new intent is refused and cancelled rather than handed
+    // to the browser. The shared helper explains the race both card doors
+    // close with it.
+    //
+    // The Payment mirrors the effective split so the invariant
+    // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
+    // update branch also corrects a not-yet-paid legacy full-price payment
+    // forward to the effective amount when a fresh intent is minted here.
+    const attached = await attachMintedCardIntent({
+      bookingId: booking.id,
+      paymentIntentId: paymentIntent.id,
+      isPayableStatus: isImmediatePaymentBookingStatus,
+      paymentCreate: {
         amountCents: effectivePriceCents,
-        status: PaymentStatus.PROCESSING,
+        creditAppliedCents: appliedCreditCents,
+        stripeCustomerId: customer.id,
+      },
+      paymentUpdate: {
+        amountCents: effectivePriceCents,
+        creditAppliedCents: appliedCreditCents,
+        stripeCustomerId: customer.id,
+      },
+      transaction: {
+        amountCents: effectivePriceCents,
         reason: repaySupersededIntentId
           ? "repay_after_refund"
           : "primary_booking_payment",
         stripeCustomerId: customer.id,
-        store: tx,
-      });
-      return true;
+      },
     });
 
-    if (!attached) {
-      // The client secret never leaves this server, so nobody can confirm the
-      // orphaned intent; cancelling it is tidiness, not safety.
-      await cancelPaymentIntentIfCancellableWithResult(paymentIntent.id).catch(
-        (err) =>
-          logger.warn(
-            { err, bookingId: booking.id, paymentIntentId: paymentIntent.id },
-            "Could not cancel a card intent minted for a booking that switched to Internet Banking meanwhile (#3638)"
-          )
-      );
+    if (attached === "switchedToInternetBanking") {
+      return switchedToInternetBankingResponse();
+    }
+    if (attached === "notPayable") {
       return NextResponse.json(
         {
           error:
-            "This booking has switched to Internet Banking, so it can't be paid by card here. Reload the booking to see the invoice details.",
-          code: "SWITCHED_TO_INTERNET_BANKING",
+            "This booking is no longer payable. Reload the booking and try again.",
         },
         { status: 409 }
       );

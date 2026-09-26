@@ -803,10 +803,13 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
 
     const res = await createPaymentIntent(req);
 
-    expect(res.status).toBe(400);
+    // #3638: the same body as the refusal under the attach lock, so the pay
+    // page needs one arm for it.
+    expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({
       error:
-        "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
+        "This booking is being paid by Internet Banking, so it can't be paid by card. Reload the booking to see the invoice details.",
+      code: "SWITCHED_TO_INTERNET_BANKING",
     });
     expect(stripe.findOrCreateCustomer).not.toHaveBeenCalled();
     expect(stripe.createPaymentIntent).not.toHaveBeenCalled();

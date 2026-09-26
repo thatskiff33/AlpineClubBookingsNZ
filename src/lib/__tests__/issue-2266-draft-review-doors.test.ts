@@ -138,7 +138,9 @@ vi.mock("@/lib/payment-transactions", () => ({
   findPaymentTransactionByIntentId: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
 }));
-vi.mock("@/lib/booking-status", () => ({
+vi.mock("@/lib/booking-status", async (importOriginal) => ({
+  // #3638: the mint attach reads the real payable-status rule.
+  ...((await importOriginal()) as typeof import("@/lib/booking-status")),
   bookingHasCapacityOverride: vi.fn().mockReturnValue(false),
 }));
 vi.mock("@/lib/booking-payment-cleanup", () => ({
