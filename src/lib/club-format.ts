@@ -278,7 +278,7 @@ export interface ClubFormatCandidate {
  *
  * THE PRECEDENCE IS THE WHOLE POINT (INV-CONFIG-006, owner decision D3 on
  * #3205). A valid persisted value wins outright: once the club has configured
- * its currency, `CURRENCY` and `NEXT_PUBLIC_CURRENCY` are not a second opinion,
+ * its currency, the server's `CURRENCY` is not a second opinion,
  * and editing the container's environment cannot move the club's money. The
  * environment is read ONLY while nothing is persisted — the window between
  * `prisma migrate deploy` and the first boot of the upgraded release, which is
