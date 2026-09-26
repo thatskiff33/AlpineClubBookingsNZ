@@ -82,7 +82,7 @@ const LATE_CAPTURE_INTENT_ID = "race-3641-pi-late";
  */
 const lateCaptureAlert = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/email", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/email")>()),
+  ...((await importOriginal()) as typeof import("@/lib/email")),
   sendAdminXeroSyncErrorAlert: lateCaptureAlert,
 }));
 
