@@ -499,7 +499,7 @@ function MissingInvoicesList({
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                {formatPayloadCalendarDay(booking.checkIn)} to {formatPayloadCalendarDay(booking.checkOut)} - Payment {shortId(booking.paymentId)}
+                {formatPayloadCalendarDay(booking.checkIn, clubTime.format)} to {formatPayloadCalendarDay(booking.checkOut, clubTime.format)} - Payment {shortId(booking.paymentId)}
               </p>
             </div>
             <p className="text-xs text-muted-foreground">Created {clubTime.instantDateTime(requireInstant(booking.createdAt))}</p>

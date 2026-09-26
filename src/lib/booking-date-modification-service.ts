@@ -680,7 +680,7 @@ export async function modifyBookingDates({
       // rather than read under the locks (`INV-LOCK-004`). The same day the
       // edit policy, the change fee and the settlement tier above use.
       today: clubTodayDateOnly,
-    });
+    }, format);
 
     /**
      * #3166 (epic #2797): THE DATE PATH EVIDENCE GATE, and the reason it could
@@ -2009,7 +2009,7 @@ export async function adminShiftBookingDates({
       // Resolved before this transaction opened (`INV-LOCK-004`); the same day
       // the shift's edit-policy gate reads.
       today: clubTodayDateOnly,
-    });
+    }, format);
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below

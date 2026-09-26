@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -63,7 +64,7 @@ function makeEvent(overrides: Partial<CalendarEventDTO> = {}): CalendarEventDTO 
 
 describe("the grid is calendar dates, and needs no zone", () => {
   it("starts weeks on Monday", () => {
-    expect(weekdayLabels()).toEqual([
+    expect(weekdayLabels(CLUB_FORMAT_TEST)).toEqual([
       "Mon",
       "Tue",
       "Wed",
@@ -123,20 +124,20 @@ describe("the grid is calendar dates, and needs no zone", () => {
       April grid said "March 2026". `formatClubMonthYear` takes a calendar date
       and pins UTC over its own encoding, so it is the identity everywhere.
     */
-    expect(formatClubMonthYear(requireCalendarDate("2026-04-01"))).toBe(
+    expect(formatClubMonthYear(requireCalendarDate("2026-04-01"), CLUB_FORMAT_TEST)).toBe(
       "April 2026",
     );
-    expect(formatClubMonthYear(requireCalendarDate("2026-12-01"))).toBe(
+    expect(formatClubMonthYear(requireCalendarDate("2026-12-01"), CLUB_FORMAT_TEST)).toBe(
       "December 2026",
     );
   });
 
   it("labels a day key long, and shows the raw text for a malformed one", () => {
-    expect(formatDayKeyLong("2026-04-16")).toBe("Thursday, 16 April 2026");
+    expect(formatDayKeyLong("2026-04-16", CLUB_FORMAT_TEST)).toBe("Thursday, 16 April 2026");
     // A blank dialog is worse than the stored text (see ClubTimeProvider's note
     // on choosing a decoder in a client render).
-    expect(formatDayKeyLong("2026-4-16")).toBe("2026-4-16");
-    expect(formatDayKeyLong("")).toBe("");
+    expect(formatDayKeyLong("2026-4-16", CLUB_FORMAT_TEST)).toBe("2026-4-16");
+    expect(formatDayKeyLong("", CLUB_FORMAT_TEST)).toBe("");
   });
 });
 
@@ -179,7 +180,7 @@ describe("the grid is indifferent to the HOST's zone", () => {
   it("labels a day key the same whatever zone the process is in", () => {
     for (const host of HOSTILE_HOSTS) {
       expect(
-        withTimeZone(host, () => formatDayKeyLong("2026-04-16")),
+        withTimeZone(host, () => formatDayKeyLong("2026-04-16", CLUB_FORMAT_TEST)),
         `the day label changed under a process pinned to ${host}`,
       ).toBe("Thursday, 16 April 2026");
     }
@@ -226,7 +227,7 @@ describe("the day label does not follow the ENVIRONMENT's zone either", () => {
     const calendarClient = await import("@/lib/calendar-client");
     return {
       appTimeZone: operational.APP_TIME_ZONE,
-      label: calendarClient.formatDayKeyLong("2026-04-16"),
+      label: calendarClient.formatDayKeyLong("2026-04-16", CLUB_FORMAT_TEST),
     };
   }
 
@@ -480,16 +481,16 @@ describe("a timed event inside a spring-forward gap keeps its length", () => {
 describe("event labels read the club's clock", () => {
   it("formats a chip time in club time, and says so for an all-day event", () => {
     const { zone, expected, environmentAnswer, hostAnswer } = divergentClubZone(
-      (z) => formatClubInstantTime(requireInstant("2026-04-16T10:30:00.000Z"), z),
+      (z) => formatClubInstantTime(requireInstant("2026-04-16T10:30:00.000Z"), z, CLUB_FORMAT_TEST),
     );
-    const label = formatEventTime(makeEvent(), zone);
+    const label = formatEventTime(makeEvent(), zone, CLUB_FORMAT_TEST);
     expect(label).toBe(expected);
     // Both wrong answers really are different labels, so the assertion above is
     // discriminating: a chip built from `APP_TIME_ZONE` or from the host's own
     // `getHours()` would read as one of these.
     expect(label).not.toBe(environmentAnswer);
     expect(label).not.toBe(hostAnswer);
-    expect(formatEventTime(makeEvent({ allDay: true }), zone)).toBe("All day");
+    expect(formatEventTime(makeEvent({ allDay: true }), zone, CLUB_FORMAT_TEST)).toBe("All day");
   });
 
   it("formats a heading from the club calendar day the event starts on", () => {
@@ -500,23 +501,23 @@ describe("event labels read the club's clock", () => {
           z,
         ) as CalendarDate,
     );
-    expect(formatEventDateLong(makeEvent(), zone)).toBe(
-      formatDayKeyLong(expected),
+    expect(formatEventDateLong(makeEvent(), zone, CLUB_FORMAT_TEST)).toBe(
+      formatDayKeyLong(expected, CLUB_FORMAT_TEST),
     );
   });
 
   it("shows the raw value rather than throwing on an unusable instant", () => {
     // `Intl.format` throws a RangeError on an invalid Date, and an unhandled
     // throw in a client render blanks the screen behind an error boundary.
-    expect(formatInstantTime("not-an-instant", RULE_ZONE)).toBe("not-an-instant");
-    expect(formatEventDateLong(makeEvent({ startsAt: "nope" }), RULE_ZONE)).toBe(
+    expect(formatInstantTime("not-an-instant", RULE_ZONE, CLUB_FORMAT_TEST)).toBe("not-an-instant");
+    expect(formatEventDateLong(makeEvent({ startsAt: "nope" }), RULE_ZONE, CLUB_FORMAT_TEST)).toBe(
       "nope",
     );
   });
 
   it("renders the house time shape for a club-time instant", () => {
     // 10:30Z on 16 Apr 2026 is 22:30 in New Zealand (UTC+12 in April).
-    expect(formatInstantTime("2026-04-16T10:30:00.000Z", RULE_ZONE)).toBe(
+    expect(formatInstantTime("2026-04-16T10:30:00.000Z", RULE_ZONE, CLUB_FORMAT_TEST)).toBe(
       "10:30 pm",
     );
   });

@@ -31,6 +31,7 @@ import { APP_TIME_ZONE } from "@/config/operational";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getDiagnosticsPageContextRoute } from "@/lib/diagnostics/page-context/registry";
 import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "@/lib/diagnostics/page-context/types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The club day the PAGE will be on, taken from the zone the render actually
@@ -461,7 +462,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
       {
         wrapper: ({ children }: { children: ReactNode }) => (
           <ClubFormatTestProvider>
-            <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+            <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
           </ClubFormatTestProvider>
         ),
       },

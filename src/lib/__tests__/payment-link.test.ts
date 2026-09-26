@@ -716,7 +716,7 @@ describe("getPaymentLinkContext under an open financial review", () => {
     });
 
     const resolverInput = {
-      club: bindClubTime(requireClubTimeZone("Pacific/Auckland")),
+      club: bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST),
       booking: {
         status: booking.status,
         finalPriceCents: booking.finalPriceCents,

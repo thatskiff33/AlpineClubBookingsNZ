@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -70,7 +71,7 @@ describe("finance range labels take no zone (#3123)", () => {
   it("names the window bounds as the days they are, not the day before", () => {
     // BEFORE the migration: "31 May 2026 to 29 Jun 2026".
     expect(
-      financeDashboardWindowDetail({ from: "2026-06-01", to: "2026-06-30" }),
+      financeDashboardWindowDetail({ from: "2026-06-01", to: "2026-06-30" }, CLUB_FORMAT_TEST),
     ).toBe("1 Jun 2026 to 30 Jun 2026");
   });
 
@@ -80,6 +81,7 @@ describe("finance range labels take no zone (#3123)", () => {
     const window = resolvePrimaryFinanceRange({
       option: "last-month",
       today: clubDay("2026-07-06"),
+      format: CLUB_FORMAT_TEST,
       financialYearEndMonth: MARCH_YEAR_END,
     });
     expect(window.fromMonth).toBe("2026-06");
@@ -96,10 +98,10 @@ describe("finance range labels take no zone (#3123)", () => {
       side of the contract.
     */
     expect(
-      financeDashboardWindowDetail({ from: "not-a-day", to: "2026-06-30" }),
+      financeDashboardWindowDetail({ from: "not-a-day", to: "2026-06-30" }, CLUB_FORMAT_TEST),
     ).toBe("not-a-day to 30 Jun 2026");
     expect(
-      financeDashboardWindowDetail({ from: "2026-02-30", to: "2026-06-30" }),
+      financeDashboardWindowDetail({ from: "2026-02-30", to: "2026-06-30" }, CLUB_FORMAT_TEST),
     ).toBe("2026-02-30 to 30 Jun 2026");
   });
 });
@@ -115,10 +117,12 @@ describe("the reporting month comes from the supplied club day (#3123)", () => {
     */
     const lastOfJune = resolveFinanceDashboardSelection({
       today: clubDay("2026-06-30"),
+      format: CLUB_FORMAT_TEST,
       financialYearEndMonth: MARCH_YEAR_END,
     });
     const firstOfJuly = resolveFinanceDashboardSelection({
       today: clubDay("2026-07-01"),
+      format: CLUB_FORMAT_TEST,
       financialYearEndMonth: MARCH_YEAR_END,
     });
     expect(lastOfJune.currentMonth).toBe("2026-06");
@@ -132,6 +136,7 @@ describe("the reporting month comes from the supplied club day (#3123)", () => {
     const selection = resolveFinanceDashboardSelection({
       searchParams: { range: "financial-year-to-date" },
       today: clubDay("2026-07-01"),
+      format: CLUB_FORMAT_TEST,
       financialYearEndMonth: MARCH_YEAR_END,
     });
     expect(selection.primary.fromMonth).toBe("2026-04");

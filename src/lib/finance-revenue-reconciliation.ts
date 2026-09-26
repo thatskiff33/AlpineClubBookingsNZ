@@ -39,6 +39,7 @@ import {
 } from "@/lib/finance-pnl-snapshot";
 import {
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubMonthYear,
   requireStoredCalendarDay,
 } from "@/lib/club-time";
@@ -141,7 +142,7 @@ function resolvePeriodBounds(snapshot: FinanceSnapshotRecord): {
  * zone to answer it with. Composed rather than wrapped, per
  * `docs/CLUB_TIME_KERNEL.md`.
  */
-function formatSnapshotPeriodMonth(value: Date): string {
+function formatSnapshotPeriodMonth(value: Date, format: ClubDateFormat): string {
   return formatClubMonthYear(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
@@ -151,6 +152,7 @@ function formatSnapshotPeriodMonth(value: Date): string {
           "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
       }),
     ),
+    format,
   );
 }
 
@@ -390,13 +392,14 @@ async function buildPeriod(
   snapshot: FinanceSnapshotRecord,
   chart: ChartOfAccountsContext,
   toleranceCents: number,
-  tolerancePct: number
+  tolerancePct: number,
+  format: ClubDateFormat,
 ): Promise<FinanceReconciliationPeriod> {
   const { start, end } = resolvePeriodBounds(snapshot);
   const payload = readPnlReportPayload(snapshot.payload);
   const periodLabel =
     (payload ? readPnlPeriodLabel(payload) : null) ??
-    formatSnapshotPeriodMonth(end);
+    formatSnapshotPeriodMonth(end, format);
 
   const xero = parseXeroIncome(snapshot, chart);
   const bookingHutFees = await loadBookingHutFees(start, end);
@@ -454,12 +457,15 @@ function resolveOverallStatus(
   return "TIES";
 }
 
-export async function buildFinanceRevenueReconciliation(input?: {
-  periods?: number;
-  toleranceCents?: number;
-  tolerancePct?: number;
-  now?: Date;
-}): Promise<FinanceRevenueReconciliation> {
+export async function buildFinanceRevenueReconciliation(
+  format: ClubDateFormat,
+  input?: {
+    periods?: number;
+    toleranceCents?: number;
+    tolerancePct?: number;
+    now?: Date;
+  },
+): Promise<FinanceRevenueReconciliation> {
   const periodsRequested = clampPeriods(input?.periods);
   const toleranceCents = input?.toleranceCents ?? DEFAULT_TOLERANCE_CENTS;
   const tolerancePct = input?.tolerancePct ?? DEFAULT_TOLERANCE_PCT;
@@ -486,7 +492,7 @@ export async function buildFinanceRevenueReconciliation(input?: {
   const selected = Array.from(latestByMonth.values()).slice(0, periodsRequested);
   const periods = await Promise.all(
     selected.map((snapshot) =>
-      buildPeriod(snapshot, chart, toleranceCents, tolerancePct)
+      buildPeriod(snapshot, chart, toleranceCents, tolerancePct, format)
     )
   );
 

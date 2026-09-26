@@ -5,6 +5,7 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { clearAiSpendRateOnCurrencyChange } from "@/lib/ai-spend-currency-clear";
 import {
   normaliseClubCurrencyCode,
   normaliseClubLocale,
@@ -16,6 +17,7 @@ import {
   resolveClubFormatWithSource,
 } from "@/lib/club-format-settings";
 import logger from "@/lib/logger";
+import { primeEmailClubTimeZone } from "@/lib/email-templates-club-time";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -33,22 +35,20 @@ import { requireAdmin } from "@/lib/session-guards";
  * wrong on both and looks right at a glance: it infers `support` from the path,
  * refusing the read to a finance-only admin and granting the write to a
  * support editor. The path is registered under `support` in
- * `ROUTE_AREA_PREFIXES` only so the drift guard resolves it to a concrete area;
- * both divergences from that map are declared in
- * `REVIEWED_PERMISSION_DIVERGENCES`. `/api/admin/club-time-zone` and
- * `/api/admin/environment-safety` stay Full Admin on both verbs, so this route
- * is their twin on the write only.
+ * `ROUTE_AREA_PREFIXES` only so the drift guard resolves it; both divergences
+ * are declared in `REVIEWED_PERMISSION_DIVERGENCES`. `/api/admin/club-time-zone`
+ * and `/api/admin/environment-safety` are Full Admin on both verbs.
  *
  * THE CONFIRMATION IS ENFORCED HERE, not only in the panel. A checkbox in a
  * browser is a courtesy to the operator, and the panel is not the only caller.
  *
- * THE TRANSACTION TOUCHES EXACTLY TWO TABLES — `ClubFormatSettings` and
- * `AuditLog` — and that is a contract, not an implementation detail. Changing
- * the club's currency or locale rewrites NO stored amount: every `Int` column
- * of cents holds exactly what it held before, and no payment, invoice or credit
- * is re-denominated. A write here reaching a booking, a payment or a member
- * would be that promise broken, so the route's test enumerates the delegates
- * and fails if any other one is called.
+ * THE TRANSACTION TOUCHES EXACTLY THREE TABLES — `ClubFormatSettings`, `AuditLog`
+ * and, on a CURRENCY change only, `AiSpendCurrencySettings`, whose rate it clears
+ * (#3566; `ai-spend-currency-clear.ts` says why) — a contract, not a detail. No
+ * stored amount is rewritten: every `Int` column of cents holds what it held,
+ * and no payment, invoice or credit is re-denominated. A write here reaching a
+ * booking, a payment or a member would be that promise broken, so the route's
+ * test enumerates the delegates and fails if any other one is called.
  *
  * SERIALIZABLE, AND NO ADVISORY LOCK. A single-row configuration upsert
  * composes no capacity claim, no settlement money and no lifecycle transition,
@@ -70,9 +70,9 @@ import { requireAdmin } from "@/lib/session-guards";
  * P2002 joins them here for the reason `/api/admin/club-time-zone` states: on a
  * one-row singleton whose id is a constant, a primary-key collision can only be
  * this upsert's create arm losing a race with another administrator recording
- * the setting for the first time. That rests on the ONLY other table this
- * transaction writes being `AuditLog`, whose primary key is a per-row `cuid`
- * and which carries no other unique constraint — add one and a duplicate-audit
+ * the setting for the first time. That rests on the other tables this writes
+ * being `AuditLog` (a per-row `cuid`, no other unique constraint) and the AI rate
+ * it only ever DELETES from — add a unique constraint or an insert, and a real
  * bug starts being answered "try again shortly", which retrying cannot fix.
  */
 const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
@@ -168,14 +168,13 @@ export async function PUT(request: Request) {
         });
 
         /*
-          DIRTY GATING (docs/ARCHITECTURE.md -> "Admin/member layer"). Re-saving
-          the pair already stored writes nothing at all: no row, no `updatedAt`
-          bump and no audit row. A trail recording changes that never happened
-          is worse than no trail, because the next reader cannot tell the
-          difference. The isolation level above — not the fact that this read
-          sits inside the transaction — is what keeps `before` true at commit
-          time, so a concurrent save can neither slip past this gate nor make
-          the audit row name a currency the club had already left.
+          DIRTY GATING (docs/ARCHITECTURE.md -> "Admin/member layer"). Re-saving the
+          pair already stored writes nothing: no row, no `updatedAt` bump and no
+          audit row. A trail recording changes that never happened is worse than
+          no trail, because the next reader cannot tell the difference. The
+          isolation level above — not this read sitting inside the transaction —
+          keeps `before` true at commit time, so a concurrent save can neither slip
+          past this gate nor make the audit row name a currency already left.
         */
         if (
           before &&
@@ -196,6 +195,7 @@ export async function PUT(request: Request) {
           },
           select: CLUB_FORMAT_SETTINGS_SELECT,
         });
+        await clearAiSpendRateOnCurrencyChange(tx, { before, currencyCode, actingMemberId, request });
 
         await tx.auditLog.create(
           buildStructuredAuditLogCreateArgs({
@@ -228,17 +228,17 @@ export async function PUT(request: Request) {
       },
       { isolationLevel: "Serializable" },
     );
-
+    // Emails' cached locale re-reads NOW, after commit, not on its next TTL (#3566).
+    if (outcome.changed) await primeEmailClubTimeZone();
     return NextResponse.json({
       changed: outcome.changed,
       state: await stateFromRow(outcome.row),
     });
   } catch (error) {
     /*
-      The loser of a real race, told to try again rather than handed a 500 — and
-      it wrote nothing, so retrying is safe. Anything else rethrows: this route
-      cannot tell what a broken database means, and dressing that up as a
-      friendly "try again shortly" would hide it from whoever has to fix it.
+      The loser of a real race, told to try again rather than handed a 500 — it wrote
+      nothing, so retrying is safe. Anything else rethrows: this route cannot tell what
+      a broken database means, and a friendly "try again shortly" would hide it.
     */
     if (!isTransactionContentionError(error)) throw error;
     logger.warn({ err: error }, "Club format save hit write contention");

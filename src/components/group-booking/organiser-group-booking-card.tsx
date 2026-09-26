@@ -412,7 +412,7 @@ export function OrganiserGroupBookingCard({
           {group.joinDeadline ? (
             <div>
               <span className="text-muted-foreground">Closes to joins:</span>{" "}
-              {formatStayDate(group.joinDeadline)}
+              {formatStayDate(group.joinDeadline, format)}
             </div>
           ) : null}
           {group.maxJoiners != null ? (

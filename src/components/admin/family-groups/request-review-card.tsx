@@ -192,7 +192,8 @@ export function FamilyGroupRequestReviewCard({
               {formatFamilyGroupCalendarDay(
                 request.type === "ADULT_REQUEST"
                   ? request.requestedDateOfBirth
-                  : request.childDateOfBirth
+                  : request.childDateOfBirth,
+                clubTime.format
               )}
             </p>
             {/* #2568: the same declared date of birth as an age, so it can be
@@ -453,7 +454,7 @@ export function FamilyGroupRequestReviewCard({
           <p className="break-words text-xs text-muted-foreground">
             {request.requestedEmail || request.requester.email}
             {request.requestedDateOfBirth
-              ? ` - DOB ${formatFamilyGroupCalendarDay(request.requestedDateOfBirth)}`
+              ? ` - DOB ${formatFamilyGroupCalendarDay(request.requestedDateOfBirth, clubTime.format)}`
               : ""}
           </p>
           {/* #2568: creating a brand-new record is the decision a duplicate
@@ -476,7 +477,7 @@ export function FamilyGroupRequestReviewCard({
           </p>
           <p className="break-words text-xs text-muted-foreground">
             {request.childDateOfBirth
-              ? `DOB ${formatFamilyGroupCalendarDay(request.childDateOfBirth)}`
+              ? `DOB ${formatFamilyGroupCalendarDay(request.childDateOfBirth, clubTime.format)}`
               : "DOB not provided"}
             {/* #2568: same basis note as the tier line above — the ranged tier
                 label is as at the season start, the age below it is as at

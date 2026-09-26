@@ -752,10 +752,12 @@ export default async function AdminDashboardPage() {
                       <p className="text-xs text-muted-foreground">
                         {formatClubDayMonth(
                           calendarDateOfDateOnlyInstant(booking.checkIn),
+                          money.format,
                         )}
                         {" — "}
                         {formatClubDayMonth(
                           calendarDateOfDateOnlyInstant(booking.checkOut),
+                          money.format,
                         )}
                         {" · "}
                         {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""}

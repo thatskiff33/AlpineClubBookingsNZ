@@ -1737,8 +1737,8 @@ export default function AdminMembershipTypesPage() {
                   Seasons
                 </div>
                 <div className="mt-1 text-foreground">
-                  {seasonSelectLabel(rollForwardResult.fromSeasonYear)} to{" "}
-                  {seasonSelectLabel(rollForwardResult.toSeasonYear)}
+                  {seasonSelectLabel(rollForwardResult.fromSeasonYear, clubTime.format)} to{" "}
+                  {seasonSelectLabel(rollForwardResult.toSeasonYear, clubTime.format)}
                 </div>
               </div>
               <div>

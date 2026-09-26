@@ -15,6 +15,7 @@ import {
   type LayoutRenderPayload,
   type SlotContent,
 } from "./layout-registry";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 // Server-side assembly of a v2 Layout + Template into the display-state
 // `layoutRender` payload (ADR-003 §4, LTV-027/LTV-028). This is where the CMS
@@ -101,7 +102,7 @@ function replaceModuleEmbeds(html: string): string {
  * injected config value can only ever be inert text. Area/module tokens survive
  * both steps; the caller swaps them for inert markers as the final step.
  */
-function renderAuthoredHtml(html: string, state: DisplayState): string {
+function renderAuthoredHtml(html: string, state: DisplayState, format: ClubDateFormat): string {
   // restrictImgSrc: true (issue #161, ADR-003 residual) — the display's own
   // img-src CSP is 'self' data:, so an <img src="https://…"> an author saved
   // before this change (or hand-edited around the save-time warning) has its
@@ -110,7 +111,8 @@ function renderAuthoredHtml(html: string, state: DisplayState): string {
   // public-site page content) is untouched — see page-content-html.ts.
   return resolveDisplayHtml(
     sanitizePageContentHtml(html, { restrictImgSrc: true }),
-    state
+    state,
+    format
   );
 }
 
@@ -119,36 +121,36 @@ function renderAuthoredHtml(html: string, state: DisplayState): string {
  * markers (LTV-041). Used for every authored surface that can carry an embedded
  * module — slot html, defaultContent html, footer html.
  */
-function renderAuthoredHtmlWithModuleMarkers(html: string, state: DisplayState): string {
-  return replaceModuleEmbeds(renderAuthoredHtml(html, state));
+function renderAuthoredHtmlWithModuleMarkers(html: string, state: DisplayState, format: ClubDateFormat): string {
+  return replaceModuleEmbeds(renderAuthoredHtml(html, state, format));
 }
 
 /** Sanitise + token-resolve the HTML fields inside one slot's content, then
  * swap module embed tokens for markers (module slot content carries no HTML —
  * only its scalar options, already validated — so it passes through). */
-function renderSlotContent(content: SlotContent, state: DisplayState): SlotContent {
+function renderSlotContent(content: SlotContent, state: DisplayState, format: ClubDateFormat): SlotContent {
   if ("module" in content) return content;
-  return { html: renderAuthoredHtmlWithModuleMarkers(content.html, state) };
+  return { html: renderAuthoredHtmlWithModuleMarkers(content.html, state, format) };
 }
 
 function renderAreas(
   areas: DisplayAreaDefinition[],
-  state: DisplayState
+  state: DisplayState, format: ClubDateFormat
 ): DisplayAreaDefinition[] {
   return areas.map((area) =>
     area.defaultContent
-      ? { ...area, defaultContent: renderSlotContent(area.defaultContent, state) }
+      ? { ...area, defaultContent: renderSlotContent(area.defaultContent, state, format) }
       : area
   );
 }
 
 function renderSlotContentMap(
   slotContent: DisplaySlotContentMap,
-  state: DisplayState
+  state: DisplayState, format: ClubDateFormat
 ): DisplaySlotContentMap {
   const out: DisplaySlotContentMap = {};
   for (const [key, value] of Object.entries(slotContent)) {
-    out[key] = renderSlotContent(value, state);
+    out[key] = renderSlotContent(value, state, format);
   }
   return out;
 }
@@ -175,7 +177,7 @@ export interface LayoutRenderInput {
  */
 export function buildLayoutRender(
   input: LayoutRenderInput,
-  state: DisplayState
+  state: DisplayState, format: ClubDateFormat
 ): LayoutRenderPayload {
   const areas = validateDisplayLayoutDefinition(input.bodyHtml, input.areas);
   const slotContent = validateDisplaySlotContent(areas, input.slotContent);
@@ -189,16 +191,16 @@ export function buildLayoutRender(
     // inert `<div data-display-area="key">` marker the client portals its Area
     // into. Shipping the body WHOLE (not split into sibling fragments) keeps an
     // area nested inside an authored container in place (LTV-041, issue #96).
-    bodyHtml: replaceAreaPlaceholders(renderAuthoredHtml(input.bodyHtml, state)),
+    bodyHtml: replaceAreaPlaceholders(renderAuthoredHtml(input.bodyHtml, state, format)),
     // Non-authored club-theme variables, unscoped so `:root { --brand-* }`
     // cascades to the whole page; injected BEFORE the authored CSS.
     themeCss: input.themeCss ?? "",
     defaultCss: prepareAuthoredCss(input.defaultCss),
-    areas: renderAreas(areas, state),
-    slotContent: renderSlotContentMap(slotContent, state),
+    areas: renderAreas(areas, state, format),
+    slotContent: renderSlotContentMap(slotContent, state, format),
     cssOverrides: prepareAuthoredCss(input.cssOverrides),
     // The footer html can embed `{{module:name}}` tokens — swap them for markers
     // too, the same mechanism the client mounts everywhere (LTV-041).
-    footerHtml: renderAuthoredHtmlWithModuleMarkers(input.footerHtml, state),
+    footerHtml: renderAuthoredHtmlWithModuleMarkers(input.footerHtml, state, format),
   };
 }

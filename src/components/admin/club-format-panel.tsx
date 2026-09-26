@@ -21,6 +21,13 @@ import {
   CLUB_LOCALE_MAX_LENGTH,
   listSelectableClubCurrencyCodes,
 } from "@/lib/club-format";
+import {
+  CLUB_FORMAT_AI_RATE_CLEARED,
+  CLUB_FORMAT_CARD_PAYMENTS,
+  CLUB_FORMAT_NOTHING_REWRITTEN,
+  CLUB_FORMAT_REACH,
+  CLUB_FORMAT_SERVER_SETTINGS,
+} from "@/lib/club-format-copy";
 
 /**
  * The club currency and locale maintenance panel (stage 1 of programme #3205,
@@ -68,13 +75,12 @@ import {
  * this form and never a supported-locale list: a club whose tag is not among
  * them types it and it is accepted.
  *
- * WHAT THIS SCREEN MAY CLAIM, and it is deliberately little. #3564 moved ten
- * screens onto the setting — the currency code beside a fee, the audit and
- * health row stamps, the promo counts, the lobby display's date — so the
- * consequences list names those, and says every AMOUNT and the remaining dates
- * still follow the server's `CURRENCY` and `LOCALE` until #3565-#3566 move them.
- * Each caveat goes with the change that makes it untrue — the change that makes
- * a claim true is the change that gets to make it, as CT-1 said and CT-5 did.
+ * WHAT THIS SCREEN MAY CLAIM. Since #3565 (money) and #3566 (dates, emails,
+ * AI spend, sorting) the setting reaches everything the site writes except the
+ * report charts' English axis labels, and the card-payment currency stays the
+ * server's (#3567). The consequences list renders that from
+ * `@/lib/club-format-copy`, the one home the page blurb and the contextual help
+ * share, so the next stage that moves a caveat moves it once.
  */
 
 type ClubFormatFieldSource =
@@ -506,50 +512,11 @@ export function ClubFormatPanel() {
                 </div>
               </dl>
               <ul className="list-disc space-y-1 pl-5 text-sm">
-                <li>
-                  <span className="font-semibold">
-                    Some screens follow this straight away; amounts do not yet.
-                  </span>{" "}
-                  The currency code shown beside a fee, a spend cap or a
-                  booking-request total changes as soon as you save, and so do
-                  the audit-log timestamps, the health dashboard&apos;s{" "}
-                  <em>row</em> timestamps, the promo counts and the lobby
-                  display&apos;s date. The <em>amounts themselves</em> — every
-                  price, invoice figure and statement line — are still written
-                  from the server&apos;s settings, and move across in the changes
-                  that follow this one.
-                </li>
-                <li>
-                  <span className="font-semibold">
-                    Two clocks on those screens do not move yet.
-                  </span>{" "}
-                  The health dashboard&apos;s &ldquo;Last refresh&rdquo; line and
-                  the lobby display&apos;s live clock are written by the shared
-                  date machinery rather than by their own screen, so they keep
-                  following the server&apos;s <code>LOCALE</code> until the next
-                  change moves it. They are the only place you will see both
-                  answers at once.
-                </li>
-                <li>
-                  No amount already recorded is rewritten or re-converted. A
-                  payment of 8450 cents is still 8450 cents; only the way an
-                  amount is WRITTEN will follow this setting, never what it is
-                  worth.
-                </li>
-                <li>
-                  Once saved, this page is where the setting is changed — editing{" "}
-                  <code>CURRENCY</code> or <code>LOCALE</code> on the server will
-                  not change it back. <strong>Do not remove them yet</strong>, and
-                  keep them matching what you choose here: amounts are still
-                  written from them, so a mismatch shows your chosen code beside
-                  figures written the old way.
-                </li>
-                <li>
-                  Stripe still charges in the currency the deployment is
-                  configured with. Moving the club to a different currency is a
-                  conversation with the payment provider and the club&apos;s
-                  accountant before it is a setting here.
-                </li>
+                <li>{CLUB_FORMAT_REACH}</li>
+                <li>{CLUB_FORMAT_AI_RATE_CLEARED}</li>
+                <li>{CLUB_FORMAT_NOTHING_REWRITTEN}</li>
+                <li>{CLUB_FORMAT_SERVER_SETTINGS}</li>
+                <li>{CLUB_FORMAT_CARD_PAYMENTS}</li>
               </ul>
               <div className="flex items-start gap-2">
                 <Checkbox

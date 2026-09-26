@@ -33,6 +33,7 @@ import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import type { FamilyGroupRequest } from "@/lib/admin-family-group-ui-helpers";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 afterEach(cleanup);
 
@@ -102,7 +103,7 @@ function renderCard(
   return render(
     <FamilyGroupRequestReviewCard
       request={request}
-      clubTime={bindClubTime(requireClubTimeZone(zone))}
+      clubTime={bindClubTime(requireClubTimeZone(zone), CLUB_FORMAT_TEST)}
       searchedMembers={[]}
       requestSelection={requestSelection}
       searching={false}

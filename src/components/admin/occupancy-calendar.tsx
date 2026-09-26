@@ -7,8 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubMonthYear,
   formatClubWeekdayDayMonth,
+  formatClubWeekdayHeaders,
   requireCalendarDate,
 } from "@/lib/club-time";
 import { formatMonthOnly, parseDateOnly } from "@/lib/date-only";
@@ -88,7 +90,6 @@ type OccupancyCalendarProps = {
   onVisibleMonthChange?: (month: string) => void;
 };
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 
 // The cell label deliberately carries the weekday and drops the year — the year
@@ -110,12 +111,12 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
  * kernel's calendar-date shapes are UTC-pinned by construction, so the reasoning
  * survives intact and the string is unchanged (CT-4, #2870).
  */
-function formatVisibleMonth(monthStart: Date) {
-  return formatClubMonthYear(calendarDateOfDateOnlyInstant(monthStart));
+function formatVisibleMonth(monthStart: Date, format: ClubDateFormat) {
+  return formatClubMonthYear(calendarDateOfDateOnlyInstant(monthStart), format);
 }
 
-function formatDisplayDate(dateString: string) {
-  return formatClubWeekdayDayMonth(requireCalendarDate(dateString));
+function formatDisplayDate(dateString: string, format: ClubDateFormat) {
+  return formatClubWeekdayDayMonth(requireCalendarDate(dateString), format);
 }
 
 export function OccupancyCalendar({
@@ -397,7 +398,7 @@ export function OccupancyCalendar({
   const year = visibleMonth.getUTCFullYear();
   const monthIndex = visibleMonth.getUTCMonth();
   const { daysInMonth, startOffset } = getMonthGrid(year, monthIndex);
-  const visibleMonthLabel = formatVisibleMonth(visibleMonth);
+  const visibleMonthLabel = formatVisibleMonth(visibleMonth, clubTime.format);
 
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -440,7 +441,7 @@ export function OccupancyCalendar({
       )}
 
       <div className="grid grid-cols-7 border-b border-border">
-        {DAY_LABELS.map((label) => (
+        {formatClubWeekdayHeaders(clubTime.format).map((label) => (
           <div key={label} className="px-1 py-2 text-center text-xs font-medium text-muted-foreground">
             {label}
           </div>
@@ -508,7 +509,7 @@ export function OccupancyCalendar({
               disabled={isPast}
               onClick={() => handleDayClick(dateString)}
               aria-pressed={isSelectedStart || isSelectedEnd || isInRange}
-              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}${selectionLabel ? `, ${selectionLabel.toLowerCase()} selection` : ""}`}
+              aria-label={`${formatDisplayDate(dateString, clubTime.format)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}${selectionLabel ? `, ${selectionLabel.toLowerCase()} selection` : ""}`}
               // Stable hooks for tests/tooling so overlay assertions target the
               // tone + emphasis rather than the token class strings, which the
               // "Restrained Alpine" restyle may re-tint.

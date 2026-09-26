@@ -43,6 +43,7 @@
  * screen.
  */
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/config/operational", () => ({
@@ -83,7 +84,7 @@ describe("the configured zone really is west of UTC at these instants", () => {
 describe("formatFamilyGroupCalendarDay keeps the STORED day west of UTC", () => {
   it("renders a New Year's Day date of birth as 1 January, not 31 December", () => {
     expect(
-      formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z"),
+      formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z", CLUB_FORMAT_TEST),
       "INV-DATE-019: this is the UTC-midnight encoding of a @db.Date column. " +
         "Projecting it through the configured zone names 31 Dec 2017, which " +
         "moves a declared date of birth across a year boundary on the screen " +
@@ -92,14 +93,14 @@ describe("formatFamilyGroupCalendarDay keeps the STORED day west of UTC", () => 
   });
 
   it("renders the bare spelling of that same day identically", () => {
-    expect(formatFamilyGroupCalendarDay("2018-01-01")).toBe("1 Jan 2018");
+    expect(formatFamilyGroupCalendarDay("2018-01-01", CLUB_FORMAT_TEST)).toBe("1 Jan 2018");
   });
 });
 
 describe("formatMemberCalendarDay keeps the STORED lodge night west of UTC", () => {
   it("renders a stored check-out as its own day, not the evening before", () => {
     expect(
-      formatMemberCalendarDay("2026-07-04T00:00:00.000Z"),
+      formatMemberCalendarDay("2026-07-04T00:00:00.000Z", CLUB_FORMAT_TEST),
       "INV-DATE-019: `stats.lastStay` is the `_max` of a member's booking " +
         "checkOut, a @db.Date lodge night. The summary strip on the same page " +
         "decodes it as the stored day, so a projection here puts one member's " +
@@ -108,15 +109,15 @@ describe("formatMemberCalendarDay keeps the STORED lodge night west of UTC", () 
   });
 
   it("renders the bare spelling of that same day identically", () => {
-    expect(formatMemberCalendarDay("2026-07-04")).toBe("4 Jul 2026");
+    expect(formatMemberCalendarDay("2026-07-04", CLUB_FORMAT_TEST)).toBe("4 Jul 2026");
   });
 
   it("returns the caller's fallback for a value it cannot read", () => {
     // It degrades rather than throwing, because these values are fed straight
     // from an API payload into a rendered row and a throw in that position
     // blanks the whole page.
-    expect(formatMemberCalendarDay("not-a-date")).toBe("—");
-    expect(formatMemberCalendarDay("", "unknown")).toBe("unknown");
+    expect(formatMemberCalendarDay("not-a-date", CLUB_FORMAT_TEST)).toBe("—");
+    expect(formatMemberCalendarDay("", CLUB_FORMAT_TEST, "unknown")).toBe("unknown");
   });
 
   it("carries through to the member page's history preview line", () => {
@@ -126,7 +127,7 @@ describe("formatMemberCalendarDay keeps the STORED lodge night west of UTC", () 
       formatMemberHistoryPreview({
         totalBookings: 12,
         lastStay: "2026-07-04T00:00:00.000Z",
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toBe("12 bookings · last stay 4 Jul 2026");
   });
 });

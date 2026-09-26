@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   act,
   renderWithClubFormat as render,
@@ -156,7 +157,8 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
         cssOverrides: template.cssOverrides,
         footerHtml: template.footerHtml,
       },
-      state
+      state,
+      CLUB_FORMAT_TEST
     );
 
     queue.push({
@@ -232,7 +234,8 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
         cssOverrides: template.cssOverrides,
         footerHtml: template.footerHtml,
       },
-      state
+      state,
+      CLUB_FORMAT_TEST
     );
 
     queue.push({

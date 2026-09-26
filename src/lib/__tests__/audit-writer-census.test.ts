@@ -1395,7 +1395,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment` at the site, unpinned like every other new feature's writer.
     // 359 -> 360 (#3029): the booking dietary edit record, `booking` at the
     // site, unpinned likewise. RE-MEASURED with `npm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 360 });
+    // 360 -> 361 (#3566): the AI spend rate clear (`ai-spend-currency-clear.ts`,
+    // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
+    // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
+    ).toEqual({ pinned: 128, unpinned: 361 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

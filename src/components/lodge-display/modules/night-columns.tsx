@@ -14,6 +14,8 @@ import {
   type StaySegment,
   type StayStatus,
 } from "./status-helpers";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // Next-N-nights look-ahead (issue #115; visual references: origin five-panel
 // mock O3 "The next three nights" without rooms, and
@@ -62,9 +64,9 @@ function bookingLabel(booking: DisplayStateBooking): { label: string; group: boo
 // several days at once, so the contradiction was visible inside one panel: for
 // nights {13, 15} the 13th's column said "→ Thu 16" while the 14th's said
 // "leaves". Now the 13th says "→ Tue 14" and the 15th says "→ Thu 16".
-function spanText(segment: StaySegment): string {
+function spanText(segment: StaySegment, format: ClubDateFormat): string {
   if (segment.status === "departing") return "leaves";
-  return `→ ${shortDay(segment.stayEnd)}`;
+  return `→ ${shortDay(segment.stayEnd, format)}`;
 }
 
 export function NightColumns({
@@ -74,6 +76,7 @@ export function NightColumns({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const days = intOption(options, "days", NIGHT_COLUMNS_DEFAULT_DAYS, {
     min: 1,
     max: NIGHT_COLUMNS_MAX_DAYS,
@@ -107,7 +110,7 @@ export function NightColumns({
               key: booking.key,
               label,
               status: segment.status,
-              span: spanText(segment),
+              span: spanText(segment, format),
               roomName,
               group,
             };
@@ -115,7 +118,9 @@ export function NightColumns({
           .filter((row): row is NightRow => row !== null)
           .sort((a, b) => STAY_STATUS_ORDER[a.status] - STAY_STATUS_ORDER[b.status]);
 
-        const dayLabel = today ? `Tonight · ${shortDay(date)}` : shortDay(date);
+        const dayLabel = today
+          ? `Tonight · ${shortDay(date, format)}`
+          : shortDay(date, format);
         const newCount = occ && !today && occ.arriving > 0 ? ` · ${occ.arriving} new` : "";
         const countLabel = occ ? `${occ.staying} in${newCount}` : "";
 

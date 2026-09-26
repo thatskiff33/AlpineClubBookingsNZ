@@ -137,6 +137,7 @@ vi.mock("@/components/admin/bed-range-assign-dialog", () => ({
 }));
 
 import AdminBedAllocationPage from "@/app/(admin)/admin/bed-allocation/page";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 function buildPayload(): DashboardPayload {
   return {
@@ -462,7 +463,7 @@ describe("bed allocation board — the opening night comes from the club's zone 
 
     render(<AdminBedAllocationPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     });
     await waitFor(() => {

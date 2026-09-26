@@ -27,8 +27,9 @@ import { withheldEmailDisplayName } from "@/lib/booking-email-suppression";
  */
 vi.mock("@/lib/club-time/server", async () => {
   const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
+  const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
   const zone = requireClubTimeZone("America/Denver");
-  return { clubTime: async () => bindClubTime(zone), clubTimeZone: async () => zone };
+  return { clubTime: async () => bindClubTime(zone, CLUB_FORMAT_TEST), clubTimeZone: async () => zone };
 });
 
 /**

@@ -1,4 +1,5 @@
 import {
+  type ClubDateFormat,
   formatClubDate,
   formatClubMonthYear,
   formatClubShortMonthYear,
@@ -58,13 +59,25 @@ export function monthStartString(monthKey: string): string {
  * ("June 2026"), unlike {@link financeDashboardTrendMonthLabel}'s short form,
  * which chart axes need so a dozen ticks fit side by side.
  */
-export function financeDashboardMonthLabel(monthKey: string) {
-  return formatClubMonthYear(requireCalendarDate(monthStartString(monthKey)));
+export function financeDashboardMonthLabel(
+  monthKey: string,
+  format: ClubDateFormat,
+) {
+  return formatClubMonthYear(
+    requireCalendarDate(monthStartString(monthKey)),
+    format,
+  );
 }
 
 /** Short month label ("Jun 2026") for trend axes. */
-export function financeDashboardTrendMonthLabel(monthKey: string) {
-  return formatClubShortMonthYear(requireCalendarDate(monthStartString(monthKey)));
+export function financeDashboardTrendMonthLabel(
+  monthKey: string,
+  format: ClubDateFormat,
+) {
+  return formatClubShortMonthYear(
+    requireCalendarDate(monthStartString(monthKey)),
+    format,
+  );
 }
 
 /**
@@ -83,19 +96,23 @@ export function financeDashboardTrendMonthLabel(monthKey: string) {
  * as `2026-02-30`, and this one refuses it — which lands on the same side of the
  * contract: the raw string, not a rolled-forward date and not a throw.
  */
-export function financeDashboardDayLabel(dateOnly: string) {
+export function financeDashboardDayLabel(
+  dateOnly: string,
+  format: ClubDateFormat,
+) {
   const day = parseCalendarDate(dateOnly);
-  return day === null ? dateOnly : formatClubDate(day);
+  return day === null ? dateOnly : formatClubDate(day, format);
 }
 
 export function financeDashboardWindowDetail(
   window: {
     from: string | null;
     to: string | null;
-  } | null
+  } | null,
+  format: ClubDateFormat,
 ) {
   if (!window || !window.from || !window.to) {
     return window ? "Unavailable" : "None";
   }
-  return `${financeDashboardDayLabel(window.from)} to ${financeDashboardDayLabel(window.to)}`;
+  return `${financeDashboardDayLabel(window.from, format)} to ${financeDashboardDayLabel(window.to, format)}`;
 }

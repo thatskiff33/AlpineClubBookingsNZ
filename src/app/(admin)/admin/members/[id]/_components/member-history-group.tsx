@@ -45,8 +45,8 @@ function BookingHistoryTable({
       <TableBody>
         {bookings.map((booking) => (
           <TableRow key={booking.id}>
-            <TableCell>{formatPayloadCalendarDay(booking.checkIn)}</TableCell>
-            <TableCell>{formatPayloadCalendarDay(booking.checkOut)}</TableCell>
+            <TableCell>{formatPayloadCalendarDay(booking.checkIn, format)}</TableCell>
+            <TableCell>{formatPayloadCalendarDay(booking.checkOut, format)}</TableCell>
             <TableCell>
               <Badge
                 variant="secondary"

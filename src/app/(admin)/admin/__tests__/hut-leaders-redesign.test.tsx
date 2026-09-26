@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // Capture the props the page passes to the (mocked) calendar so we can assert on
 // the computed overlay, and drive selection / month-change from the test.
@@ -385,7 +386,7 @@ describe("hut leaders — Active/Past comes from the club's day (CT-4, #2870)", 
     const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
     render(<HutLeadersPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     });
     await settleLodgeScopedPage("/api/admin/hut-leaders?lodgeId=");

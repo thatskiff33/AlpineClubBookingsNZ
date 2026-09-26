@@ -1157,7 +1157,7 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
       const { choreRosterTemplate } = await import("@/lib/email-templates/chores");
       const html = choreRosterTemplate(
         "Bob Jones",
-        "2026-07-15",
+        "Wednesday, 15 July 2026",
         [{ name: "Breakfast", description: "Cook it" }],
         "https://example.com/chores/abc123"
       );
@@ -1171,7 +1171,7 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
       const { choreRosterTemplate } = await import("@/lib/email-templates/chores");
       const html = choreRosterTemplate(
         "Bob Jones",
-        "2026-07-15",
+        "Wednesday, 15 July 2026",
         [{ name: "Breakfast", description: null }]
       );
 

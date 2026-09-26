@@ -8,6 +8,13 @@
  * and the booking messages under Bookings setup.
  */
 import { entry, help, type HelpEntry } from "../types";
+import {
+  CLUB_FORMAT_AI_RATE_CLEARED,
+  CLUB_FORMAT_CARD_PAYMENTS,
+  CLUB_FORMAT_NOTHING_REWRITTEN,
+  CLUB_FORMAT_REACH,
+  CLUB_FORMAT_SERVER_SETTINGS,
+} from "@/lib/club-format-copy";
 
 export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
   entry(
@@ -583,8 +590,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         },
         {
           name: "Not the server's settings",
-          description:
-            "CURRENCY and LOCALE on the server seeded these once, and changing them no longer changes this setting - change it here. Do not remove them yet, and keep them matching your choice: every AMOUNT the site writes, and every date the screens listed below do not cover, still come from the server values until the later stages of #3205 move them across.",
+          description: CLUB_FORMAT_SERVER_SETTINGS,
         },
         {
           name: "Last changed",
@@ -593,10 +599,10 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         },
       ],
       [
-        "Saving here changes the currency code shown beside a fee, a spend cap or a booking-request total, the audit-log timestamps, the health dashboard's row timestamps, the promo counts and the lobby display's date. It does not yet change how an AMOUNT is written - prices, invoice figures and statement lines still follow the server settings until the changes that follow this one.",
-        "Two clocks on those same screens do not move yet, and they are the only place you will see both answers at once: the health dashboard's \"Last refresh\" line and the lobby display's live clock. Both are written by the shared date machinery rather than by their own screen, so they still follow the server's LOCALE until the next change moves it.",
-        "No amount already recorded is rewritten or re-converted. A payment of 8450 cents is still 8450 cents; only the way an amount is written follows this setting.",
-        "Stripe still charges in the currency the deployment is configured with. Moving the club to a different currency is a conversation with the payment provider and the club's accountant before it is a setting here.",
+        CLUB_FORMAT_REACH,
+        CLUB_FORMAT_AI_RATE_CLEARED,
+        CLUB_FORMAT_NOTHING_REWRITTEN,
+        CLUB_FORMAT_CARD_PAYMENTS,
       ],
     ),
   ),

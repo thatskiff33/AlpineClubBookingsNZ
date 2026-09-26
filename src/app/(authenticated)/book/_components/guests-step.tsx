@@ -6,6 +6,7 @@ import { MemberGuestFindPanel } from "@/components/book/member-guest-find-panel"
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   getFamilyMemberBookingActionLabel,
   getFamilyMemberBookingBlockMessage,
@@ -140,6 +141,7 @@ export function GuestsStep({
   declareDependantDifferentPerson,
   withdrawDependantDeclaration,
 }: GuestsStepProps) {
+  const format = useClubFormat();
   /** Derived once, so the three add-guest affordances cannot disagree. */
   const atPartyCeiling = lodgeCapacity !== null && guests.length >= lodgeCapacity;
   // The find panel opens INLINE, underneath the Guests heading (owner sign-off
@@ -291,8 +293,8 @@ export function GuestsStep({
                   the kernel's formatter pins `UTC` over the encoding, so the
                   projection is the identity for every club rather than only for
                   one east of Greenwich. */}
-              {formatClubDate(requireCalendarDate(checkIn))} -{" "}
-              {formatClubDate(requireCalendarDate(checkOut))} ({nights} night{nights !== 1 ? "s" : ""})
+              {formatClubDate(requireCalendarDate(checkIn), format)} -{" "}
+              {formatClubDate(requireCalendarDate(checkOut), format)} ({nights} night{nights !== 1 ? "s" : ""})
             </span>
           )}
         </CardTitle>

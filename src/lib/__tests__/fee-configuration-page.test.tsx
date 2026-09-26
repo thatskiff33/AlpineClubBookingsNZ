@@ -379,7 +379,7 @@ describe("fee configuration page", () => {
           currencyCode={CLUB_CURRENCY_FALLBACK}
           locale={CLUB_LOCALE_FALLBACK}
         >
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_LOCALE_FALLBACK}>{children}</ClubTimeProvider>
         </ClubFormatProvider>
       ),
     });
@@ -715,7 +715,7 @@ describe("fee configuration page", () => {
       render(<FinanceFeesSections />, {
         wrapper: ({ children }) => (
           <FreshClubFormatProvider currencyCode="CHF" locale="de-CH">
-            <FreshClubTimeProvider zone="Australia/Sydney">{children}</FreshClubTimeProvider>
+            <FreshClubTimeProvider zone="Australia/Sydney" locale="de-CH">{children}</FreshClubTimeProvider>
           </FreshClubFormatProvider>
         ),
       });

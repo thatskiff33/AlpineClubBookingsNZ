@@ -397,7 +397,7 @@ export default async function ProfilePage({
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription {seasonSelectLabel(currentSeasonYear)}
+                Subscription {seasonSelectLabel(currentSeasonYear, club.format)}
               </span>
               <Badge
                 className={subscriptionStatusClass(
@@ -489,7 +489,7 @@ export default async function ProfilePage({
           ) : (
             <div className="divide-y">
               {subscriptionHistory.map((sub) => {
-                const label = seasonSelectLabel(sub.seasonYear);
+                const label = seasonSelectLabel(sub.seasonYear, club.format);
                 const isCurrent = sub.seasonYear === currentSeasonYear;
                 return (
                   <div

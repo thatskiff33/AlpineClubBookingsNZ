@@ -12,6 +12,7 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 const holdSchema = z.object({
   optionId: z.string().min(1).max(40).optional().nullable(),
@@ -80,7 +81,7 @@ export async function POST(
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, await clubFormatValues()),
         { status: 409 },
       );
     }

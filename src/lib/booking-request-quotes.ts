@@ -1678,6 +1678,7 @@ export async function holdBookingRequestSlots(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  const format = await clubFormatValues(); // the guard's refusal copy (#3566), before the locks
 
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -1959,7 +1960,7 @@ export async function holdBookingRequestSlots(input: {
         guests: guestCreates,
         // Resolved before this transaction opened (`INV-LOCK-004`).
         today: clubTodayDateOnly,
-      });
+      }, format);
 
       const ownerName =
         request.type === BookingRequestType.SCHOOL

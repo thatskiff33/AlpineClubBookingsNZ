@@ -57,11 +57,12 @@
  */
 
 import {
+  type CalendarDate,
   calendarDateOfDateOnlyInstant,
+  type ClubDateFormat,
   formatClubDate,
   parseCalendarDate,
   parseInstant,
-  type CalendarDate,
 } from "@/lib/club-time";
 
 /**
@@ -91,8 +92,9 @@ export function calendarDayFromPayload(
  */
 export function formatPayloadCalendarDay(
   value: string | null | undefined,
+  format: ClubDateFormat,
   fallback = "—",
 ): string {
   const day = calendarDayFromPayload(value);
-  return day === null ? fallback : formatClubDate(day);
+  return day === null ? fallback : formatClubDate(day, format);
 }

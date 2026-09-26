@@ -456,6 +456,132 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // aliased constructor, `Intl["NumberFormat"]`, or `toLocaleString(...)` — the
 // guard is a structural check on the one shape this codebase has actually
 // written, not a proof that no other shape exists.
+// INV-CONFIG-006 / #3566 — the club's FORMAT is a required argument, and this
+// arm keeps it one (#3628 review, finding B7).
+//
+// The compiler is the census for a missing format only while the parameter is
+// REQUIRED. A `format: ClubDateFormat = { locale: "en-NZ" }` default, a
+// `format = CLUB_FORMAT_TEST`, or a `format?: ClubFormat` would make every
+// caller that forgets the club's format compile again — silently, in a wrapper
+// such as `season-label.ts` that the `@ts-expect-error` locks in
+// `house-shapes.test.ts` and `club-format-kernel.test.ts` never call. So a
+// default value (an `AssignmentPattern`) or an optional marker on ANY parameter
+// typed `ClubDateFormat` or `ClubFormat`, anywhere in `src/`, is refused. On the
+// mandatory set, so no block can lift it. Branding the type was the
+// alternative and was not taken: every test fixture and every server reader
+// would need to mint the brand, for no protection this arm does not give.
+//
+// WHAT IT SEES (widened in the #3628 re-review). A club-format type reference
+// (`ClubDateFormat`, `ClubFormat`, or qualified `ct.ClubDateFormat`) that IS the
+// annotation, or sits in it as a union / intersection member, an array element,
+// or a generic argument (`Readonly<ClubDateFormat>`, `Readonly<X | null>`,
+// `Array<ClubFormat>`) — on:
+//  - a parameter with a DEFAULT (`format: ClubDateFormat | undefined = NZ`);
+//  - an OPTIONAL identifier: a function parameter, an interface-method or
+//    function-type parameter (`format?: ClubDateFormat | null`);
+//  - an OPTIONAL property signature, so an options object cannot carry it
+//    optionally (`opts: { format?: ClubDateFormat }`), nor a class field;
+//  - an optional TUPLE element, so a rest tuple cannot
+//    (`...rest: [ClubDateFormat?]`, `...rest: [format?: ClubDateFormat]`);
+//  - a DESTRUCTURED default on a property named `format` / `clubFormat` /
+//    `dateFormat` (`({ format = NZ }: Options)`) — by NAME, because a selector
+//    cannot follow `Options` to its declaration; the optional-property arm is
+//    what refuses `format?:` on that declaration.
+// The annotation is walked by explicit CHILD paths, not a descendant `:has`, on
+// purpose: an optional property whose type is a FUNCTION taking a required
+// format (`sendAlert?: (report, format: ClubFormat) => Promise<void>`, in
+// `xero-credit-sync-checker.ts`) keeps that format required, and a descendant
+// match would refuse it. That function's own parameters are still judged,
+// by the optional-identifier arm, so `(format?: ClubFormat) => void` is caught.
+// What a selector cannot see is a type ALIAS (`type F = ClubDateFormat;
+// (format?: F)`), which needs type resolution; `club-format-required-guard.test.ts`
+// backs that with a census refusing any alias of a club format outside the
+// kernel's own definition.
+const CLUB_FORMAT_TYPE_NAME = "/^Club(?:Date)?Format$/";
+const CLUB_FORMAT_REF = `TSTypeReference:matches([typeName.name=${CLUB_FORMAT_TYPE_NAME}], [typeName.right.name=${CLUB_FORMAT_TYPE_NAME}])`;
+/** Where, below an annotation's root, a club-format reference still makes that annotation "a club format". */
+const CLUB_FORMAT_ANNOTATION_PATHS = [
+  CLUB_FORMAT_REF,
+  `TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSIntersectionType > ${CLUB_FORMAT_REF}`,
+  `TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeOperator > TSArrayType > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+  `TSTypeReference > TSTypeParameterInstantiation > TSUnionType > ${CLUB_FORMAT_REF}`,
+  `TSUnionType > TSTypeReference > TSTypeParameterInstantiation > ${CLUB_FORMAT_REF}`,
+];
+/** `head > path` for every annotation path, as one comma-list selector. */
+const clubFormatAnnotated = (head) =>
+  CLUB_FORMAT_ANNOTATION_PATHS.map((path) => `${head} > ${path}`).join(", ");
+const CLUB_FORMAT_REQUIRED_MESSAGE =
+  "INV-CONFIG-006 / #3566: a `ClubDateFormat` / `ClubFormat` parameter is REQUIRED — no default value and no `?`. A default is the ambient-locale shape the owner declined on #3566 and #3565: it lets a caller that forgot the club's format compile. Take the format from the caller (clubTime().format / clubFormatValues() on the server, useClubTime().format / useClubFormat() in the browser).";
+const CLUB_FORMAT_PARAMETER_RESTRICTIONS = [
+  clubFormatAnnotated("AssignmentPattern > Identifier.left > TSTypeAnnotation"),
+  clubFormatAnnotated("Identifier[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSPropertySignature[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("PropertyDefinition[optional=true] > TSTypeAnnotation"),
+  clubFormatAnnotated("TSOptionalType"),
+  clubFormatAnnotated("TSNamedTupleMember[optional=true]"),
+  "ObjectPattern > Property[key.name=/^(?:format|clubFormat|dateFormat)$/] > AssignmentPattern",
+].map((selector) => ({ selector, message: CLUB_FORMAT_REQUIRED_MESSAGE }));
+
+/**
+ * The #3566 required-format arm as bare selector strings, for
+ * `club-format-required-guard.test.ts` — read from HERE, never copied.
+ */
+export const CLUB_FORMAT_GUARD_ARMS = {
+  requiredParameter: CLUB_FORMAT_PARAMETER_RESTRICTIONS.map((entry) => entry.selector),
+};
+
+// INV-CONFIG-006 / #3566 — nothing outside `src/config/operational.ts` IMPORTS
+// `APP_LOCALE` or `APP_CURRENCY` (#3628 review, finding B9). The acceptance
+// criterion of #3566, enforced rather than measured once.
+//
+// A `no-restricted-syntax` arm on the mandatory set rather than
+// `no-restricted-imports`, for the reason the environment-zone note above gives:
+// flat config REPLACES a rule's options, and `src/lib/xero-*` sets its own
+// `no-restricted-imports`, so an import rule would be silently lifted for the
+// modules that write Xero documents. Every spelling of the module path is
+// matched, and a namespace import, a default import and a re-export are refused
+// too, since each reaches the constants without naming them. Tests are outside
+// it (they are outside `no-restricted-syntax` altogether); #3567 retires the
+// constants and the tests' last references.
+//
+// `APP_STRIPE_CURRENCY`, the card-charge currency derived from `APP_CURRENCY`,
+// is NOT covered here: its seven importers are the named #3567 exception, pinned
+// by `app-currency-import-census.test.ts` so an eighth fails there.
+// The module path, however spelled: `@/config/operational`,
+// `../config/operational`, `@/config/./operational`, `@/config//operational`,
+// `@/config/operational.js` (round 2 of the #3628 review). A template literal
+// (`import(`@/config/${name}`)`) or a `require` cannot always be read to its
+// value, so any template mentioning `config` or `operational` in a dynamic
+// import or `require` is refused outright. What no selector can follow — a
+// computed module name, a `createRequire` alias — is backstopped by the
+// word-level census in `app-currency-import-census.test.ts`: no
+// `APP_LOCALE` / `APP_CURRENCY` token anywhere in non-test `src/` code outside
+// `operational.ts`, comments stripped.
+const OPERATIONAL_MODULE = "/(?:^|\\/)config(?:\\/+\\.)*\\/+operational(?:\\.[cm]?[jt]sx?)?$/";
+const OPERATIONAL_TEMPLATE = "TemplateElement[value.raw=/config|operational/]";
+const RETIRED_FORMAT_CONSTANT_MESSAGE =
+  "INV-CONFIG-006 / #3566: do not import APP_LOCALE or APP_CURRENCY. The club's locale and currency are the persisted setting: clubFormatValues() / clubFormat() on the server, useClubFormat() in the browser, getClubFormat() in a src/lib module that already imports @/lib/prisma, and a date's locale through the club-time binding's .format. The environment is a seed only (club-format-env.ts); #3567 retires these constants.";
+const RETIRED_FORMAT_CONSTANT_RESTRICTIONS = [
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportSpecifier[imported.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
+  `ImportDeclaration[source.value=${OPERATIONAL_MODULE}] ImportNamespaceSpecifier`,
+  `ExportNamedDeclaration[source.value=${OPERATIONAL_MODULE}] ExportSpecifier[local.name=/^(?:APP_LOCALE|APP_CURRENCY)$/]`,
+  `ExportAllDeclaration[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.value=${OPERATIONAL_MODULE}]`,
+  `ImportExpression[source.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `CallExpression[callee.name="require"][arguments.0.value=${OPERATIONAL_MODULE}]`,
+  `CallExpression[callee.name="require"][arguments.0.type="TemplateLiteral"]:has(${OPERATIONAL_TEMPLATE})`,
+  `TSExternalModuleReference[expression.value=${OPERATIONAL_MODULE}]`,
+].map((selector) => ({ selector, message: RETIRED_FORMAT_CONSTANT_MESSAGE }));
+
+/** The #3566 retired-constant arm as bare selectors, read by its guard test. */
+export const RETIRED_FORMAT_CONSTANT_ARMS = RETIRED_FORMAT_CONSTANT_RESTRICTIONS.map(
+  (entry) => entry.selector,
+);
+
 const CURRENCY_LOCALE_MESSAGE =
   "INV-CONFIG-001 / #3325: do not construct `Intl.NumberFormat(<literal locale>, { style: \"currency\" })` — the locale is the club's configuration, not this codebase's. Render an integer-cent amount with formatCents / formatSignedCents from @/lib/utils, or a whole-dollar dashboard figure with formatDollarsDisplay from @/lib/finance-format; since #3565 both TAKE the club's resolved format, which a server caller gets from clubFormat() and a browser caller from bindClubFormat. A genuinely new rendering SHAPE is declared in @/lib/club-format-intl beside the others, never as another Intl instance. There is no exemption list for this rule and no eslint-disable.";
 
@@ -549,20 +675,6 @@ const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
   "src/lib/finance-legacy-dashboard-export.ts",
   "src/lib/promo-redemptions-csv.ts",
   "src/lib/membership-cancellation-blocker-messages.ts",
-];
-
-/**
- * The one `CENTS_DISPLAY_EXEMPTIONS` file that is ALSO a `DATE_FNS_ADAPTER_FILES`
- * member: it already drops `DATE_FNS_RESTRICTIONS` (CT-6, #2991) via its own
- * block, so the block that additionally drops `CENTS_DISPLAY_RESTRICTIONS` for
- * it has to replicate THAT swap too, for the same flat-config-replaces-not-merges
- * reason as `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` above. Found by `npm run lint`
- * actually going red the first time this file's exemption was wired as an
- * ordinary one — proof this kind of overlap is exactly the failure mode that
- * reading glob text instead of asking ESLint misses.
- */
-const CENTS_DISPLAY_DATE_FNS_OVERLAP = [
-  "src/app/(admin)/admin/reports/page.tsx",
 ];
 
 // Where a bare `x * 100` is money by construction.
@@ -1035,7 +1147,6 @@ const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
  */
 const DATE_FNS_ADAPTER_FILES = [
   "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
-  "src/app/(admin)/admin/reports/page.tsx",
   "src/app/(admin)/admin/reports/_components/report-charts.tsx",
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
@@ -1055,12 +1166,6 @@ export const DATE_FNS_ADAPTERS = [
     uses: "formatDistanceToNow",
     reason:
       "The same relative-duration hint on a password action, zone-independent for the same reason.",
-  },
-  {
-    file: "src/app/(admin)/admin/reports/page.tsx",
-    uses: "format",
-    reason:
-      "The admin report date-series surface #2870's ledger carries as an open residual. Migrating it is a report-shape change, not a formatter swap, so it is scoped there rather than re-scoped here.",
   },
   {
     file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
@@ -1132,7 +1237,6 @@ const ENVIRONMENT_ZONE_ADAPTER_FILES = [
   "src/lib/club-time-zone-env.ts",
   "src/lib/ai-assistant-usage.ts",
   "src/lib/ai-diagnostics-usage.ts",
-  "src/lib/induction-display.ts",
 ];
 
 export const ENVIRONMENT_ZONE_ADAPTERS = [
@@ -1149,17 +1253,12 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
   {
     file: "src/lib/ai-assistant-usage.ts",
     reason:
-      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the five below.",
+      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the one below.",
   },
   {
     file: "src/lib/ai-diagnostics-usage.ts",
     reason:
       "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
-  },
-  {
-    file: "src/lib/induction-display.ts",
-    reason:
-      "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
   },
 ];
 
@@ -2580,6 +2679,8 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...CENTS_IN_PROSE_RESTRICTIONS,
   ...CURRENCY_LOCALE_RESTRICTIONS,
   ...AUTHORITY_DEFAULT_RESTRICTIONS,
+  ...CLUB_FORMAT_PARAMETER_RESTRICTIONS,
+  ...RETIRED_FORMAT_CONSTANT_RESTRICTIONS,
 ];
 
 /**
@@ -2601,7 +2702,7 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     files: DATE_FNS_ADAPTER_FILES,
     omits: DATE_FNS_RESTRICTIONS,
     reason:
-      "The seven files still importing `date-fns`, measured by CT-6 (#2991). Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
+      "The files still importing `date-fns`, measured by CT-6 (#2991) at seven and six since #3566 moved the reports page off it. Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
   },
   {
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
@@ -2822,14 +2923,12 @@ const eslintConfig = defineConfig([
     //   * `src/lib/date-only.ts` — the helper module itself, the sanctioned home
     //     for the date-only encoding. `src/lib/nzst-date.ts` sat beside it until
     //     CT-2 (#2990) took its exemption away and #3123 deleted the file.
-    //   * `src/lib/email-templates/chores.ts` — `formatChoreRosterDate`
-    //     (#2256): the chore-roster long-weekday subject line and body must stay
-    //     byte-identical, and the helper is shared with `src/lib/email/chores.ts`.
-    //     Flat config cannot scope a rule to one function, so the exemption is
-    //     still file-wide — but the file is now the 88-line chore-template
-    //     module rather than the 5,000-line template monolith (#2689), which is
-    //     as narrow as flat config allows. New date rendering in it must still
-    //     use the helpers.
+    //   * `src/lib/email-templates/chores.ts` USED TO BE HERE, for the
+    //     chore-roster date (#2256), and #3566 took the exemption away: the
+    //     roster now renders the kernel's `longWeekdayDate` house shape through
+    //     the email seam, in the club's locale rather than a hard-coded `en-NZ`,
+    //     so the file needs no exemption at all. `date-only.ts` is now the only
+    //     file-wide DATE-rule exclusion.
     //   * the three Number-formatting files — a narrowed block, NOT an `off`:
     //     they keep both date restrictions and drop only `toLocaleString`.
     //   * `src/lib/xero-invoice-helpers.ts` — ISO payload dates for the Xero
@@ -2933,30 +3032,6 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // The one documented format exclusion left.
-    // Flat config replaces a rule's whole option list rather than merging it, so
-    // this block re-states the mandatory restrictions (#2289, #2684) instead of
-    // switching `no-restricted-syntax` off outright: the file contains no raw
-    // SQL and no hand-written date truncation, and the exemption it needs is
-    // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
-    // Number-formatting block below.
-    //
-    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE, was taken off in CT-2
-    // (#2990), and no longer exists at all: #3123 deleted it. It held the six
-    // frozen `Intl.DateTimeFormat` constants the club's rendering seam was built
-    // from, then delegated every one of them to `@/lib/club-time` and so needed
-    // no exemption. Recorded because the sequence is the rule: an adapter loses
-    // its exemption when it stops formatting, and is deleted when its last
-    // caller moves — it is never left exempt "for now". The census in
-    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the other
-    // half: it refuses an `Intl.DateTimeFormat` in the remaining adapter, and
-    // refuses the deleted file coming back.
-    files: ["src/lib/email-templates/chores.ts"],
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntax(),
-    },
-  },
-  {
     // `src/lib/date-only.ts` is the ONE file exempt from the #2684 encoding
     // restrictions, because it is the sanctioned home for the truncation: the
     // rule exists to make every other file call `formatDateOnly` instead of
@@ -3057,33 +3132,19 @@ const eslintConfig = defineConfig([
   },
   {
     // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
-    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` and
-    // `CENTS_DISPLAY_DATE_FNS_OVERLAP` below. Drops only the new group by
+    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` below (the
+    // date-fns overlap went with #3566, when the reports page stopped importing
+    // date-fns). Drops only the new group by
     // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
     // `src/**` block's own addition, not part of the mandatory set), so
     // nothing else these files were guarded against is lifted with it.
     files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
       (file) =>
-        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file) &&
-        !CENTS_DISPLAY_DATE_FNS_OVERLAP.includes(file),
+        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file),
     ),
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
-        ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3302 — `CENTS_DISPLAY_DATE_FNS_OVERLAP`: the one exempted file that is
-    // ALSO a `DATE_FNS_ADAPTER_FILES` member, so it already drops
-    // `DATE_FNS_RESTRICTIONS` via its own block. Replicated here for the same
-    // flat-config-replaces reason as the money-domain overlap below — `npm run
-    // lint` caught this one going red before this block existed.
-    files: CENTS_DISPLAY_DATE_FNS_OVERLAP,
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...DATE_FNS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
         ...DATE_RENDERING_RESTRICTIONS,
       ),
     },

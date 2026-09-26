@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import { NoticeBoard } from "@/components/lodge-display/modules/notice-board";
 import { DISPLAY_MODULE_COMPONENTS } from "@/components/lodge-display/modules";
