@@ -26,7 +26,7 @@ import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
 } from "../_lib/calendar-day";
-import { formatCents } from "@/lib/pricing";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import {
@@ -491,7 +491,7 @@ export function PromoCodesPageClient({
     setType(promo.type);
     setPercentOff(promo.percentOff != null ? String(promo.percentOff) : "");
     setValueDollars(
-      promo.valueCents != null ? (promo.valueCents / 100).toFixed(2) : ""
+      promo.valueCents != null ? formatCentsPlain(promo.valueCents) : ""
     );
     setFreeNightsPerIndividual(
       promo.freeNightsPerIndividual != null ? String(promo.freeNightsPerIndividual) : ""
@@ -501,13 +501,13 @@ export function PromoCodesPageClient({
     );
     setFixedNightlyPriceDollars(
       promo.fixedNightlyPriceCents != null
-        ? (promo.fixedNightlyPriceCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.fixedNightlyPriceCents)
         : ""
     );
     setFixedNightlyMode(promo.fixedNightlyMode ?? "CAP_ONLY");
     setMaxNightlyValueDollars(
       promo.maxNightlyValueCents != null
-        ? (promo.maxNightlyValueCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.maxNightlyValueCents)
         : ""
     );
     setMaxGuestsPerBooking(

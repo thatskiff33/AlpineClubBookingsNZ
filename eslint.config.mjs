@@ -349,7 +349,7 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 // below is where that judgement is made, once, in writing, per file — exactly
 // the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
 const CENTS_DISPLAY_MESSAGE =
-  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. Only a genuinely different output, such as a raw numeric export cell or an amount in a provider-specific currency, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason. The list is checked by money-cents-guard.test.ts. Never an eslint-disable comment.";
 
 // #3533 — the OTHER way a person is shown the storage form: not a bad
 // division, but no division at all. `${refundAmountCents} cents` in an audit
@@ -484,18 +484,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
     files: ["src/lib/utils.ts"],
     reason:
       "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
-  },
-  {
-    files: [
-      "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
-      "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
-      "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
-      "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
-      "src/components/admin/joining-fee-preview.tsx",
-      "src/components/admin/manual-refund-task-queue.tsx",
-    ],
-    reason:
-      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it. The refund-requests page left this list in #2932: its `<input max>` went with the browser number control it belonged to, and its prefill now compares integer cents and renders once through `formatCentsPlain`. The hut-fees section left it in #2938: its flat whole-lodge box was the last hand-rolled copy in that file and now seeds through `amountFieldValue`, which renders the same cents through `formatCentsPlain`.',
   },
   {
     files: [
