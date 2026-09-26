@@ -132,6 +132,60 @@ describe("OrganiserGroupBookingCard settlement", () => {
     ).toBe("internet_banking");
   });
 
+  // #3642: the pending invoice lived only in React state, so a reload offered
+  // the Card / Internet Banking picker again over an invoice already emailed.
+  it("shows a pending Internet Banking invoice from the server on a fresh load, with no method picker", async () => {
+    const fetchMock = stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "PENDING",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: "GROUP-ABCD1234",
+          },
+        })}
+      />
+    );
+
+    expect(await screen.findByText(/Invoice emailed/)).toBeDefined();
+    expect(screen.getByText(/GROUP-ABCD1234/)).toBeDefined();
+    // Wait for the module flag to resolve: the picker must still not appear.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes("/api/payments/options"))
+      ).toBe(true)
+    );
+    expect(screen.queryByRole("button", { name: /Internet Banking/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Settle group total/ })).toBeNull();
+  });
+
+  it("offers the method picker again once the server says no invoice is pending", async () => {
+    stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "FAILED",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: null,
+          },
+        })}
+      />
+    );
+
+    expect(await screen.findByRole("button", { name: /Internet Banking/ })).toBeDefined();
+    expect(screen.queryByText(/Invoice emailed/)).toBeNull();
+  });
+
   // #2919 review: both of this card's message bodies were printed with only
   // {{paymentReference}} substituted, so an edited body's other merge fields
   // reached the organiser as literal braces.
