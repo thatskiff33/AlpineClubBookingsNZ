@@ -1740,7 +1740,7 @@ async function performBookingCancellation(
 
     // #3639: the CANCELLED event and its policy snapshot commit WITH the claim.
     // The snapshot is the decision record the Stripe webhook reads before it
-    // refunds a late notice (`INV-PAY-102`); written after commit, a notice
+    // refunds a late notice (`INV-PAY-106`); written after commit, a notice
     // landing in the gap — or after a failed write — found no decision and
     // refunded money a 0%-tier cancel had kept. See `writePaidCancellationEvent`.
     await writePaidCancellationEvent(tx, {

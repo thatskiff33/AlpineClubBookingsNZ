@@ -104,7 +104,7 @@ export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
 // refund of a genuine late capture on a cancelled booking. ONE builder for the
 // webhook's automatic refund and the treasurer-approved one, because they are the
 // same refund of the same capture: whichever runs first, a repeat under this
-// prefix is answered by Stripe with the original refund (INV-PAY-102).
+// prefix is answered by Stripe with the original refund (INV-PAY-106).
 const LATE_CAPTURE_REFUND_KEY_PREFIX = "late_cancel_refund_";
 export const LATE_CAPTURE_REFUND_METADATA_REASON = "cancelled_booking_late_capture";
 export function buildLateCaptureRefundStripeKeyPrefix(

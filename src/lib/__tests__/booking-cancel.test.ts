@@ -1939,7 +1939,7 @@ describe("cancelBooking credit refunds", () => {
   });
 
   // -------------------------------------------------------------------------
-  // #3639 (`INV-PAY-102`): the CANCELLED event's policy snapshot is the decision
+  // #3639 (`INV-PAY-106`): the CANCELLED event's policy snapshot is the decision
   // record the Stripe webhook reads before it refunds a late notice, and on a
   // 0%-tier cancel it is the only one. It is written INSIDE the claim, so it
   // commits with the CANCELLED flip: no notice can find the booking cancelled

@@ -646,7 +646,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `--apply --apply-action <key>` (#1491). Rows flattened by the old defect are
   not backfilled.
 
-## INV-PAY-102
+## INV-PAY-106
 
 - **Nothing later re-decides what a cancellation settled** (#3639). One rule,
   `classifyCaptureOnCancelledBooking` in `src/lib/cancellation-settled-money.ts`,

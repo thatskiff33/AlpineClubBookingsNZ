@@ -1,6 +1,6 @@
 /**
  * WHAT DID THE CANCELLATION ALREADY SETTLE? — one home for the question (#3639,
- * `INV-PAY-102`, `INV-SSOT-001`).
+ * `INV-PAY-106`, `INV-SSOT-001`).
  *
  * Two processes look at a cancelled booking's money long after the cancel has
  * decided it, and both used to re-decide it without asking:
@@ -182,7 +182,7 @@ export function isLateCaptureHandlerWrite(reason: string | null): boolean {
 }
 
 /**
- * THE rule (#3639, `INV-PAY-102`): what a success notice on a cancelled booking
+ * THE rule (#3639, `INV-PAY-106`): what a success notice on a cancelled booking
  * is. Settled money needs BOTH halves, and each closes a hole the other leaves:
  *
  * 1. **The capture is not known to have landed after the cancel.** Skipping on

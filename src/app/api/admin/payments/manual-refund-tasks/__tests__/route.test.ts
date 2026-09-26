@@ -225,6 +225,30 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     expect(mocks.manualRefundTaskFindMany).not.toHaveBeenCalled();
   });
 
+  it("flags a late capture held for a treasurer, by its marker and not by its kind (#3639)", async () => {
+    // Both rows are the #2700 kind, which the previous app version reads; only
+    // the marker says completing one refunds the card through Stripe.
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([
+        { ...OPEN_ROW, id: "task-held", kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: "pi_late" },
+        { ...OPEN_ROW, id: "task-2700", kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: null },
+      ]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: { id: string; awaitingLateCaptureApproval: boolean }[];
+    };
+
+    expect(calls()[0].select).toMatchObject({ lateCaptureApprovalIntentId: true });
+    expect(body.tasks.map((t) => [t.id, t.awaitingLateCaptureApproval])).toEqual([
+      ["task-held", true],
+      ["task-2700", false],
+    ]);
+    // The intent id itself is not the browser's business.
+    expect(JSON.stringify(body)).not.toContain("pi_late");
+  });
+
   it("keeps the hand-back queue exactly as it was: OPEN, oldest first", async () => {
     await GET();
 

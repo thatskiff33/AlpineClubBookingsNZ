@@ -1273,7 +1273,7 @@ until somebody acts, and the money returning is the safe direction when nobody i
 watching, so visibility was added instead. **Do not gate it as a side effect of
 work in this area.** The one gate is the club's own choice: owner decision 26 Sep
 2026 ([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
-made treasurer approval a club setting, off by default, stated in `INV-PAY-102`.
+made treasurer approval a club setting, off by default, stated in `INV-PAY-106`.
 
 ### INV-ADDPAY-038
 

@@ -1,5 +1,5 @@
 -- #3639 (owner decision 26 Sep 2026, on the issue's DECISION RECORD comment).
--- INV-PAY-102.
+-- INV-PAY-106.
 --
 -- A genuine late capture on a cancelled booking (money Stripe took AFTER the
 -- cancel) has always been refunded automatically by the webhook. The owner asked

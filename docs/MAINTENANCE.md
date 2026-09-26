@@ -1618,7 +1618,7 @@ finalPrice + changeFee)`). Before #3639 it also recognized only a booking-level
 on the payment, so `--apply` queued a full-finalPrice note on top of the
 partly-cleared invoice and OVER-allocated (Xero rejects over-allocation,
 poisoning the op). Since #3639 the arm skips any cancelled booking whose payment
-already carries a refund or account-credit note (`INV-PAY-102`), so these
+already carries a refund or account-credit note (`INV-PAY-106`), so these
 bookings get no finding from it at all — which also means the tool will not
 point at the open delta. Repair each audit finding by hand: issue a
 supplementary credit note for exactly the reported open delta against the named

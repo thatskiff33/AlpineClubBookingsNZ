@@ -28,7 +28,7 @@ import {
 import { prisma } from "@/lib/prisma";
 
 /**
- * #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): a club may have a treasurer
+ * #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): a club may have a treasurer
  * approve the refund of a genuine late capture on a cancelled booking — money
  * Stripe took after the cancel — instead of the webhook refunding it
  * automatically. The owner's words: "each club will have different preferences".

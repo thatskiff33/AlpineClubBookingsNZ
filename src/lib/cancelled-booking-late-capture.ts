@@ -62,7 +62,7 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * `classifyNoticeOnCancelledBooking`: it recognises money the cancellation had
  * already decided, or a capture already handed back, neither of which the
  * member is still owed by this path. The only gate on a genuine late capture is
- * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-102`), which
+ * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-106`), which
  * lives in `late-capture-refund-approval.ts`. The
  * `booking.payment.refunded_after_cancellation` audit entry also stays in each
  * handler: it carries handler-specific detail, and moving it would renumber census
@@ -79,7 +79,7 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 /**
  * #3639: what a success notice for a CANCELLED booking is —
- * `classifyCaptureOnCancelledBooking` is the rule (`INV-PAY-102`); this reads
+ * `classifyCaptureOnCancelledBooking` is the rule (`INV-PAY-106`); this reads
  * what it needs, for BOTH late-capture handlers.
  *
  * THE ROW IS READ AGAIN rather than taken from the webhook dispatch, which read

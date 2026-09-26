@@ -33,7 +33,7 @@ export function paidCancellationBranch(params: {
  *
  * INSIDE THE CLAIM TRANSACTION, since #3639 — not `recordBookingEvent` after
  * commit. The snapshot is the decision record `isCancellationRefundDecisionRecorded`
- * reads (`INV-PAY-102`), and on a 0%-tier cancel it is the ONLY one. Written
+ * reads (`INV-PAY-106`), and on a 0%-tier cancel it is the ONLY one. Written
  * after commit, a Stripe notice landing in the gap, or arriving after a failed
  * write, found no decision and refunded money the cancel had kept.
  *

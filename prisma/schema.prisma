@@ -3093,7 +3093,7 @@ model ManualRefundTask {
   /// because rows completed before this column existed carry no direction and
   /// must stay legal; it constrains every row written from here on.
   settlementDirection ManualRefundTaskDirection?
-  /// #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): set when this task is a
+  /// #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): set when this task is a
   /// late capture on a cancelled booking held for a treasurer's approval, and it
   /// names that capture's Stripe payment intent. It is the marker (completing
   /// such a task refunds the card through Stripe, under the automatic refund's
@@ -3649,7 +3649,7 @@ model BookingDefaults {
   // later disagrees gets the per-lodge conversion every other singleton on this
   // model is already queued for.
   linkedMoveChargesBothChangeFees Boolean @default(true)
-  // #3639 (owner decision 26 Sep 2026, `INV-PAY-102`): what happens to a genuine
+  // #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): what happens to a genuine
   // late capture on a cancelled booking — money Stripe took after the cancel.
   // false (the default, and the behaviour before this column): the webhook refunds
   // it automatically. true: nothing moves; an OPEN approval task
