@@ -1,5 +1,5 @@
 /**
- * #3642 (`INV-PAY-106`): an organiser-pays group settlement is BOUND to its
+ * #3642 (`INV-PAY-105`): an organiser-pays group settlement is BOUND to its
  * combined Internet Banking invoice while it waits for that invoice to be paid.
  *
  * The invoice is emailed with a fixed total the moment it is raised, and the
@@ -38,4 +38,47 @@ export function isGroupSettlementBoundToInvoice(
     settlement?.source === PaymentSource.INTERNET_BANKING &&
     settlement.status === PaymentStatus.PENDING
   );
+}
+
+/**
+ * #3642 (`INV-SSOT-002`): the one definition of a group settlement's total —
+ * the sum of its committed children's final prices. The settle paths size the
+ * settlement with it, the bound-invoice rule compares against it, the paid
+ * apply re-verifies with it, and the create worker refuses to raise an invoice
+ * whose lines disagree with it.
+ */
+/**
+ * #3642: where a bound settlement's invoice has got to, as the organiser's page
+ * shows it. Decided on the server from the settlement's pointer and its latest
+ * CREATE row, so the page never says "emailed" before the invoice was.
+ */
+export type GroupSettlementInvoiceDisplay =
+  | "preparing"
+  | "failed"
+  | "raised"
+  | "emailed";
+
+export function groupSettlementInvoiceDisplay(
+  settlement: { xeroInvoiceId: string | null },
+  latestCreate: { status: string; responsePayload: unknown } | null
+): GroupSettlementInvoiceDisplay {
+  if (!settlement.xeroInvoiceId) {
+    return latestCreate?.status === "FAILED" ? "failed" : "preparing";
+  }
+  const payload =
+    latestCreate?.responsePayload && typeof latestCreate.responsePayload === "object"
+      ? (latestCreate.responsePayload as Record<string, unknown>)
+      : null;
+  const emailed =
+    latestCreate?.status === "SUCCEEDED" &&
+    payload?.invoiceEmail != null &&
+    payload.invoiceEmailWithheldByNoEmails !== true &&
+    payload.invoiceEmailWithheldForEnvironment !== true;
+  return emailed ? "emailed" : "raised";
+}
+
+export function groupSettlementTotalCents(
+  children: ReadonlyArray<{ finalPriceCents: number }>
+): number {
+  return children.reduce((sum, child) => sum + child.finalPriceCents, 0);
 }

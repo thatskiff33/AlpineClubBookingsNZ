@@ -4,13 +4,15 @@ import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
-import type { XeroSyncOperation } from "@prisma/client";
+import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
@@ -77,6 +79,45 @@ export class XeroOperationRetryError extends Error {
     this.name = "XeroOperationRetryError";
     this.status = status;
   }
+}
+
+/**
+ * #3642: the combined group invoice's outbox rows (its CREATE and both VOIDs)
+ * go back to the outbox on Retry; they are never run inline, because their
+ * handlers fence on `lock(1)` and the outbox claim is the one execution
+ * authority. Returns the payload to queue them with, or null for any other
+ * row. The CREATE's is rebuilt from the row itself — its worker overwrote the
+ * queued payload with the invoice it sent — and its attempt lives in the
+ * correlation key, which Retry leaves alone. A VOID keeps its queued payload.
+ */
+function groupSettlementInvoiceRequeuePayload(
+  operation: RetryableOperation,
+): Record<string, unknown> | null {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "INVOICE" ||
+    operation.localModel !== "GroupBookingSettlement" ||
+    !operation.localId
+  ) {
+    return null;
+  }
+  if (
+    operation.operationType === "CREATE" &&
+    operation.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
+  ) {
+    return {
+      queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+      settlementId: operation.localId,
+    };
+  }
+  const queued = readQueuedOutboxPayload(operation.requestPayload);
+  if (
+    operation.operationType === "UPDATE" &&
+    queued?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
+  ) {
+    return { ...queued };
+  }
+  return null;
 }
 
 export interface XeroOperationRetryMeta {
@@ -703,6 +744,14 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   ) {
     return { supported: true, reason: null };
   }
+  if (groupSettlementInvoiceRequeuePayload(operation)) {
+    return operation.status === "FAILED"
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason: "Only a failed group settlement invoice operation can be retried.",
+        };
+  }
 
   const appliedCreditChild =
     operation.entityType === "ALLOCATION" &&
@@ -1018,6 +1067,28 @@ export async function retryXeroSyncOperation(
           ? "Queued applied-credit allocation retry."
           : "Queued applied-credit deallocation retry.",
     };
+  }
+
+  const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
+  if (groupSettlementPayload) {
+    const queued = await prisma.xeroSyncOperation.updateMany({
+      where: { id: operation.id, status: "FAILED" },
+      data: {
+        status: "PENDING",
+        requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+    if (queued.count !== 1) {
+      throw new XeroOperationRetryError(
+        "This group settlement invoice operation was already queued or claimed by another retry.",
+        409,
+      );
+    }
+    return { message: "Queued the group settlement invoice operation for retry." };
   }
 
   const xero = await import("@/lib/xero");

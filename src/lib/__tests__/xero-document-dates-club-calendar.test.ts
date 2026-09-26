@@ -702,6 +702,11 @@ describe.each(CLUB_DAY_CASES)(
         run({
           $executeRaw: vi.fn().mockResolvedValue(undefined),
           groupBookingSettlement: { findUnique: mocks.settlementFindUnique },
+          // #3642: the worker learns its attempt from the CREATE rows.
+          xeroSyncOperation: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
+          },
         }),
       );
       mocks.settlementFindUnique.mockResolvedValue({
@@ -711,6 +716,8 @@ describe.each(CLUB_DAY_CASES)(
         // gets one.
         source: "INTERNET_BANKING",
         status: "PENDING",
+        // #3642: the invoice is raised only at the settlement's own total.
+        amountCents: 5000,
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
         groupBooking: {
@@ -727,7 +734,20 @@ describe.each(CLUB_DAY_CASES)(
           status: "CONFIRMED",
           checkIn: new Date("2026-08-03T00:00:00.000Z"),
           checkOut: new Date("2026-08-05T00:00:00.000Z"),
-          guests: [],
+          finalPriceCents: 5000,
+          promoAdjustmentCents: 0,
+          promoRedemption: null,
+          guests: [
+            {
+              firstName: "Jo",
+              lastName: "Joiner",
+              ageTier: "ADULT",
+              isMember: true,
+              rateMembershipTypeId: null,
+              priceCents: 5000,
+              nights: [],
+            },
+          ],
         },
       ]);
       mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error(SENTINEL));

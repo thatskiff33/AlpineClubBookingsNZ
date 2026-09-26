@@ -95,7 +95,7 @@ describe("enqueueXeroGroupSettlementInvoiceVoidOperation", () => {
   });
 });
 
-// #3642 (INV-PAY-106): the VOID of an invoice a LIVE group's settlement
+// #3642 (INV-PAY-105): the VOID of an invoice a LIVE group's settlement
 // abandoned. The group is not cancelled, so the invoice is named by the
 // operation rather than read back off the settlement.
 describe("abandoned group settlement invoices (#3642)", () => {
