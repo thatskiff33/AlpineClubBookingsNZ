@@ -659,7 +659,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   saved-card charge answered after an unpaid cancel would be kept. Known limit:
   a 0%-tier cancel's only artefact is the snapshot, written best-effort after
   its claim commits, so a notice before that write, or after it failed, is
-  still refunded.
+  still refunded. Not the gating `INV-ADDPAY-037` rules out: nothing the member
+  is owed is held back, only money the cancel already decided.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source (the Stripe-only list stays for Stripe actions, #668), and
   skips a payment already carrying a refund or account-credit note, or such an

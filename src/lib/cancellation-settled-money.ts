@@ -9,11 +9,15 @@
  *   that is already cancelled (`handleCancelledBookingPaymentSucceeded`). It
  *   refunded the whole capture — including money a 0%-tier cancellation had
  *   kept — whenever the notice was merely late;
- * - the booking-versus-Xero repair tool's late-capture arm, which has asked the
- *   question since #1491 and was the only place that did.
+ * - the booking-versus-Xero repair tool's cancelled-open-invoice arm, which
+ *   counted only Stripe captures as "paid" and missed a credit note already on
+ *   the payment, so it cleared invoices bank transfers had paid. Its half is
+ *   `hasCapturedRepairPayment` and `paymentNoteAnswersInvoice` in the repair
+ *   modules, because it asks about Xero objects this leaf cannot see.
  *
- * #1491's test moved here from `xero-booking-repair-classify.ts` so both read
- * the same answer. A second copy in the webhook would give the tree two
+ * The repair tool's late-capture arm was the one place that already asked
+ * (#1491). Its test moved here from `xero-booking-repair-classify.ts` and the
+ * webhook now reads it too: a second copy in the webhook would give the tree two
  * definitions of "the cancellation decided this money", which is the drift the
  * issue was filed to prevent.
  *

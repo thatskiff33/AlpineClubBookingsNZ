@@ -52,7 +52,9 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * #1350 decision to make it stay in the handlers and are untouched —
  * `INV-ADDPAY-037` records that the refund is not gated. The one exception, #2774's
  * hand-back fence, is not a gate on that policy: it withholds a second copy of a
- * refund the member has already had by hand. The
+ * refund the member has already had by hand. Nor is #3639's
+ * `findCaptureSettledByCancellation`: it recognises money the cancellation had
+ * already decided, which was never a late capture and is not the member's. The
  * `booking.payment.refunded_after_cancellation` audit entry also stays in each
  * handler: it carries handler-specific detail, and moving it would renumber census
  * ordinals for no gain.
