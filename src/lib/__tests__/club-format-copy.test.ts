@@ -4,8 +4,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLUB_FORMAT_CARD_PAYMENTS,
+  CLUB_FORMAT_PROVIDER_CURRENCIES,
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
+  clubFormatCurrencyChangeAcknowledgement,
 } from "@/lib/club-format-copy";
 import { stripComments } from "./support/strip-comments";
 
@@ -48,7 +51,23 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     expect(CLUB_FORMAT_REACH).toMatch(/every date and time/);
     expect(CLUB_FORMAT_REACH).toMatch(/Emails follow/);
     expect(CLUB_FORMAT_REACH).toMatch(/report charts/);
-    expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/card payments/);
+    // #3567 D1: the server's CURRENCY no longer decides card payments either.
+    expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/not what cards are charged in/);
+    expect(CLUB_FORMAT_SERVER_SETTINGS).not.toMatch(/still taken from the server/);
+  });
+
+  it("says card payments follow the setting, and Stripe and Xero must match (#3567 D1, D2, D8)", () => {
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/charged in this currency/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/already started stays/);
+    // #3567 review: the retry window and the refund divergence are disclosed.
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/first 24 hours/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/refund of a payment taken before the change/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/saved card charged later/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/two decimal places/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).not.toMatch(/configured with|conversation with/);
+    expect(CLUB_FORMAT_PROVIDER_CURRENCIES).toMatch(/Stripe account/);
+    expect(CLUB_FORMAT_PROVIDER_CURRENCIES).toMatch(/Xero organisation's base currency/);
+    expect(clubFormatCurrencyChangeAcknowledgement("CHF")).toMatch(/Xero base currency are both CHF/);
   });
 
   // Round 2 of the #3628 review (B5): the copy called the chart labels "the

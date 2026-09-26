@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * #3123 — four predicates that compare a STORED LODGE NIGHT against "today",
@@ -12,29 +12,18 @@ import { describe, expect, it, vi } from "vitest";
  * back one early. That is `INV-DATE-026`, and it is the mistake #3113 was filed
  * to correct.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `America/Denver` — behind
- * Greenwich, which is the side the defect shows on, and deliberately NOT
- * `Pacific/Auckland`, which is `APP_TIME_ZONE`'s own fallback and therefore
- * indistinguishable from "no pin at all". Every subject here is a PURE function
+ * DISCRIMINATION. This file used to pin the environment zone to
+ * `America/Denver` — behind Greenwich, which is the side the defect shows on.
+ * #3567 deleted that environment constant and nothing reads the environment's
+ * zone any more, so the pin is gone. Every subject here is a PURE function
  * taking both operands as data, so there is no persisted zone to mock and the
- * fail-soft `clubTimeSettings` trap does not apply: the discriminating dial is
- * `APP_TIME_ZONE`, and it is moved.
+ * fail-soft `clubTimeSettings` trap does not apply.
  *
- * Before the migration each assertion below fails against this pin. After it,
+ * Before the migration each assertion below failed against that pin. After it,
  * the stored night is decoded rather than projected — and it is DECODED off the
- * UTC clock face, which the last block pins on the HOST axis. That block's own
- * comment says exactly what it can and cannot see, because the two axes are not
- * interchangeable: the club zone is `APP_TIME_ZONE`, mocked once at load, and
- * the host zone is `process.env.TZ`, moved per case.
+ * UTC clock face, which the last block pins on the HOST axis, where the host
+ * zone is `process.env.TZ`, moved per case.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import { evaluateGuestSelfRemoval } from "@/lib/booking-guest-self-removal";
 import { predictConsentDeclineRefusal } from "@/lib/member-guest-consent-card";
 import { daysUntilDate } from "@/lib/policies/cancellation";
@@ -46,9 +35,8 @@ const storedNight = (day: string) => new Date(`${day}T00:00:00.000Z`);
 
 const AUGUST_1 = storedNight("2026-08-01");
 
-describe("PREMISE: the container zone and the stored day disagree", () => {
-  it("is pinned behind Greenwich, where the defect is visible", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
+describe("PREMISE: a zone behind Greenwich and the stored day disagree", () => {
+  it("projecting behind Greenwich, where the defect is visible, moves the day", () => {
     // The projection this migration removes: 1 August at UTC midnight reads as
     // 31 July in Denver. Asserted from raw `Intl` rather than from any helper,
     // so the premise cannot drift with the code under test.
@@ -185,11 +173,12 @@ describe("the HOST's zone cannot move the decoded night either", () => {
     claimed something it could not see.
 
     It used to say it caught "a future sweep that moves these predicates onto the
-    club zone". It could not: the club zone reaches this module only through
-    `APP_TIME_ZONE`, which is frozen at module load and is MOCKED at the top of
-    this file, so `process.env.TZ` cannot move it under the old code or the new.
-    That claim is covered instead by the `America/Denver` pin above, under which
-    every assertion in this file fails before the migration.
+    club zone". It could not: the club zone reached this module only through
+    `APP_TIME_ZONE`, which was frozen at module load and MOCKED at the top of
+    this file, so `process.env.TZ` could not move it under the old code or the
+    new. That claim was covered instead by the `America/Denver` pin, under which
+    every assertion in this file failed before the migration. (#3567 deleted the
+    constant and the pin with it.)
 
     The axis this leg really moves is the HOST's, and there is a live regression
     on it: all three subjects decode through `utcDateOnlyString`, whose whole

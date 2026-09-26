@@ -32,6 +32,8 @@ import {
 } from "@/lib/club-format";
 import {
   decideClubFormatBackfill,
+  ignoredPublicClubFormatVariables,
+  type ClubFormatBackfillDecision,
   type ClubFormatFieldBackfill,
 } from "@/lib/club-format-env";
 import type { ConfigSelfHealStep } from "@/lib/config-self-heal";
@@ -117,16 +119,17 @@ export const clubFormatSelfHealStepDefinition: ConfigSelfHealStep<ClubFormat> = 
   },
   currentValue() {
     const decision = decideClubFormatBackfill();
+    reportIgnoredPublicVariables(decision);
     reportClubFormatBackfillField(
       "currency",
       decision.currency,
-      "CURRENCY / NEXT_PUBLIC_CURRENCY",
-      "a three-letter ISO 4217 code such as NZD or CHF",
+      "CURRENCY",
+      "a three-letter ISO 4217 code with two decimal places, such as NZD or CHF",
     );
     reportClubFormatBackfillField(
       "locale",
       decision.locale,
-      "LOCALE / NEXT_PUBLIC_LOCALE",
+      "LOCALE",
       "a language tag such as en-NZ or de-CH",
     );
     return {
@@ -154,6 +157,33 @@ export const clubFormatSelfHealStepDefinition: ConfigSelfHealStep<ClubFormat> = 
     });
   },
 };
+
+/**
+ * `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE` are no longer read (#3567, owner
+ * decision D5). An install that set only the public form is seeded with the
+ * default instead, which is the silent re-denomination this step exists to
+ * prevent, so it is said out loud on the one boot that records the row.
+ */
+function reportIgnoredPublicVariables(decision: ClubFormatBackfillDecision): void {
+  for (const ignored of ignoredPublicClubFormatVariables()) {
+    const recorded =
+      ignored.use === "CURRENCY" ? decision.currency.value : decision.locale.value;
+    logger.warn(
+      {
+        scope: "config-self-heal",
+        step: "club-format",
+        ignoredVariable: ignored.variable,
+        ignoredValue: ignored.value,
+        recorded,
+      },
+      `Config self-heal ignored ${ignored.variable}="${ignored.value}": it is no ` +
+        `longer read (#3567) and ${ignored.use} is not set, so the club was ` +
+        `recorded as ${recorded}. If that is wrong, an administrator must set it ` +
+        `at /admin/club-format; setting ${ignored.use} now changes nothing, ` +
+        `because the recorded value is the authority from here on.`,
+    );
+  }
+}
 
 /**
  * Say which of the three ways one backfilled field got its value, in the two

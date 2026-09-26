@@ -34,10 +34,11 @@
  * Two axes, because the removed call read one and the surviving code must be
  * independent of both:
  *
- * - `APP_TIME_ZONE` is mocked to `America/Denver`. It cannot be left at its
- *   default: with no `TZ` set that default IS `Pacific/Auckland`, which is
- *   ahead of Greenwich, where `normalizeDateOnlyForTimeZone` is the identity on
- *   a UTC-midnight value and every case below would pass vacuously.
+ * - the club zone is `America/Denver` (`CLUB_ZONE_BEHIND_UTC`), not the
+ *   `Pacific/Auckland` default, which is ahead of Greenwich, where
+ *   `normalizeDateOnlyForTimeZone` is the identity on a UTC-midnight value and
+ *   every case below would pass vacuously. (This used to be an `APP_TIME_ZONE`
+ *   mock; that constant was deleted in #3567 and nothing reads it any more.)
  * - one case pins the HOST behind Greenwich as well (`Pacific/Pago_Pago`),
  *   because `storedDateOnly` must read the stored day with UTC getters and take
  *   no zone at all.
@@ -49,13 +50,6 @@
  * refused. This file installs no clock of its own.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 // Hoisted spies so the module mocks below can reference them and tests can read
 // what the apply path actually wrote.
@@ -126,7 +120,7 @@ const tx = {
   row), every one of which degrades to the environment. Without the delegate
   this suite resolved Auckland's 1 July on the apply side against the oracle's
   club day of 30 June, and the pair it exists to keep identical came apart. The
-  persisted zone matches the mocked `APP_TIME_ZONE` deliberately: this file is
+  persisted zone is `CLUB_ZONE_BEHIND_UTC` deliberately: this file is
   about preview/apply PARITY, and which zone wins is
   `payments/options`, `lodge/instructions/preview` and the joining-fee preview's
   `club-time-authority` suites.
@@ -247,7 +241,6 @@ vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
   };
 });
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import {
   addDaysDateOnly,
@@ -267,10 +260,8 @@ import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
 /**
- * The zone the `@/config/operational` factory above pins, named rather than left
- * to the legacy helpers' `APP_TIME_ZONE` default, which #3123 deletes. The
- * premise case still asserts the two are the same zone, so this constant cannot
- * drift out of step with the factory.
+ * The club's zone, behind Greenwich, named rather than left to the legacy
+ * helpers' `APP_TIME_ZONE` default, which #3123 deleted.
  */
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -350,7 +341,7 @@ function primeTx(booking: Booking) {
  *
  * `editPolicy.today` is the CLUB's day since #3123 — a required value the caller
  * supplies from the persisted `ClubTimeSettings.timeZone`, not the environment's
- * `APP_TIME_ZONE`. This oracle holds it at `2026-06-30`, the same day the mocked
+ * zone. This oracle holds it at `2026-06-30`, the same day the club's
  * Denver zone produces at the frozen `2026-07-01T00:00Z` instant, so the fixtures
  * and the PREMISE case below keep exactly the geometry they were written with.
  *
@@ -573,8 +564,7 @@ beforeEach(() => {
 });
 
 describe("the preview and the apply service read the same date window", () => {
-  it("PREMISE: the mocked zone puts the club's today a day behind the stored day", () => {
-    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+  it("PREMISE: the club zone puts the club's today a day behind the stored day", () => {
     expect(formatDateOnly(getTodayDateOnly(CLUB_ZONE_BEHIND_UTC))).toBe("2026-06-30");
     // The single day every case below turns on: a stored 1 July projected
     // through Denver is 30 June.

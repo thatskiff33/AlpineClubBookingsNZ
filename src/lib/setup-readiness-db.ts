@@ -7,6 +7,7 @@ import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { CLUB_FORMAT_SETTINGS_ID } from "@/lib/club-format";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
@@ -523,6 +524,17 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
         ? null
         : (clubTimeSettings?.timeZone ?? null),
     clubTimeZoneUnreadable: clubTimeSettings === CLUB_TIME_SETTINGS_UNREADABLE,
+    // Raw, like the zone above (#3567 review); guarded, so an unreadable row is
+    // "not checked" rather than a failed snapshot.
+    clubFormatCurrencyCode: await Promise.resolve()
+      .then(() =>
+        prisma.clubFormatSettings.findUnique({
+          where: { id: CLUB_FORMAT_SETTINGS_ID },
+          select: { currencyCode: true },
+        }),
+      )
+      .then((row) => row?.currencyCode ?? null)
+      .catch(() => null),
     environmentRole,
     withheldEmail,
   };

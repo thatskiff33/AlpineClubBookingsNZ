@@ -21,24 +21,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  *
  * ## DISCRIMINATION
  *
- * `APP_TIME_ZONE` is pinned to `America/Denver` and the provider is given a zone
- * the environment does NOT claim, then MOVED between assertions. The frozen
+ * The environment zone is modelled as `America/Denver` (the `APP_TIME_ZONE`
+ * constant this file used to pin there was deleted in #3567, and nothing reads
+ * the environment's zone any more) and the provider is given a zone that model
+ * does NOT claim, then MOVED between assertions. The frozen
  * instant is `2026-07-01T00:00:00.000Z`, which is **30 June** in Denver and
  * **1 July** in Auckland — so "This Month" is June for the environment's answer
  * and July for the club's, and the two can never be confused. A suite passing
  * the zone the environment already holds could not tell the persisted zone from
  * the environment zone (#3123 execution contract).
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { bookingFilterDateRangePresets } from "@/lib/date-range-presets";
@@ -79,8 +74,7 @@ afterEach(() => {
 });
 
 describe("PREMISE: the club and the container disagree about the month", () => {
-  it("pins the environment to a zone still on 30 June", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
+  it("models the environment as a zone still on 30 June", () => {
     const now = new Date();
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: ENVIRONMENT_ZONE }).format(now),

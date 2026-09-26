@@ -334,7 +334,10 @@ describe("diagnostics budget race DB safety guard (#2532)", () => {
       ({ reserveDiagnosticsBudget, diagnosticsUsageMonthKey } = await import(
         "@/lib/ai-diagnostics-usage"
       ));
-      month = diagnosticsUsageMonthKey(RACE_NOW);
+      // The same zone the reserver resolves (#3567 D6): the stored one, or the
+      // seed while this scratch database records none.
+      const { clubTimeZone } = await import("@/lib/club-time/server");
+      month = diagnosticsUsageMonthKey(RACE_NOW, await clubTimeZone());
 
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] =
         await Promise.all([

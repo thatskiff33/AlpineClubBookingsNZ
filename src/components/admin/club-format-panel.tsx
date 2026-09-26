@@ -23,11 +23,14 @@ import {
 } from "@/lib/club-format";
 import {
   CLUB_FORMAT_AI_RATE_CLEARED,
-  CLUB_FORMAT_CARD_PAYMENTS,
   CLUB_FORMAT_NOTHING_REWRITTEN,
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
 } from "@/lib/club-format-copy";
+import {
+  ClubFormatCurrencyChange,
+  type ClubFormatInFlightCardPayments,
+} from "@/components/admin/club-format-currency-change";
 
 /**
  * The club currency and locale maintenance panel (stage 1 of programme #3205,
@@ -76,9 +79,10 @@ import {
  * them types it and it is accepted.
  *
  * WHAT THIS SCREEN MAY CLAIM. Since #3565 (money) and #3566 (dates, emails,
- * AI spend, sorting) the setting reaches everything the site writes except the
- * report charts' English axis labels, and the card-payment currency stays the
- * server's (#3567). The consequences list renders that from
+ * AI spend, sorting) the setting reaches everything the site writes except a
+ * few English labels the guide lists, and since #3567 card payments are charged
+ * in it too — so a CURRENCY change carries a second, counted confirmation
+ * (`ClubFormatCurrencyChange`). The consequences list renders that from
  * `@/lib/club-format-copy`, the one home the page blurb and the contextual help
  * share, so the next stage that moves a caveat moves it once.
  */
@@ -162,7 +166,9 @@ function describeSource(
       `Something is recorded that this app cannot use — ` +
       `"${printableStoredValue(unusableStored)}" — so it is falling back to ` +
       `${inForce}. Restarting will not repair it. Set the club's ${noun} again ` +
-      `below.`
+      `below.` +
+      // #3567: an unusable stored CURRENCY also switches card payments off.
+      (noun === "currency" ? " Until then no card payment can be taken." : "")
     );
   }
   return SOURCE_EXPLANATION[source];
@@ -198,6 +204,8 @@ export function ClubFormatPanel() {
   const [localeChoice, setLocaleChoice] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
+  const [currencyAcknowledged, setCurrencyAcknowledged] = useState(false);
+  const [inFlight, setInFlight] = useState<ClubFormatInFlightCardPayments>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forbiddenSave, setForbiddenSave] = useState(false);
@@ -248,8 +256,12 @@ export function ClubFormatPanel() {
     void fetch("/api/admin/club-format")
       .then(async (response) => {
         if (!response.ok) throw new Error("load failed");
-        const payload = (await response.json()) as { state: ClubFormatState };
+        const payload = (await response.json()) as {
+          state: ClubFormatState;
+          inFlight?: ClubFormatInFlightCardPayments;
+        };
         setState(payload.state);
+        setInFlight(payload.inFlight ?? null);
       })
       .catch(() => setLoadFailed(true));
   }
@@ -305,6 +317,9 @@ export function ClubFormatPanel() {
     chosenCurrency === state.currencyCode &&
     chosenLocale === state.locale &&
     !nothingUsableRecorded;
+  // Card charges follow the currency (#3567), so changing it needs its own tick.
+  const currencyChanges = chosenCurrency !== state.currencyCode;
+  const readyToSave = acknowledged && (!currencyChanges || currencyAcknowledged);
   /*
     The chosen code is ALWAYS offered, even when the filter excludes it and even
     when this runtime's `supportedValuesOf` does not list it — ICU's currency
@@ -324,6 +339,7 @@ export function ClubFormatPanel() {
     setLocaleChoice(state?.locale ?? null);
     setFilter("");
     setAcknowledged(false);
+    setCurrencyAcknowledged(false);
     setError(null);
     setForbiddenSave(false);
     setEditing(true);
@@ -335,12 +351,13 @@ export function ClubFormatPanel() {
     setLocaleChoice(null);
     setFilter("");
     setAcknowledged(false);
+    setCurrencyAcknowledged(false);
     setError(null);
     setForbiddenSave(false);
   }
 
   async function save() {
-    if (canEdit !== true || !acknowledged || unchanged) return;
+    if (canEdit !== true || !readyToSave || unchanged) return;
     setSaving(true);
     setError(null);
     setForbiddenSave(false);
@@ -352,6 +369,7 @@ export function ClubFormatPanel() {
           currencyCode: chosenCurrency,
           locale: chosenLocale,
           confirmed: true,
+          currencyChangeConfirmed: currencyChanges && currencyAcknowledged,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -516,7 +534,6 @@ export function ClubFormatPanel() {
                 <li>{CLUB_FORMAT_AI_RATE_CLEARED}</li>
                 <li>{CLUB_FORMAT_NOTHING_REWRITTEN}</li>
                 <li>{CLUB_FORMAT_SERVER_SETTINGS}</li>
-                <li>{CLUB_FORMAT_CARD_PAYMENTS}</li>
               </ul>
               <div className="flex items-start gap-2">
                 <Checkbox
@@ -527,12 +544,21 @@ export function ClubFormatPanel() {
                 <Label htmlFor={acknowledgeId} className="text-sm font-normal">
                   I understand that this records the club&apos;s currency and
                   number format, that no amount already recorded is changed or
-                  re-converted, that amounts are still written from the
-                  server&apos;s settings for now, and that the server settings
-                  stop deciding this one once this is saved.
+                  re-converted, and that the server settings stop deciding
+                  either once this is saved.
                 </Label>
               </div>
             </div>
+
+            {currencyChanges ? (
+              <ClubFormatCurrencyChange
+                fromCurrency={state.currencyCode}
+                toCurrency={chosenCurrency}
+                inFlight={inFlight}
+                acknowledged={currencyAcknowledged}
+                onAcknowledgedChange={setCurrencyAcknowledged}
+              />
+            ) : null}
 
             {unchanged ? (
               <p className="text-sm text-muted-foreground">
@@ -560,7 +586,7 @@ export function ClubFormatPanel() {
                 describeReason={false}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={() => void save()}
-                disabled={!acknowledged || unchanged || saving}
+                disabled={!readyToSave || unchanged || saving}
               >
                 {saving ? "Saving…" : "Save currency and format"}
               </ViewOnlyActionButton>

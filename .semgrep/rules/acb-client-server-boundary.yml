@@ -43,9 +43,10 @@ rules:
       # from the running server: the split-brain `INV-CONFIG-002` forbids. Its
       # pure sibling `club-time-zone` is NOT in the list, on purpose — the admin
       # panel needs its zone list. `club-format-env` (#3563) is the same pair
-      # for the same reason, and worse: NEXT_PUBLIC_CURRENCY has no Dockerfile
-      # build argument, so a client-side read inlines `undefined` in the
-      # published image and every club silently falls back to NZD. Its pure
+      # for the same reason: it reads the server's CURRENCY / LOCALE, which a
+      # browser bundle does not have at all (they are not NEXT_PUBLIC_, and
+      # since #3567 the NEXT_PUBLIC_ twins are not read either), so a client
+      # import would find nothing and fall back to NZD for every club. Its pure
       # sibling `club-format` is NOT in the list either. `environment-role-declaration` and
       # `environment-role` join it on sharper grounds: the declaration module
       # reads `process.env.APP_ENVIRONMENT_ROLE`, and a non-public variable

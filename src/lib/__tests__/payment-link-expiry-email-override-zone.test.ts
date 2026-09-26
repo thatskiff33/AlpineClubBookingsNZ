@@ -9,7 +9,7 @@
  * (CT-5, #2869). The sending function ALSO puts the same value into
  * `templateData`, and that copy went through `formatNZDateTime` — the retired
  * `@/lib/nzst-date` adapter, whose zone was
- * `unvalidatedLegacyClubTimeZone(APP_TIME_ZONE)`, the CONTAINER's. #3123 deleted
+ * the environment's (`APP_TIME_ZONE`, deleted in #3567), the CONTAINER's. #3123 deleted
  * that adapter; `ENVIRONMENT_SAYS` below spells its rendering out so this suite
  * can still name the wrong answer it refuses.
  *
@@ -32,8 +32,8 @@
  * exported formatter, imported rather than reimplemented — for the same instant.
  *
  * The club's zone comes from `divergentClubZone`, which returns one whose answer
- * is proven to differ from both `APP_TIME_ZONE`'s and the host's. A literal
- * cannot promise that: `APP_TIME_ZONE` with no `TZ` IS `Pacific/Auckland`, so a
+ * is proven to differ from both the environment zone's and the host's. A literal
+ * cannot promise that: the environment zone with no `TZ` IS `Pacific/Auckland`, so a
  * suite persisting Auckland cannot tell the persisted zone from the environment
  * however much it asserts. A premise failure here is a FAILURE, never a skip
  * (owner decision, #2870).
@@ -119,7 +119,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { type ClubTimeZone } from "@/lib/club-time";
 import { formatLinkExpiry } from "@/app/(public)/pay/[token]/pay-link-presentation";
 import {
@@ -185,15 +185,17 @@ const PAGE_SAYS = formatLinkExpiry(
  *
  * SPELLED OUT RATHER THAN IMPORTED, since #3123 deleted `@/lib/nzst-date`. This
  * was `formatNZDateTime(EXPIRES_AT)`, and that function was exactly the two lines
- * below: the house date-time shape over `unvalidatedLegacyClubTimeZone(APP_TIME_ZONE)`.
- * The zone is UNVALIDATED on purpose — `APP_TIME_ZONE` is a raw `process.env.TZ`
+ * below: the house date-time shape over the environment's zone, now spelled
+ * `unvalidatedLegacyClubTimeZone(ENVIRONMENT_CLUB_ZONE)` (the `APP_TIME_ZONE`
+ * constant it used was deleted in #3567).
+ * The zone is UNVALIDATED on purpose — the environment's zone is a raw `process.env.TZ`
  * passthrough, so it may legitimately be `UTC` or a legacy spelling that CT-1's
  * validator refuses, and this is the answer a wrong implementation gives rather
  * than a zone any club may choose.
  */
 const ENVIRONMENT_SAYS = formatClubInstantDateTime(
   EXPIRES_AT,
-  unvalidatedLegacyClubTimeZone(APP_TIME_ZONE),
+  unvalidatedLegacyClubTimeZone(ENVIRONMENT_CLUB_ZONE),
   CLUB_FORMAT_TEST,
 );
 
@@ -308,7 +310,7 @@ describe("the emailed payment deadline is the club's, on the override branch too
     // on a pair of zones whose offsets differ by a whole day.
     expect(
       PAGE_SAYS,
-      `divergentClubZone chose ${CLUB_ZONE}, whose rendering of ${EXPIRES_AT.toISOString()} should differ from APP_TIME_ZONE's (${APP_TIME_ZONE}). If these are equal the suite below cannot see the defect it exists for.`,
+      `divergentClubZone chose ${CLUB_ZONE}, whose rendering of ${EXPIRES_AT.toISOString()} should differ from the environment zone's (${ENVIRONMENT_CLUB_ZONE}). If these are equal the suite below cannot see the defect it exists for.`,
     ).not.toBe(ENVIRONMENT_SAYS);
     expect(EXPIRES_AT.toISOString()).toBe(CLUB.expected);
     expect(EXPIRES_AT.toISOString()).not.toBe(CLUB.environmentAnswer);

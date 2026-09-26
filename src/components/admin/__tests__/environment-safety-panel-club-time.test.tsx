@@ -10,26 +10,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * The panel names when application mail was last held back and when the safer
  * override was last changed. Both are real INSTANTS, so neither has a civil date
  * until a zone is chosen — and before this migration both went through
- * `formatNZInstantOrRaw`, whose zone is `APP_TIME_ZONE`: the container's clock.
+ * `formatNZInstantOrRaw`, whose zone was `APP_TIME_ZONE`: the container's clock.
  * For a club west of Greenwich that dated an override change to the previous
  * day, on the screen an operator opens precisely because something already looks
  * wrong.
  *
  * ## How it discriminates
  *
- * `APP_TIME_ZONE` is pinned to `America/Denver` — behind Greenwich, where the
- * defect shows — and the provider carries a DIFFERENT zone, declared here rather
- * than taken from `club-time-render`'s convenient default. That default is
- * `Pacific/Auckland` on purpose, which is also what `APP_TIME_ZONE` falls back
- * to, and its own docblock says a suite using it "proves nothing about zone
- * authority". This file is one of the suites that has to.
+ * The environment zone is modelled as `America/Denver` — behind Greenwich, where
+ * the defect shows — and the provider carries a DIFFERENT zone. (The
+ * `APP_TIME_ZONE` constant this file used to pin there was deleted in #3567;
+ * nothing reads the environment's zone any more.) `club-time-render`'s default,
+ * `Pacific/Auckland`, is also the environment's fallback, and its own docblock
+ * says a suite using it "proves nothing about zone authority".
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { EnvironmentSafetyPanel } from "@/components/admin/environment-safety-panel";

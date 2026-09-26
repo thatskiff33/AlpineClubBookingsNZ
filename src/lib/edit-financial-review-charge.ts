@@ -38,6 +38,7 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { updatePaymentIntentAmount } from "@/lib/stripe";
+import { reissueRaisedAskIfCurrencyChanged } from "@/lib/additional-intent-currency";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -479,10 +480,10 @@ export async function syncEditFinancialReviewChargeRequest({
         carriedCents: existing.carriedAskCents,
       };
     }
-    // The one write that makes a second share join the first: the SAME intent,
-    // asking for more. Nothing is minted, so nothing is superseded, so
-    // `queueSupersededAdditionalIntentCancellations` never fires between two
-    // shares of one edit.
+    const reissuedId = await reissueRaisedAskIfCurrencyChanged({ format, bookingId, paymentId, staleIntentId: existing.stripePaymentIntentId, ask: raised, reason });
+    if (reissuedId) return { outcome: "raised", paymentIntentId: reissuedId, totalCents, carriedCents: raised.carriedCents };
+    // Same currency (#3567): the SAME intent asks for more. Nothing is minted, so nothing
+    // is superseded — `queueSupersededAdditionalIntentCancellations` never fires between shares.
     await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
     await upsertPaymentIntentTransaction({
       paymentId,

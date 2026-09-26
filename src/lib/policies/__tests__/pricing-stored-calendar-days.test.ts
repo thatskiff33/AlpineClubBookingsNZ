@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * CT-4 (#2870), group F2: the pricing engine reads a booking date as the STORED
@@ -19,14 +19,17 @@ import { describe, expect, it, vi } from "vitest";
  * and (the reason this was the epic's most serious finding) the night list a
  * policy-exception proposal freezes, capacity-checks and executes.
  *
- * ## Why the zone is MOCKED rather than taken from the machine
+ * ## Why the zone was MOCKED rather than taken from the machine
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
- * and CI sets no `TZ`, so on CI the club zone resolves to New Zealand — which is
+ * The environment's zone is `process.env.TZ || NEXT_PUBLIC_TZ ||
+ * "Pacific/Auckland"`, and CI sets no `TZ`, so on CI the club zone resolves to New Zealand — which is
  * AHEAD of Greenwich, where a UTC-midnight instant never changes date. A suite
  * that let the environment choose therefore could not tell a corrected
  * implementation from the broken one: it is the same "0 of 460 assertions
- * killed" blindness measured on group C's shared render harness.
+ * killed" blindness measured on group C's shared render harness. (The
+ * environment constant this file mocked to `America/Denver` was deleted in
+ * #3567 and nothing reads the environment's zone any more, so the mock is gone;
+ * the premise below measures the old projection through Denver directly.)
  *
  * Pinning `America/Denver` here makes the assertions below discriminating on
  * every host, CI included.
@@ -63,14 +66,6 @@ import { describe, expect, it, vi } from "vitest";
  * backwards. A club at or ahead of Greenwich was never exposed, which is why the
  * defect survived so long in a New Zealand deployment.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { getMinimumStayViolations } from "@/lib/policies/minimum-stay";
 import {
@@ -90,12 +85,7 @@ function day(value: string): Date {
 
 const MEMBER_TYPE = "type-member";
 
-/**
- * The zone the `@/config/operational` factory above pins, named rather than left
- * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
- * asserts the two are still the same zone, so this constant cannot drift out of
- * step with the factory and leave every case below passing for the wrong reason.
- */
+/** A club zone behind Greenwich, where a projected stored day moves. */
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** Stored days for the whole file. 4 July 2026 is a Saturday in UTC. */
@@ -128,14 +118,12 @@ const adult: GuestInput = {
 };
 
 describe("the pricing engine reads booking dates as stored calendar days (CT-4, #2870)", () => {
-  it("PREMISE: the mocked club zone really does move a stored day", () => {
+  it("PREMISE: a club zone behind Greenwich really does move a stored day", () => {
     // Measured, not assumed. If `America/Denver` ever stopped shifting a
     // UTC-midnight day, every assertion below would hold for the wrong reason
     // and this file would silently stop guarding anything — the failure mode
     // this epic keeps diagnosing. The legacy helper below is exactly what
-    // `normalizeBookingDate` used to call, and the zone it read is
-    // `APP_TIME_ZONE` — so the constant has to keep naming it.
-    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    // `normalizeBookingDate` used to call.
     expect(formatDateOnlyForTimeZone(day(CHECK_IN), CLUB_ZONE_BEHIND_UTC)).toBe(
       "2026-07-03",
     );

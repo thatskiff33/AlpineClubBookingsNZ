@@ -18,9 +18,9 @@
  *
  * The persisted reader is STUBBED, to a zone the environment does not hold, and
  * the page is driven twice at one instant with two different clubs configured.
- * Two different answers are demanded. A page that had gone on reading
- * `APP_TIME_ZONE` would give the Auckland answer for both, which is what the
- * Denver expectations below refuse.
+ * Two different answers are demanded. A page that ignored the persisted setting
+ * would give one answer for both clubs, which is what the two sets of
+ * expectations below refuse.
  *
  * ## The instant, and why it is this one
  *
@@ -35,8 +35,8 @@
  *
  * ## The premise, asserted rather than assumed
  *
- * `expect(APP_TIME_ZONE).not.toBe(PERSISTED_ZONE)` on the identifier alone would
- * be the tempting guard and is nearly worthless — it passes under
+ * Comparing the environment's zone identifier with the persisted one would be
+ * the tempting guard and is nearly worthless — it passes under
  * `America/Chicago` while every assertion here goes vacuous.
  *
  * What is asserted instead is what `Intl` ITSELF puts each zone on at the pinned
@@ -44,31 +44,25 @@
  * first version of that guard, cannot fail for any reason whatsoever — they are
  * constants declared a hundred lines above it.
  *
- * The environment is STUBBED to Auckland so "the environment's own answer is the
- * Auckland one" is a guarantee rather than a fact about whoever's laptop is
- * running the suite. And `process.env.TZ` is pinned to a THIRD zone, from
- * `vi.hoisted` so it lands before the imports, so that stub cannot go stale
- * unnoticed: `APP_TIME_ZONE` falls back to `Pacific/Auckland` wherever `TZ` is
- * unset, CI included, so a `vi.mock` that stopped applying would answer exactly
- * what the guard demands.
+ * This file used to stub the environment's zone to Auckland. That stub is gone:
+ * #3567 deleted the constant, and nothing reads the environment's zone any more.
+ * `process.env.TZ` is still pinned to a THIRD zone, from `vi.hoisted` so it
+ * lands before the imports, so a page that fell back to the machine's clock
+ * would answer neither club's day.
  */
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 
 /*
   THE MACHINE IS MOVED TO A THIRD ZONE, ABOVE THE IMPORTS.
 
-  Two things here are frozen when their module loads and cannot be moved by a
-  `beforeEach`: `APP_TIME_ZONE` itself, and `dashboard/page.tsx`'s module-level
-  calendar-date formatter. Pinning the host from `vi.hoisted` is what makes the
-  "the environment stub is live" line below falsifiable — without it, a `vi.mock`
-  that stopped applying would resolve the FALLBACK, which is the very
-  `Pacific/Auckland` that line demands, and it would pass on CI while proving
-  nothing. `Atlantic/Cape_Verde` is UTC-1: behind Greenwich, so it also moves a
-  UTC-midnight encoding a day, and neither of the two clubs under test.
+  Pinned from `vi.hoisted` so it is in place before any module loads. It used to
+  back up an environment-zone stub, which went with the constant in #3567; what
+  it buys now is that a page reading the machine's clock answers a zone neither
+  club is on. `Atlantic/Cape_Verde` is UTC-1: behind Greenwich, so it also moves
+  a UTC-midnight encoding a day, and neither of the two clubs under test.
 
   Read by hand because `vi.hoisted` runs above this file's imports;
   `restoreHostTimeZone` below is the shared #2485 rule.
@@ -106,21 +100,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
-
-/*
-  THE ENVIRONMENT IS PINNED, SO THIS SUITE MEANS THE SAME THING ON EVERY HOST.
-
-  `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
-  so a developer whose laptop is set to Denver would otherwise turn the premise
-  below into a red herring — docs/TESTING.md rule 6. Pinning it here makes
-  "Auckland is what the environment would have answered" a GUARANTEE rather than
-  an assumption about the machine, which is what lets the Denver expectations
-  mean "this did not come from the environment".
-*/
-vi.mock("@/config/operational", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  APP_TIME_ZONE: "Pacific/Auckland",
-}));
 
 
 /*
@@ -172,7 +151,7 @@ import DashboardPage from "../page";
 /** 01:30 on 2 July in Auckland; 07:30 on 1 July in Denver. */
 const PINNED_INSTANT = "2026-07-01T13:30:00.000Z";
 
-/** The environment's zone, and this deployment's persisted value too. */
+/** The shipped default zone, and this deployment's persisted value too. */
 const AUCKLAND = "Pacific/Auckland";
 /** Behind UTC, so it disagrees with Auckland about the calendar day here. */
 const DENVER = "America/Denver";
@@ -304,7 +283,7 @@ describe("the member dashboard runs on the persisted club timezone (CT-4, #2870)
     });
   });
 
-  it("the runtime really puts these clubs where this file says, and both stubs are live", () => {
+  it("the runtime really puts these clubs where this file says, and the host pin is live", () => {
     /*
       THE PREMISE, AND IT HAS TO READ SOMETHING OUTSIDE THIS FILE.
 
@@ -316,19 +295,15 @@ describe("the member dashboard runs on the persisted club timezone (CT-4, #2870)
       runtime that collapsed the two fails here rather than leaving every case
       below quietly vacuous.
 
-      The last two lines record why Auckland is the control and make that
-      checkable: it is what the environment resolves to here, so a page that
-      ignored the persisted setting would produce the Auckland column for both
-      clubs. `APP_TIME_ZONE` falls back to `Pacific/Auckland` wherever `TZ` is
-      unset — CI included — so this line only means something because the host
-      is pinned somewhere else entirely (see the top of the file). A `vi.mock`
-      that quietly stopped applying now answers `Atlantic/Cape_Verde` and fails.
+      The last line checks the host pin took (see the top of the file): the
+      machine is on `Atlantic/Cape_Verde`, neither club's zone, so a page that
+      ignored the persisted setting for the machine's clock could not produce
+      either column by accident.
     */
     expect(civilDayIn(AUCKLAND)).toBe(CLUB_TODAY[AUCKLAND]);
     expect(civilDayIn(DENVER)).toBe(CLUB_TODAY[DENVER]);
     expect(civilDayIn(AUCKLAND)).not.toBe(civilDayIn(DENVER));
 
-    expect(APP_TIME_ZONE).toBe(AUCKLAND);
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(HOST);
   });
 
@@ -356,7 +331,7 @@ describe("the member dashboard runs on the persisted club timezone (CT-4, #2870)
     /*
       THE HALF THAT CATCHES A PAGE STILL READING THE ENVIRONMENT. Same instant,
       same stay, same member — and the only difference is which club is
-      configured. A dashboard on `APP_TIME_ZONE` would answer Auckland here and
+      configured. A dashboard on the environment's zone would answer Auckland here and
       offer a lodge link a day early, which is the visible shape of the defect:
       a member clicking through to a kiosk that answers `tier: "none"`.
     */

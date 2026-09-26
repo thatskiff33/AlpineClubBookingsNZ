@@ -19,6 +19,7 @@ import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_gue
 import relocaleProofExceptionRequestIdentities from "./20260930010000_relocale_proof_exception_request_identities";
 import addMemberSessionsRevokedAt from "./20261009010000_add_member_sessions_revoked_at";
 import backfillMemberSessionsRevokedAt from "./20261009020000_backfill_member_sessions_revoked_at";
+import dropPaymentRefundCurrencyDefault from "./20261012010000_drop_payment_refund_currency_default";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -60,4 +61,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addMemberParentPartnerExclusion,
   addMemberSessionsRevokedAt,
   backfillMemberSessionsRevokedAt,
+  dropPaymentRefundCurrencyDefault,
 ];

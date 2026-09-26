@@ -34,10 +34,12 @@
  *
  * `admin-booking-copy.test.ts` runs on the default configured zone, which is
  * `Pacific/Auckland` - ahead of Greenwich, where the projection is the identity
- * and every one of these values is already right. This file pins the configured
- * zone to `Atlantic/Azores` with a module mock and copies a booking across the
+ * and every one of these values is already right. This file models the
+ * replaced projection in `Atlantic/Azores` and copies a booking across the
  * 2026 change (25 October), which is the one arrangement that separates a
- * decode from a projection here.
+ * decode from a projection here. (It used to pin the environment constant
+ * `APP_TIME_ZONE` to that zone; the constant was deleted in #3567 and the copy
+ * reads no zone at all, so the pin is gone.)
  *
  * The first case asserts the premise, so nothing below can pass vacuously.
  */
@@ -55,14 +57,6 @@ const { SIGN_CHANGE_ZONE } = vi.hoisted(() => ({
   SIGN_CHANGE_ZONE: "Atlantic/Azores",
 }));
 
-// `APP_TIME_ZONE` is frozen at module load, so the configured zone has to move
-// above the imports.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: SIGN_CHANGE_ZONE,
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
@@ -113,7 +107,6 @@ vi.mock("@/lib/member-guest-add-policy", () => ({
   matchMemberGuestNotificationRows: vi.fn(() => []),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { copyBookingToDraft } from "@/lib/admin-booking-copy";
 import { formatDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
@@ -193,7 +186,7 @@ beforeEach(() => {
 
 describe("#3107 premise: the configured zone really changes sign across DST", () => {
   it("pins it, so nothing below measures the identity", () => {
-    expect(APP_TIME_ZONE).toBe("Atlantic/Azores");
+    expect(SIGN_CHANGE_ZONE).toBe("Atlantic/Azores");
     // Inside DST the stored day reads as itself; outside it, a day early. It is
     // that DIFFERENCE, within one booking, that the old projection could not
     // survive - a uniform shift would have cancelled. The zone is named at each

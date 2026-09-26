@@ -16,6 +16,8 @@ import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { CardPaymentsRefusedBanner } from "@/components/admin/card-payments-refused-banner";
 
 export default async function AdminLayout({
   children,
@@ -42,12 +44,13 @@ export default async function AdminLayout({
     level: "edit",
   });
   const showOnboardingWizard = guard.showOnboardingWizard;
-  const [effectiveModules, theme, lodgeCapacity, clubIdentity] =
+  const [effectiveModules, theme, lodgeCapacity, clubIdentity, clubFormat] =
     await Promise.all([
       loadEffectiveModuleFlags(),
       getWebsiteThemeRenderState(),
       getDefaultLodgeCapacity(),
       getCachedClubIdentity(),
+      clubFormatValues(),
     ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
 
@@ -108,6 +111,8 @@ export default async function AdminLayout({
                   </div>
                 </div>
               )}
+              {/* #3567: card payments refused while the stored currency is unusable. */}
+              <CardPaymentsRefusedBanner format={clubFormat} />
               {children}
             </main>
           </div>

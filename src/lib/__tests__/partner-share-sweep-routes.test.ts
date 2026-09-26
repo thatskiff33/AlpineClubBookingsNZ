@@ -135,7 +135,7 @@ import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as bulkUpdate } from "@/app/api/admin/members/bulk-update/route";
 import { POST as reviewDeletion } from "@/app/api/admin/deletion-requests/[id]/route";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { getTodayDateOnly } from "@/lib/date-only";
 
 const fullAdminGuard = {
@@ -509,7 +509,7 @@ describe("bulk set-role linked-guest cut-off comes from the persisted club zone 
     // The premise, measured as an ANSWER rather than a zone identifier: two
     // zone names can still name the same day, and then this proves nothing.
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * `ENVIRONMENT_CLUB_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
      * zone exists to get OFF the environment; here the environment IS the
      * subject of the assertion — the line measures what the environment
      * authority answers so it can prove the persisted zone answers differently.
@@ -517,7 +517,7 @@ describe("bulk set-role linked-guest cut-off comes from the persisted club zone 
      * and the premise would stop tracking the environment it is guarding.
      */
     expect(
-      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      getTodayDateOnly(ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell the two apart.",
     ).not.toBe("2026-06-30T00:00:00.000Z");

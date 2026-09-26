@@ -19,20 +19,26 @@
  * gate a discount against `Booking.checkIn`, so the day decides what a member is
  * charged.
  *
- * So the config module is mocked to `America/Denver` (UTC-6, and UTC-7 in
- * winter) for this file only. Against the fixed code the assertions below hold
+ * So the club's zone is `America/Denver` (UTC-6, and UTC-7 in winter) for this
+ * file only, supplied through `ClubTimeProvider` below. (It used to be pinned by
+ * mocking the environment constant, which #3567 deleted; nothing reads the
+ * environment's zone any more.) Against the fixed code the assertions below hold
  * because nothing consults a zone at all; against the projection they fail by
  * exactly one day, which is the discrimination this file exists to provide. The
  * sibling file `promo-codes-page.test.tsx` covers the rest of this screen in the
  * default zone and is deliberately left alone.
  */
 
+import type { ReactElement, ReactNode } from "react";
 import {
-  render,
+  ClubFormatTestProvider,
+  render as renderWithTestClub,
   screen,
   fireEvent,
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -40,14 +46,22 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 
-// A club west of Greenwich. Everything the real module exports is restated, so
-// an import this screen picks up later cannot resolve to `undefined`.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
+// A club west of Greenwich.
+const CLUB_ZONE_WEST_OF_UTC = "America/Denver";
+
+function WestOfUtcClub({ children }: { children: ReactNode }) {
+  return (
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={CLUB_ZONE_WEST_OF_UTC} locale={CLUB_FORMAT_TEST.locale}>
+        {children}
+      </ClubTimeProvider>
+    </ClubFormatTestProvider>
+  );
+}
+
+function render(ui: ReactElement) {
+  return renderWithTestClub(ui, { wrapper: WestOfUtcClub });
+}
 
 vi.mock("@/components/lodge-select", () => ({
   useLodgeOptions: () => ({

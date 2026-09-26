@@ -65,6 +65,8 @@ export declare const AMBIENT_AUTHORITY_RESOLVERS: {
   }>;
 };
 export declare const RETIRED_FORMAT_CONSTANT_ARMS: readonly string[];
+/** #3567 review: the environment currency/locale env-read arm, as bare selectors. */
+export declare const ENVIRONMENT_FORMAT_ARMS: readonly string[];
 export declare const CLUB_FORMAT_GUARD_ARMS: {
   readonly requiredParameter: readonly string[];
 };

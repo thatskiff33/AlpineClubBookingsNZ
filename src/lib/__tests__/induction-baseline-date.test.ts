@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * settles whose today that is: the club's, from the persisted
  * `ClubTimeSettings.timeZone`, never the container's `TZ` (`INV-CONFIG-002`).
  *
- * DISCRIMINATION, and why this file previously measured nothing. `APP_TIME_ZONE`
- * — the only thing the replaced `todayDateOnlyForTimeZone()` ever read — is
- * pinned to `America/Denver`, BEHIND Greenwich, which is the side the defect
- * shows on and is deliberately not `Pacific/Auckland` (that is `APP_TIME_ZONE`'s
- * own fallback, so a club on it cannot be told apart from the environment's
- * claim). The persisted club zone is `Pacific/Auckland`. At the pinned instant
+ * DISCRIMINATION, and why this file previously measured nothing. The
+ * environment zone — the only thing the replaced `todayDateOnlyForTimeZone()`
+ * ever read — is modelled as `America/Denver`, BEHIND Greenwich, which is the
+ * side the defect shows on. (It used to be pinned with a `@/config/operational`
+ * mock; #3567 deleted that module and nothing reads the environment's zone any
+ * more.) The persisted club zone is `Pacific/Auckland`. At the pinned instant
  * `2026-07-31T00:00:00.000Z` Denver reads 30 July and Auckland reads 31 July, so
  * the two never agree and no assertion here can pass by coincidence.
  *
@@ -19,13 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * one of them degrades silently to the environment. A prisma mock without it
  * passes for exactly the reason this file exists to rule out.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
 const { mockClubTimeSettingsFindUnique } = vi.hoisted(() => ({
   mockClubTimeSettingsFindUnique: vi.fn(),
 }));
@@ -36,7 +29,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { runInductionBaseline } from "@/lib/induction-baseline";
 
 const ENVIRONMENT_ZONE = "America/Denver";
@@ -82,7 +74,6 @@ describe("trusted induction baseline date boundary", () => {
   it("PREMISE: the container and the club disagree about today", () => {
     // Without this leg the suite passes just as well when both zones agree,
     // which is the false green #3123's contract names.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     const inEnvironment = new Intl.DateTimeFormat("en-CA", {
       timeZone: ENVIRONMENT_ZONE,
     }).format(PINNED);
@@ -156,7 +147,7 @@ describe("trusted induction baseline date boundary", () => {
 
   it("reads the club's timezone from the persisted row, not the environment", async () => {
     // The fail-soft trap, made visible: if this delegate were absent the reader
-    // would fall back to `APP_TIME_ZONE` and every assertion above would still
+    // would fall back to the environment and every assertion above would still
     // pass — measuring nothing.
     await expect(
       runInductionBaseline({

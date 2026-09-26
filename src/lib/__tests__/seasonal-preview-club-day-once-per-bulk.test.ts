@@ -29,9 +29,10 @@ import { NextRequest } from "next/server";
  *
  * ## What makes the club-day cases discriminating
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer the replaced
- * default gave AND this codebase's own fallback, so it is the one value a wrong
- * fix could still pass under. The PERSISTED zone is `America/Denver`, behind
+ * `Pacific/Auckland` is the answer the replaced default gave AND this
+ * codebase's own fallback, so it is the one value a wrong fix could still pass
+ * under. (The environment constant once pinned to it here was deleted in #3567;
+ * nothing reads the environment's zone any more.) The PERSISTED zone is `America/Denver`, behind
  * Greenwich. Under the frozen clock (`2026-07-01T00:00:00.000Z`) the club's day
  * is 30 June and the environment's is 1 July.
  *
@@ -40,14 +41,6 @@ import { NextRequest } from "next/server";
  * missing, when the query throws, and when the row is absent — so a mock without
  * it would let this file pass for the very reason it exists to rule out.
  */
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 const PERSISTED_ZONE = "America/Denver";
@@ -89,7 +82,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { POST } from "@/app/api/admin/members/bulk-membership-type/preview/route";
 
@@ -174,7 +166,6 @@ beforeEach(() => {
 
 describe("the bulk seasonal preview reads the club's zone once (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's disagree about the day", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(dayIn(PERSISTED_ZONE)).toBe("2026-06-30");
     expect(dayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
   });

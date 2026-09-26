@@ -4,24 +4,15 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
-  THE ENVIRONMENT IS PINNED TO A LOCALE NEITHER CLUB HOLDS.
-
-  `APP_LOCALE` is `process.env.LOCALE || NEXT_PUBLIC_LOCALE || "en-NZ"`, so on a
-  host that sets neither it resolves to `en-NZ` — which is also one of the two
-  club locales exercised below. A stub set to the fallback cannot be told from
-  no stub at all, and the `en-NZ` case would pass whether or not the migration
-  happened. `ja-JP` writes this date in a shape no Latin-script locale produces,
-  so a component still reading the environment is caught by BOTH cases rather
-  than by neither.
+  This file used to pin the environment's locale constant to `ja-JP`, a locale
+  neither club holds, so a component still reading the environment was caught
+  by both cases. That constant was deleted in #3567 and nothing reads the
+  environment's locale any more, so the pin is gone; `ja-JP` stays below as a
+  shape the Swiss case must not render.
 */
-vi.mock("@/config/operational", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  APP_LOCALE: "ja-JP",
-}));
 
 import { DisplayScreen } from "@/app/display/display-screen";
 import { ClubFormatProvider } from "@/components/club-format-provider";
-import { APP_LOCALE } from "@/config/operational";
 import {
   CLUB_CURRENCY_FALLBACK,
   CLUB_LOCALE_FALLBACK,
@@ -35,7 +26,7 @@ import {
  * ## What was wrong, in one sentence
  *
  * `display-header-clock.tsx` built its header day formatter as a module-level
- * `new Intl.DateTimeFormat(APP_LOCALE, …)` — and `APP_LOCALE` is
+ * `new Intl.DateTimeFormat(APP_LOCALE, …)` — and `APP_LOCALE` was
  * `NEXT_PUBLIC_LOCALE` inlined at BUILD time, with no `Dockerfile` build
  * argument, so in the published image it is `undefined` and every club's wall
  * read `Wed, 1 Jul` however it had configured itself.
@@ -61,9 +52,9 @@ import {
  * ## What this suite deliberately does NOT assert
  *
  * The live clock and the "updated" stamp. Those render through
- * `@/lib/club-time`, whose formatter factory still takes its locale from
- * `APP_LOCALE` at module load — that is `src/lib/club-time/intl.ts`, which is
- * #3565 and explicitly out of scope here. Asserting them would pin behaviour
+ * `@/lib/club-time`, whose formatter factory took its locale from the
+ * environment at module load when this suite was written — that is
+ * `src/lib/club-time/intl.ts`, which was #3565 and out of scope here. Asserting them would pin behaviour
  * that the next stage is about to change, and would quietly test the
  * environment rather than the club.
  */
@@ -111,8 +102,8 @@ const DEFAULT_FORMAT: ClubFormat = {
 };
 
 /**
- * A real club locale that is neither the shipped default nor the environment
- * stub, and whose date shape differs from `en-NZ` in word, order and
+ * A real club locale that is neither the shipped default nor `ja-JP`, and
+ * whose date shape differs from `en-NZ` in word, order and
  * punctuation rather than in one character.
  */
 const SWISS_FORMAT: ClubFormat = { currencyCode: "CHF", locale: "de-CH" };
@@ -195,10 +186,6 @@ describe("the lobby display writes its date in the club's locale (#3564)", () =>
     expect(dayLineFor("de-CH")).toBe(EXPECTED_DAY["de-CH"]);
     expect(dayLineFor("ja-JP")).toBe(EXPECTED_DAY["ja-JP"]);
     expect(new Set(Object.values(EXPECTED_DAY)).size).toBe(3);
-
-    // And the environment stub really applied: on a host with `LOCALE` unset
-    // this constant falls back to `en-NZ`, which is neither of these.
-    expect(APP_LOCALE).toBe("ja-JP");
   });
 
   it("a club on the shipped defaults sees exactly what it saw before", async () => {

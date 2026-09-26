@@ -577,7 +577,7 @@ new ADR:
   one `id = "default"` row. The two AI modules are club-wide paid products with
   one credential and one monthly cap apiece, and the rate that turns the NZD
   provider price table into the club's configured currency is a property of
-  the deployment (one `APP_CURRENCY`), not of a building. A per-lodge rate
+  the deployment (one club currency), not of a building. A per-lodge rate
   would have nothing to mean, because no lodge is billed for AI separately.
 - Member message board (`ClubPost`, `ClubPostImage`, `ClubPostReport`, the
   `commsPortal` module): a post carries no `lodgeId`, decided as D-C1 on epic

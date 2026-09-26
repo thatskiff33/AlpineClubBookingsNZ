@@ -6,6 +6,7 @@ import {
   PaymentStatus,
   PaymentTransactionKind,
 } from "@prisma/client";
+import { BelowStripeMinimumError, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // #3268 — the saved-card charge-failure classifier and the retirement of a
@@ -286,6 +287,16 @@ describe("classifySavedCardChargeFailure (#3268)", () => {
       expect(classifySavedCardChargeFailure(new Error("Card declined"), IN_WINDOW).message).toBe("Card declined");
       expect(classifySavedCardChargeFailure("boom", IN_WINDOW).message).toBe("boom");
     });
+  });
+});
+
+describe("a refusal made before Stripe was called is its own outcome (#3567 re-review)", () => {
+  it.each([
+    ["the club's currency", new UnsupportedChargeCurrencyError("JPY")],
+    ["the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
+  ])("%s -> local_refusal, never retry and never terminal (the card is fine)", (_label, err) => {
+    expect(classifySavedCardChargeFailure(err, { holdOverdueWindows: 1 }).outcome).toBe("local_refusal");
+    expect(classifySavedCardChargeFailure(err, { holdOverdueWindows: 9 }).outcome).toBe("local_refusal");
   });
 });
 

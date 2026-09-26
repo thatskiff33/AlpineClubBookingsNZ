@@ -1177,8 +1177,8 @@ describe("clubFormatSelfHealStep — the upgrade keeps the currency already in u
         process.env[name] = value;
       }
     }
-    // The second half of each seed's precedence, cleared so the bare variable
-    // is unambiguously what the environment says, on CI as well as here.
+    // The retired public twins (no longer read since #3567), cleared so no
+    // test meets the ignored-variable warning by accident.
     delete process.env.NEXT_PUBLIC_CURRENCY;
     delete process.env.NEXT_PUBLIC_LOCALE;
   }
@@ -1332,6 +1332,52 @@ describe("clubFormatSelfHealStep — the upgrade keeps the currency already in u
     expect(
       warnings.every((text) => /will NOT change it/i.test(text)),
     ).toBe(true);
+  });
+
+  /*
+    #3567, owner decision D5: NEXT_PUBLIC_CURRENCY / NEXT_PUBLIC_LOCALE are no
+    longer read. An install that set only the public form is seeded with the
+    default, and the one boot that records the row must say so.
+  */
+  it("ignores NEXT_PUBLIC_CURRENCY / NEXT_PUBLIC_LOCALE, and WARNS when only they are set", async () => {
+    pinEnvironmentFormat(null, null);
+    process.env.NEXT_PUBLIC_CURRENCY = "CHF";
+    process.env.NEXT_PUBLIC_LOCALE = "de-CH";
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({
+      currencyCode: CLUB_CURRENCY_FALLBACK,
+      locale: CLUB_LOCALE_FALLBACK,
+    });
+    const warnings = mockLogger.warn.mock.calls.map((call) => String(call[1]));
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/ignored NEXT_PUBLIC_CURRENCY="CHF".*recorded as NZD/);
+    expect(warnings[1]).toMatch(/ignored NEXT_PUBLIC_LOCALE="de-CH".*recorded as en-NZ/);
+  });
+
+  it("says nothing about a public twin when its plain variable is set", async () => {
+    pinEnvironmentFormat("AUD", "en-AU");
+    process.env.NEXT_PUBLIC_CURRENCY = "CHF";
+    process.env.NEXT_PUBLIC_LOCALE = "de-CH";
+    const { rows, clubFormatSettings } = makeClubFormatDb();
+
+    await runConfigSelfHeal({
+      db: { clubFormatSettings } as unknown as SelfHealDb,
+      steps: [clubFormatSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    // The plain variable wins outright; the twin is neither read nor warned about.
+    expect(rows.get("default")).toMatchObject({ currencyCode: "AUD", locale: "en-AU" });
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it("cannot overwrite an existing row even when the presence check is bypassed", async () => {

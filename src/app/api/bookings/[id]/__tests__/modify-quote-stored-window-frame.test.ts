@@ -31,29 +31,15 @@ import { NextRequest } from "next/server";
  * flat mock would return the same cents either way and the defect would stay
  * invisible, which is how it survived in the first place.
  *
- * `APP_TIME_ZONE` is pinned in the mock, so this says the same thing on any
- * machine and on CI, where `TZ` is unset. The harness is
+ * Every zone here is named explicitly, so this says the same thing on any
+ * machine and on CI, where `TZ` is unset. (The environment constant used to be
+ * pinned in a mock; #3567 deleted it, so the pin went with it.) The harness is
  * `modify-quote-in-stay-min-stay.test.ts`'s, kept deliberately close so the two
  * read as the same route under two lenses.
  */
 
-/*
- * The zone behind UTC, declared ONCE (#3123). `vi.mock` factories hoist above
- * every plain `const`, which is why the literals below are inlined; `vi.hoisted`
- * lets the factory and the premise assertion share one declaration, so the zone
- * the mock pins and the zone the legacy projection is measured in cannot drift.
- */
-const { LEGACY_PROJECTION_ZONE } = vi.hoisted(() => ({
-  LEGACY_PROJECTION_ZONE: "America/Denver",
-}));
-
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: LEGACY_PROJECTION_ZONE,
-  APP_LOCALE: "en-NZ",
-}));
+/** The zone behind UTC the legacy projection is measured in (#3123). */
+const LEGACY_PROJECTION_ZONE = "America/Denver";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),

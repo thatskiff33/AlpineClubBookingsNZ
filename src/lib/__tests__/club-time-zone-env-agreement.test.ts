@@ -9,38 +9,34 @@ import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 import { stripComments } from "./support/strip-comments";
 
 /**
- * The two readings of the environment's timezone must not drift apart while both
- * exist (CT-1, #2989; epic #2988).
+ * The seed reader and the suites' model of the environment's zone must not drift
+ * apart (CT-1, #2989; epic #2988).
  *
- * For the length of this epic there are two of them. `APP_TIME_ZONE` in
- * `src/config/operational.ts` is the OLD one — the transitional bridge that every
- * call site CT-2 and CT-4 have not yet migrated still reads. The new one is
+ * There used to be two production readings of the environment's timezone: the
+ * config constant in `src/config/operational.ts`, and
  * `readEnvironmentClubTimeZoneSeed()`, which exists only to SEED the persisted
- * club timezone once. **`APP_TIME_ZONE` is retired by CT-6**, and this file
- * retires with it.
- *
- * Until then they must read the same two variables in the same order, because
- * they are two descriptions of the same fact: "the zone this deployment is
- * currently effectively using". If one of them gained a variable the other did
- * not, an upgrade would persist a zone different from the one the un-migrated
- * call sites were still formatting with, and half the app would silently disagree
- * with the other half about what day it is.
+ * club timezone once. #3567 deleted the config module, so the seed reader is
+ * now the only production reading. What remains to pin is its agreement with
+ * `ENVIRONMENT_CLUB_ZONE` — the test helper many suites use as "the zone an
+ * implementation reading the environment would use". If the two drifted, those
+ * suites would be proving the club's zone wins over a zone the environment
+ * never actually offers.
  *
  * The pin below is total rather than illustrative:
  *
- *     (readEnvironmentClubTimeZoneSeed() ?? CLUB_TIME_ZONE_FALLBACK) === APP_TIME_ZONE
+ *     (readEnvironmentClubTimeZoneSeed() ?? CLUB_TIME_ZONE_FALLBACK) === ENVIRONMENT_CLUB_ZONE
  *
  * for every combination of the two variables — set, unset, blank, and both at
  * once. Note it pins the RAW strings, not the validated answers: the club
  * timezone additionally refuses `NZT`-style values (that is CT-1's whole point,
- * and `club-time-zone.test.ts` covers it), whereas `APP_TIME_ZONE` will happily
+ * and `club-time-zone.test.ts` covers it), whereas the helper will happily
  * carry one. What is pinned here is which variables are read and in what order.
  *
- * The behavioural pin cannot see a THIRD variable added to only one of the two
- * readings, because nothing in an assertion over `TZ` and `NEXT_PUBLIC_TZ`
- * enumerates the unknown. That gap is closed by the census at the bottom of this
- * file, which reads the source tree and fails if any file other than those two
- * reads a `*TZ` environment variable at all.
+ * The behavioural pin cannot see a THIRD variable, because nothing in an
+ * assertion over `TZ` and `NEXT_PUBLIC_TZ` enumerates the unknown. That gap is
+ * closed by the census at the bottom of this file, which reads the source tree
+ * and fails if any production file other than the seed reader reads a `*TZ`
+ * environment variable at all.
  *
  * STATED LIMIT: the census matches `process.env.X` reads, in dot and bracket
  * form, after block comments are stripped. It would not see a read routed
@@ -110,11 +106,11 @@ function filesReadingATimeZoneEnvironmentVariable(): string[] {
     .sort();
 }
 
-/** `APP_TIME_ZONE` is computed at import, so it needs a fresh module each time. */
-async function readAppTimeZone(): Promise<string> {
+/** `ENVIRONMENT_CLUB_ZONE` is computed at import, so it needs a fresh module each time. */
+async function readEnvironmentClubZone(): Promise<string> {
   vi.resetModules();
-  const operational = await import("@/config/operational");
-  return operational.APP_TIME_ZONE;
+  const environment = await import("@/lib/__tests__/helpers/environment-club-zone");
+  return environment.ENVIRONMENT_CLUB_ZONE;
 }
 
 function setEnvironment(tz: string | null, nextPublicTz: string | null): void {
@@ -146,7 +142,7 @@ afterAll(() => {
   vi.resetModules();
 });
 
-describe("the club-timezone seed and the transitional APP_TIME_ZONE read the same environment", () => {
+describe("the club-timezone seed and the suites' environment zone read the same environment", () => {
   it.each([
     ["TZ alone", "America/Denver", null, "America/Denver"],
     ["NEXT_PUBLIC_TZ alone", null, "Europe/London", "Europe/London"],
@@ -162,26 +158,24 @@ describe("the club-timezone seed and the transitional APP_TIME_ZONE read the sam
       setEnvironment(tz, nextPublicTz);
 
       const seed = readEnvironmentClubTimeZoneSeed();
-      const appTimeZone = await readAppTimeZone();
+      const environmentClubZone = await readEnvironmentClubZone();
 
-      expect(appTimeZone).toBe(expected);
-      expect(seed ?? CLUB_TIME_ZONE_FALLBACK).toBe(appTimeZone);
+      expect(environmentClubZone).toBe(expected);
+      expect(seed ?? CLUB_TIME_ZONE_FALLBACK).toBe(environmentClubZone);
     },
   );
 
-  it("is read in exactly two places in the source tree", () => {
-    // The census that closes the pin's stated limit. Two readings of the
-    // environment's timezone exist on purpose for the length of this epic; a
-    // THIRD would be a second authority nobody had pinned to either, and the
-    // behavioural cases above could not see it. Adding one has to be a decision,
-    // which means updating this list and saying why.
+  it("is read in exactly one place in the production source tree", () => {
+    // The census that closes the pin's stated limit. The seed reader is the one
+    // production reading of the environment's timezone; a SECOND would be an
+    // authority nobody had pinned, and the behavioural cases above could not
+    // see it. Adding one has to be a decision, which means updating this list
+    // and saying why. (The deleted config module was the other entry until
+    // #3567.)
     const found = filesReadingATimeZoneEnvironmentVariable();
 
     expect(found).toEqual([
-      // The transitional bridge every not-yet-migrated call site still reads.
-      // Retired by CT-6 (#2991), and this entry goes with it.
-      "src/config/operational.ts",
-      // The seed for the persisted club timezone — the only other reading.
+      // The seed for the persisted club timezone — the only reading.
       "src/lib/club-time-zone-env.ts",
     ]);
   });
@@ -209,12 +203,12 @@ describe("the club-timezone seed and the transitional APP_TIME_ZONE read the sam
   });
 
   it("shares the same hard-coded New Zealand default", async () => {
-    // If one of the two ever changed its last-resort default, an install with no
-    // TZ at all would persist one zone and format with another.
+    // If one of the two ever changed its last-resort default, the suites would
+    // model an environment zone the seed never offers.
     setEnvironment(null, null);
 
     expect(readEnvironmentClubTimeZoneSeed()).toBeNull();
-    await expect(readAppTimeZone()).resolves.toBe(CLUB_TIME_ZONE_FALLBACK);
+    await expect(readEnvironmentClubZone()).resolves.toBe(CLUB_TIME_ZONE_FALLBACK);
     expect(CLUB_TIME_ZONE_FALLBACK).toBe("Pacific/Auckland");
   });
 });
