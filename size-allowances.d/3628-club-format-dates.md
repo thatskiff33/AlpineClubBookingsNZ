@@ -156,7 +156,7 @@ reason: the required club date format threaded through an already-oversized
   the parameter.
 
 file: src/lib/booking-request.ts
-lines: 3041
+lines: 3043
 reason: the required club date format threaded through an already-oversized
   module (#3566); splitting it is a separate refactor that would not remove
   the parameter.
@@ -168,7 +168,7 @@ reason: the required club date format threaded through an already-oversized
   the parameter.
 
 file: src/lib/school-booking-request.ts
-lines: 2944
+lines: 2942
 reason: the required club date format threaded through an already-oversized
   module (#3566); splitting it is a separate refactor that would not remove
   the parameter.
