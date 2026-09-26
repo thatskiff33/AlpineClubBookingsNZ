@@ -17,7 +17,9 @@ const MESSAGE_SOURCES = [
   "src/lib/rate-derived-night-price-backfill.ts",
 ] as const;
 const REPO_ROOT = path.resolve(__dirname, "../../..");
-const CENT_AMOUNT_REFERENCE = /(?:Cents\b|\bproviderTotal\b|\boutstanding\b)/;
+// The last four names are cent-valued aliases without a `Cents` suffix in the
+// scoped sources. Keep the roster explicit so a new alias needs classification.
+const CENT_AMOUNT_REFERENCE = /(?:Cents\b|\b(?:providerTotal|outstanding|existingTotal|upperBound)\b)/;
 
 function isBareAmountRendering(expression: ts.Expression, file: ts.SourceFile): boolean {
   if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) &&
@@ -87,6 +89,7 @@ describe("operator Xero repair message amounts (INV-SSOT-001)", () => {
       "const d = `Applied ${formatCents(appliedCents, format)}`;",
       "const e = `Applied ${appliedCents !== undefined ? formatCents(appliedCents, format) : \"\"}`;",
       "const f = `Applied ${appliedCents !== undefined ? formatCents(appliedCents, format) : appliedCents}`;",
+      "const g = `Existing ${existingTotal}, upper ${upperBound}`;",
       "const payload = { amountCents: appliedCents };",
     ].join("\n");
     expect(bareAmountInterpolations(source, "fixture.ts")).toEqual([
@@ -95,6 +98,8 @@ describe("operator Xero repair message amounts (INV-SSOT-001)", () => {
       "fixture.ts:3: providerTotal",
       "fixture.ts:3: outstanding",
       "fixture.ts:6: appliedCents !== undefined ? formatCents(appliedCents, format) : appliedCents",
+      "fixture.ts:7: existingTotal",
+      "fixture.ts:7: upperBound",
     ]);
   });
 
@@ -117,7 +122,17 @@ describe("operator Xero repair message amounts (INV-SSOT-001)", () => {
       "formatCents(item.derivedTotalCents, format)",
       "item.derivedTotalCents",
     ],
-  ])("mutation-proves the expanded census reaches %s", (filename, formatted, bare) => {
+    [
+      "src/lib/xero-applied-credit-allocation-repair.ts",
+      "formatCents(existingTotal, format)",
+      "existingTotal",
+    ],
+    [
+      "src/lib/xero-applied-credit-allocation-repair.ts",
+      "formatCents(upperBound, format)",
+      "upperBound",
+    ],
+  ])("mutation-proves the scoped census reaches %s: %s", (filename, formatted, bare) => {
     const original = fs.readFileSync(path.join(REPO_ROOT, filename), "utf8");
     expect(original).toContain(formatted);
     const mutated = original.replace(formatted, bare);
