@@ -1314,6 +1314,120 @@ describe("enqueueXeroModificationCreditNoteOperation", () => {
       })
     );
   });
+
+  // #3535 (`INV-PAY-017`): the internet-banking hold-expiry release enqueues
+  // this note inside its own transaction, anchored on the booking, told it
+  // clears an invoice nobody paid.
+  it("reads, dedupes and inserts through the supplied store for an unpaid-invoice clearing note", async () => {
+    const storeBookingFindUnique = vi.fn().mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: "inv_existing" },
+    });
+    const storeLinkFindFirst = vi.fn().mockResolvedValue(null);
+    const storeOperationFindFirst = vi.fn().mockResolvedValue(null);
+    const store = {
+      booking: { findUnique: storeBookingFindUnique },
+      xeroObjectLink: { findFirst: storeLinkFindFirst },
+      xeroSyncOperation: { findFirst: storeOperationFindFirst },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      enqueueXeroModificationCreditNoteOperation(
+        { bookingId: "booking_1", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        { store }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_mod_credit_note_1",
+      message: "Xero modification credit note queued for background processing.",
+    });
+
+    expect(storeBookingFindUnique).toHaveBeenCalledTimes(1);
+    expect(storeLinkFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          localModel: "Booking",
+          localId: "booking_1",
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+        }),
+      })
+    );
+    expect(storeOperationFindFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.findUniqueBooking).not.toHaveBeenCalled();
+    expect(mocks.findFirstLink).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Booking",
+        localId: "booking_1",
+        status: "PENDING",
+        // The booking-anchored clearing key the never-captured cancel path and
+        // the repair tool's cancelled-open-invoice arm also mint.
+        idempotencyKey: "booking:booking_1:mod-credit-note:15000:v1",
+        correlationKey: "booking:booking_1:mod-credit-note:15000:v1",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_1",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        },
+        store,
+      })
+    );
+  });
+
+  it("enqueues nothing new when the booking already holds a clearing note, read through the store", async () => {
+    const store = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "booking_1",
+          payment: { xeroInvoiceId: "inv_existing" },
+        }),
+      },
+      xeroObjectLink: { findFirst: vi.fn().mockResolvedValue({ id: "link_1" }) },
+      xeroSyncOperation: { findFirst: vi.fn() },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      enqueueXeroModificationCreditNoteOperation(
+        { bookingId: "booking_1", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        { store }
+      )
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "Xero modification credit note already linked for this change.",
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("returns the queued operation instead of a second one when the same clearing note is already pending", async () => {
+    const store = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "booking_1",
+          payment: { xeroInvoiceId: "inv_existing" },
+        }),
+      },
+      xeroObjectLink: { findFirst: vi.fn().mockResolvedValue(null) },
+      xeroSyncOperation: {
+        findFirst: vi.fn().mockResolvedValue({ id: "op_already_queued" }),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      enqueueXeroModificationCreditNoteOperation(
+        { bookingId: "booking_1", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        { store }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_already_queued",
+      message: "Xero modification credit note is already queued for background processing.",
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
 });
 
 describe("enqueueXeroModificationAccountCreditNoteOperation", () => {
@@ -2051,6 +2165,40 @@ describe("processQueuedXeroOutboxOperations", () => {
       syncOperationId: "op_mod_credit_note_1",
       format: CLUB_FORMAT_TEST,
     });
+  });
+
+  it("hands a queued unpaid-invoice clearing note to the builder as one (#3535)", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_clearing_1",
+        localId: "booking_1",
+        localModel: "Booking",
+        createdByMemberId: null,
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_1",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        },
+      },
+    ]);
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn_clear");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual(
+      expect.objectContaining({ processed: 1, succeeded: 1, failed: 0 })
+    );
+
+    const [params] = mocks.createXeroCreditNoteForModification.mock.calls[0]!;
+    expect(params).toEqual(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        refundAmountCents: 15000,
+        clearsUnpaidInvoice: true,
+        syncOperationId: "op_clearing_1",
+      })
+    );
+    expect(params).not.toHaveProperty("refundMethod");
   });
 
   it("claims and processes queued credit-note allocation operations", async () => {

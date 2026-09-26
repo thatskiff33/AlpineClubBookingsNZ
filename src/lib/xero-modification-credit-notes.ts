@@ -34,11 +34,21 @@ import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 import {
   buildRefundDocumentDescription,
   buildRefundDocumentReference,
-  type RefundMethod,
+  modificationNoteWording,
+  type ModificationNoteWording,
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
 
+/**
+ * `refundMethod` is how the reduction went back to the member (`INV-PAY-101`,
+ * #3529) — the wording on the note. This note is allocated against the
+ * original invoice rather than settled by a payment, so the method changes no
+ * account here; it is what the treasurer reads. Absent on rows queued before
+ * the field existed, which were all card refunds by this builder's own history.
+ * `clearsUnpaidInvoice` instead says the invoice is closed because nobody paid
+ * it (`INV-PAY-017`, #3535) — the same allocation, no refund named.
+ */
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;
   refundAmountCents: number;
@@ -47,20 +57,12 @@ export async function createXeroCreditNoteForModification(params: {
   repairExistingLink?: boolean;
   syncOperationId?: string;
   /**
-   * How the reduction went back to the member (`INV-PAY-101`, #3529) — the
-   * wording on the note. This note is allocated against the original invoice
-   * rather than settled by a payment, so the method changes no account here;
-   * it is what the treasurer reads. Absent on rows queued before the field
-   * existed, which were all card refunds by this builder's own history.
-   */
-  refundMethod?: RefundMethod;
-  /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
    * by the job or request that raised this document, never here.
    */
   format: ClubFormat;
-}): Promise<string | null> {
+} & ModificationNoteWording): Promise<string | null> {
   const {
     bookingId,
     refundAmountCents,
@@ -69,7 +71,12 @@ export async function createXeroCreditNoteForModification(params: {
     repairExistingLink,
     syncOperationId,
   } = params;
-  const refundMethod: RefundMethod = params.refundMethod ?? "card";
+  const wording = modificationNoteWording(params);
+  // Recorded on the operation so the treasurer's audit trail and any repair
+  // read the same choice the note was built with.
+  const recordedWording = params.clearsUnpaidInvoice
+    ? { clearsUnpaidInvoice: true as const }
+    : { refundMethod: params.refundMethod ?? "card" };
 
   if (refundAmountCents <= 0) {
     if (syncOperationId) {
@@ -135,7 +142,7 @@ export async function createXeroCreditNoteForModification(params: {
 
   const modRefundLineItem: LineItem = {
     description: buildRefundDocumentDescription({
-      method: refundMethod,
+      method: wording,
       bookingId,
       modificationId: bookingModificationId ?? null,
     }),
@@ -162,7 +169,7 @@ export async function createXeroCreditNoteForModification(params: {
     date: modificationCreditNoteDate,
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: itemised?.lineItems ?? [modRefundLineItem],
-    reference: buildRefundDocumentReference({ method: refundMethod, bookingId }),
+    reference: buildRefundDocumentReference({ method: wording, bookingId }),
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
@@ -180,7 +187,7 @@ export async function createXeroCreditNoteForModification(params: {
     creditNotes: [buildCreditNote(contactId)],
     invoiceId: originalInvoiceId,
     refundAmountCents,
-    refundMethod,
+    ...recordedWording,
     ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
@@ -222,7 +229,7 @@ export async function createXeroCreditNoteForModification(params: {
         creditNotes: [buildCreditNote(resolvedContactId)],
         invoiceId: originalInvoiceId,
         refundAmountCents,
-        refundMethod,
+        ...recordedWording,
         ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>

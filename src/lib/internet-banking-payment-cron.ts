@@ -27,7 +27,7 @@ import {
 } from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import {
-  enqueueXeroRefundCreditNoteOperation,
+  enqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
@@ -156,9 +156,9 @@ function releaseOneHold(paymentId: string, now: Date) {
       // (1) Issued invoice (#1597 trace): the create-time hold-slots shape is
       // CONFIRMED, and booking-create only enqueues the invoice for a
       // PAYMENT_PENDING booking, so that shape reaches release with NO invoice
-      // (`xeroInvoiceId` null). Enqueuing a refund note for it minted a
-      // permanently-failing outbox op — the worker's createXeroCreditNote
-      // throws "No Xero invoice linked to payment" (xero-credit-notes.ts).
+      // (`xeroInvoiceId` null). Enqueuing a note for it minted a
+      // permanently-failing outbox op before #1597 — the worker had no invoice
+      // to credit.
       //
       // (2) Never-captured payment: a clearing note is only ever right for money
       // that never settled. If ledger evidence shows the payment captured, its
@@ -219,13 +219,28 @@ function releaseOneHold(paymentId: string, now: Date) {
       // enqueue is a pure local insert — the Xero call happens in the outbox
       // worker, outside this transaction. Guard on `> 0` exactly like the
       // cancel path (#1547): a zero amount (no invoice, or an invoice already
-      // fully credit-noted) enqueues nothing at all — no refund note, no
+      // fully credit-noted) enqueues nothing at all — no note, no
       // permanently-failing outbox op.
+      //
+      // #3535: the SAME note the never-captured cancel path raises — anchored
+      // on the booking, ALLOCATED against its invoice, no credit-note payment —
+      // so the unpaid invoice closes and no money is recorded as moving. It
+      // was the cash-refund note, which is never allocated and named a bank
+      // transfer refund for money nobody paid. The wording now says the
+      // invoice was cleared because the booking was not paid.
+      // Idempotency: this line runs once per hold (the guard set above), and
+      // the enqueue dedupes on `booking:<id>:mod-credit-note:<cents>:v1` plus
+      // the booking's active MODIFICATION_CREDIT_NOTE link — the key the cancel
+      // path and the repair tool's cancelled-open-invoice arm also use, so one
+      // booking gets one clearing note whichever of them gets there first.
       let queueOperationId: string | null = null;
       if (xeroClearingAmountCents > 0) {
-        const queued = await enqueueXeroRefundCreditNoteOperation(
-          fresh.id,
-          xeroClearingAmountCents,
+        const queued = await enqueueXeroModificationCreditNoteOperation(
+          {
+            bookingId: fresh.bookingId,
+            refundAmountCents: xeroClearingAmountCents,
+            clearsUnpaidInvoice: true,
+          },
           { store: tx },
         );
         queueOperationId = queued.queueOperationId;

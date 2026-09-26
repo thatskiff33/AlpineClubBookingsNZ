@@ -14,11 +14,13 @@ import {
   buildRefundPaymentReference,
   defaultRefundMethodForPaymentSource,
   describeRefundMethod,
+  modificationNoteWording,
   parseRefundMethod,
   REFUND_METHOD_WORDING,
   REFUND_METHODS,
   refundMethodForSettlementMethod,
   refundSettlementMappingKey,
+  UNPAID_INVOICE_CLEARING_WORDING,
 } from "@/lib/xero-refund-method";
 
 describe("the owner's three wordings (INV-PAY-101)", () => {
@@ -56,6 +58,30 @@ describe("the owner's three wordings (INV-PAY-101)", () => {
     expect(
       buildRefundPaymentReference({ method: "card", clubName: "Test Club", paymentId: "cmpaymentx1" }),
     ).toBe("Refund against original credit card - Test Club payment cmpaymen");
+  });
+});
+
+/**
+ * #3535 (`INV-PAY-017`): the note that closes an invoice nobody paid is not a
+ * refund, so it is not a fourth method — it names why the invoice was cleared.
+ */
+describe("the unpaid-invoice clearing wording (INV-PAY-017)", () => {
+  it("says the invoice was cleared because the booking was not paid, and claims no refund", () => {
+    expect(UNPAID_INVOICE_CLEARING_WORDING).toBe("Invoice cleared - booking not paid");
+    expect(UNPAID_INVOICE_CLEARING_WORDING).not.toMatch(/refund/i);
+    expect(REFUND_METHODS).not.toContain("unpaid-invoice-clearing");
+    expect(
+      buildRefundDocumentDescription({ method: "unpaid-invoice-clearing", bookingId: "cmabcdefgh123" }),
+    ).toBe("Invoice cleared - booking not paid - Booking cmabcdef");
+    expect(
+      buildRefundDocumentReference({ method: "unpaid-invoice-clearing", bookingId: "cmabcdefgh123" }),
+    ).toBe("Invoice cleared - booking not paid - Booking cmabcdef");
+  });
+
+  it("is what a modification note says when told it clears an unpaid invoice, and card when told nothing", () => {
+    expect(modificationNoteWording({ clearsUnpaidInvoice: true })).toBe("unpaid-invoice-clearing");
+    expect(modificationNoteWording({ refundMethod: "internet-banking" })).toBe("internet-banking");
+    expect(modificationNoteWording({})).toBe("card");
   });
 });
 
@@ -119,10 +145,14 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("nobody else spells the wording (INV-SSOT)", () => {
-  it("finds each of the three strings in exactly one module under src/lib", () => {
+  it("finds each wording in exactly one module under src/lib", () => {
     const root = join(process.cwd(), "src", "lib");
     const files = walk(root);
-    for (const wording of Object.values(REFUND_METHOD_WORDING)) {
+    // The three refund methods, and the unpaid-invoice clearing note's (#3535).
+    for (const wording of [
+      ...Object.values(REFUND_METHOD_WORDING),
+      UNPAID_INVOICE_CLEARING_WORDING,
+    ]) {
       // Any quoting counts: no lint rule pins double quotes, so a copy in
       // single quotes or a template literal is still a copy.
       const spelled = new RegExp(`['"\`]${wording}['"\`]`);

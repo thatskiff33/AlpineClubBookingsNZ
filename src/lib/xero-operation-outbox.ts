@@ -35,7 +35,7 @@ import {
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
-import type { RefundMethod } from "@/lib/xero-refund-method";
+import type { ModificationNoteWording } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
@@ -2240,17 +2240,26 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId?: string;
-    /** `INV-PAY-101`: the wording the note carries; card when omitted. */
-    refundMethod?: RefundMethod;
-  },
-  options?: { createdByMemberId?: string }
+  } & ModificationNoteWording,
+  options?: {
+    createdByMemberId?: string;
+    /**
+     * The caller's transaction client, so the outbox row commits with the state
+     * change that owes it (#3535: the internet-banking hold-expiry release,
+     * `INV-PAY-017`). Every read and the insert go through it, so the dedupe
+     * below sees that transaction's own uncommitted rows. Defaults to `prisma`.
+     */
+    store?: Prisma.TransactionClient;
+  }
 ) {
   const {
     bookingId,
     refundAmountCents,
     bookingModificationId,
     refundMethod,
+    clearsUnpaidInvoice,
   } = params;
+  const db = options?.store ?? prisma;
 
   if (refundAmountCents <= 0) {
     return {
@@ -2259,7 +2268,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
     };
   }
 
-  const booking = await prisma.booking.findUnique({
+  const booking = await db.booking.findUnique({
     where: { id: bookingId },
     select: {
       id: true,
@@ -2285,7 +2294,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
+  const existingLink = await db.xeroObjectLink.findFirst({
     where: {
       localModel,
       localId,
@@ -2311,7 +2320,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
     "v1"
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -2349,9 +2358,14 @@ export async function enqueueXeroModificationCreditNoteOperation(
       bookingId,
       refundAmountCents,
       bookingModificationId: bookingModificationId ?? null,
-      ...(refundMethod ? { refundMethod } : {}),
+      ...(clearsUnpaidInvoice
+        ? { clearsUnpaidInvoice: true }
+        : refundMethod
+          ? { refundMethod }
+          : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: db,
   });
 
   return {
@@ -3085,7 +3099,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingId: payload.bookingId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
-          refundMethod: payload.refundMethod,
+          ...(payload.clearsUnpaidInvoice
+            ? { clearsUnpaidInvoice: true as const }
+            : { refundMethod: payload.refundMethod }),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,

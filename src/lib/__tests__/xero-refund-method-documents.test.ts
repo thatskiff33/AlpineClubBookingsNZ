@@ -395,6 +395,58 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
       "Refund against original credit card - Booking cmbookin",
     );
   });
+
+  // #3535 (`INV-PAY-017`): a released internet-banking hold clears an invoice
+  // nobody paid. The note closes it by ALLOCATION, records no payment, and
+  // says why the invoice was cleared rather than naming a refund.
+  it("clears an unpaid invoice by allocation, records no payment, and names no refund", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.[0]?.description).toBe(
+      "Invoice cleared - booking not paid - Booking cmbookin",
+    );
+    expect(note.reference).toBe("Invoice cleared - booking not paid - Booking cmbookin");
+    expect(note.lineItems?.[0]?.unitAmount).toBe(150);
+    expect(`${note.reference} ${note.lineItems?.[0]?.description}`).not.toMatch(/refund/i);
+
+    // Allocated against the booking's own invoice for the full amount…
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    const allocation = mocks.createCreditNoteAllocation.mock.calls[0]![2] as {
+      allocations: Array<{ invoice: { invoiceID: string }; amount: number }>;
+    };
+    expect(allocation.allocations).toEqual([
+      expect.objectContaining({ invoice: { invoiceID: "invoice_1" }, amount: 150 }),
+    ]);
+    // …and no credit-note payment: no money is recorded as leaving any account.
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    expect(settlingPayment()).toBeUndefined();
+
+    // The choice is recorded on the operation, and no refund method with it.
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      localModel: string;
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.localModel).toBe("Booking");
+    expect(recorded.requestPayload).toEqual(
+      expect.objectContaining({ clearsUnpaidInvoice: true, invoiceId: "invoice_1" }),
+    );
+    expect(recorded.requestPayload).not.toHaveProperty("refundMethod");
+    expect(completion()).toEqual(
+      expect.objectContaining({
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_1",
+        extraLinks: expect.arrayContaining([
+          expect.objectContaining({ role: "MODIFICATION_CREDIT_NOTE_ALLOCATION" }),
+        ]),
+      }),
+    );
+  });
 });
 
 /**
