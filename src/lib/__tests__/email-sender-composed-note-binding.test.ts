@@ -48,8 +48,8 @@ import {
   sendAdminDuplicateCaptureRefundAlert,
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
-  sendAdminSecondInstrumentSettlementConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
+import { sendAdminSecondInstrumentSettlementConflictAlert } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
   sendSplitGuestPortionCancelledEmail,
