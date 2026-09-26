@@ -595,24 +595,27 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - The hold-expiry release and its invoice-clearing Xero credit-note outbox row
   commit in ONE transaction (#1357): the release marks the hold consumed
   (re-runs skip it), so an intent enqueued post-commit would ride a crash
-  window with no self-heal. The outbox enqueue is a pure local insert — the
-  Xero call itself stays in the outbox worker, outside the transaction. The
-  clearing note is sized like the never-captured cancel path (#1597), NOT the
-  credit-reduced payment amount: the booking invoice is raised at the FULL
-  finalPrice, so the note is `max(0, finalPrice + changeFee − Xero-allocated
-  applied credit)` (only credit already allocated to the invoice AS A XERO
-  credit note — `BOOKING_APPLIED` rows carrying `xeroCreditNoteId` — is
-  subtracted, and the 100% local restore does not double-count: the allocated
-  note stays on the cancelled invoice while the restore re-creates the credit
-  locally, netting out). Since #1620 (allocate-existing, see the invariant below)
-  that term is non-zero for an Internet-Banking booking whose applied credit was
-  allocated to its invoice; before #1620 locally-applied credit never reduced the
-  invoice and the term was always 0. It is gated on an ISSUED
-  invoice: the create-time hold-slots shape is CONFIRMED and booking-create
-  enqueues the invoice only for PAYMENT_PENDING, so that shape reaches release
-  with no invoice and enqueues nothing (a refund note against no invoice was a
-  permanently-failing outbox op pre-#1597). `scripts/audit-ib-hold-clearing.ts`
-  reports invoices under-cleared by the pre-fix sizing (read-only).
+  window with no self-heal. The enqueue is a pure local insert; the Xero call
+  stays in the outbox worker, outside the transaction.
+- **The note clears the invoice; it is not a refund** (#3535). It is the
+  never-captured cancel path's booking-anchored modification credit note
+  (`clearsUnpaidInvoice`), ALLOCATED against the invoice so it closes, with no
+  credit-note payment, worded *Invoice cleared - booking not paid* (homed and
+  censused with the refund wordings in `src/lib/xero-refund-method.ts`). It
+  shares the cancel path's booking-anchored clearing key, so a booking gets one
+  clearing note; holds released before #3535 are never re-selected.
+- It is sized like the never-captured cancel path (#1597), NOT the
+  credit-reduced payment amount: the invoice is raised at the FULL finalPrice,
+  so the note is `max(0, finalPrice + changeFee − Xero-allocated applied
+  credit)`. Only credit already allocated to the invoice as a Xero credit note
+  is subtracted (non-zero since #1620), and the 100% local restore does not
+  double-count: the allocated note stays on the cancelled invoice while the
+  restore re-creates the credit locally. It is gated on an ISSUED invoice: the
+  create-time hold-slots shape reaches release with none and enqueues nothing.
+  `scripts/audit-ib-hold-clearing.ts` reports invoices under-cleared by the
+  pre-#1597 sizing (read-only).
+- Pinned by `internet-banking-payment-cron.test.ts`,
+  `xero-refund-method-documents.test.ts` and `xero-operation-outbox.test.ts`.
 
 ## INV-PAY-018
 

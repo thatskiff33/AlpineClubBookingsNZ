@@ -289,7 +289,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
-| `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
+| `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
