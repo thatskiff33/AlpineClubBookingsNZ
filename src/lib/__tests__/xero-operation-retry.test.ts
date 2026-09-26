@@ -380,6 +380,80 @@ describe("getXeroOperationRetryMeta", () => {
   });
 });
 
+// #3535: a FAILED booking-anchored invoice-clearing note (hold expiry, the
+// never-captured cancel, the repair re-queue) was refused by the retry screen,
+// leaving the unpaid invoice open with no way back.
+describe("booking-anchored clearing note retries (#3535)", () => {
+  const clearingOperation = (requestPayload: Record<string, unknown>, queueType: string | null = "MODIFICATION_CREDIT_NOTE") =>
+    makeOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      queueType,
+      requestPayload,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("marks a failed clearing note retryable from its queued or its executed payload", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation({
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_7",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        })
+      )
+    ).toEqual({ supported: true, reason: null });
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation(
+          { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+          null
+        )
+      )
+    ).toEqual({ supported: true, reason: null });
+  });
+
+  it("refuses a booking-anchored row with no recorded amount", () => {
+    expect(
+      getXeroOperationRetryMeta(clearingOperation({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_7" }))
+        .supported
+    ).toBe(false);
+  });
+
+  it("replays the recorded amount and keeps the clearing wording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      clearingOperation(
+        { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        null
+      )
+    );
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn_7");
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero invoice-clearing credit note creation." });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "booking_7",
+      refundAmountCents: 15000,
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      clearsUnpaidInvoice: true,
+      format: CLUB_FORMAT_TEST,
+    });
+    const [params] = mocks.createXeroCreditNoteForModification.mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
+  });
+});
+
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -1345,6 +1345,26 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else {
+          // #3535: a live or failed clearing operation the retry helper cannot
+          // replay must still be SEEN - silence here left an unpaid invoice open
+          // with nothing in the report (the #1356 third-arm rule).
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+              ? "A Xero invoice-clearing credit note operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero invoice-clearing credit note operation looks stuck."
+                : "A Xero invoice-clearing credit note operation is already pending or running.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              retryUnsupportedReason: blockingOperation.retryMeta.reason,
+            },
+            actionKeys: [],
+          });
         }
       } else {
         const allocation = resolveObjectFromCandidates({

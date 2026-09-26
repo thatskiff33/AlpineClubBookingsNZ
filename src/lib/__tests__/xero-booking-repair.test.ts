@@ -566,6 +566,68 @@ describe("runBookingXeroRepair", () => {
     expect(params).not.toHaveProperty("refundMethod");
   });
 
+  // #3535: a FAILED clearing note is replayed, never skipped; a blocking one
+  // the retry helper cannot replay is at least reported.
+  it("retries a failed booking-anchored clearing note and reports one it cannot retry (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const failedClearing = (requestPayload: Record<string, unknown>) =>
+      makeOperation({
+        id: "operation_clearing",
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        status: "FAILED",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload,
+      });
+
+    const retryable = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [
+          failedClearing({
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            refundAmountCents: 10000,
+            clearsUnpaidInvoice: true,
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const retryableBooking = retryable.passes[0].bookings[0];
+    expect(retryableBooking.findings).toContainEqual(
+      expect.objectContaining({ code: "BLOCKED_BY_XERO_OPERATION", safeToAutoApply: true })
+    );
+    expect(retryableBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(retryableBooking.actions.length).toBeGreaterThan(0);
+
+    const unreadable = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [failedClearing({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_1" })],
+      }),
+      scope: { all: true },
+    });
+    const unreadableBooking = unreadable.passes[0].bookings[0];
+    expect(unreadableBooking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        safeToAutoApply: false,
+        actions: [],
+      })
+    );
+  });
+
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
   // cancel path's own helper — applied credit already allocated to the invoice
   // is not cleared twice, and a fully allocated invoice needs no note at all.
