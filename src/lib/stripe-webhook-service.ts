@@ -10,6 +10,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
@@ -880,7 +881,10 @@ async function handleAdditionalModificationPaymentSucceeded(
     },
   });
 
-  if (bookingRecord?.status === "CANCELLED") {
+  // #3641: the one predicate for "this capture is refunded, not kept", which
+  // the late-capture Xero release also reads to decide a retired invoice stays
+  // unsent. Every other status keeps the money and gets its invoice or an alert.
+  if (bookingRecord && isLateCaptureRefundedBookingStatus(bookingRecord.status)) {
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,

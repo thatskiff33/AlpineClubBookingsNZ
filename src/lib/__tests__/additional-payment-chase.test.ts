@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ADDITIONAL_OWED_BOOKING_STATUSES,
   ADDITIONAL_PAYABLE_BOOKING_STATUSES,
   isAdditionalPayableBookingStatus,
+  isAdditionalPaymentDoorOpenForBooking,
   isAdditionalPaymentOwed,
+  isLateCaptureRefundedBookingStatus,
   payableAdditionalPaymentIntentId,
   resolveAdditionalPaymentChase,
+  resolveAdditionalPaymentDoor,
 } from "@/lib/additional-payment-chase";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 
@@ -178,6 +181,98 @@ describe("payableAdditionalPaymentIntentId", () => {
         payment: null,
       }),
     ).toBeNull();
+  });
+});
+
+/**
+ * #3641, `INV-PAY-105`: the whole pay door, Stripe's half included. The route
+ * hands out a secret only on `payable`; the Xero reaper retires only on `closed`.
+ */
+describe("resolveAdditionalPaymentDoor", () => {
+  const openInput = {
+    bookingStatus: "CONFIRMED",
+    bookingDeletedAt: null,
+    payment: {
+      additionalPaymentIntentId: "pi_ask",
+      additionalPaymentStatus: "FAILED",
+    },
+  };
+
+  it("is payable while Stripe still lets the intent be confirmed", async () => {
+    for (const status of [
+      "requires_payment_method",
+      "requires_confirmation",
+      "requires_action",
+    ]) {
+      const intent = { status, client_secret: "secret" };
+      await expect(
+        resolveAdditionalPaymentDoor(openInput, async () => intent),
+      ).resolves.toEqual({ state: "payable", intent });
+    }
+  });
+
+  it("is closed for an intent Stripe cancelled, though our rows read it as a decline", async () => {
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => ({ status: "canceled" })),
+    ).resolves.toEqual({ state: "closed" });
+  });
+
+  it("is closed when Stripe has no such intent, and never asks Stripe when the local door is shut", async () => {
+    const missing = Object.assign(new Error("No such payment_intent"), {
+      type: "StripeInvalidRequestError",
+      code: "resource_missing",
+    });
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => {
+        throw missing;
+      }),
+    ).resolves.toEqual({ state: "closed" });
+
+    const retrieve = vi.fn();
+    await expect(
+      resolveAdditionalPaymentDoor(
+        { ...openInput, bookingStatus: "CANCELLED" },
+        retrieve,
+      ),
+    ).resolves.toEqual({ state: "closed" });
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  it("reports money Stripe has taken, or is taking, that our rows have not caught up with", async () => {
+    for (const status of ["succeeded", "requires_capture", "processing"]) {
+      await expect(
+        resolveAdditionalPaymentDoor(openInput, async () => ({ status })),
+      ).resolves.toEqual({ state: "captured-at-provider" });
+    }
+  });
+
+  it("lets any other Stripe failure through, so no caller mistakes an outage for an answer", async () => {
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => {
+        throw new Error("stripe unavailable");
+      }),
+    ).rejects.toThrow("stripe unavailable");
+  });
+});
+
+describe("the booking half of the door, and which captures are refunded (#3641)", () => {
+  it("opens only for a live booking in a payable lifecycle", () => {
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "PAID", bookingDeletedAt: null }),
+    ).toBe(true);
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "PAID", bookingDeletedAt: new Date() }),
+    ).toBe(false);
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "BUMPED", bookingDeletedAt: null }),
+    ).toBe(false);
+  });
+
+  it("refunds a capture on a CANCELLED booking only; every other closed status keeps the money", () => {
+    expect(isLateCaptureRefundedBookingStatus("CANCELLED")).toBe(true);
+    for (const status of ["BUMPED", "AWAITING_REVIEW", "PENDING", "WAITLISTED", "CONFIRMED", null]) {
+      expect(isLateCaptureRefundedBookingStatus(status)).toBe(false);
+    }
   });
 });
 

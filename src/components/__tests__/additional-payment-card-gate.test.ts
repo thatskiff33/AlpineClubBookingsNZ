@@ -158,30 +158,38 @@ describe("the member's additional-payment card", () => {
       if (!container) return true;
       const guard = (container as ts.JsxExpression).expression;
       if (!guard) return true;
-      return !callsFunction(guard, "isAdditionalPayableBookingStatus");
+      return !callsFunction(guard, "isAdditionalPaymentDoorOpenForBooking");
     });
     expect(
       ungated.map((site) => site.file),
       "every AdditionalPaymentCard render site must sit inside a JSX expression " +
-        "guard that calls isAdditionalPayableBookingStatus",
+        "guard that calls isAdditionalPaymentDoorOpenForBooking (#3641: the " +
+        "booking half of the member's pay door)",
     ).toEqual([]);
   });
 
   it("is gated by the same predicate as the route that hands out the secret", () => {
-    // #3641: the route asks the member's pay door, which the Xero outbox reaper
-    // shares, and the door is built from this same predicate. Both halves are
-    // checked, so neither hop can drop it.
+    // #3641: ONE pay door. The route asks the whole door, the Xero outbox
+    // reaper asks it too, and every link of the chain down to the lifecycle list
+    // is checked, so no hop can drop a clause and leave the card, the secret and
+    // the invoice disagreeing.
     const route = parse(SECRET_ROUTE);
-    expect(callsFunction(route, "payableAdditionalPaymentIntentId")).toBe(true);
+    expect(callsFunction(route, "resolveAdditionalPaymentDoor")).toBe(true);
 
     const chase = parse(CHASE_MODULE);
-    const door = findFirst(
-      chase,
-      (candidate) =>
-        ts.isFunctionDeclaration(candidate) &&
-        candidate.name?.text === "payableAdditionalPaymentIntentId",
-    );
-    expect(door, "payableAdditionalPaymentIntentId not found").not.toBeNull();
-    expect(callsFunction(door!, "isAdditionalPayableBookingStatus")).toBe(true);
+    const chain: Array<[string, string]> = [
+      ["resolveAdditionalPaymentDoor", "payableAdditionalPaymentIntentId"],
+      ["payableAdditionalPaymentIntentId", "isAdditionalPaymentDoorOpenForBooking"],
+      ["isAdditionalPaymentDoorOpenForBooking", "isAdditionalPayableBookingStatus"],
+    ];
+    for (const [caller, callee] of chain) {
+      const declaration = findFirst(
+        chase,
+        (candidate) =>
+          ts.isFunctionDeclaration(candidate) && candidate.name?.text === caller,
+      );
+      expect(declaration, `${caller} not found`).not.toBeNull();
+      expect(callsFunction(declaration!, callee), `${caller} -> ${callee}`).toBe(true);
+    }
   });
 });

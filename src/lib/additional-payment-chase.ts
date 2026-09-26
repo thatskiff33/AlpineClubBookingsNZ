@@ -24,6 +24,8 @@
  * we would chase a member for money they do not owe.
  */
 
+import { isStripeResourceMissingError } from "@/lib/stripe-errors";
+
 /** Days after the extra was raised before the first reminder goes out. */
 export const ADDITIONAL_PAYMENT_REMINDER_DAYS = 3;
 
@@ -125,24 +127,44 @@ export function isAdditionalPayableBookingStatus(
 }
 
 /**
- * THE MEMBER'S PAY DOOR, as one predicate (#3641, `INV-PAY-105`): the
- * additional PaymentIntent a member can still pay right now, or `null`.
+ * THE BOOKING HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`): may this
+ * booking still be shown, and take, a card payment for an outstanding addition
+ * at all? Not deleted, and in `ADDITIONAL_PAYABLE_BOOKING_STATUSES`.
  *
- * `GET /api/bookings/[id]/additional-payment-secret` hands out this intent's
- * client secret and nothing else, with no age limit, and the reminder cron
- * chases it until check-in. So "can the member still pay this ask?" has
- * exactly one answer, and it is this one. The Xero outbox reaper asks the same
- * question before it retires a supplementary invoice parked on an intent: an
- * invoice waiting on an ask this door still hands out is not stale, however
- * old it is or however many cards were declined against it.
- *
- * The door is closed when the booking no longer names the intent (a later
- * change superseded it, or an officer withdrew it: the `Payment` columns
- * always describe the LATEST additional transaction), when that ask was
- * already collected, when the booking was deleted, or when its lifecycle can
- * no longer take a card payment for an addition (CANCELLED, BUMPED).
+ * Its own predicate because the booking page's pay card asks exactly this and
+ * no more. The card is shown for an uncollected amount even when no intent
+ * exists yet (a failed mint), where it explains the amount is still owing
+ * (#3340 fix round), so it cannot ask the whole door below, which needs the
+ * intent. Both call this, so the card, the secret route and the Xero reaper
+ * share one lifecycle rule.
  */
-export function payableAdditionalPaymentIntentId(input: {
+export function isAdditionalPaymentDoorOpenForBooking(input: {
+  bookingStatus: string | null | undefined;
+  bookingDeletedAt: Date | null;
+}): boolean {
+  return (
+    !input.bookingDeletedAt &&
+    isAdditionalPayableBookingStatus(input.bookingStatus)
+  );
+}
+
+/**
+ * The booking state in which a captured additional payment is REFUNDED rather
+ * than kept (#3641). The Stripe webhook routes such a capture to
+ * `handleCancelledBookingAdditionalPaymentSucceeded`, and the late-capture Xero
+ * release leaves a retired invoice unsent for exactly the same bookings. One
+ * predicate, so the two can never disagree about which captures are kept: any
+ * other status keeps the money, so its invoice is re-issued or an officer is
+ * told. A soft-deleted booking is always CANCELLED (`INV-ADDPAY-030`).
+ */
+export function isLateCaptureRefundedBookingStatus(
+  status: string | null | undefined,
+): boolean {
+  return status === "CANCELLED";
+}
+
+/** The pay door's local inputs: the booking and its `Payment` summary columns. */
+export interface AdditionalPaymentDoorInput {
   bookingStatus: string | null | undefined;
   bookingDeletedAt: Date | null;
   payment:
@@ -152,17 +174,92 @@ export function payableAdditionalPaymentIntentId(input: {
       }
     | null
     | undefined;
-}): string | null {
+}
+
+/**
+ * THE LOCAL HALF OF THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`): the
+ * additional PaymentIntent the booking's own rows say the member can still pay,
+ * or `null`. `resolveAdditionalPaymentDoor` below adds Stripe's half and is the
+ * door itself; this is its first step, and the answer for any caller that has no
+ * provider read to make.
+ *
+ * Closed when the booking no longer names the intent (a later change superseded
+ * it, or an officer withdrew it: the `Payment` columns always describe the
+ * LATEST additional transaction), when that intent's status is SUCCEEDED, or when
+ * the booking half above is closed. It tests the intent's STATUS, not the amount;
+ * the amount test is `isAdditionalAmountUncollected`, which the page card asks.
+ */
+export function payableAdditionalPaymentIntentId(
+  input: AdditionalPaymentDoorInput,
+): string | null {
   const { payment } = input;
   if (
     !payment?.additionalPaymentIntentId ||
     payment.additionalPaymentStatus === "SUCCEEDED" ||
-    input.bookingDeletedAt !== null ||
-    !isAdditionalPayableBookingStatus(input.bookingStatus)
+    !isAdditionalPaymentDoorOpenForBooking(input)
   ) {
     return null;
   }
   return payment.additionalPaymentIntentId;
+}
+
+/**
+ * Stripe statuses in which the intent's money has been taken or is being taken,
+ * so no second confirmation may be offered.
+ */
+const PROVIDER_CAPTURED_INTENT_STATUSES: readonly string[] = [
+  "succeeded",
+  "requires_capture",
+  "processing",
+];
+
+/** The pay door's three answers. */
+export type AdditionalPaymentDoorAnswer<Intent> =
+  /** The member may pay this intent now: hand out its client secret; keep its invoice waiting. */
+  | { state: "payable"; intent: Intent }
+  /** Stripe has taken (or is taking) the money and our rows have not caught up: refuse a second form; keep the invoice for the capture to release. */
+  | { state: "captured-at-provider" }
+  /** Nothing here can be paid: local door shut, Stripe says `canceled`, or Stripe has no such intent. */
+  | { state: "closed" };
+
+/**
+ * THE MEMBER'S PAY DOOR (#3641, `INV-PAY-105`). The additional-payment-secret
+ * route hands out a client secret only on `payable`, and the Xero outbox reaper
+ * retires a waiting supplementary invoice only on `closed`, so an invoice is
+ * kept for exactly as long as the member can be handed that intent's form.
+ *
+ * WHY STRIPE IS PART OF IT. The local rows cannot tell a declined card (still
+ * payable with another card) from an intent cancelled at the provider (never
+ * payable again): both are recorded FAILED. A cancelled intent still carries a
+ * client secret, so without this read the route handed out a form Stripe.js then
+ * rejected, while the reaper retired the same ask.
+ *
+ * `retrieve` is REQUIRED and injected, not imported, because this module is
+ * imported by client components and must never reach the Stripe SDK. A thrown
+ * error other than "no such payment intent" propagates: the route answers 500,
+ * the reaper keeps the invoice.
+ */
+export async function resolveAdditionalPaymentDoor<
+  Intent extends { status: string },
+>(
+  input: AdditionalPaymentDoorInput,
+  retrieve: (paymentIntentId: string) => Promise<Intent>,
+): Promise<AdditionalPaymentDoorAnswer<Intent>> {
+  const paymentIntentId = payableAdditionalPaymentIntentId(input);
+  if (!paymentIntentId) return { state: "closed" };
+
+  let intent: Intent;
+  try {
+    intent = await retrieve(paymentIntentId);
+  } catch (err) {
+    if (isStripeResourceMissingError(err)) return { state: "closed" };
+    throw err;
+  }
+  if (intent.status === "canceled") return { state: "closed" };
+  if (PROVIDER_CAPTURED_INTENT_STATUSES.includes(intent.status)) {
+    return { state: "captured-at-provider" };
+  }
+  return { state: "payable", intent };
 }
 
 const MS_PER_DAY = 86_400_000;

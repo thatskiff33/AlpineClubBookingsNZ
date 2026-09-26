@@ -2072,6 +2072,48 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     expect(res.status).toBe(200);
   });
 
+  /*
+    #3641 (`INV-PAY-105`): Stripe's half of the pay door. A cancelled intent
+    still carries a client secret, so handing it out showed a form Stripe.js
+    then rejected; money Stripe already took must not be offered a second form.
+  */
+  it("refuses an intent Stripe cancelled, or no longer has, with 404", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(
+      additionalPaymentRow({ additionalPaymentStatus: "FAILED" })
+    );
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      status: "canceled",
+      client_secret: "pi_additional_secret_xyz",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const cancelled = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(cancelled.status).toBe(404);
+
+    mockedGetPaymentIntent.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), { code: "resource_missing" })
+    );
+    const missing = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(missing.status).toBe(404);
+  });
+
+  it("answers 409 for an intent Stripe has already captured, never a second form", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      status: "succeeded",
+      client_secret: "pi_additional_secret_xyz",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).clientSecret).toBeUndefined();
+  });
+
   it("returns 403 for a different member trying to access", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "other-member", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
