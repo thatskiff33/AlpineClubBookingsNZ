@@ -101,7 +101,7 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // (`additionalAmountCents`) and a stubbed minter would pass whatever it is handed;
 // a removal asks for nothing, so the real one returns before minting.
 vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-modification-settlement")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
   drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
   executeBookingModificationRefund: mocks.executeBookingModificationRefund,
 }));

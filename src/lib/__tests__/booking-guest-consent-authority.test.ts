@@ -110,7 +110,7 @@ vi.mock("@/lib/payment-recovery", () => ({
 // the edit's ask (`additionalAmountCents`), and a stubbed supersede is how #3340's
 // sizing defect stayed green; the removals here never mint, so it never runs.
 vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/booking-payment-cleanup")>()),
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
