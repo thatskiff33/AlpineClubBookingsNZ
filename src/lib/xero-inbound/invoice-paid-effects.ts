@@ -22,6 +22,7 @@ import {
   type GroupSettlementMismatch,
 } from "@/lib/group-settlement";
 import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
+import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -1584,74 +1585,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
   return result;
 }
 
-/**
- * #3642: how long one paid-invoice conflict on one group settlement stays
- * quiet after it has alerted. The same PAID invoice is re-fetched on every
- * Xero event for it, and each re-fetch would otherwise re-send the alert.
- */
-const GROUP_SETTLEMENT_INVOICE_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-/**
- * One operator alert about a paid combined group invoice the app would not
- * apply. The group's organiser and stay are read here so every arm names the
- * same facts. `cooldownKey` quiets the arms a re-fetch of one already-paid
- * invoice would repeat; the #1033 arms fire once per apply attempt, as before.
- *
- * #3642 note for the #3638 convergence: lane #3638 is adding a shared
- * settlement-conflict alert helper for the per-booking arms of this file. This
- * group-settlement helper should fold into it once both have merged.
- */
-async function alertGroupSettlementInvoiceConflict(
-  params: {
-    settlementId: string;
-    invoiceId: string;
-    errorMessage: string;
-    cooldownKey?: string;
-  },
-  format: ClubFormat
-): Promise<void> {
-  if (params.cooldownKey) {
-    const holdsClaim = await claimAlertCooldown({
-      key: params.cooldownKey,
-      windowMs: GROUP_SETTLEMENT_INVOICE_CONFLICT_ALERT_COOLDOWN_MS,
-    }).catch((err) => {
-      logger.error(
-        { err, settlementId: params.settlementId, invoiceId: params.invoiceId },
-        "Failed to claim the group settlement invoice conflict alert cooldown; sending anyway rather than staying silent about unreconciled money"
-      );
-      return true;
-    });
-    if (!holdsClaim) return;
-  }
-  const settlementDetail = await prisma.groupBookingSettlement.findUnique({
-    where: { id: params.settlementId },
-    select: {
-      amountCents: true,
-      groupBooking: {
-        select: {
-          organiserMember: { select: { firstName: true, lastName: true } },
-          organiserBooking: { select: { checkIn: true, checkOut: true } },
-        },
-      },
-    },
-  });
-  await sendAdminPaymentFailureAlert({
-    memberName: settlementDetail
-      ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
-      : "Unknown group organiser",
-    checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
-    checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
-    amountCents: settlementDetail?.amountCents ?? 0,
-    errorMessage: params.errorMessage,
-    paymentIntentId: params.invoiceId,
-  }, format).catch((alertErr) =>
-    logger.error(
-      { err: alertErr, invoiceId: params.invoiceId, settlementId: params.settlementId },
-      "Failed to send admin alert for a group settlement invoice conflict"
-    )
-  );
-}
-
 /** The operator instruction for a paid invoice the app did not apply (#1033, #3642). */
 function groupSettlementMismatchMessage(
   invoiceId: string,
@@ -1661,7 +1594,10 @@ function groupSettlementMismatchMessage(
   if (mismatch?.reason === "collected") {
     return `Group settlement invoice ${invoiceId} was paid ${formatCents(mismatch.collectedCents, format)}, but the settlement it pays is ${formatCents(mismatch.recordedCents, format)}. No bookings were settled; reconcile manually (collect or refund the difference, then settle the group).`;
   }
-  if (mismatch?.reason === "invoice_superseded") {
+  if (
+    mismatch?.reason === "invoice_superseded" ||
+    mismatch?.reason === "intent_superseded"
+  ) {
     return `Group settlement invoice ${invoiceId} was paid, but the settlement no longer uses that invoice. No bookings were settled; refund or credit the organiser in Xero, or apply the payment by hand.`;
   }
   return `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`;
@@ -1673,11 +1609,14 @@ function groupSettlementMismatchMessage(
  * to `syncInternetBankingPaymentsForPaidInvoice`: a single combined invoice
  * settles the whole ORGANISER_PAYS group at once.
  *
- * #3642 (`INV-PAY-106`): the invoice's cash is compared with the settlement's
+ * #3642 (`INV-PAY-105`): the invoice's cash is compared with the settlement's
  * total under the settle lock, and a paid invoice that can no longer settle
  * anything is never silent — one the settlement abandoned (released by the
  * reaper, replaced, or left behind by a card payment before this shipped), and
  * one that lands on a settlement a card payment already settled, both alert.
+ * This handler sees only PAID invoices: one that is part-paid is caught before
+ * the app would release or replace it — by the reaper, the replacement, and
+ * the VOID worker, which all read the invoice in Xero first.
  */
 export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format: ClubFormat) {
   const invoiceId = invoice.invoiceID ?? null;
@@ -1714,6 +1653,16 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
         },
         select: { localId: true },
       });
+  // A cancelled group's invoice is never abandoned by the reaper (#3642), but
+  // one retired before that rule shipped still reads as paid after cancel.
+  const abandonedGroupCancelled = abandonedFor
+    ? (
+        await prisma.groupBookingSettlement.findUnique({
+          where: { id: abandonedFor.localId },
+          select: { groupBooking: { select: { status: true } } },
+        })
+      )?.groupBooking.status === "CANCELLED"
+    : false;
 
   if (!settlement && !abandonedFor) {
     return result;
@@ -1738,12 +1687,13 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
         { invoiceId, settlementId },
         "Paid group settlement invoice was already abandoned by its settlement - operator review required"
       );
-      await alertGroupSettlementInvoiceConflict(
+      await alertGroupSettlementInvoice(
         {
           settlementId,
           invoiceId,
-          errorMessage: `Group settlement invoice ${invoiceId} was paid after the settlement stopped using it (the settlement lapsed or was replaced). No bookings were settled from it; refund the organiser, or apply the payment to the group's current bill by hand.`,
-          cooldownKey: `group-settlement-invoice-conflict:${settlementId}:${invoiceId}`,
+          errorMessage: abandonedGroupCancelled
+            ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
+            : `Group settlement invoice ${invoiceId} was paid after the settlement stopped using it (the settlement lapsed or was replaced). No bookings were settled from it; refund the organiser, or apply the payment to the group's current bill by hand.`,
         },
         format
       );
@@ -1763,12 +1713,11 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
         { invoiceId, settlementId },
         "Paid group settlement invoice landed on a settlement already paid by card - operator refund required"
       );
-      await alertGroupSettlementInvoiceConflict(
+      await alertGroupSettlementInvoice(
         {
           settlementId,
           invoiceId,
           errorMessage: `Group settlement invoice ${invoiceId} was paid, but the group had already been settled by card. The organiser has paid twice; refund one payment.`,
-          cooldownKey: `group-settlement-invoice-conflict:${settlementId}:${invoiceId}`,
         },
         format
       );
@@ -1805,12 +1754,11 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       { invoiceId, settlementId: settlement.id, knownCents: cash.knownCents },
       "Paid group settlement invoice cash could not be quantified exactly - operator review required"
     );
-    await alertGroupSettlementInvoiceConflict(
+    await alertGroupSettlementInvoice(
       {
         settlementId: settlement.id,
         invoiceId,
         errorMessage: `Group settlement invoice ${invoiceId} was paid, but the amount paid could not be read exactly (at least ${formatCents(cash.knownCents, format)}). No bookings were settled; check the payment in Xero and settle the group by hand.`,
-        cooldownKey: `group-settlement-invoice-conflict:${settlement.id}:${invoiceId}`,
       },
       format
     );
@@ -1839,7 +1787,10 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
           ? "Paid group settlement invoice belongs to a cancelled group - operator refund required"
           : "Paid group settlement invoice does not match what the settlement owes - operator review required"
       );
-      await alertGroupSettlementInvoiceConflict(
+      // #3642: behind the same per-invoice cooldown as every other arm, so a
+      // stable mismatch on a PAID invoice alerts once per window, not once per
+      // re-fetch.
+      await alertGroupSettlementInvoice(
         {
           settlementId: settlement.id,
           invoiceId,

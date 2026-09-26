@@ -52,6 +52,8 @@ import {
   BookingEventType,
   BookingStatus,
   GroupBookingPaymentMode,
+  GroupBookingStatus,
+  PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -68,6 +70,11 @@ import {
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
+import {
+  describeGroupSettlementInvoiceMoney,
+  readGroupSettlementInvoiceState,
+} from "@/lib/xero-group-settlement-invoice-voids";
+import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -107,6 +114,12 @@ export interface GroupSettlementReapResult {
   scannedInterruptedCancels: number;
   /** Interrupted organiser-cancel cleanups this run re-drove to completion. */
   resumedInterruptedCancels: number;
+  /**
+   * #3642: Internet Banking settlements past their deadline that were NOT
+   * released because their invoice has started being paid, or could not be
+   * checked in Xero this run.
+   */
+  heldForInvoicePayment?: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -144,9 +157,12 @@ export async function reapStaleGroupSettlements(
       amountCents: true,
       updatedAt: true,
       stripePaymentIntentId: true,
+      source: true,
+      xeroInvoiceId: true,
       groupBookingId: true,
       groupBooking: {
         select: {
+          status: true,
           organiserBookingId: true,
           organiserMember: {
             select: { id: true, email: true, firstName: true, lastName: true },
@@ -177,6 +193,10 @@ export async function reapStaleGroupSettlements(
     }
 
     try {
+      if (!(await invoiceAllowsRelease(settlement, format))) {
+        result.heldForInvoicePayment = (result.heldForInvoicePayment ?? 0) + 1;
+        continue;
+      }
       const released = await releaseSettlementChildren(settlement.id, {
         organiserBookingId: settlement.groupBooking.organiserBookingId,
       });
@@ -377,6 +397,67 @@ type ReleasedChild = {
 };
 
 /**
+ * #3642 (`INV-PAY-105`): an unpaid Internet Banking settlement is released only
+ * once its emailed invoice is known to carry no money. Xero is read first,
+ * outside every lock. An invoice that has started being paid or credited — a
+ * transfer part-way through, or one for a different total — keeps the group's
+ * beds and alerts the operators (the owner's #3643 rule for single bookings:
+ * never release a hold that has started being paid). An invoice Xero cannot
+ * show this run is held until the next run rather than released blind.
+ *
+ * Only a PENDING settlement with an invoice is read. A cancelled group's
+ * invoice belongs to the cancellation VOID (`INV-PAY-035`), and a payment that
+ * lands between this read and the release is still caught: the abandon VOID
+ * reads the invoice again, and a paid invoice alerts inbound.
+ */
+async function invoiceAllowsRelease(
+  settlement: {
+    id: string;
+    status: PaymentStatus;
+    source: PaymentSource;
+    xeroInvoiceId: string | null;
+    groupBooking: { status: GroupBookingStatus };
+  },
+  format: ClubFormat
+): Promise<boolean> {
+  if (
+    settlement.status !== PaymentStatus.PENDING ||
+    settlement.source !== PaymentSource.INTERNET_BANKING ||
+    !settlement.xeroInvoiceId ||
+    settlement.groupBooking.status === GroupBookingStatus.CANCELLED
+  ) {
+    return true;
+  }
+  let state: Awaited<ReturnType<typeof readGroupSettlementInvoiceState>>;
+  try {
+    state = await readGroupSettlementInvoiceState(
+      settlement.xeroInvoiceId,
+      "reap group settlement"
+    );
+  } catch (err) {
+    logger.error(
+      { err, settlementId: settlement.id, invoiceId: settlement.xeroInvoiceId },
+      "Could not read the group settlement invoice before releasing it; holding the group until the next run"
+    );
+    return false;
+  }
+  if (state.kind !== "has_money") return true;
+  logger.error(
+    { settlementId: settlement.id, invoiceId: settlement.xeroInvoiceId, state },
+    "Group settlement invoice has started being paid; not releasing the group"
+  );
+  await alertGroupSettlementInvoice(
+    {
+      settlementId: settlement.id,
+      invoiceId: settlement.xeroInvoiceId,
+      errorMessage: `The group's combined invoice ${settlement.xeroInvoiceId} has ${describeGroupSettlementInvoiceMoney(state, format)} but is not fully paid, and the settlement's time has run out. The group's beds are being held rather than released. Reconcile with the organiser: collect the rest, or refund and release the group.`,
+    },
+    format
+  );
+  return false;
+}
+
+/**
  * Revert the settlement's CONFIRMED unpaid children to PAYMENT_PENDING under
  * the same advisory lock the settle path takes. Returns null when the
  * settlement succeeded in the meantime (payment race — the payment wins).
@@ -390,7 +471,12 @@ async function releaseSettlementChildren(
 
     const current = await tx.groupBookingSettlement.findUnique({
       where: { id: settlementId },
-      select: { status: true, xeroInvoiceId: true, updatedAt: true },
+      select: {
+        status: true,
+        xeroInvoiceId: true,
+        updatedAt: true,
+        groupBooking: { select: { status: true } },
+      },
     });
     if (
       !current ||
@@ -522,14 +608,20 @@ async function releaseSettlementChildren(
       });
     }
 
-    // #3642 (`INV-PAY-106`): a released settlement is no longer bound to its
+    // #3642 (`INV-PAY-105`): a released settlement is no longer bound to its
     // combined Internet Banking invoice, so that invoice is retired in the same
     // commit — its VOID queued through the outbox, the settlement's pointer
     // dropped. Before this the reaper cancelled only a Stripe intent, and the
     // emailed invoice stayed AUTHORISED in receivables for a bill nobody owed.
     // A pass that finds an older FAILED row still carrying one (released before
-    // this shipped) retires it too, without restarting the expiry clock.
-    if (current.xeroInvoiceId) {
+    // this shipped) retires it too, without restarting the expiry clock. A
+    // CANCELLED group's invoice is left alone: the cancellation VOID
+    // (`INV-PAY-035`) owns it and reads the pointer this step would clear, and
+    // a payment on it must read as "paid after the organiser cancelled".
+    if (
+      current.xeroInvoiceId &&
+      current.groupBooking.status !== GroupBookingStatus.CANCELLED
+    ) {
       await abandonGroupSettlementInvoiceInTx(tx, {
         settlementId,
         xeroInvoiceId: current.xeroInvoiceId,

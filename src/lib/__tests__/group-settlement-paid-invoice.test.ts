@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Invoice } from "xero-node";
 
 /**
- * #3642 (`INV-PAY-106`): the bank-transfer arm of an organiser-pays group
+ * #3642 (`INV-PAY-105`): the bank-transfer arm of an organiser-pays group
  * settlement. A paid combined invoice settles the group only for exactly the
  * settlement's total, and a paid invoice that can settle nothing — one the
  * settlement abandoned, or one landing on a settlement a card already paid —
@@ -181,6 +181,52 @@ describe("syncGroupSettlementForPaidInvoice (#3642)", () => {
     expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
     expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(
       /after the settlement stopped using it/
+    );
+  });
+
+  it("keeps a stable mismatch quiet on the next re-fetch of the same paid invoice", async () => {
+    mocks.settlementFindFirst.mockResolvedValue({
+      id: "settle-1",
+      status: "PENDING",
+      stripePaymentIntentId: null,
+    });
+    mocks.applyFromInvoice.mockResolvedValue({
+      outcome: "amount_mismatch",
+      settledBookingIds: [],
+      mismatch: { reason: "collected", recordedCents: 80000, collectedCents: 60000, childrenCents: null },
+    });
+
+    await syncGroupSettlementForPaidInvoice(paidInvoice(), CLUB_FORMAT_TEST);
+    mocks.cooldownCreate.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+    await syncGroupSettlementForPaidInvoice(paidInvoice(), CLUB_FORMAT_TEST);
+
+    expect(mocks.applyFromInvoice).toHaveBeenCalledTimes(2);
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.cooldownCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ key: "group-settlement-invoice-conflict:settle-1:xinv_1" }),
+    });
+  });
+
+  it("reads a payment on a cancelled group's retired invoice as paid after the cancel", async () => {
+    mocks.linkFindFirst.mockResolvedValue({ localId: "settle-1" });
+    mocks.settlementFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) =>
+      args.select && "amountCents" in args.select
+        ? {
+            amountCents: 80000,
+            groupBooking: {
+              organiserMember: { firstName: "Olive", lastName: "Organiser" },
+              organiserBooking: { checkIn: new Date("2026-08-01"), checkOut: new Date("2026-08-03") },
+            },
+          }
+        : { groupBooking: { status: "CANCELLED" } }
+    );
+
+    await syncGroupSettlementForPaidInvoice(paidInvoice(), CLUB_FORMAT_TEST);
+
+    expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(
+      /paid after the organiser cancelled the group/
     );
   });
 
