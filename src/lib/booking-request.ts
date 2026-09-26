@@ -103,6 +103,7 @@ import { MEMBER_WHOLE_LODGE_GUEST_NAME_PREFIX } from "@/lib/placeholder-guest-na
 import { prisma } from "@/lib/prisma";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
@@ -2898,9 +2899,9 @@ export function buildBookingRequestListWhere(
 /**
  * The stored teachers/parent helpers, as the ADMIN QUEUE reads them.
  *
- * The names go through `nameField()` — the same helper `schoolTeacherSchema`
- * uses — because the panel and the server now answer the SAME question from
- * these two reads (#3412, review round 5, finding E). The panel builds the
+ * The names and email go through the same `schoolTeacherSchema` the acting
+ * path uses, because the panel and the server must answer the SAME question
+ * from these two reads (#3412, #3485). The panel builds the
  * party it is about to quote by putting these names in front of the generated
  * children and comparing that list to the stored one; the server rebuilds it
  * through `parseSchoolTeachers`, which trims and collapses CR/LF. A raw
@@ -2913,21 +2914,16 @@ export function buildBookingRequestListWhere(
  * misplaced-link warning fired against the teacher's own row, which disabled
  * Save quote too. Both doors shut on a request nothing was wrong with.
  *
- * A name the helper rejects (empty, or over 100 characters) now yields the same
- * empty list this parser has always returned for a shape it cannot read. That
- * is the answer the server already gives such a row — `parseSchoolTeachers`
- * refuses it outright — so the two reads agree there as well.
+ * A rejected teacher name or email yields the same empty list this parser has
+ * always returned for an unreadable shape, plus a school-only attention flag.
+ * The acting path refuses the entire list, so showing a partial one would
+ * misstate the party and could shift position-based guest/member links.
  */
-function parseAdminTeachers(raw: unknown) {
-  const schema = z.array(
-    z.object({
-      firstName: nameField(),
-      lastName: nameField(),
-      email: z.string().nullable().optional(),
-    })
-  );
-  const parsed = schema.safeParse(raw);
-  return parsed.success ? parsed.data : [];
+function readAdminTeachersForDisplay(raw: unknown) {
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
+  return parsed.success
+    ? { teachers: parsed.data, needsAttention: false }
+    : { teachers: [], needsAttention: true };
 }
 
 export function serializeBookingRequestForAdmin(
@@ -2959,13 +2955,14 @@ export function serializeBookingRequestForAdmin(
   // is refused before it gets here; decline is the path that reaches this
   // serialiser with a flagged row, and it is the intended one.)
   //
-  // The two stored blobs are flagged SEPARATELY (#2342 review finding D). One
+  // The stored blobs are flagged SEPARATELY (#2342 review finding D). One
   // OR'd flag forced the panel to describe both failures whichever had
   // happened, so a row whose links were fine was told its links were hidden,
   // and a row whose names were fine was told to distrust them. Each flag means
   // exactly one thing: that blob failed its schema.
   const guestDisplay = readBookingRequestGuestsForDisplay(request.guests);
   const linkedDisplay = readLinkedGuestMembersForDisplay(request.linkedGuestMembers);
+  const teacherDisplay = readAdminTeachersForDisplay(request.teachers);
   return {
     id: request.id,
     type: request.type,
@@ -2997,7 +2994,7 @@ export function serializeBookingRequestForAdmin(
     // payload only: no member-facing serialiser reads this function.
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
-    teachers: parseAdminTeachers(request.teachers),
+    teachers: teacherDisplay.teachers,
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,
@@ -3015,6 +3012,11 @@ export function serializeBookingRequestForAdmin(
     // `linkedGuestMembers` above is then empty — no half-trusted links.
     ...(linkedDisplay.needsAttention
       ? { linkedMemberDataNeedsAttention: true }
+      : {}),
+    // General requests do not have a teacher blob. On school requests the flag
+    // names this blob alone; no partial list is trusted or displayed.
+    ...(request.type === BookingRequestType.SCHOOL && teacherDisplay.needsAttention
+      ? { teacherDataNeedsAttention: true }
       : {}),
     message: request.message,
     indicativePriceCents: request.indicativePriceCents,

@@ -132,7 +132,13 @@ import {
   sameSchoolGuestList,
   unchangedSchoolGuestPrefixLength,
 } from "@/lib/school-booking-constants";
-import { nameField } from "@/lib/zod-helpers";
+import {
+  schoolTeacherSchema,
+  storedSchoolTeacherListSchema,
+} from "@/lib/school-teacher-schema";
+
+// Keep the existing route import surface while the schema lives in one module.
+export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
@@ -172,14 +178,6 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
 // ---------------------------------------------------------------------------
 // Input shapes
 // ---------------------------------------------------------------------------
-
-export const schoolTeacherSchema = z.object({
-  firstName: nameField(),
-  lastName: nameField(),
-  // PIN email goes here when present; otherwise it falls back to the school
-  // contact email at approval time.
-  email: z.string().email().max(200).optional().nullable(),
-});
 
 type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
 
@@ -269,7 +267,7 @@ export function generateSchoolGuests(input: {
 }
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
-  const parsed = z.array(schoolTeacherSchema).safeParse(raw);
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
   if (!parsed.success) {
     throw new BookingRequestError("Stored school teachers are invalid", 500);
   }
