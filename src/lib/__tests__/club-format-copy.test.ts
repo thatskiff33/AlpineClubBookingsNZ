@@ -50,4 +50,34 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     expect(CLUB_FORMAT_REACH).toMatch(/report charts/);
     expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/card payments/);
   });
+
+  // Round 2 of the #3628 review (B5): the copy called the chart labels "the
+  // one exception" while the guide listed three. It must not count them at
+  // all, and must point at the guide, which is the list.
+  it("never claims a single exception, and defers to the guide's list", () => {
+    const counted =
+      /\b(?:one|only|single|sole|two|three|four|five)\s+(?:exception|thing|place|label|limitation)s?\b|\bthe only\b|\bexcept(?:ion)? for\b/i;
+    expect(CLUB_FORMAT_REACH).not.toMatch(counted);
+    expect(CLUB_FORMAT_REACH).toMatch(/\bguide\b/);
+  });
+
+  it("the guide's list names every known English-only label", () => {
+    const guide = readFileSync(path.join(process.cwd(), "docs/guides/club-format.md"), "utf8");
+    const start = guide.indexOf("**What does not follow it.**");
+    expect(start).toBeGreaterThan(-1);
+    const section = guide.slice(start, guide.indexOf("\n\n**", start + 1));
+    for (const item of [
+      /report charts/,
+      /chore schedule/,
+      /minimum-stay setup/,
+      /subscription lockout/i,
+      /public booking-policy page/i,
+      /relative times/,
+    ]) {
+      expect(section, String(item)).toMatch(item);
+    }
+    expect(section, "the guide must not put a number on the list either").not.toMatch(
+      /\b(?:Two|Three|Four|Five|Six) things\b/,
+    );
+  });
 });

@@ -62,7 +62,7 @@ next sends an email more than five minutes after its last check, so that first
 email can still show dates the old way. Its amounts already show the new
 currency either way.
 
-**What does not follow it.** Three things stay in English whatever is set
+**What does not follow it.** A few labels stay in English whatever is set
 here, and are recorded rather than fixed for now:
 
 - the date labels along the bottom of the report charts (for example
@@ -70,6 +70,10 @@ here, and are recorded rather than fixed for now:
   this page;
 - the day-of-week names on the chore schedule and minimum-stay setup screens,
   which are fixed lists of choices rather than dates;
+- the month names in the subscription lockout page's "Financial year-end
+  month" choice ("January" to "December"), also a fixed list of choices;
+- the minimum-stay check-in days on the public booking-policy page ("Friday,
+  Saturday"), written from the same fixed list of day names;
 - relative times such as "3 hours ago", which are wording, not a date format.
 
 On `en-NZ` the one visible change this brought is September: the bookings
