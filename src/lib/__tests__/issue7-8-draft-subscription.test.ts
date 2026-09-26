@@ -808,7 +808,7 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toEqual({
       error:
-        "This booking is being paid by Internet Banking, so it can't be paid by card. Reload the booking to see the invoice details.",
+        "This booking is being paid by Internet Banking, so it can't be paid by card. Pay by bank transfer using the booking's Internet Banking details instead.",
       code: "SWITCHED_TO_INTERNET_BANKING",
     });
     expect(stripe.findOrCreateCustomer).not.toHaveBeenCalled();

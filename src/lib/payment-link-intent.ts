@@ -40,6 +40,7 @@ import {
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -67,15 +68,6 @@ export class PaymentLinkPaymentRecoveryError extends Error {
  * credit balance or how much of it they elected to spend. The operator alert
  * raised alongside carries the full detail.
  */
-/**
- * #3638 (`INV-PAY-102`). The booking is being paid by Internet Banking — it was
- * switched before this request, or while its intent was being minted — so the
- * link will not take a card payment beside the emailed invoice. The pay page
- * shows the bank-transfer details this points at.
- */
-const PAYING_BY_INTERNET_BANKING_MESSAGE =
-  "This booking is being paid by Internet Banking, so it can't be paid by card here. Use the Internet Banking details on this page, or contact the club.";
-
 const CREDIT_ELECTION_PENDING_MESSAGE =
   "This booking has to be paid from the member's own account rather than through this link. Please contact the club and they'll sort it out.";
 
@@ -90,6 +82,19 @@ class UnconsumedCreditElectionError extends Error {
     super("Booking carries an unconsumed credit election");
     this.name = "UnconsumedCreditElectionError";
   }
+}
+
+/**
+ * #3638 (`INV-PAY-102`): the shared switched-to-Internet-Banking refusal
+ * (`SWITCHED_TO_INTERNET_BANKING_BODY`, one definition for both card doors),
+ * carried as a PaymentLinkError so the route sends its code with the message.
+ */
+function switchedToInternetBankingError() {
+  return new PaymentLinkError(
+    SWITCHED_TO_INTERNET_BANKING_BODY.error,
+    409,
+    SWITCHED_TO_INTERNET_BANKING_BODY.code,
+  );
 }
 
 export type PaymentLinkIntentResult =
@@ -128,7 +133,7 @@ export async function createPaymentIntentForPaymentLink(
   // Checked here with no lock, and again under lock(1) where the intent is
   // attached, for a switch that commits in between.
   if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-    throw new PaymentLinkError(PAYING_BY_INTERNET_BANKING_MESSAGE, 409);
+    throw switchedToInternetBankingError();
   }
 
   // Reuse or reconcile an existing PaymentIntent before creating a new one
@@ -433,7 +438,7 @@ export async function createPaymentIntentForPaymentLink(
     },
   });
   if (attached === "switchedToInternetBanking") {
-    throw new PaymentLinkError(PAYING_BY_INTERNET_BANKING_MESSAGE, 409);
+    throw switchedToInternetBankingError();
   }
   if (attached === "notPayable") {
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);

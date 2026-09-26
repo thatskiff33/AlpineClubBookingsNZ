@@ -43,11 +43,18 @@ export function isPayableByLink(status: BookingStatus): boolean {
 
 export class PaymentLinkError extends Error {
   status: number;
+  /**
+   * A machine-readable refusal code, when the refusal has one a client
+   * recognises (#3638: `SWITCHED_TO_INTERNET_BANKING`). The route sends it
+   * beside the message.
+   */
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "PaymentLinkError";
     this.status = status;
+    this.code = code;
   }
 }
 

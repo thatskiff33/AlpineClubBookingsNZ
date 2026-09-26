@@ -133,6 +133,7 @@ import {
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -313,6 +314,41 @@ describe("getPaymentLinkContext", () => {
     expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
     expect(context.narrative.message).toContain("$120.00");
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  // #3638 delta D4: a switched booking's link page offers no card and keeps
+  // its bank-transfer details, even if the module has since been turned off.
+  it("offers card payment on an ordinary payable booking", async () => {
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(true);
+  });
+
+  it("offers no card payment on a booking switched to Internet Banking, and still shows its reference", async () => {
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: true,
+      internetBankingPayments: false,
+    });
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          status: BookingStatus.PAYMENT_PENDING,
+          payment: {
+            id: "pay-1",
+            source: "INTERNET_BANKING",
+            status: PaymentStatus.PENDING,
+            stripePaymentIntentId: null,
+          },
+        }),
+      }) as never
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(false);
+    expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
   });
 
   // #2919: the public pay page's confirmation copy used to name the club's
@@ -1365,9 +1401,11 @@ describe("createPaymentIntentForPaymentLink", () => {
         }) as never
       );
 
+      // The shared body's message AND code (delta D4: one definition).
       await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
         status: 409,
-        message: expect.stringContaining("Internet Banking"),
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
       });
       expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
       expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
@@ -1393,7 +1431,8 @@ describe("createPaymentIntentForPaymentLink", () => {
 
       await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
         status: 409,
-        message: expect.stringContaining("Internet Banking"),
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
       });
       expect(prisma.payment.upsert).not.toHaveBeenCalled();
       expect(mockedUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
