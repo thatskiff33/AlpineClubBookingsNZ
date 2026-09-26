@@ -1748,12 +1748,15 @@ describe("a settlement bound to its Internet Banking invoice (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue(BOUND);
     let refusedInsideTheClaim = false;
     mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) => {
+      const claimsBefore = mocks.bookingUpdateMany.mock.calls.length;
       try {
         return await cb(txClient);
       } catch (err) {
         // The refusal is thrown INSIDE the transaction that claimed child-3, so
         // the claim rolls back with it: C holds no bed that is on no bill.
-        if (mocks.bookingUpdateMany.mock.calls.length > 0) refusedInsideTheClaim = true;
+        if (mocks.bookingUpdateMany.mock.calls.length > claimsBefore) {
+          refusedInsideTheClaim = true;
+        }
         throw err;
       }
     });
