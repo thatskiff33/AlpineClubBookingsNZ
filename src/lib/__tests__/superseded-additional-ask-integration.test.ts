@@ -51,11 +51,29 @@ const stripe = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => {
   const tick = () => new Date(Date.UTC(2026, 8, 1) + ++ledger.clock * 1000);
 
+  /*
+    STRICT BY DESIGN (#3341 review): a filter this fake does not understand
+    THROWS rather than matching everything. A future `notIn`, `gte` or `OR` in
+    the supersede query would otherwise over-select, and this witness would keep
+    passing over a ledger that no longer behaves like Postgres.
+  */
+  const OPERATORS = new Set(["in", "not", "gt", "lt", "lte"]);
+  const refuse = (what: string): never => {
+    throw new Error(`in-memory ledger: unsupported ${what}; teach the fake before relying on it`);
+  };
+  const onlyArgs = (args: Row, allowed: string[]) => {
+    for (const key of Object.keys(args)) if (!allowed.includes(key)) refuse(`argument "${key}"`);
+  };
+
   const matches = (row: Row, where: Row = {}): boolean =>
     Object.entries(where).every(([field, condition]) => {
+      if (field === "AND" || field === "OR" || field === "NOT") refuse(`combinator "${field}"`);
       const value = row[field];
       if (condition !== null && typeof condition === "object" && !(condition instanceof Date)) {
         const c = condition as Record<string, unknown>;
+        for (const operator of Object.keys(c)) {
+          if (!OPERATORS.has(operator)) refuse(`operator "${operator}" on "${field}"`);
+        }
         if ("in" in c && !(c.in as unknown[]).includes(value)) return false;
         if ("not" in c && (value === null || value === c.not)) return false;
         if ("gt" in c && !((value as number) > (c.gt as number))) return false;
@@ -103,7 +121,17 @@ vi.mock("@/lib/prisma", () => {
   return {
     prisma: {
       payment: {
-        findUnique: async ({ where, include }: { where: Row; include?: Row }) => {
+        findUnique: async (args: { where: Row; include?: Row }) => {
+          onlyArgs(args, ["where", "include"]);
+          const { where, include } = args;
+          if (include) {
+            onlyArgs(include, ["transactions"]);
+            // `withTransactions` sorts oldest first, which is the only order
+            // reconcile asks for; anything else would be answered wrongly.
+            if (JSON.stringify(include.transactions) !== JSON.stringify({ orderBy: { createdAt: "asc" } })) {
+              refuse(`include ${JSON.stringify(include)}`);
+            }
+          }
           const payment = ledger.payments.find((row) => matches(row, where));
           if (!payment) return null;
           return include?.transactions ? withTransactions(payment) : { ...payment };
@@ -115,8 +143,13 @@ vi.mock("@/lib/prisma", () => {
         },
       },
       paymentTransaction: {
-        findMany: async ({ where, select }: { where: Row; select?: Row }) =>
-          ledger.transactions.filter((row) => matches(row, where)).map((row) => project(row, select)),
+        findMany: async (args: { where: Row; select?: Row }) => {
+          // No `orderBy` / `take` support, so their presence is refused.
+          onlyArgs(args, ["where", "select"]);
+          return ledger.transactions
+            .filter((row) => matches(row, args.where))
+            .map((row) => project(row, args.select));
+        },
         create: async ({ data }: { data: Row }) => {
           const row = { id: `txn_${ledger.transactions.length + 1}`, ...transactionDefaults(), createdAt: tick(), ...data };
           ledger.transactions.push(row);
