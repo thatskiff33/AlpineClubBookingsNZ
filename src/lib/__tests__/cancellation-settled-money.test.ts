@@ -6,6 +6,7 @@ import {
   isCancellationRefundDecisionRecorded,
   type CancellationRefundDecisionEvidence,
 } from "@/lib/cancellation-settled-money";
+import { MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 
 // #3639: the one answer to "what did the cancellation already settle?", read by
 // the Stripe webhook's late-capture handler and the repair tool's late-capture
@@ -33,7 +34,7 @@ describe("isCancellationRefundDecisionRecorded (#1491, lifted by #3639)", () => 
     expect(
       isCancellationRefundDecisionRecorded({
         ...noDecision(),
-        cancelledEvents: [{ snapshot: { refundPercentage: 0 } }],
+        cancelledEvents: [{ type: "CANCELLED", snapshot: { refundPercentage: 0 } }],
       })
     ).toBe(true);
   });
@@ -42,7 +43,21 @@ describe("isCancellationRefundDecisionRecorded (#1491, lifted by #3639)", () => 
     expect(
       isCancellationRefundDecisionRecorded({
         ...noDecision(),
-        cancelledEvents: [{ snapshot: null }],
+        cancelledEvents: [{ type: "CANCELLED", snapshot: null }],
+      })
+    ).toBe(false);
+  });
+
+  it("does not count an admin settlement marker, a CANCELLED event whose snapshot decides no refund", () => {
+    expect(
+      isCancellationRefundDecisionRecorded({
+        ...noDecision(),
+        cancelledEvents: [
+          {
+            type: "CANCELLED",
+            snapshot: { kind: MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND },
+          },
+        ],
       })
     ).toBe(false);
   });
@@ -125,7 +140,7 @@ describe("getCancellationCreditCents", () => {
 describe("hasCancellationSettledCapture (#3639)", () => {
   const decided: CancellationRefundDecisionEvidence = {
     ...noDecision(),
-    cancelledEvents: [{ snapshot: { refundPercentage: 0 } }],
+    cancelledEvents: [{ type: "CANCELLED", snapshot: { refundPercentage: 0 } }],
   };
 
   it("holds for a capture the booking's own settlement recorded before a cancel that decided it", () => {

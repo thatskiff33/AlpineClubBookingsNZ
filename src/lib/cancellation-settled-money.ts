@@ -1,6 +1,6 @@
 /**
  * WHAT DID THE CANCELLATION ALREADY SETTLE? — one home for the question (#3639,
- * `INV-PAY-018`, `INV-SSOT-001`).
+ * `INV-PAY-102`, `INV-SSOT-001`).
  *
  * Two processes look at a cancelled booking's money long after the cancel has
  * decided it, and both used to re-decide it without asking:
@@ -25,7 +25,12 @@
  * evidence its own way (the repair tool in bulk for a sweep, the webhook for one
  * booking); the DECISION over that evidence is only here.
  */
-import { CreditType, type PaymentStatus } from "@prisma/client";
+import {
+  CreditType,
+  type BookingEventType,
+  type PaymentStatus,
+} from "@prisma/client";
+import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 /**
@@ -52,8 +57,8 @@ export type CancellationCreditRow = {
  */
 export type CancellationRefundDecisionEvidence = {
   bookingId: string;
-  /** The booking's `CANCELLED` events. Only whether each carries a snapshot is read. */
-  cancelledEvents: ReadonlyArray<{ snapshot: unknown }>;
+  /** The booking's `CANCELLED` events: whether each carries a snapshot, and whose. */
+  cancelledEvents: ReadonlyArray<{ type: BookingEventType; snapshot: unknown }>;
   /** `MemberCredit` rows whose `sourceBookingId` is this booking. */
   creditsFromCancellation: ReadonlyArray<CancellationCreditRow>;
   /**
@@ -96,7 +101,10 @@ export function getCancellationCreditCents(
  *
  * - a `CANCELLED` event carrying the policy snapshot — written by every
  *   paid-path cancel, including a 0%-tier retention; unpaid-branch cancels
- *   carry no snapshot;
+ *   carry no snapshot. The #2262 admin settlement markers are `CANCELLED`
+ *   events WITH a snapshot that cancel nothing and decide no refund
+ *   (`isManualSettlementMarkerEvent`), so they never count: read by the
+ *   webhook, one would withhold a genuine late capture's refund;
  * - a cancellation credit (the credit path);
  * - a LIVE booking-cancel refund recovery operation (the card path, frozen
  *   inside the claim transaction). A terminally `FAILED` one is a decision whose
@@ -119,7 +127,10 @@ export function isCancellationRefundDecisionRecorded(
   evidence: CancellationRefundDecisionEvidence
 ): boolean {
   return (
-    evidence.cancelledEvents.some((event) => event.snapshot !== null) ||
+    evidence.cancelledEvents.some(
+      (event) =>
+        event.snapshot !== null && !isManualSettlementMarkerEvent(event)
+    ) ||
     getCancellationCreditCents(
       evidence.bookingId,
       evidence.creditsFromCancellation

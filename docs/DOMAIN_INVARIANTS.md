@@ -292,6 +292,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
+| `INV-PAY-102` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
 | `INV-PAY-021` | An unpaid confirmation defers to the invoice and promises nothing about it |
 | `INV-PAY-022` | Unpaid confirmation with applied credit states the netting, from the ledger |

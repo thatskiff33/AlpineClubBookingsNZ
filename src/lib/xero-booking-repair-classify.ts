@@ -23,6 +23,7 @@ import {
 import {
   getBlockingOperation,
   isStuckOperation,
+  paymentNoteAnswersInvoice,
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
@@ -1276,32 +1277,13 @@ export function classifyBookingContext(
     }
   }
 
-  // #3639: the arm below clears an invoice NOBODY PAID, so it asks two things
-  // first. (1) Was money ever captured, from any source? A cancelled booking
-  // paid by bank transfer has no Stripe capture, and the Stripe-only list made
-  // it look never-paid. (2) Did the cancellation already answer the invoice on
-  // the PAYMENT? An internet-banking cancel records its account-credit note
-  // there, and an internet-banking hold released before #3535 answered its
-  // unpaid invoice with a refund note there; the booking-level
-  // MODIFICATION_CREDIT_NOTE lookup inside the arm sees neither, so the arm
-  // raised a second, full clearing note. A payment-level credit-note operation
-  // still queued or failed counts too: it will produce that note when it runs.
-  const paymentCreditNoteAnswersInvoice =
-    refundCreditNote !== null ||
-    resolveObjectFromCandidates({
-      links: paymentLinks,
-      operations: paymentOperations,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "ACCOUNT_CREDIT_NOTE",
-      entityType: "CREDIT_NOTE",
-      operationType: "CREATE",
-    }) !== null ||
-    getBlockingOperation(paymentOperations, "CREDIT_NOTE", "CREATE") !== null;
+  // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
+  // and `paymentNoteAnswersInvoice` are the two things it asks first.
   if (
     booking.status === "CANCELLED" &&
     payment &&
     !hasCapturedRepairPayment(payment) &&
-    !paymentCreditNoteAnswersInvoice &&
+    !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) &&
     primaryInvoice
   ) {
     const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
@@ -1486,26 +1468,20 @@ export function classifyBookingContext(
     outstandingCapturedRefundAmountCents > 0
   ) {
     // #1491 (owner decision): a cancel that RECORDED a refund decision
-    // deliberately retained the remainder as the cancellation-policy
-    // penalty. Correct books ⇒ no finding (the #1427 account-credit-settled
-    // precedent: never nag forever on correct books). Which artefacts count
-    // is `isCancellationRefundDecisionRecorded` — lifted out of this arm by
-    // #3639 so the Stripe webhook's late-capture handler asks the SAME
-    // question. Without such a record the state cannot be distinguished
-    // from a genuine late capture, so the finding stays but is NEVER
-    // auto-applied — an operator confirms which it is before any refund
-    // moves. Known residual: a genuine late capture on a booking that ALSO
-    // had a paid-path cancel is masked by that cancel's artifact; the #1350
-    // durable intent-cancellation recovery and the webhook superseded-intent
-    // hook own that population.
-    const cancellationRefundDecisionRecorded =
-      isCancellationRefundDecisionRecorded({
-        bookingId: booking.id,
-        cancelledEvents: booking.events ?? [],
-        creditsFromCancellation: booking.creditsFromCancellation,
-        cancellationRefundRecoveryOperations:
-          context.cancellationRefundRecoveryOperations,
-      });
+    // deliberately retained the remainder as the cancellation-policy penalty,
+    // so correct books get no finding (the #1427 precedent). Which artefacts
+    // count is `isCancellationRefundDecisionRecorded`, shared with the Stripe
+    // webhook since #3639. Without one, a late capture and a retention look
+    // alike, so the finding stays but is NEVER auto-applied. Known residual: a
+    // late capture on a booking that ALSO had a paid-path cancel is masked by
+    // that cancel's artifact; the #1350 durable intent-cancellation recovery
+    // and the webhook superseded-intent hook own that population.
+    const cancellationRefundDecisionRecorded = isCancellationRefundDecisionRecorded({
+      bookingId: booking.id,
+      cancelledEvents: booking.events ?? [],
+      creditsFromCancellation: booking.creditsFromCancellation,
+      cancellationRefundRecoveryOperations: context.cancellationRefundRecoveryOperations,
+    });
     if (!cancellationRefundDecisionRecorded) {
       const lateCaptureTransactions = capturedPaymentTransactions.filter(
         (transaction) => transaction.amountCents > transaction.refundedAmountCents

@@ -1059,9 +1059,7 @@ between two deliveries resolves to the one row, because every lookup matches all
 four `reason` sentences; and `booking-cancel.ts`'s cash-settlement task on the same
 booking and payment carries a different `reason`, so it neither blocks the create
 nor is mistaken for this row. The two named exceptions below are the only gaps, and
-they are the same two on both paths. Since #3639 the primary handler first asks
-whether the cancellation already settled the capture; if it did, nothing is
-refunded, so no row is owed (`INV-PAY-018`).
+they are the same two on both paths.
 
 **FOUR `reason` SENTENCES, ONE PER (capture kind, population).** The kind decides
 "a booking modification payment" versus "the booking's own payment" and the

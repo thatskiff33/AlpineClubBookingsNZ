@@ -2466,7 +2466,7 @@ describe("Stripe webhook Xero alerting", () => {
       // 0%-tier cancel froze its decision in the CANCELLED event's snapshot.
       armCaptureRow("SUCCEEDED");
       mockBookingEventFindMany.mockResolvedValue([
-        { snapshot: { refundPercentage: 0, retainedAmountCents: 12000 } },
+        { type: "CANCELLED", snapshot: { refundPercentage: 0, retainedAmountCents: 12000 } },
       ]);
 
       const response = await POST(makeRequest());
@@ -2543,7 +2543,7 @@ describe("Stripe webhook Xero alerting", () => {
       armCancelledBooking("xero-inv-7", null);
       armCaptureRow("SUCCEEDED", "cancelled_booking_late_capture");
       mockBookingEventFindMany.mockResolvedValue([
-        { snapshot: { refundPercentage: 0 } },
+        { type: "CANCELLED", snapshot: { refundPercentage: 0 } },
       ]);
 
       const response = await POST(makeRequest());
@@ -2573,7 +2573,7 @@ describe("Stripe webhook Xero alerting", () => {
       );
       armCancelledBooking(null, null);
       armCaptureRow("SUCCEEDED", "confirm_pending_saved_card");
-      mockBookingEventFindMany.mockResolvedValue([{ snapshot: null }]);
+      mockBookingEventFindMany.mockResolvedValue([{ type: "CANCELLED", snapshot: null }]);
 
       const response = await POST(makeRequest());
 

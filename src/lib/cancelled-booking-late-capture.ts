@@ -11,8 +11,13 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type { ClubFormat } from "@/lib/club-format";
-import type { CancellationRefundDecisionEvidence } from "@/lib/cancellation-settled-money";
+import {
+  hasCancellationSettledCapture,
+  type CancellationRefundDecisionEvidence,
+} from "@/lib/cancellation-settled-money";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 /**
  * The shared epilogue of BOTH late-capture handlers on a cancelled booking
@@ -62,30 +67,50 @@ import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-reco
  */
 
 /**
- * #3639: the #1491 decision artefacts for ONE booking, read by the late-capture
- * handler before it refunds, so it can ask `hasCancellationSettledCapture` the
- * question the repair tool has asked since #1491.
+ * #3639: the capture row for this intent when the cancellation ALREADY SETTLED
+ * it, so the late-capture handler must leave it alone — or `null`, and the
+ * handler refunds as before. `hasCancellationSettledCapture` is the rule; this
+ * reads what it needs.
  *
- * The same three sources the repair tool loads in bulk
- * (`xero-booking-repair-load.ts` and `bookingRepairSelect`): the booking's
- * `CANCELLED` events, the credits it is the source of, and its booking-cancel
- * refund recovery operation by exact key. Only the loading is per caller; which
- * of them counts as a decision is decided once, in
- * `isCancellationRefundDecisionRecorded`.
+ * THE ROW IS READ AGAIN rather than taken from the webhook dispatch, which read
+ * it BEFORE it saw the booking cancelled: a settlement and a cancel committing
+ * between those two reads would leave a stale "not captured" row in hand. Read
+ * after the booking is known `CANCELLED`, it carries every capture recorded
+ * before the cancel (a later settlement refuses a cancelled booking).
  *
- * NOT CAUGHT, like the #2774 fence read: a read that cannot answer answers
- * neither way. Guessing "no decision" would refund money a cancellation kept,
- * and guessing "decided" would keep a genuine late capture, so the webhook
+ * THE DECISION EVIDENCE is read only when the row captured, so an ordinary late
+ * capture (its row still PENDING) costs one query, not four. It is the #1491
+ * artefacts for this booking — its `CANCELLED` events, the credits it is the
+ * source of, and its booking-cancel refund recovery operation by exact key —
+ * the same three the repair tool loads in bulk (`xero-booking-repair-load.ts`).
+ *
+ * NOTHING IS CAUGHT, like the #2774 fence read: a read that cannot answer
+ * answers neither way. Guessing "not settled" would refund money a cancellation
+ * kept, and guessing "settled" would keep a genuine late capture, so the webhook
  * answers 500 and Stripe redelivers.
  */
-export async function loadCancellationRefundDecisionEvidence(
+export async function findCaptureSettledByCancellation(params: {
+  bookingId: string;
+  paymentIntentId: string;
+}) {
+  const captureRow = await findPaymentTransactionByIntentId({
+    paymentIntentId: params.paymentIntentId,
+  });
+  if (!captureRow || !isCapturedTransactionStatus(captureRow.status)) {
+    return null;
+  }
+  const evidence = await loadCancellationRefundDecisionEvidence(params.bookingId);
+  return hasCancellationSettledCapture(captureRow, evidence) ? captureRow : null;
+}
+
+async function loadCancellationRefundDecisionEvidence(
   bookingId: string
 ): Promise<CancellationRefundDecisionEvidence> {
   const [cancelledEvents, creditsFromCancellation, recoveryOperation] =
     await Promise.all([
       prisma.bookingEvent.findMany({
         where: { bookingId, type: "CANCELLED" },
-        select: { snapshot: true },
+        select: { type: true, snapshot: true },
       }),
       prisma.memberCredit.findMany({
         where: { sourceBookingId: bookingId },
