@@ -10,6 +10,7 @@ import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 // Moved to a leaf so the booking ledger's settlement sync can share them
@@ -682,9 +683,7 @@ export async function recordStripeRefundsAgainstTransaction({
     let createdRefundsCount = 0;
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
-    const ordered = [...refunds].sort((a, b) =>
-      a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    );
+    const ordered = [...refunds].sort((a, b) => compareOrdinal(a.id, b.id));
     for (const refund of ordered) {
       const recorded = await recordStripeRefundLedgerEntry({
         paymentId,

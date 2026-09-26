@@ -7,7 +7,7 @@ with the ledger rows. The superseded-payment recovery's own copy of the old
 formula moved into it, so `payment-recovery.ts` shrinks by the same logic.
 
 file: src/lib/payment-transactions.ts
-lines: 1388
+lines: 1387
 reason: the writer belongs beside the ledger insert whose "newly recorded"
   answer it keys on, the refund-status helper it sets and the two callers it
   serves (the inline refund and the charge.refunded sync); moving it out would
