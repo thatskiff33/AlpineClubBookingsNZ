@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
+import { CLUB_CURRENCY_FALLBACK, CLUB_LOCALE_FALLBACK } from "@/lib/club-format";
 import { bindClubFormat } from "@/lib/club-format-bound";
 import { clubMoneyFormatter, clubNumberFormatter } from "@/lib/club-format-intl";
 import {
@@ -29,14 +29,19 @@ import { CLUB_FORMAT_TEST_OTHER } from "./support/club-format-fixture";
  *
  * ONE: NIL BEHAVIOUR CHANGE FOR A CLUB ON THE NEW ZEALAND DEFAULTS. Every
  * rendering is compared against a reference formatter transcribed from the
- * module-level constants this change retired — `new Intl.NumberFormat(APP_LOCALE,
- * { style: "currency", currency: APP_CURRENCY })` and the four in
+ * module-level formatters #3565 retired — `new Intl.NumberFormat(<locale>,
+ * { style: "currency", currency: <currency> })` and the four in
  * `finance-format.ts` — over a spread of amounts chosen to exercise grouping, the
- * sign, rounding at the half, negative zero and the empty case. The reference is
- * built here rather than imported, so it cannot drift with the thing it is
- * checking, and it is built from the SAME identifiers the old constants used
- * rather than from string literals, so it is still a real transcription on a
- * deployment configured for another currency.
+ * sign, rounding at the half, negative zero and the empty case, and a handful of
+ * renderings are pinned as LITERAL strings besides. The reference is built here
+ * rather than imported, so it cannot drift with the thing it is checking.
+ *
+ * FIXED VALUES, NOT THE ENVIRONMENT (#3567). The reference used to be built from
+ * the `APP_CURRENCY` / `APP_LOCALE` constants, which followed the test process's
+ * `CURRENCY` / `LOCALE`, so the byte-identity proof quietly depended on the
+ * machine it ran on. #3567 deleted those constants; the proof now uses the
+ * literal New Zealand pair `NZD` / `en-NZ`, and checks separately that it is the
+ * shipped fallback.
  *
  * TWO: THE ARGUMENT IS LOAD-BEARING. A test that only proves nothing changed
  * would pass just as happily if `format` were ignored entirely, which is the
@@ -70,35 +75,57 @@ const AMOUNTS_CENTS = [
 ];
 
 /**
- * The format the retired module constants amounted to, spelled from the SAME
- * identifiers so the comparison below is still a transcription on a deployment
- * configured for another currency. It is what every one-argument call rendered
- * with before this stage, and the required argument is proven against it.
+ * The New Zealand default pair as LITERALS, so the byte-identity proof below
+ * means the same thing on every machine whatever its environment says (#3567).
+ * It is what every one-argument call rendered with on a default deployment
+ * before #3565, and the required argument is proven against it.
  */
-const RETIRED: ClubFormat = { currencyCode: APP_CURRENCY, locale: APP_LOCALE };
+const RETIRED: ClubFormat = { currencyCode: "NZD", locale: "en-NZ" };
 
-/** The reference formatters, transcribed from the retired module constants. */
-const referenceCents = new Intl.NumberFormat(APP_LOCALE, {
+/** The reference formatters, transcribed from the retired module formatters. */
+const referenceCents = new Intl.NumberFormat("en-NZ", {
   style: "currency",
-  currency: APP_CURRENCY,
+  currency: "NZD",
 });
-const referenceDollars = new Intl.NumberFormat(APP_LOCALE, {
+const referenceDollars = new Intl.NumberFormat("en-NZ", {
   style: "currency",
-  currency: APP_CURRENCY,
+  currency: "NZD",
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
-const referencePercent = new Intl.NumberFormat(APP_LOCALE, {
+const referencePercent = new Intl.NumberFormat("en-NZ", {
   style: "percent",
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
-const referenceRatio = new Intl.NumberFormat(APP_LOCALE, {
+const referenceRatio = new Intl.NumberFormat("en-NZ", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 const referenceNumber = (value: number, maximumFractionDigits = 0) =>
-  new Intl.NumberFormat(APP_LOCALE, { maximumFractionDigits }).format(value);
+  new Intl.NumberFormat("en-NZ", { maximumFractionDigits }).format(value);
+
+describe("#3567: the NZ default renders byte-identical, pinned as literals", () => {
+  it("is the shipped fallback pair", () => {
+    expect(CLUB_CURRENCY_FALLBACK).toBe("NZD");
+    expect(CLUB_LOCALE_FALLBACK).toBe("en-NZ");
+  });
+
+  it("renders the same strings a New Zealand club has always seen", () => {
+    expect(formatCents(845000, RETIRED)).toBe("$8,450.00");
+    expect(formatCents(-123456, RETIRED)).toBe("-$1,234.56");
+    expect(formatCents(0, RETIRED)).toBe("$0.00");
+    expect(formatCents(1, RETIRED)).toBe("$0.01");
+    expect(formatSignedCents(1050, RETIRED)).toBe("+$10.50");
+    expect(formatSignedCents(-99950, RETIRED)).toBe("-$999.50");
+    expect(formatDollarsDisplay(44667484, RETIRED)).toBe("$446,675");
+    expect(formatSignedDollarsDisplay(-123456, RETIRED)).toBe("-$1,235");
+    expect(formatCompactDollarsDisplay(250000000, RETIRED)).toBe("$2.5m");
+    expect(formatFinancePercent(0.1234, RETIRED)).toBe("12.3%");
+    expect(formatFinanceRatio(1.5, RETIRED)).toBe("1.50");
+    expect(formatFinanceNumber(1234567.891, RETIRED, 2)).toBe("1,234,567.89");
+  });
+});
 
 describe("#3565 kernel: nil behaviour change on the configured defaults", () => {
   it("renders exact cents exactly as the retired module formatter did", () => {

@@ -7,12 +7,13 @@ import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confi
 import { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS as MAX_LOOKBACK_DAYS } from "@/lib/booking-create-types";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 
 /*
   CT-4 (#2870): every date in this suite is relative to the CLUB's calendar day,
   taken from the persisted `ClubTimeSettings` row the prisma mock below serves —
-  not from `APP_TIME_ZONE`, which this file pins to a DIFFERENT zone on purpose.
+  not from the environment's zone (`ENVIRONMENT_CLUB_ZONE`), which differs from it
+  on purpose.
 
   Before CT-4 the route derived "today" from `getTodayDateOnly()`, i.e. the
   container's `TZ`, and this suite used the same helper as its oracle. The two
@@ -40,15 +41,10 @@ function getTodayDateOnly() {
 // service is a spy so we can assert what the route threads and inject its
 // structured errors; every pre-service helper is stubbed to pass through so the
 // request reaches the past-date / lock-date guards deterministically.
-// Deliberately NOT the persisted zone: the point of this file is that they can
-// differ and the route must follow the persisted one. Inlined because `vi.mock`
-// hoists above every const here.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
+// The environment zone used to be pinned here to `Pacific/Auckland`; that
+// constant was deleted in #3567 and nothing reads the environment's zone any
+// more, so the pin is gone. The premise below still checks the environment's
+// day differs from the persisted zone's.
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -112,7 +108,7 @@ vi.mock("@/lib/prisma", () => ({
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     // The club's persisted timezone. NOT optional on this mock: `getClubTimeZone`
     // degrades silently to the environment when the delegate is missing, so
-    // leaving it off would put the route back on `APP_TIME_ZONE` with nothing
+    // leaving it off would put the route back on the environment's zone with nothing
     // failing.
     clubTimeSettings: {
       findUnique: vi.fn().mockResolvedValue({
@@ -321,7 +317,7 @@ afterEach(() => {
 });
 
 describe("CT-4 (#2870): the past-date gate runs on the club's day", () => {
-  it("PREMISE: the persisted zone and APP_TIME_ZONE disagree about today", () => {
+  it("PREMISE: the persisted zone and the environment zone disagree about today", () => {
     /*
       The ANSWERS must differ, not merely the identifiers — `America/Chicago` is
       a different string from `America/Denver` and gives the same day, so a guard
@@ -331,9 +327,9 @@ describe("CT-4 (#2870): the past-date gate runs on the club's day", () => {
       The exact-lookback-boundary case below is what turns that disagreement into
       a failure: a check-in exactly MAX_LOOKBACK_DAYS before the CLUB's day is one
       day further back than MAX_LOOKBACK_DAYS before the ENVIRONMENT's, so a route
-      that still reads `APP_TIME_ZONE` refuses it with a 400.
+      that read the environment's zone would refuse it with a 400.
     */
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+    expect(clubToday(requireClubTimeZone(ENVIRONMENT_CLUB_ZONE))).not.toBe("2026-06-30");
     expect(clubToday(requireClubTimeZone("Pacific/Auckland"))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE))).toBe("2026-06-30");
     expect(formatDateOnly(getTodayDateOnly())).toBe("2026-06-30");

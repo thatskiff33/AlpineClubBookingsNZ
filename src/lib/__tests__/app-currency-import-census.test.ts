@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -7,28 +7,19 @@ import { MANDATORY_SRC_RESTRICTIONS, RETIRED_FORMAT_CONSTANT_ARMS } from "../../
 import { stripComments } from "./support/strip-comments";
 
 /**
- * No module outside `src/config/operational.ts` imports `APP_LOCALE` or
- * `APP_CURRENCY` (#3566's acceptance criterion, enforced — review finding B9),
- * and `APP_STRIPE_CURRENCY` reaches exactly the seven card-charge modules
- * #3567 has to decide about, and no eighth.
+ * `src/config/operational.ts` is gone, with all four of its constants
+ * (#3567, the last stage of programme #3205), and nothing may import it again.
+ * #3566 banned importing `APP_LOCALE` / `APP_CURRENCY` (review finding B9);
+ * #3567 moved the seven `APP_STRIPE_CURRENCY` importers onto the club format
+ * `stripe.ts` already requires and the two `APP_TIME_ZONE` readers onto the
+ * club's stored zone, then deleted the file.
  *
  * The lint arm is the enforcement; this suite lints real snippets through the
- * shipping config at real paths, and walks `src/` for the charge-currency
- * importers. Disk-scanning: run by name.
+ * shipping config at real paths, and walks `src/` — tests included — for any
+ * of the four names. Disk-scanning: run by name.
  */
 const ROOT = process.cwd();
-const PREFIX = "INV-CONFIG-006 / #3566: do not import APP_LOCALE";
-
-/** The #3567 exception: the modules that charge a card in the server's currency. */
-const APP_STRIPE_CURRENCY_IMPORTERS = [
-  "src/app/api/payments/create-payment-intent/route.ts",
-  "src/lib/booking-modification-settlement.ts",
-  "src/lib/group-settlement.ts",
-  "src/lib/payment-link-intent.ts",
-  "src/lib/payment-recovery.ts",
-  "src/lib/payment-transactions.ts",
-  "src/lib/saved-card-charge-request.ts",
-];
+const PREFIX = "INV-CONFIG-006 / #3567: do not import @/config/operational";
 
 let eslint: ESLint;
 
@@ -54,16 +45,20 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const full = path.join(dir, name);
     if (statSync(full).isDirectory()) {
-      if (name === "__tests__" || name === "node_modules") continue;
+      if (name === "node_modules") continue;
       walk(full, out);
-    } else if (/\.[cm]?[jt]sx?$/.test(name) && !/\.(test|spec)\./.test(name)) {
+    } else if (/\.[cm]?[jt]sx?$/.test(name)) {
       out.push(full);
     }
   }
   return out;
 }
 
-describe("#3566: APP_LOCALE and APP_CURRENCY are not imported outside operational.ts", () => {
+describe("#3567: @/config/operational is deleted, and no import of it lints clean", () => {
+  it("no longer exists", () => {
+    expect(existsSync(path.join(ROOT, "src/config/operational.ts"))).toBe(false);
+  });
+
   it("is on the mandatory set, so no block can lift it", () => {
     const mandatory = new Set(
       MANDATORY_SRC_RESTRICTIONS.map((r: { selector: string }) => r.selector),
@@ -119,56 +114,58 @@ describe("#3566: APP_LOCALE and APP_CURRENCY are not imported outside operationa
     }
   });
 
-  it("leaves the constants the programme has not retired yet alone", async () => {
-    expect(
-      await hits(
-        'import { APP_TIME_ZONE, APP_STRIPE_CURRENCY } from "@/config/operational";\nexport const x = [APP_TIME_ZONE, APP_STRIPE_CURRENCY];',
-        "src/lib/season-label.ts",
-      ),
-    ).toBe(0);
+  it("refuses the two constants #3567 retired too, which the #3566 arm used to leave alone", async () => {
+    for (const code of [
+      'import { APP_TIME_ZONE } from "@/config/operational";\nexport const x = APP_TIME_ZONE;',
+      'import { APP_STRIPE_CURRENCY } from "@/config/operational";\nexport const x = APP_STRIPE_CURRENCY;',
+      'import "@/config/operational";',
+      'export { APP_TIME_ZONE as z } from "@/config/operational";',
+    ]) {
+      expect(await hits(code, "src/lib/season-label.ts"), code).toBe(1);
+    }
   });
 });
 
-describe("#3567 exception: APP_STRIPE_CURRENCY reaches exactly the seven card-charge modules", () => {
-  it("names every importer, and no other module imports it", () => {
-    const importers = walk(path.join(ROOT, "src"))
-      .filter((file) =>
-        /\bAPP_STRIPE_CURRENCY\b/.test(stripComments(readFileSync(file, "utf8"))),
-      )
-      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
-      .filter((file) => file !== "src/config/operational.ts")
-      .sort();
-    expect(
-      importers,
-      "APP_STRIPE_CURRENCY is the card-charge currency, still derived from the server's CURRENCY until #3567 decides where it comes from. A new importer is a new card path charging in a currency the club's setting does not control; add it to this list only with that decision in hand.",
-    ).toEqual([...APP_STRIPE_CURRENCY_IMPORTERS].sort());
-  });
-});
-
-/** `APP_LOCALE` / `APP_CURRENCY` as a whole word — never `APP_STRIPE_CURRENCY`. */
+/** Any of the four retired names as a whole word, comments stripped. */
 export function findRetiredFormatConstantTokens(source: string): string[] {
-  return [...stripComments(source).matchAll(/\bAPP_(?:LOCALE|CURRENCY)\b/g)].map((match) => match[0]);
+  return [
+    ...stripComments(source).matchAll(/\bAPP_(?:LOCALE|CURRENCY|STRIPE_CURRENCY|TIME_ZONE)\b/g),
+  ].map((match) => match[0]);
 }
 
-describe("#3566 backstop: no APP_LOCALE / APP_CURRENCY token in src code outside operational.ts", () => {
+/**
+ * Where a retired name may still be written in CODE: the lint fixtures and
+ * censuses that must spell it to prove it is refused. Each is a string literal
+ * handed to ESLint or a regex, never a reference.
+ */
+const FIXTURE_FILES = new Set([
+  "src/lib/__tests__/app-currency-import-census.test.ts",
+  "src/lib/__tests__/cents-display-guard.test.ts",
+  "src/lib/__tests__/club-time-boundary-guard.test.ts",
+  "src/lib/__tests__/ssot-authority-default-guard.test.ts",
+  "src/lib/__tests__/client-server-boundary-census.test.ts",
+]);
+
+describe("#3567 backstop: none of the four retired names in src code, tests included", () => {
   it("counts the tokens it looks for", () => {
     expect(findRetiredFormatConstantTokens("const x = mod.APP_LOCALE;")).toHaveLength(1);
     expect(findRetiredFormatConstantTokens('const x = mod["APP_CURRENCY"];')).toHaveLength(1);
     expect(findRetiredFormatConstantTokens("const { APP_LOCALE: l, APP_CURRENCY: c } = req(p);")).toHaveLength(2);
-    expect(findRetiredFormatConstantTokens("const x = APP_STRIPE_CURRENCY;")).toHaveLength(0);
+    expect(findRetiredFormatConstantTokens("const x = APP_STRIPE_CURRENCY;")).toHaveLength(1);
+    expect(findRetiredFormatConstantTokens("const x = APP_TIME_ZONE;")).toHaveLength(1);
     expect(findRetiredFormatConstantTokens("const x = MY_APP_LOCALE_X;")).toHaveLength(0);
-    expect(findRetiredFormatConstantTokens("// was APP_LOCALE\n/* and APP_CURRENCY */")).toHaveLength(0);
+    expect(findRetiredFormatConstantTokens("// was APP_LOCALE\n/* and APP_TIME_ZONE */")).toHaveLength(0);
   });
 
   it("finds none — a spelling no lint selector follows still names the constant", () => {
     const offenders = walk(path.join(ROOT, "src"))
       .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
-      .filter((file) => file !== "src/config/operational.ts")
+      .filter((file) => !FIXTURE_FILES.has(file))
       .filter((file) => findRetiredFormatConstantTokens(readFileSync(path.join(ROOT, file), "utf8")).length > 0)
       .sort();
     expect(
       offenders,
-      "APP_LOCALE / APP_CURRENCY are retired from reading (#3566): take the club's locale and currency from clubFormatValues() / clubFormat() on the server or useClubFormat() in the browser.",
+      "The environment constants are retired (#3567): take the club's locale and currency from clubFormatValues() / clubFormat() on the server or useClubFormat() in the browser, the card-charge currency from stripe.ts's own derivation, and the club's time zone from clubTimeZone() or readClubTimeZoneOutsideRequest(). A test pins a fixed value instead (CLUB_FORMAT_TEST, CLUB_TIME_TEST_ZONE).",
     ).toEqual([]);
   });
 });

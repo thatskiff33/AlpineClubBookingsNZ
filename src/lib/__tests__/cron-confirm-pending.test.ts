@@ -270,7 +270,7 @@ const mockAdultMemberHostingPolicyFindMany = vi.fn().mockResolvedValue([]);
 
   It defaults to NO ROW so every test above resolves the same zone it always
   did: `readClubTimeZoneOutsideRequest` folds an absent row into the environment
-  seed, which is `APP_TIME_ZONE`. The club-zone block at the end of this file is
+  seed, which is `ENVIRONMENT_CLUB_ZONE`. The club-zone block at the end of this file is
   the only one that persists a value.
 */
 const mockClubTimeSettingsFindUnique = vi.fn().mockResolvedValue(null);
@@ -338,14 +338,17 @@ const {
 
   The club-zone block below used to compose it by hand as
   `process.env.TZ || process.env.NEXT_PUBLIC_TZ || "Pacific/Auckland"`. Same
-  precedence, but not the same value: `src/config/operational.ts` TRIMS the
+  precedence, but not the same value: the environment reading TRIMS the
   variable, so a `TZ` carrying a stray space made the hand-rolled copy and the
   code under test disagree — and the zone chooser below excludes candidates by
   comparing against exactly this string, so a disagreement there hands the suite
   a candidate equal to the environment's and quietly stops it discriminating.
-  One import cannot drift from the constant it is asserting against.
+  The shared helper trims the same way (`club-time-zone-env-agreement.test.ts`
+  pins it to the seed reader); it replaced the config constant #3567 deleted.
 */
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 
 function makePendingBooking(
   id: string,
@@ -2918,19 +2921,19 @@ describe("Cron: Confirm Pending Bookings", () => {
     The two branches below decide `PENDING -> CANCELLED` for a booking whose
     check-in day has ended. The request-origin one RELEASES REAL CAPACITY. Both
     were bound by comment to the payment link's mint boundary "so the two can
-    never disagree", and both resolved that boundary in `APP_TIME_ZONE` — the
+    never disagree", and both resolved that boundary in the environment zone — the
     deployment's `TZ` seed — while the mint, the pay page and the approval email
     moved onto the club's PERSISTED zone (#3068). They now call one function that
     takes the zone.
 
     Measured before this block existed: replacing the threaded `clubZone` with
-    `APP_TIME_ZONE` at both sites left all 57 tests in this file GREEN. The two
+    the environment zone at both sites left all 57 tests in this file GREEN. The two
     highest-consequence sites in the change had no coverage of the defect at all.
 
     ## Why the fixtures are searched for rather than written down
 
     Discriminating needs `now` to fall strictly between the club's boundary and
-    BOTH wrong answers' — `APP_TIME_ZONE`'s and the host's own resolved zone.
+    BOTH wrong answers' — the environment zone's and the host's own resolved zone.
     `divergentClubZone` guarantees three DIFFERENT answers, which is not the same
     thing: a club boundary sitting between the two wrong ones would leave the
     observable identical to one of them. So this searches the same candidate list
@@ -2985,7 +2988,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       return lo;
     }
 
-    const environmentZone = APP_TIME_ZONE;
+    const environmentZone = ENVIRONMENT_CLUB_ZONE;
     const hostZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     /**
@@ -3009,7 +3012,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       }
       throw new Error(
         "No (club zone, check-in day) pair leaves the club's day still running " +
-          `while both APP_TIME_ZONE (${environmentZone}) and the host (${hostZone}) ` +
+          `while both the environment zone (${environmentZone}) and the host (${hostZone}) ` +
           "say it has ended. Without one, this assertion cannot tell the club's " +
           "persisted zone from either wrong answer and would pass for both. " +
           `Tried: ${tried.join(", ") || "no candidate day had both wrong answers ended"}.`,
@@ -3033,7 +3036,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     it("proves the fixture really splits the club's day from both wrong answers", () => {
       // Without this the tests below could pass against a tree that read
-      // APP_TIME_ZONE. Stated separately so an ICU or candidate-list change fails
+      // the environment zone. Stated separately so an ICU or candidate-list change fails
       // here, legibly, rather than as a cancelled/extended mismatch.
       expect(endOfCivilDay(environmentZone, FIXTURE.checkIn)).toBeLessThanOrEqual(
         NOW.getTime(),
@@ -3063,7 +3066,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         result.cancelledBookingIds,
         "INV-CONFIG-002: the club's check-in day has not ended, so the requester's " +
           "/pay link is still live and this booking must keep its hold. Closing " +
-          "the day on APP_TIME_ZONE cancels it and RELEASES ITS BEDS a whole club " +
+          "the day on the environment zone cancels it and RELEASES ITS BEDS a whole club " +
           "day early, and REVOKES THE MEMBER'S LINK with them: the terminal " +
           "branch calls `revokePaymentLinksForBooking` in the same transaction, " +
           "which is why the assertion below is `not.toHaveBeenCalled()`. So the " +

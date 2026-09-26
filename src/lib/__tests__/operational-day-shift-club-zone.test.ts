@@ -20,10 +20,13 @@
  * ## Why no existing suite caught it
  *
  * Every one of them runs with the environment zone resolving to
- * `Pacific/Auckland`, where the projection is the identity. So this file moves
- * the environment axis with a config mock, and the host axis with `withTimeZone`
- * — separately, because a suite that moved them together could not tell a
- * projection through the configured zone from one through the host's.
+ * `Pacific/Auckland`, where the projection is the identity. So this file moved
+ * the environment axis to `America/Denver` with a config mock, and moves the
+ * host axis with `withTimeZone` — separately, because a suite that moved them
+ * together could not tell a projection through the configured zone from one
+ * through the host's. (#3567 deleted that environment constant, and nothing
+ * reads the environment's zone any more, so the mock is gone; the premise below
+ * measures the old projection through `America/Denver` directly.)
  *
  * ## What this file may and may not assert
  *
@@ -51,19 +54,8 @@
  * is read correctly, and keeping the instant round trip with a UTC reader is
  * correct only until somebody changes the encoder.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// `APP_TIME_ZONE` is frozen at module load, so the environment zone has to move
-// above this file's imports. The mock moves it ALONE, leaving the host wherever
-// the runner put it.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   expandStayEnvelopeToNightKeys,
   getExplicitGuestBedNightKeys,
@@ -85,6 +77,9 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 function day(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
+
+/** The zone behind Greenwich the removed projection is measured under. */
+const PROJECTION_ZONE = "America/Denver";
 
 /** Both offset extremes, to prove the host cannot move any answer here. */
 const HOST_EXTREMES = ["Pacific/Pago_Pago", "Pacific/Kiritimati"];
@@ -111,10 +106,9 @@ function presence(guest: GuestStayRange, dayValue: Date) {
 }
 
 describe("#3100 premise: the projection this fix removes really is reachable", () => {
-  it("pins the environment zone behind Greenwich, so nothing here is vacuous", () => {
-    // If either assertion fails, every kill below is measuring the identity.
-    expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnlyForTimeZone(day("2026-07-04"), APP_TIME_ZONE)).toBe(
+  it("projects through a zone behind Greenwich, so nothing here is vacuous", () => {
+    // If this fails, every kill below is measuring the identity.
+    expect(formatDateOnlyForTimeZone(day("2026-07-04"), PROJECTION_ZONE)).toBe(
       "2026-07-03",
     );
   });
@@ -128,7 +122,7 @@ describe("#3100 premise: the projection this fix removes really is reachable", (
     const zone = unvalidatedLegacyClubTimeZone("America/Denver");
     const fallBackDay = startOfClubDay(requireCalendarDate("2026-11-01"), zone);
     const plus24h = new Date(fallBackDay.getTime() + 24 * 60 * 60 * 1000);
-    expect(formatDateOnlyForTimeZone(plus24h, APP_TIME_ZONE)).toBe("2026-11-01");
+    expect(formatDateOnlyForTimeZone(plus24h, PROJECTION_ZONE)).toBe("2026-11-01");
 
     // The calendar answer, which takes no zone and no instant at all.
     expect(

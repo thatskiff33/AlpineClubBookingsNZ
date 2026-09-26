@@ -20,20 +20,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *   `validUntil`. That one genuinely needs a zone, and the zone it needs is the
  *   club's PERSISTED one (`INV-CONFIG-002`), never the container's.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `America/Denver`, behind
- * Greenwich, because that is the side on which both defects are visible. Where
+ * DISCRIMINATION. The projection is measured under `America/Denver`, behind
+ * Greenwich, because that is the side on which both defects are visible. (The
+ * environment constant this file used to pin to Denver was deleted in #3567;
+ * nothing reads the environment's zone any more, so the pin is gone.) Where
  * the persisted club zone matters it is set to something the environment does
  * not claim, and moved between cases — a suite that persists the zone the
  * environment already holds cannot tell the persisted zone from the environment
  * zone (#3123 execution contract).
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
 const { mockPromoCodeAssignmentFindMany, mockClubTimeSettingsFindUnique } =
   vi.hoisted(() => ({
     mockPromoCodeAssignmentFindMany: vi.fn(),
@@ -53,7 +48,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   getAssignedPromoCodeSummariesForMember,
@@ -75,7 +69,7 @@ function storedDay(day: string): Date {
 
 /*
   #3123, second half: `validatePromoCodeRules` no longer takes an instant it
-  projects through `APP_TIME_ZONE` — it takes the CLUB's already-resolved
+  projects through the environment's zone — it takes the CLUB's already-resolved
   calendar day, so the `FROZEN_NOW` fixture this file used to pass is gone
   entirely rather than converted. At the frozen instant the club's day is 1 July
   for the persisted `Pacific/Auckland` and 30 June for the environment's
@@ -105,9 +99,8 @@ beforeEach(() => {
   persistClubZone("Pacific/Auckland");
 });
 
-describe("PREMISE: the environment is behind Greenwich, so a stored day projected through it moves", () => {
-  it("is pinned to America/Denver, and a UTC-midnight @db.Date reads a day early there", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
+describe("PREMISE: behind Greenwich, a stored day projected through the zone moves", () => {
+  it("a UTC-midnight @db.Date reads a day early in America/Denver", () => {
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: ENVIRONMENT_ZONE }).format(
         storedDay("2026-08-01"),

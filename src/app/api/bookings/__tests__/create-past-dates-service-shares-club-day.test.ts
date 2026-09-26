@@ -33,19 +33,21 @@ import { NextRequest } from "next/server";
  *   - generic failure  => both guards passed, the pair agrees;
  *   - lookback message => one of them refused, and the boundary case says which.
  *
- * `APP_TIME_ZONE` is pinned a day ahead of the persisted zone under the frozen
- * clock, which is exactly the deployment shape that straddles. Nothing reads the
- * host's `TZ`, so this says the same thing on CI, where it is unset.
+ * The environment's zone (`ENVIRONMENT_CLUB_ZONE`: `TZ`, else `Pacific/Auckland`)
+ * is a day ahead of the persisted zone under the frozen clock, which is exactly
+ * the deployment shape that straddles. The `APP_TIME_ZONE` pin that used to
+ * guarantee this went with the constant in #3567; nothing reads it any more.
  */
 import { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS as MAX_LOOKBACK_DAYS } from "@/lib/booking-create-types";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 
 /*
   CT-4 (#2870): every date in this suite is relative to the CLUB's calendar day,
   taken from the persisted `ClubTimeSettings` row the prisma mock below serves —
-  not from `APP_TIME_ZONE`, which this file pins to a DIFFERENT zone on purpose.
+  not from the environment's zone (`ENVIRONMENT_CLUB_ZONE`), which differs from it
+  on purpose.
 
   Before CT-4 the route derived "today" from `getTodayDateOnly()`, i.e. the
   container's `TZ`, and this suite used the same helper as its oracle. The two
@@ -68,15 +70,9 @@ function getTodayDateOnly() {
 // service is a spy so we can assert what the route threads and inject its
 // structured errors; every pre-service helper is stubbed to pass through so the
 // request reaches the past-date / lock-date guards deterministically.
-// Deliberately NOT the persisted zone: the point of this file is that they can
-// differ and the route must follow the persisted one. Inlined because `vi.mock`
-// hoists above every const here.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
+// The environment zone used to be pinned here to `Pacific/Auckland`; that
+// constant was deleted in #3567 and nothing reads the environment's zone any
+// more, so the pin is gone.
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -161,7 +157,7 @@ vi.mock("@/lib/prisma", () => ({
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     // The club's persisted timezone. NOT optional on this mock: `getClubTimeZone`
     // degrades silently to the environment when the delegate is missing, so
-    // leaving it off would put the route back on `APP_TIME_ZONE` with nothing
+    // leaving it off would put the route back on the environment's zone with nothing
     // failing.
     clubTimeSettings: {
       findUnique: vi.fn().mockResolvedValue({
@@ -365,8 +361,7 @@ describe("the create route and the create service share one today (CT-4, #2870)"
     // The ANSWERS must differ, not merely the zone identifiers, and in this
     // DIRECTION: a container BEHIND the club would make the service's guard the
     // looser of the two and hide the refusal entirely.
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
-    expect(clubToday(requireClubTimeZone(APP_TIME_ZONE))).toBe("2026-07-01");
+    expect(clubToday(requireClubTimeZone(ENVIRONMENT_CLUB_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE))).toBe("2026-06-30");
   });
 

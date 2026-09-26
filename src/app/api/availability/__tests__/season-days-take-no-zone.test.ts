@@ -25,20 +25,13 @@ import { NextRequest } from "next/server";
  * plain about. A calendar date takes no zone, ever, so after the change this
  * route consults none on this path: mocking a persisted `ClubTimeSettings` row
  * would prove nothing, because the code never reads one here and the old
- * projection would sail past such a test. `APP_TIME_ZONE` — the only zone the
- * replaced helper ever read — is instead pinned BEHIND UTC, and the first case
- * measures what that helper answers so the premise cannot go quiet.
+ * projection would sail past such a test. Instead the first case measures what
+ * the replaced helper answers for a club BEHIND UTC, so the premise cannot go
+ * quiet. (The environment constant that helper read used to be pinned here; #3567
+ * deleted it, so the pin went with it.)
  *
- * Independent of the host's `TZ`, which the mock overrides.
+ * Independent of the host's `TZ`: every zone here is named explicitly.
  */
-
-// Inlined: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -79,16 +72,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { GET } from "@/app/api/availability/route";
 
-/**
- * The zone the `@/config/operational` factory above pins, named rather than left
- * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
- * asserts the two are still the same zone, so this constant cannot drift out of
- * step with the factory and leave the cases below measuring nothing.
- */
+/** A club behind UTC, where a zone projection of a `@db.Date` moves the day. */
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** A season stored exactly as a `@db.Date` pair round-trips. */
@@ -123,11 +110,6 @@ describe("season windows on the availability grid take no zone (CT-4, #2870)", (
     // The legacy ANSWER, measured rather than assumed. If these ever equalled
     // the stored days the zone would have stopped discriminating and the case
     // below would pass against the defect.
-    //
-    // The zone the replaced helper would have read is `APP_TIME_ZONE`, so the
-    // constant below has to keep naming it for this premise to be about the
-    // right zone at all.
-    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
     expect(formatDateOnlyForTimeZone(SEASON.startDate, CLUB_ZONE_BEHIND_UTC)).toBe(
       "2026-07-31",
     );

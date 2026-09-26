@@ -122,7 +122,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/deletion-requests/[id]/route";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { getTodayDateOnly } from "@/lib/date-only";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
@@ -1531,7 +1531,8 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
     // different zone names can still name the same day (`America/Chicago` gives
     // Denver's answer at this instant), and then the bound below proves nothing.
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * THE ENVIRONMENT'S ZONE PASSED ON PURPOSE (#3123; the `APP_TIME_ZONE`
+     * constant it used to be was deleted in #3567). Everywhere else an explicit
      * zone exists to get OFF the environment; here the environment IS the
      * subject of the assertion — the line measures what the environment
      * authority answers so it can prove the persisted zone answers differently.
@@ -1539,7 +1540,7 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
      * and the premise would stop tracking the environment it is guarding.
      */
     expect(
-      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      getTodayDateOnly(ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell the two apart.",
     ).not.toBe("2026-06-30T00:00:00.000Z");

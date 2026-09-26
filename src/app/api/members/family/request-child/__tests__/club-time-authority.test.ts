@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
  *
  * The comparison has always been day-against-day rather than day-against-instant
  * (#2682) — what changes here is where the day comes from. It used to be
- * `getTodayDateOnly()`, which reads `APP_TIME_ZONE`, i.e. the container's `TZ`.
+ * `getTodayDateOnly()`, which read `APP_TIME_ZONE`, i.e. the container's `TZ`.
  * A club whose server runs in a different region than the club does therefore
  * refused a birthday the club's own date picker offered, or accepted one a day
  * ahead of it. The answer now comes from the persisted `ClubTimeSettings.timeZone`
@@ -20,26 +20,19 @@ import { NextRequest } from "next/server";
  * between the two cases is the `ClubTimeSettings` row, and the route's answer has
  * to change with it. That is a property no mutant which ignores the persisted
  * value can satisfy, including the two most tempting ones: reading
- * `APP_TIME_ZONE` (pinned here to `Pacific/Auckland`, so it agrees with one case
- * and not the other) and hard-coding the documented default.
+ * the environment's zone (`ENVIRONMENT_CLUB_ZONE`, `Pacific/Auckland` unless `TZ`
+ * says otherwise, so it agrees with one case and not the other) and hard-coding
+ * the documented default.
  *
  * A 404 rather than a 422 is what "the gate let it through" looks like: the
  * request goes on to look the requester up, and the fixture has no such member.
  *
- * Independent of the host's own `TZ` — `APP_TIME_ZONE` is supplied by the mock,
- * and `getClubTimeZone`'s environment seed is never reached because a persisted
- * row is always present.
+ * The route never reads the host's `TZ`: the environment-zone constant this
+ * file used to pin was deleted in #3567, and `getClubTimeZone`'s environment
+ * seed is never reached because a persisted row is always present.
  */
 
-// Inlined: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-const ENVIRONMENT_ZONE = "Pacific/Auckland";
+const ENVIRONMENT_ZONE = ENVIRONMENT_CLUB_ZONE;
 const BEHIND_UTC_ZONE = "America/Denver";
 
 const mocks = vi.hoisted(() => ({
@@ -89,7 +82,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { POST } from "@/app/api/members/family/request-child/route";
 
 /** The frozen clock's calendar day in a given zone. */
@@ -135,7 +128,6 @@ describe("a child's date of birth is judged on club time (CT-4, #2870)", () => {
   it("PREMISE: the two zones disagree about today at the frozen instant", () => {
     // The ANSWERS differ, not just the identifiers. Without this the two cases
     // below would be the same case written twice.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(todayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
     expect(todayIn(BEHIND_UTC_ZONE)).toBe("2026-06-30");
   });

@@ -58,6 +58,13 @@ const dbShape = mocks.dbShape;
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.dbShape }));
 vi.mock("@/lib/observability-bridge", () => ({ reportAiError: mocks.reportAiError }));
 
+// #3567 D6: the month boundary is the club's STORED zone, resolved once through
+// the server binding. Pinned here so a test can move it and prove it is read.
+const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland" }));
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: async () => zoneMocks.zone,
+}));
+
 // #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
 // Mocked at the reader so the conversion seam is exercised without a currency
 // env; the reader itself has its own suites.
@@ -99,9 +106,13 @@ import {
   resetDiagnosticsMeteringHealthForTests,
   settleDiagnosticsRoundtrip,
 } from "@/lib/ai-diagnostics-usage";
+import { requireClubTimeZone } from "@/lib/club-time";
+
+const AUCKLAND = requireClubTimeZone("Pacific/Auckland");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  zoneMocks.zone = "Pacific/Auckland";
   resetDiagnosticsMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   mocks.execRaw.mockResolvedValue(1);
@@ -120,10 +131,16 @@ beforeEach(() => {
   );
 });
 
-describe("diagnosticsUsageMonthKey (Pacific/Auckland)", () => {
+describe("diagnosticsUsageMonthKey (the club's stored zone, #3567 D6)", () => {
   it("crosses the month at the NZ boundary, not UTC", () => {
-    expect(diagnosticsUsageMonthKey(new Date("2026-06-30T13:00:00Z"))).toBe("2026-07");
-    expect(diagnosticsUsageMonthKey(new Date("2026-07-31T11:59:00Z"))).toBe("2026-07");
+    expect(diagnosticsUsageMonthKey(new Date("2026-06-30T13:00:00Z"), AUCKLAND)).toBe("2026-07");
+    expect(diagnosticsUsageMonthKey(new Date("2026-07-31T11:59:00Z"), AUCKLAND)).toBe("2026-07");
+  });
+
+  it("keys the reserve's advisory lock by the club's STORED zone month", async () => {
+    zoneMocks.zone = "America/New_York";
+    await reserveDiagnosticsBudget({ reserveCents: 40, now: new Date("2026-07-01T02:00:00Z") });
+    expect(mocks.execRaw.mock.calls[0][1]).toBe("2026-06");
   });
 });
 
@@ -491,7 +508,7 @@ describe("settle serialises against reserve on the per-month lock (money-safety 
 
   it("takes the per-month advisory lock as its FIRST statement, before release/event/rollup", async () => {
     const now = new Date("2026-08-15T00:00:00Z");
-    const month = diagnosticsUsageMonthKey(now);
+    const month = diagnosticsUsageMonthKey(now, AUCKLAND);
 
     await settleDiagnosticsRoundtrip({ ...settleInput, now });
 
@@ -514,7 +531,7 @@ describe("settle serialises against reserve on the per-month lock (money-safety 
 
   it("acquires the IDENTICAL lock key as reserve for the same month (mutual exclusion)", async () => {
     const now = new Date("2026-08-15T00:00:00Z");
-    const month = diagnosticsUsageMonthKey(now);
+    const month = diagnosticsUsageMonthKey(now, AUCKLAND);
 
     await reserveDiagnosticsBudget({ reserveCents: 40, now });
     await settleDiagnosticsRoundtrip({ ...settleInput, now });

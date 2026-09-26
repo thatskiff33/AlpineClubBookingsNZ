@@ -49,7 +49,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { GET } from "@/app/api/admin/promo-codes/[id]/redemptions/route";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { startOfDateOnlyForTimeZone } from "@/lib/date-only";
 
 /** Persist a club timezone for the route's `clubTimeZone()` read to resolve. */
@@ -750,7 +750,7 @@ describe("promo redemptions — the window comes from the persisted club zone (C
     // the assertions below cannot fail for the right reason. Comparing zone
     // NAMES would not establish that; `America/Chicago` gives Denver's answer.
     expect(
-      startOfDateOnlyForTimeZone("2026-07-01", APP_TIME_ZONE).toISOString(),
+      startOfDateOnlyForTimeZone("2026-07-01", ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now opens the club day at the " +
         "same instant the persisted zone does, so this window cannot tell which " +
         "of the two the route obeyed.",

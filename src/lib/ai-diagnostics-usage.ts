@@ -35,7 +35,8 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { calendarMonthOf, clubCalendarDateOf, requireInstant, type ClubTimeZone } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { AI_DIAGNOSTICS_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
 import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
@@ -187,25 +188,20 @@ export function computeWorstCaseRoundtripCents(): number {
 export const WORST_CASE_ROUNDTRIP_CENTS = computeWorstCaseRoundtripCents();
 
 // ---------------------------------------------------------------------------
-// Month key (Pacific/Auckland)
+// Month key (the club's stored time zone)
 // ---------------------------------------------------------------------------
 
-const monthKeyFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: APP_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-});
-
 /**
- * The billing month, "YYYY-MM", in the app time zone (Pacific/Auckland). An
- * instant near a UTC month boundary can fall in a different NZ month, so the key
- * is computed in APP_TIME_ZONE, never from getUTCMonth/getMonth.
+ * The billing month, "YYYY-MM", in the CLUB's stored time zone
+ * (INV-CONFIG-002). An instant near a UTC month boundary can fall in a
+ * different club month, so the key is the club calendar day's month, never
+ * getUTCMonth/getMonth. The zone is an ARGUMENT, resolved once by the caller
+ * before any transaction or lock (INV-LOCK-004): until #3567 it was the
+ * environment's `APP_TIME_ZONE`, which on the New Zealand default gives the
+ * same key byte for byte.
  */
-export function diagnosticsUsageMonthKey(date: Date = new Date()): string {
-  const parts = monthKeyFormatter.formatToParts(date);
-  const year = parts.find((p) => p.type === "year")?.value ?? "0000";
-  const month = parts.find((p) => p.type === "month")?.value ?? "00";
-  return `${year}-${month}`;
+export function diagnosticsUsageMonthKey(date: Date, zone: ClubTimeZone): string {
+  return calendarMonthOf(clubCalendarDateOf(requireInstant(date), zone));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +306,9 @@ export async function reserveDiagnosticsBudget(
   input: ReserveDiagnosticsBudgetInput = {},
 ): Promise<ReserveDiagnosticsBudgetResult> {
   const now = input.now ?? new Date();
-  const month = diagnosticsUsageMonthKey(now);
+  // Resolved before the locked transaction below, never inside it: the month is
+  // part of the lock key (INV-LOCK-004).
+  const month = diagnosticsUsageMonthKey(now, await clubTimeZone());
 
   const p = prisma as DiagnosticsPrisma;
   if (
@@ -516,7 +514,8 @@ export async function settleDiagnosticsRoundtrip(
   input: SettleDiagnosticsRoundtripInput,
 ): Promise<void> {
   const now = input.now ?? new Date();
-  const month = diagnosticsUsageMonthKey(now);
+  // Resolved before the locked transaction below (INV-LOCK-004).
+  const month = diagnosticsUsageMonthKey(now, await clubTimeZone());
   const usage = input.usage ?? EMPTY_USAGE;
   const nzdCostCents = input.usage
     ? estimateDiagnosticsCostCents(input.model, input.usage)
@@ -635,7 +634,7 @@ function budgetStatusFor(usagePercent: number): DiagnosticsBudgetStatus {
  * caller (the admin route wraps it in a 500).
  */
 export async function getDiagnosticsUsageSummary(now: Date = new Date()) {
-  const month = diagnosticsUsageMonthKey(now);
+  const month = diagnosticsUsageMonthKey(now, await clubTimeZone());
   const [monthly, settings, reservedAgg, events, currency] = await Promise.all([
     prisma.diagnosticsUsageMonthly.findUnique({ where: { month } }),
     prisma.diagnosticsSettings.findUnique({ where: { id: DIAGNOSTICS_SETTINGS_ID } }),

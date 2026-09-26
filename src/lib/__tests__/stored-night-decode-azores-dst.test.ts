@@ -37,14 +37,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The environment zone moves ALONE, above the imports, because `APP_TIME_ZONE`
-// is frozen at module load. The host stays where the runner put it.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Atlantic/Azores",
-  APP_LOCALE: "en-NZ",
-}));
+// This file used to pin the environment zone to `Atlantic/Azores` with a config
+// mock. #3567 deleted that environment constant and nothing reads the
+// environment's zone any more, so the pin is gone; the premise below measures
+// the old projection through `Atlantic/Azores` directly.
+const SIGN_CHANGING_ZONE = "Atlantic/Azores";
 
 const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
@@ -64,7 +61,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   expandStayEnvelopeToNightKeys,
@@ -102,19 +98,18 @@ beforeEach(() => {
 
 describe("#3107 premise: this zone's projection is NOT a uniform shift", () => {
   it("pins both day-deltas across the 2026-03-29 transition", () => {
-    expect(APP_TIME_ZONE).toBe("Atlantic/Azores");
     // Standard time, UTC-1: the previous day.
-    expect(formatDateOnlyForTimeZone(day("2026-03-28"), APP_TIME_ZONE)).toBe("2026-03-27");
-    expect(formatDateOnlyForTimeZone(day("2026-03-29"), APP_TIME_ZONE)).toBe("2026-03-28");
+    expect(formatDateOnlyForTimeZone(day("2026-03-28"), SIGN_CHANGING_ZONE)).toBe("2026-03-27");
+    expect(formatDateOnlyForTimeZone(day("2026-03-29"), SIGN_CHANGING_ZONE)).toBe("2026-03-28");
     // Summer time, UTC+0: the same day. Two stored days collapse onto one key
     // above, and 29 March is named by none of them.
-    expect(formatDateOnlyForTimeZone(day("2026-03-30"), APP_TIME_ZONE)).toBe("2026-03-30");
+    expect(formatDateOnlyForTimeZone(day("2026-03-30"), SIGN_CHANGING_ZONE)).toBe("2026-03-30");
     // If either delta ever disappears this file has stopped testing the class
     // it exists for, so the non-uniformity is asserted rather than assumed.
     const deltas = new Set(
       NIGHTS.map(
         (value) =>
-          (Date.parse(`${formatDateOnlyForTimeZone(day(value), APP_TIME_ZONE)}T00:00:00.000Z`) -
+          (Date.parse(`${formatDateOnlyForTimeZone(day(value), SIGN_CHANGING_ZONE)}T00:00:00.000Z`) -
             Date.parse(`${value}T00:00:00.000Z`)) /
           86_400_000,
       ),

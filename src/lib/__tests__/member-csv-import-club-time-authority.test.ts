@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * #3123 — the member-import "cancelled date cannot be in the future" boundary
@@ -11,20 +11,13 @@ import { describe, expect, it, vi } from "vitest";
  * `useClubTime().today()`, the route from `club.today()` — and that is why the
  * parameter was made REQUIRED rather than re-pointed at a different default.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `Pacific/Auckland`: the value the
- * removed default (`todayDateOnlyForTimeZone()`) would have produced, AND this
- * codebase's own fallback. So it is the one pin under which a half-done fix
- * could still look right, and every case below is chosen so the club's day and
- * that value disagree.
+ * DISCRIMINATION. `Pacific/Auckland` is the day the removed default
+ * (`todayDateOnlyForTimeZone()`) would have produced, AND this codebase's own
+ * fallback. (The environment constant that used to be pinned to it here was
+ * deleted in #3567; nothing reads the environment's zone any more.) So it is the
+ * answer under which a half-done fix could still look right, and every case
+ * below is chosen so the club's day and that value disagree.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   buildMemberImportPreview,
   inferMemberImportColumnMapping,
@@ -35,7 +28,7 @@ import {
 /**
  * The frozen clock is `2026-07-01T00:00:00.000Z` — midday on 1 July in
  * Auckland, and still 30 June in every zone behind Greenwich. So a club on
- * `America/Denver` is on 30 June while `APP_TIME_ZONE` says 1 July, and a
+ * `America/Denver` is on 30 June while the NZ default says 1 July, and a
  * cancellation dated 1 July is the FUTURE for that club and TODAY for the
  * container.
  */
@@ -48,8 +41,7 @@ const CSV = [
 ].join("\n");
 
 describe("PREMISE: the container's day is not the club's", () => {
-  it("pins the environment to the removed default's own answer", () => {
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+  it("the removed default's own answer (Pacific/Auckland) is a day ahead of the club", () => {
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland" }).format(
         new Date(),

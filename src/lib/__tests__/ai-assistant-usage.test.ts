@@ -29,6 +29,13 @@ vi.mock("@/lib/observability-bridge", () => ({
   reportAiError: mocks.reportAiError,
 }));
 
+// #3567 D6: the month boundary is the club's STORED zone, resolved once through
+// the server binding. Pinned here so a test can move it and prove it is read.
+const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland" }));
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: async () => zoneMocks.zone,
+}));
+
 // #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
 // Mocked at the reader so the conversion seam is exercised without a currency
 // env; the reader itself has its own suites.
@@ -66,6 +73,10 @@ import {
   resetAiMeteringHealthForTests,
   WORST_CASE_CALL_CENTS,
 } from "@/lib/ai-assistant-usage";
+import { requireClubTimeZone } from "@/lib/club-time";
+
+const AUCKLAND = requireClubTimeZone("Pacific/Auckland");
+const NEW_YORK = requireClubTimeZone("America/New_York");
 
 const USAGE = {
   inputTokens: 1_000_000,
@@ -76,6 +87,7 @@ const USAGE = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  zoneMocks.zone = "Pacific/Auckland";
   resetAiMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   // $transaction executes the array of pending ops (which are already-resolved
@@ -85,17 +97,44 @@ beforeEach(() => {
   mocks.monthlyUpsert.mockResolvedValue({});
 });
 
-describe("aiUsageMonthKey (Pacific/Auckland)", () => {
+describe("aiUsageMonthKey (the club's stored zone, #3567 D6)", () => {
   it("returns YYYY-MM in NZ time", () => {
     // 15 Jul 2026 12:00 UTC → 16 Jul NZST, still July.
-    expect(aiUsageMonthKey(new Date("2026-07-15T12:00:00Z"))).toBe("2026-07");
+    expect(aiUsageMonthKey(new Date("2026-07-15T12:00:00Z"), AUCKLAND)).toBe("2026-07");
   });
 
   it("crosses the month at the NZ boundary, not the UTC boundary", () => {
     // 30 Jun 2026 13:00 UTC is 1 Jul 01:00 NZST → the NZ month is July.
-    expect(aiUsageMonthKey(new Date("2026-06-30T13:00:00Z"))).toBe("2026-07");
+    expect(aiUsageMonthKey(new Date("2026-06-30T13:00:00Z"), AUCKLAND)).toBe("2026-07");
     // 31 Jul 2026 11:59 UTC is still 31 Jul 23:59 NZST → July.
-    expect(aiUsageMonthKey(new Date("2026-07-31T11:59:00Z"))).toBe("2026-07");
+    expect(aiUsageMonthKey(new Date("2026-07-31T11:59:00Z"), AUCKLAND)).toBe("2026-07");
+  });
+
+  it("follows the zone it is given: the same instant is June in New York", () => {
+    expect(aiUsageMonthKey(new Date("2026-07-01T02:00:00Z"), NEW_YORK)).toBe("2026-06");
+    expect(aiUsageMonthKey(new Date("2026-07-01T02:00:00Z"), AUCKLAND)).toBe("2026-07");
+  });
+
+  it("the budget gate buckets by the club's STORED zone, not the environment's", async () => {
+    zoneMocks.zone = "America/New_York";
+    mocks.monthlyFindUnique.mockResolvedValue(null);
+    mocks.settingsFindUnique.mockResolvedValue(null);
+    await checkAiBudget(new Date("2026-07-01T02:00:00Z"));
+    expect(mocks.monthlyFindUnique).toHaveBeenCalledWith({ where: { month: "2026-06" } });
+  });
+
+  it("records usage under the club-zone month", async () => {
+    zoneMocks.zone = "America/New_York";
+    await recordAiUsage({
+      surface: "admin",
+      pathname: "/admin",
+      model: "claude-haiku-4-5",
+      success: true,
+      now: new Date("2026-07-01T02:00:00Z"),
+    });
+    expect(mocks.eventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ month: "2026-06" }) }),
+    );
   });
 });
 

@@ -57,24 +57,18 @@ const { originalHostTimeZone } = vi.hoisted(() => {
 });
 
 /*
-  THE CLUB'S ZONE NOW ARRIVES THROUGH THE PROVIDER, AND THE ENVIRONMENT IS SET
-  SOMEWHERE ELSE ON PURPOSE (CT-4, #2870; INV-CONFIG-002).
+  THE CLUB'S ZONE ARRIVES THROUGH THE PROVIDER, AND THE HOST IS SET SOMEWHERE
+  ELSE ON PURPOSE (CT-4, #2870; INV-CONFIG-002).
 
-  Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
-  and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
-  anything once the HOST zone moved. The page now takes the club's day from
-  `ClubTimeProvider` instead, and `renderKiosk` (in `./helpers/kiosk-harness`)
-  supplies it — so the mock
-  is free to become a third zone, and it should be.
+  Before CT-4 the kiosk read `APP_TIME_ZONE`, and this file mocked it. The page
+  now takes the club's day from `ClubTimeProvider`, which `renderKiosk` (in
+  `./helpers/kiosk-harness`) supplies, and #3567 deleted the environment
+  constant — nothing reads the environment's zone any more — so the mock is gone.
 
-  WHAT THAT DOES AND DOES NOT BUY, stated precisely, because the obvious claim is
-  wrong. Three authorities are in play — club `Pacific/Auckland` (the provider),
-  environment `America/Denver` (this mock), host `America/New_York` (above) — and
-  at the 02:00 UTC instants every case here pins, the club is on one calendar day
-  and BOTH of the others are on the day before. So a date assertion tells the
-  club apart from either wrong authority, which is what matters; it does not tell
-  the environment apart from the host, and no assertion at this instant could,
-  because at any single moment there are only ever two calendar days on earth.
+  WHAT THE HOST PIN BUYS, stated precisely. Club `Pacific/Auckland` (the
+  provider) and host `America/New_York` (above): at the 02:00 UTC instants every
+  case here pins, the club is on one calendar day and the host is on the day
+  before, so a date assertion tells the club apart from the tablet's own clock.
 
   The zone claim is carried by "opens on the club's day" below. Every other case
   here reaches its night by CLICKING a tile by name, which self-corrects: pick
@@ -83,17 +77,10 @@ const { originalHostTimeZone } = vi.hoisted(() => {
   7 tests in this file, while the comment above claimed all of them discriminated
   all three zones.
 
-  `APP_LOCALE` still matters and is left alone — the kiosk header's long-weekday
-  formatter is a calendar-date shape with no house entry in the kernel, so it
-  stays local and is pinned to `UTC` over the UTC-midnight encoding.
+  The kiosk header's long-weekday formatter is a calendar-date shape with no
+  house entry in the kernel, so it stays local and is pinned to `UTC` over the
+  UTC-midnight encoding.
 */
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
-
 vi.mock("@/components/kiosk-lodge-instructions", () => ({
   KioskLodgeInstructions: () => null,
 }));
@@ -254,16 +241,15 @@ describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)"
     vi.setSystemTime(frozenTestNow());
   });
 
-  it("opens on the CLUB's day, not the environment's and not the tablet's", async () => {
+  it("opens on the CLUB's day, not the tablet's", async () => {
     /*
       THE ONLY CASE IN THIS FILE THAT MAKES A ZONE CLAIM, and it exists because
       the others cannot: they reach their night by clicking a tile by name, so
       opening on the wrong day self-corrects and every zone mutant survived.
 
       At 02:00 UTC on 12 July the club (`Pacific/Auckland`, UTC+12) is on the
-      12th; the environment (`America/Denver`) and the tablet's own clock
-      (`America/New_York`) are both still on the 11th. So the Today chip lands on
-      a different tile for each answer, and the day heading names a different
+      12th; the tablet's own clock (`America/New_York`) is still on the 11th. So
+      the Today chip lands on a different tile for each answer, and the day heading names a different
       night — which is a hut leader served the wrong guest list.
 
       It also pins the two module-level `Intl.DateTimeFormat` constants that
