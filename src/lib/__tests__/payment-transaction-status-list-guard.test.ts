@@ -20,22 +20,32 @@ function productionSourceFiles(directory = SOURCE_ROOT): SourceFile[] {
 }
 
 /**
- * The two forms are intentional and bounded: Prisma's `status.in` receiver
- * and the in-memory `new Set<PaymentStatus>` reader are the copies this lane
- * removed. #3632 owns the existing aggregate finance set and removes this
- * exact exception when it replaces that set with the aggregate predicate.
+ * The receivers cover Prisma's inline `status.in`, in-memory sets, and named
+ * arrays later spread into either. #3632 owns the existing aggregate finance
+ * set and removes this exact exception when it replaces that set with the
+ * aggregate predicate. The canonical transaction definition is exempt.
  */
 function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[]): string[] {
+  const namedEnumArray = /(?:export\s+)?const\s+\w+(?:\s*:\s*[^=\n]+)?\s*=\s*\[([\s\S]{0,500}?)\]/g;
   const copiedListReceivers = [
     /status\s*:\s*\{\s*in\s*:\s*\[([\s\S]{0,500}?)\]\s*\}/g,
     /new\s+Set(?:<\s*PaymentStatus\s*>)?\s*\(\s*\[([\s\S]{0,500}?)\]\s*\)/g,
+    namedEnumArray,
   ];
   return files.flatMap(({ file, source }) => {
+    if (file.replaceAll("\\", "/") === "src/lib/payment-transaction-status.ts") return [];
+    if (file.replaceAll("\\", "/") === "src/lib/booking-payment-state.ts") return [];
     const matches: string[] = [];
     const code = stripComments(source);
     for (const receiver of copiedListReceivers) {
       for (const match of code.matchAll(receiver)) {
         const values = match[1];
+        if (receiver === namedEnumArray) {
+          // Status vocabularies and Xero aggregate strings are different lists.
+          // The copied transaction-list form uses exactly these enum members.
+          const enumMembers = values.match(/\bPaymentStatus\.[A-Z_]+\b/g) ?? [];
+          if (enumMembers.length !== CAPTURED_STATUS_NAMES.length) continue;
+        }
         const declaration = code.slice(Math.max(0, match.index - 64), match.index);
         const knownAggregateFinanceSet =
           file.replaceAll("\\", "/") === "src/lib/finance-booking-metrics.ts" &&
@@ -71,10 +81,16 @@ describe("INV-SSOT: captured PaymentTransaction status-list guard (#3606)", () =
           source:
             "const captured = new Set<PaymentStatus>([PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED]);",
         },
+        {
+          file: "src/lib/mutated-payment-transaction-array.ts",
+          source:
+            "const CAPTURED = [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED]; const where = { status: { in: [...CAPTURED] } };",
+        },
       ]),
     ).toEqual([
       "src/lib/mutated-payment-transaction-reader.ts",
       "src/lib/mutated-payment-transaction-set.ts",
+      "src/lib/mutated-payment-transaction-array.ts",
     ]);
   });
 });
