@@ -74,7 +74,8 @@ const {
   mockFindOrCreateCustomer: vi.fn(),
   mockUpsertPaymentIntentTransaction: vi.fn().mockResolvedValue({}),
   // #3341: the REAL supersede helper's ledger read (`INV-OPS-015`). Empty by
-  // default - the replay fixtures carry no earlier live ask.
+  // default, which is honest only for a fixture with no live ADDITIONAL ask; a
+  // case whose payment carries one answers it with that row.
   mockPaymentTransactionFindMany: vi.fn().mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
   // #3220 fix round: the withdrawal's one exception. Null is "nothing is
@@ -2150,6 +2151,11 @@ describe("payment recovery worker", () => {
       mockPaymentFindUnique.mockResolvedValue(
         paymentWithAsk(7000, PaymentStatus.PENDING),
       );
+      // ...and the ledger row behind that live $70, which the real supersede
+      // reads and must retire once the replay has absorbed it (#3341).
+      mockPaymentTransactionFindMany.mockResolvedValueOnce([
+        { id: "txn-add-1", stripePaymentIntentId: "pi_edit1", amountCents: 7000 },
+      ]);
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
 
@@ -2158,6 +2164,18 @@ describe("payment recovery worker", () => {
         expect.objectContaining({
           amountCents: 10000,
           idempotencyKey: "mod_guest_bk1_mod-9",
+        }),
+      );
+      // The absorbed $70 intent is retired through the durable queue, not left
+      // live beside the $100 ask that now carries it.
+      expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+            paymentTransactionId: "txn-add-1",
+            paymentIntentId: "pi_edit1",
+            amountCents: 7000,
+          }),
         }),
       );
     });
