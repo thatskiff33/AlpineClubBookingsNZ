@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { cancelPaymentIntentIfCancellableWithResult, cancelSetupIntentIfCancellable } from "./stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { isXeroConnected } from "./xero";
 import {
   calculateAppliedCreditRestore,
@@ -2504,13 +2505,13 @@ async function cancelOutstandingPaymentIntents({
       // the same write for the same reason). The row is left for the
       // webhook's cancelled-booking late-capture handler, which records the
       // capture and refunds it in full.
-      const { paymentIntent, canceled } =
+      const result =
         await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
-      if (canceled || paymentIntent.status === "canceled") {
+      if (isPaymentIntentCancelConfirmed(result)) {
         await markPaymentIntentTransactionFailed({ paymentIntentId });
       } else {
         logger.warn(
-          { paymentIntentId, status: paymentIntent.status },
+          { paymentIntentId, status: result.paymentIntent.status },
           "Cancelled booking: Stripe would not cancel the PaymentIntent, so its row is left for the late-capture handler (#3638)"
         );
       }

@@ -17,10 +17,8 @@ import logger from "@/lib/logger";
 import { BookingEventType, BookingStatus, PaymentSource } from "@prisma/client";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
-import {
-  findPaymentTransactionByIntentId,
-  upsertPaymentIntentTransaction,
-} from "@/lib/payment-transactions";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
@@ -548,23 +546,12 @@ export async function POST(request: NextRequest) {
         // until that lookup succeeds we cannot truthfully call it paid OR
         // refunded.
         succeededPaymentIntentObserved = true;
-        // #1765 — a refunded PaymentIntent keeps status "succeeded" forever
-        // (refunds hang off the charge and never move the intent), so at the
-        // intent level a deliberately refunded payment is indistinguishable
-        // from crashed-webhook recovery. Discriminate on the local ledger:
-        // refund history lives on the intent's PaymentTransaction row
-        // (REFUNDED/PARTIALLY_REFUNDED), which genuine recovery — success
-        // never recorded locally — can never carry. The lookup backfills
-        // pre-ledger payments; the aggregate-status fallback covers a payment
-        // with no derivable transaction row.
-        const pointedTransaction = await findPaymentTransactionByIntentId({
+        // #1765 — refund history or a crashed-webhook capture? Stripe cannot
+        // tell (a refunded intent stays "succeeded"); the local ledger can.
+        const refundedHistory = await isRefundedPaymentIntentHistory({
           paymentIntentId: existingIntent.id,
+          paymentStatus: booking.payment.status,
         });
-        const refundedHistory = pointedTransaction
-          ? pointedTransaction.status === PaymentStatus.REFUNDED ||
-            pointedTransaction.status === PaymentStatus.PARTIALLY_REFUNDED
-          : booking.payment.status === PaymentStatus.REFUNDED ||
-            booking.payment.status === PaymentStatus.PARTIALLY_REFUNDED;
 
         if (!refundedHistory) {
           receivedPaymentIntentId = existingIntent.id;

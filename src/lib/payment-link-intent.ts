@@ -18,10 +18,8 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import {
-  findPaymentTransactionByIntentId,
-  upsertPaymentIntentTransaction,
-} from "@/lib/payment-transactions";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
@@ -134,14 +132,10 @@ export async function createPaymentIntentForPaymentLink(
       // must lead to a fresh repayment intent.
       let refundedHistory: boolean;
       try {
-        const pointedTransaction = await findPaymentTransactionByIntentId({
+        refundedHistory = await isRefundedPaymentIntentHistory({
           paymentIntentId: existingIntent.id,
+          paymentStatus: booking.payment.status,
         });
-        refundedHistory = pointedTransaction
-          ? pointedTransaction.status === PaymentStatus.REFUNDED ||
-            pointedTransaction.status === PaymentStatus.PARTIALLY_REFUNDED
-          : booking.payment.status === PaymentStatus.REFUNDED ||
-            booking.payment.status === PaymentStatus.PARTIALLY_REFUNDED;
       } catch (error) {
         logger.error(
           { err: error, bookingId: booking.id },

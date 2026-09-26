@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   txExecuteRaw: vi.fn(),
   recordInternetBankingPaymentTransaction: vi.fn(),
   cancelPaymentIntentIfCancellableWithResult: vi.fn(),
+  findPaymentTransactionByIntentId: vi.fn(),
   txPaymentFindUnique: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
   enqueueXeroAppliedCreditAllocationOperation: vi.fn(),
@@ -48,6 +49,8 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   recordInternetBankingPaymentTransaction:
     mocks.recordInternetBankingPaymentTransaction,
+  // #3638 / #1765: the refund-history lookup behind `isCardIntentRetired`.
+  findPaymentTransactionByIntentId: mocks.findPaymentTransactionByIntentId,
 }));
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellableWithResult:
@@ -563,25 +566,152 @@ describe("POST /api/payments/switch-to-internet-banking — the card payment mus
     expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   }
 
-  // Whatever status Stripe reports, `canceled: false` on a live intent is a
-  // refusal — the route does not second-guess which statuses can still charge.
-  for (const status of ["succeeded", "processing", "requires_capture"] as const) {
-    it(`refuses with 409 and raises no invoice when Stripe does not cancel a ${status} intent`, async () => {
+  // The mocks below return only what the real
+  // `cancelPaymentIntentIfCancellableWithResult` can: it CANCELS every status
+  // in its cancellable set (processing and requires_capture included), so
+  // `canceled: false` on a live intent only ever means `succeeded`.
+  it("refuses with 409 and raises no invoice when the card payment has succeeded", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "succeeded" },
+      canceled: false,
+    });
+    // A live capture: its transaction carries no refund history.
+    mocks.findPaymentTransactionByIntentId.mockResolvedValueOnce({
+      status: PaymentStatus.SUCCEEDED,
+    });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_NOT_CANCELLABLE",
+      error: expect.stringContaining("already gone through"),
+    });
+    expectNothingWritten();
+  });
+
+  it("refuses with 409 when a succeeded intent has no local row and the payment carries no refund", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "succeeded" },
+      canceled: false,
+    });
+    mocks.findPaymentTransactionByIntentId.mockResolvedValueOnce(null);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    expectNothingWritten();
+  });
+
+  it("switches after Stripe cancels a held authorisation (requires_capture releases it)", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "canceled" },
+      canceled: true,
+    });
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalled();
+  });
+
+  it("refuses as unconfirmed when a processing intent's cancel throws", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValueOnce(
+      Object.assign(new Error("This PaymentIntent's status is processing"), {
+        code: "payment_intent_unexpected_state",
+      }),
+    );
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_CANCEL_UNCONFIRMED",
+    });
+    expectNothingWritten();
+  });
+
+  // #3638 review (correctness F1): #1765's repay-after-refund booking is
+  // PAYMENT_PENDING with its payment pointing at the refunded intent, which
+  // Stripe still reports `succeeded`. That intent can never charge again, so
+  // the switch must go through; before this it was refused as "already gone
+  // through", a false statement the member could not get past.
+  for (const refundStatus of [
+    PaymentStatus.REFUNDED,
+    PaymentStatus.PARTIALLY_REFUNDED,
+  ] as const) {
+    it(`switches a repay-after-refund booking whose succeeded intent's transaction is ${refundStatus} (#1765)`, async () => {
+      mocks.findUnique.mockResolvedValueOnce(
+        stripeBooking({
+          payment: {
+            source: PaymentSource.STRIPE,
+            status: refundStatus,
+            stripePaymentIntentId: "pi_123",
+          },
+        })
+      );
       mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
-        paymentIntent: { id: "pi_123", status },
+        paymentIntent: { id: "pi_123", status: "succeeded" },
         canceled: false,
+      });
+      mocks.findPaymentTransactionByIntentId.mockResolvedValueOnce({
+        status: refundStatus,
       });
 
       const res = await POST(postRequest());
 
-      expect(res.status).toBe(409);
-      await expect(res.json()).resolves.toMatchObject({
-        code: "CARD_PAYMENT_NOT_CANCELLABLE",
-        error: expect.stringContaining("already gone through"),
+      expect(res.status).toBe(200);
+      expect(mocks.findPaymentTransactionByIntentId).toHaveBeenCalledWith({
+        paymentIntentId: "pi_123",
       });
-      expectNothingWritten();
+      expect(mocks.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            source: PaymentSource.INTERNET_BANKING,
+            stripePaymentIntentId: null,
+          }),
+        })
+      );
+      expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalled();
     });
   }
+
+  it("falls back to the payment's own refund status when the refunded intent has no local row (#1765)", async () => {
+    mocks.findUnique.mockResolvedValueOnce(
+      stripeBooking({
+        payment: {
+          source: PaymentSource.STRIPE,
+          status: PaymentStatus.REFUNDED,
+          stripePaymentIntentId: "pi_123",
+        },
+      })
+    );
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "succeeded" },
+      canceled: false,
+    });
+    mocks.findPaymentTransactionByIntentId.mockResolvedValueOnce(null);
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses as unconfirmed when the refund-history lookup fails", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { id: "pi_123", status: "succeeded" },
+      canceled: false,
+    });
+    mocks.findPaymentTransactionByIntentId.mockRejectedValueOnce(new Error("db down"));
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_CANCEL_UNCONFIRMED",
+    });
+    expectNothingWritten();
+  });
 
   it("refuses with 409 and raises no invoice when the cancel throws (a failed cancel proves nothing)", async () => {
     mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValueOnce(
@@ -638,6 +768,12 @@ describe("POST /api/payments/switch-to-internet-banking — the card payment mus
     const res = await POST(postRequest());
 
     expect(res.status).toBe(409);
+    // A retry would cancel that intent first, so this is not the permanent
+    // "can no longer switch" refusal.
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_STARTED",
+      error: expect.stringContaining("another window"),
+    });
     expect(mocks.upsert).not.toHaveBeenCalled();
     expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();

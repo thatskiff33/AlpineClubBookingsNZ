@@ -35,6 +35,7 @@ import {
 } from "@/lib/internet-banking-settings";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { isCardIntentRetired } from "@/lib/card-intent-retirement";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -194,11 +195,13 @@ export async function POST(request: NextRequest) {
   // cancel failed) survived the switch, settled the booking, and left the
   // member holding an emailed Xero invoice for the same price. Refused here,
   // before the locked transaction, so a refusal writes nothing and raises no
-  // invoice. The rule: `INV-PAY-103`.
+  // invoice. A refunded intent (#1765's repay-after-refund booking) is as dead
+  // as a cancelled one. The rule: `INV-PAY-103`.
   const cancelledCardIntentId = booking.payment?.stripePaymentIntentId ?? null;
-  if (cancelledCardIntentId) {
+  if (cancelledCardIntentId && booking.payment) {
     const retired = await retireCardIntentBeforeSwitch(
       cancelledCardIntentId,
+      booking.payment.status,
       bookingId,
     );
     if (retired !== "retired") {
@@ -264,7 +267,7 @@ export async function POST(request: NextRequest) {
       lockedPayment?.stripePaymentIntentId &&
       lockedPayment.stripePaymentIntentId !== cancelledCardIntentId
     ) {
-      return { type: "notSwitchable" as const };
+      return { type: "cardPaymentStarted" as const };
     }
 
     // Credit writers serialize on a per-member key, not lock(1). Compose all
@@ -447,9 +450,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (paymentResult.type === "cardPaymentStarted") {
+    // #3638: a card payment was started in another window while this request
+    // waited on the locks. Nothing was written; a retry cancels that intent
+    // first, so this is not the permanent refusal below.
+    return NextResponse.json(
+      {
+        error:
+          "A card payment was started for this booking in another window. Finish it there, or try switching to Internet Banking again.",
+        code: "CARD_PAYMENT_STARTED",
+      },
+      { status: 409 },
+    );
+  }
+
   if (paymentResult.type === "notSwitchable") {
     // A concurrent cancel/modify moved the booking out of PAYMENT_PENDING while
-    // we waited on the locks (#1881). Nothing was written; report a conflict.
+    // we waited on the locks (#1881), or the status-guarded CONFIRMED claim
+    // lost. Nothing was written; report a conflict.
     return NextResponse.json(
       { error: "This booking can no longer switch to Internet Banking." },
       { status: 409 },
@@ -498,25 +516,27 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * #3638 — cancel the booking's card intent and report whether it is really
- * dead. `retired` only when Stripe confirms the cancel, or the intent was
- * already cancelled; `notCancellable` when Stripe reports a status the cancel
- * cannot act on (it has succeeded, typically with the local record lagging);
- * `unconfirmed` when the call throws, because a failed cancel proves nothing
+ * #3638 — cancel the booking's card intent and report whether it can still
+ * take money. `retired` when `isCardIntentRetired` says so (Stripe confirmed
+ * the cancel, the intent was already cancelled, or it succeeded and the local
+ * ledger shows it refunded); `notCancellable` for a succeeded intent with no
+ * refund history — a live capture, typically with the local record lagging;
+ * `unconfirmed` when a call throws, because a failed cancel proves nothing
  * about whether the card can still be charged.
  */
 async function retireCardIntentBeforeSwitch(
   paymentIntentId: string,
+  paymentStatus: PaymentStatus,
   bookingId: string,
 ): Promise<"retired" | "notCancellable" | "unconfirmed"> {
   try {
-    const { paymentIntent, canceled } =
+    const result =
       await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
-    if (canceled || paymentIntent.status === "canceled") {
+    if (await isCardIntentRetired({ result, paymentStatus })) {
       return "retired";
     }
     logger.warn(
-      { bookingId, paymentIntentId, status: paymentIntent.status },
+      { bookingId, paymentIntentId, status: result.paymentIntent.status },
       "Refused an Internet Banking switch: the card payment could not be cancelled (#3638)"
     );
     return "notCancellable";
