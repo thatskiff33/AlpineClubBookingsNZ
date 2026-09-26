@@ -315,11 +315,14 @@ function SummaryCard({
   icon: Icon,
   children,
   valueClassName,
+  hint,
 }: {
   title: string;
   icon: LucideIcon;
   children: ReactNode;
   valueClassName?: string;
+  /** What the figure covers, where the title alone would invite a wrong reading. */
+  hint?: string;
 }) {
   return (
     <Card>
@@ -338,6 +341,9 @@ function SummaryCard({
         >
           {children}
         </div>
+        {hint ? (
+          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -394,7 +400,7 @@ export default function PaymentsPage() {
   const [pageSize] = useState(25);
   const [data, setData] = useState<PaymentRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState({ totalRevenueCents: 0, refundedCents: 0, count: 0 });
+  const [summary, setSummary] = useState({ netRevenueCents: 0, refundedCents: 0, count: 0 });
   const [loading, setLoading] = useState(false);
   /*
     #2685 review — the query the API REFUSED.
@@ -574,7 +580,7 @@ export default function PaymentsPage() {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
         setData([]);
         setTotal(0);
-        setSummary({ totalRevenueCents: 0, refundedCents: 0, count: 0 });
+        setSummary({ netRevenueCents: 0, refundedCents: 0, count: 0 });
         setFilterError(
           await readAdminQueryErrorMessage(res, PAYMENTS_FILTER_FALLBACK_ERROR),
         );
@@ -1024,10 +1030,23 @@ export default function PaymentsPage() {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <SummaryCard title="Total Revenue" icon={DollarSign}>
-          {formatCents(summary.totalRevenueCents, format)}
+        {/* #3372: NET, so the title says so - it used to read "Total Revenue"
+            over a gross sum that also counted pending and failed payments. The
+            two hints state the asymmetry: revenue leaves cancelled bookings out
+            (#773), the refund tile counts every row listed. */}
+        <SummaryCard
+          title="Net Revenue"
+          icon={DollarSign}
+          hint="Captured, less refunds. Excludes cancelled bookings."
+        >
+          {formatCents(summary.netRevenueCents, format)}
         </SummaryCard>
-        <SummaryCard title="Refunded / Credited" icon={CreditCard} valueClassName="text-danger">
+        <SummaryCard
+          title="Refunded / Credited"
+          icon={CreditCard}
+          valueClassName="text-danger"
+          hint="Every payment listed, cancelled bookings included."
+        >
           {formatCents(summary.refundedCents, format)}
         </SummaryCard>
         <SummaryCard title="Payments" icon={BarChart2}>

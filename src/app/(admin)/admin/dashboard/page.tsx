@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { summarizeCollectedCash } from "@/lib/admin-reports";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -137,10 +138,15 @@ async function getStats() {
     prisma.booking.count({
       where: { deletedAt: null, status: { in: [...ACTIVE_BOOKING_STATUSES] } },
     }),
-    prisma.payment.aggregate({
-      _sum: { amountCents: true },
+    // #3372: every status, summed per status, so the ONE net-collected-cash
+    // derivation (`summarizeCollectedCash`) decides which statuses count as
+    // captured. This used to sum `SUCCEEDED` alone: a partly-refunded payment
+    // left the figure entirely, and nothing subtracted a refund on the ones that
+    // stayed, so a card titled "Revenue" was neither net nor complete.
+    prisma.payment.groupBy({
+      by: ["status"],
+      _sum: { amountCents: true, refundedAmountCents: true },
       where: {
-        status: "SUCCEEDED",
         createdAt: { gte: startOfMonth, lte: endOfMonth },
       },
     }),
@@ -266,7 +272,16 @@ async function getStats() {
     countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow }),
   ]);
 
-  const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
+  // Payments TAKEN this month, less every refund made on them - whenever it was
+  // made. A cohort, not a cash-flow statement: a refund this month on last
+  // month's payment does not reduce it, and the card's subline says so.
+  const revenueThisMonth = summarizeCollectedCash(
+    revenueResult.map((group) => ({
+      status: group.status,
+      amountCents: group._sum.amountCents ?? 0,
+      refundedAmountCents: group._sum.refundedAmountCents ?? 0,
+    })),
+  );
   const unassignedNamesLodges = coverageNeedsLodgeContext({
     activeLodgeCount,
     rows: unassignedHutLeaderDates,
@@ -700,13 +715,22 @@ export default async function AdminDashboardPage() {
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                     Revenue This Month
                   </div>
+                  {/* #3372: NET of refunds, the shape #3364 gave the payments
+                      board - the headline is what the club holds, and gross and
+                      refunded print beneath so the arithmetic is on the card. */}
                   <div className="text-right">
                     <div className="text-xl font-semibold text-foreground">
-                      {money.dollars(stats.revenueThisMonth)}
+                      {money.dollars(stats.revenueThisMonth.netCollectedCents)}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      from succeeded payments
+                      payments taken this month, less refunds on them
                     </p>
+                    {stats.revenueThisMonth.refundedCents > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {money.dollars(stats.revenueThisMonth.capturedGrossCents)} paid,{" "}
+                        {money.dollars(stats.revenueThisMonth.refundedCents)} refunded
+                      </p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

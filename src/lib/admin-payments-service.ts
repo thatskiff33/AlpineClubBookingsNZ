@@ -14,6 +14,7 @@ import {
   type XeroActivitySummary,
   type XeroState,
 } from "@/lib/admin-operational-state";
+import { summarizeCollectedCash } from "@/lib/admin-reports";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -634,20 +635,35 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    const summary = filteredCandidates.reduce(
-      (acc, payment) => {
-        // Total Revenue should reflect retained revenue only. A cancelled
-        // booking's payment must not count toward it (issue #773), even though
-        // the row still appears in the list and its refund is tracked below.
-        if (payment.booking.status !== "CANCELLED") {
-          acc.totalRevenueCents += payment.amountCents;
-        }
-        acc.refundedCents += payment.refundedAmountCents;
-        acc.count += 1;
-        return acc;
-      },
-      { totalRevenueCents: 0, refundedCents: 0, count: 0 }
+    // #3372: the revenue tile is NET of refunds over CAPTURED payments, through
+    // the one net-collected-cash derivation the dashboard and Reports also use.
+    // It used to add gross `amountCents` for every row the filter matched - a
+    // PENDING or FAILED payment's amount included under the default "all" status
+    // filter, and a refund never subtracted - while this comment already said
+    // "retained revenue only".
+    //
+    // A cancelled booking's payment still does not count toward it (#773), even
+    // though the row appears in the list. `refundedCents` is deliberately wider:
+    // every matched row, cancelled bookings included, which is what the
+    // "Refunded / Credited" tile beside it says it is. The two tiles are not a
+    // subtraction of one another, and their hints say so.
+    const retained = summarizeCollectedCash(
+      filteredCandidates
+        .filter((payment) => payment.booking.status !== "CANCELLED")
+        .map((payment) => ({
+          status: payment.status,
+          amountCents: payment.amountCents,
+          refundedAmountCents: payment.refundedAmountCents,
+        }))
     );
+    const summary = {
+      netRevenueCents: retained.netCollectedCents,
+      refundedCents: filteredCandidates.reduce(
+        (sum, payment) => sum + payment.refundedAmountCents,
+        0
+      ),
+      count: filteredCandidates.length,
+    };
 
     return jsonResult({
       data: orderedData,

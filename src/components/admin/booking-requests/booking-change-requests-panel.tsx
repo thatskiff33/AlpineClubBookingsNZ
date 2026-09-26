@@ -455,11 +455,27 @@ export function BookingChangeRequestsPanel({
                       <span className="text-muted-foreground">Booking total:</span>{" "}
                       {formatCents(request.booking.finalPriceCents, format)}
                     </div>
+                    {/* #3372: NET of refunds, the shape #3364 gave the payments
+                        board. An officer reads this while deciding what to charge,
+                        and a gross figure beside "Booking total" sizes the balance
+                        wrongly by exactly the refund - the #3340 misreading. Gross
+                        and refunded print beneath, so only the headline changed. */}
                     <div>
                       <span className="text-muted-foreground">Payment:</span>{" "}
                       {request.booking.payment
-                        ? `${request.booking.payment.status} (${formatCents(request.booking.payment.amountCents, format)})`
+                        ? `${request.booking.payment.status} (${formatCents(
+                            request.booking.payment.amountCents -
+                              request.booking.payment.refundedAmountCents,
+                            format,
+                          )}${request.booking.payment.refundedAmountCents > 0 ? " net" : ""})`
                         : "No payment"}
+                      {request.booking.payment &&
+                      request.booking.payment.refundedAmountCents > 0 ? (
+                        <div className="text-xs text-muted-foreground">
+                          {formatCents(request.booking.payment.amountCents, format)} paid,{" "}
+                          {formatCents(request.booking.payment.refundedAmountCents, format)} refunded
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
