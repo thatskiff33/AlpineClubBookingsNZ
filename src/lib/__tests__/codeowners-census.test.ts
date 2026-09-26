@@ -22,13 +22,58 @@ const ROOT = process.cwd();
 const OWNER = "@thatskiff33";
 
 /**
- * The ceiling on the owned share of non-test `src/lib` TypeScript. Measured at
- * 94 of 1132 files (8.3%) when this landed; #3341 scoped the surface at "about
- * 7%" and said a materially larger share means the globs have gone too broad.
- * A ceiling rather than an exact count, so an ordinary new money module does not
- * red the build — but a glob that starts sweeping in unrelated code does.
+ * The ceiling on the owned share of non-test `src/lib` TypeScript, set from the
+ * surface as measured rather than from an estimate. #3341 guessed "about 7%";
+ * owning every module that mints, charges, refunds, credits, settles or sizes
+ * money — the list grew once review traced the callers of the ask-sizing,
+ * refund and settlement functions — measured 137 of 1132 (12.1%). 15% leaves
+ * room for new money modules and still reds a glob that starts sweeping in
+ * unrelated code; raise it only with the modules that justify it.
  */
-const MAX_OWNED_SRC_LIB_SHARE = 0.1;
+const MAX_OWNED_SRC_LIB_SHARE = 0.15;
+
+/**
+ * Outside `src/lib`, a share of one directory bounds nothing, so every pattern
+ * there must start with one of these prefixes AND the owned files outside
+ * `src/lib` stay under a count. Measured 18 when this was set.
+ */
+const ALLOWED_PREFIXES = [
+  "/src/lib/",
+  "/src/app/api/webhooks/stripe/",
+  "/src/app/api/payments/",
+  "/src/app/api/pay/",
+  "/src/app/api/bookings/",
+  "/src/app/api/admin/payments/",
+  "/src/app/api/admin/refund-requests/",
+  "/docs/invariants/",
+  "/.github/CODEOWNERS",
+];
+const MAX_OWNED_OUTSIDE_SRC_LIB = 40;
+
+/**
+ * THE REVERSE CHECK: modules known to move money, which must stay owned. A
+ * pattern that goes stale reds the "matches a tracked file" case; a money file
+ * that simply never got a pattern reds this one. The seam modules are added from
+ * `MONEY_SEAMS` itself (read from the census source, so the list lives once).
+ */
+const MUST_BE_OWNED = [
+  "src/lib/stripe.ts",
+  "src/lib/stripe-webhook-service.ts",
+  "src/lib/additional-payment-ask.ts",
+  "src/lib/booking-modify-settlement.ts",
+  "src/lib/payment-recovery.ts",
+  "src/lib/edit-financial-review-charge.ts",
+  "src/lib/internet-banking-payment-cron.ts",
+  "src/lib/cancelled-booking-late-capture.ts",
+  "src/lib/xero-operation-outbox.ts",
+  "src/lib/group-cancel.ts",
+  "src/lib/booking-ledger-write.ts",
+  "src/lib/member-credit.ts",
+  "src/app/api/webhooks/stripe/route.ts",
+  "src/app/api/payments/create-payment-intent/route.ts",
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/app/api/bookings/[id]/modify-quote/route.ts",
+];
 
 interface Rule {
   readonly pattern: string;
@@ -117,7 +162,45 @@ describe(".github/CODEOWNERS covers the money surface and nothing stale (#3341)"
     expect(owned).toContain("src/lib/payment-transactions.ts");
     expect(
       owned.length / srcLib.length,
-      `CODEOWNERS now owns ${owned.length} of ${srcLib.length} non-test src/lib files. #3341 scoped the money gate at about 7%; a share above ${MAX_OWNED_SRC_LIB_SHARE * 100}% means a glob has gone too broad — tighten it rather than raising this ceiling.`,
+      `CODEOWNERS now owns ${owned.length} of ${srcLib.length} non-test src/lib files, above the ${MAX_OWNED_SRC_LIB_SHARE * 100}% ceiling set from the measured money surface. A glob has probably gone too broad: tighten it. Raise the ceiling only for new money modules, and say which.`,
     ).toBeLessThanOrEqual(MAX_OWNED_SRC_LIB_SHARE);
+  });
+
+  it("stays scoped outside src/lib: every pattern starts with an allowed prefix, and few files are owned there", () => {
+    const outside = rules()
+      .filter((rule) => !ALLOWED_PREFIXES.some((prefix) => rule.pattern.startsWith(prefix)))
+      .map((rule) => `line ${rule.line}: ${rule.pattern}`);
+    expect(
+      outside,
+      "CODEOWNERS owns the money surface only. A pattern outside these prefixes needs the prefix added to ALLOWED_PREFIXES with the money reason, in the same pull request.",
+    ).toEqual([]);
+    const patterns = rules().map((rule) => matcher(rule.pattern));
+    const ownedOutside = tracked.filter(
+      (file) => !file.startsWith("src/lib/") && patterns.some((pattern) => pattern.test(file)),
+    );
+    expect(ownedOutside.length).toBeGreaterThan(0);
+    expect(
+      ownedOutside.length,
+      `CODEOWNERS owns ${ownedOutside.length} files outside src/lib (ceiling ${MAX_OWNED_OUTSIDE_SRC_LIB}). A route or docs glob has gone too broad: name the money routes instead.`,
+    ).toBeLessThanOrEqual(MAX_OWNED_OUTSIDE_SRC_LIB);
+  });
+
+  it("owns every module known to move money, including every money seam", () => {
+    const seamModules = [
+      ...readFileSync(path.join(ROOT, "src", "lib", "__tests__", "money-seam-mock-census.test.ts"), "utf8").matchAll(
+        /\bmodule:\s*"(src\/[^"]+)"/g,
+      ),
+    ].map((match) => `${match[1]}.ts`);
+    expect(seamModules.length).toBeGreaterThanOrEqual(3);
+    const patterns = rules().map((rule) => matcher(rule.pattern));
+    const unowned = [...MUST_BE_OWNED, ...seamModules].filter(
+      (file) => !patterns.some((pattern) => pattern.test(file)),
+    );
+    const untracked = [...MUST_BE_OWNED, ...seamModules].filter((file) => !tracked.includes(file));
+    expect(untracked, "A known money module moved: update MUST_BE_OWNED and CODEOWNERS together.").toEqual([]);
+    expect(
+      unowned,
+      "These modules move money and no CODEOWNERS pattern owns them, so a change to them needs no owner Approve. Add a pattern.",
+    ).toEqual([]);
   });
 });
