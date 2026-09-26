@@ -3689,6 +3689,19 @@ queued) or waits until the email call finishes and then commits its VOID debt.
 No invoice construction, contact lookup, create, or VOID provider call is held
 inside that transaction.
 
+A settlement waiting on its combined invoice is bound to it (`INV-PAY-106`,
+#3642). The bound check runs on the settlement row re-read under the same
+`lock(1)` by every writer that could change it: the child-commit transaction
+(so a refused re-size rolls back the beds it claimed), the Internet Banking
+settlement transaction, and the card attach transaction (a refused attach
+cancels the never-handed-out intent). The reaper's release transaction and a
+settle attempt on a released settlement retire the old invoice in the same
+`lock(1)` commit — an abandon VOID outbox row keyed by the invoice, the pointer
+cleared, the link deactivated — and the create worker's three existing fences
+treat a settlement that is no longer bound like a cancellation that won. The
+paid-invoice apply compares the invoice's cash with the settlement's total
+read under `lock(1)`. No lock key, order or site is added.
+
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database
 `concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker
