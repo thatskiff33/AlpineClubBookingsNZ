@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it } from "vitest";
 import type { DisplayState } from "@/lib/lodge-display-state";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
@@ -44,7 +45,7 @@ describe("standard tokens are the closed grammar, verbatim", () => {
     for (const entry of DISPLAY_STANDARD_TOKENS) {
       // A token outside the closed grammar would be left VERBATIM by
       // resolveDisplayText — so "resolved ≠ input" proves grammar membership.
-      expect(resolveDisplayText(entry.token, s)).not.toBe(entry.token);
+      expect(resolveDisplayText(entry.token, s, CLUB_FORMAT_TEST)).not.toBe(entry.token);
     }
   });
 
@@ -59,7 +60,7 @@ describe("standard tokens are the closed grammar, verbatim", () => {
 describe("config tokens", () => {
   it("displayConfigToken produces a token the resolver substitutes with the saved value", () => {
     const s = state();
-    expect(resolveDisplayText(displayConfigToken("wifi-code"), s)).toBe(
+    expect(resolveDisplayText(displayConfigToken("wifi-code"), s, CLUB_FORMAT_TEST)).toBe(
       "alpine1234"
     );
   });
@@ -68,7 +69,7 @@ describe("config tokens", () => {
     // Decision 3: the picker's warning names the EXACT placeholder the wall
     // will render, so it is asserted against the real resolver, not hand-typed.
     const s = state({ config: {} });
-    expect(resolveDisplayText(displayConfigToken("kitchen-wifi"), s)).toBe(
+    expect(resolveDisplayText(displayConfigToken("kitchen-wifi"), s, CLUB_FORMAT_TEST)).toBe(
       unsetDisplayConfigPlaceholder("kitchen-wifi")
     );
     // Normalisation matches the resolver's case-insensitive key handling too.

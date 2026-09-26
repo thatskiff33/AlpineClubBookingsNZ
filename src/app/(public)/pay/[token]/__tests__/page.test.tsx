@@ -20,6 +20,7 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
   financialReviewNoteBesideAnAmount,
 } from "@/lib/booking-financial-review-copy";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -472,7 +473,7 @@ describe("the public payment page says when the link dies, in the CLUB's time", 
     return render(<PayByLinkPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ClubFormatTestProvider>
-          <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         </ClubFormatTestProvider>
       ),
     });

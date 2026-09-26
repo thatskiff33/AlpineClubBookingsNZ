@@ -19,6 +19,7 @@ import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 export async function POST(
   req: NextRequest,
@@ -207,7 +208,7 @@ export async function POST(
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, await clubFormatValues()),
         { status: 409 },
       );
     }

@@ -151,6 +151,7 @@ import {
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 /*
   #2563: this preview holds NO stay-range arithmetic of its own.
@@ -1212,7 +1213,7 @@ export async function POST(
   }
   if (memberNightConflicts.length > 0) {
     return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
+      getBookingMemberNightConflictResponse(memberNightConflicts, await clubFormatValues()),
       { status: 409 },
     );
   }

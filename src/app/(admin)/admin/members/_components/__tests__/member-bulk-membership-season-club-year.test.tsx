@@ -43,6 +43,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider"
 import { APP_TIME_ZONE } from "@/config/operational"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import { MemberBulkMembershipDialog } from "../member-bulk-membership-dialog"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 /**
  * New Year's Eve, midday UTC. New Zealand has already rolled over (NZDT is
@@ -138,7 +139,7 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
       />,
       {
         wrapper: ({ children }: { children: ReactNode }) => (
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         ),
       },
     )

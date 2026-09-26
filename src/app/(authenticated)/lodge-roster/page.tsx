@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { requireCalendarDate } from "@/lib/club-time/calendar-date";
 import { formatClubDate } from "@/lib/club-time/format";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { collapseNightRuns } from "@/lib/bed-allocation-board-window";
 import {
   buildMemberLodgeRoster,
@@ -49,6 +51,7 @@ export default async function LodgeRosterPage() {
     notFound();
   }
 
+  const format = await clubFormatValues();
   const roster = await buildMemberLodgeRoster(session.user.id);
 
   const hasAnyone = roster.lodges.some(
@@ -102,6 +105,7 @@ export default async function LodgeRosterPage() {
               key={lodge.lodgeId}
               lodge={lodge}
               showLodgeName={!singleLodge}
+              format={format}
             />
           ))}
         </div>
@@ -113,9 +117,11 @@ export default async function LodgeRosterPage() {
 function LodgeSection({
   lodge,
   showLodgeName,
+  format,
 }: {
   lodge: LodgeRoster;
   showLodgeName: boolean;
+  format: ClubDateFormat;
 }) {
   const empty =
     lodge.people.length === 0 &&
@@ -161,7 +167,7 @@ function LodgeSection({
                     {custodian.name ? "custodian" : "in residence"}
                   </span>
                 </span>
-                <Nights nights={custodian.nights} />
+                <Nights nights={custodian.nights} format={format} />
               </li>
             ))}
             {lodge.groups.map((group, index) => (
@@ -187,7 +193,7 @@ function LodgeSection({
                     {group.count === 1 ? "1 person" : `up to ${group.count} people`}
                   </span>
                 </span>
-                <Nights nights={group.nights} />
+                <Nights nights={group.nights} format={format} />
               </li>
             ))}
             {lodge.people.map((person, index) => (
@@ -196,7 +202,7 @@ function LodgeSection({
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2"
               >
                 <span className="font-medium">{person.name}</span>
-                <Nights nights={person.nights} />
+                <Nights nights={person.nights} format={format} />
               </li>
             ))}
           </ul>
@@ -213,7 +219,13 @@ function LodgeSection({
  * runs, because a gap is a real absence in this data model and collapsing it
  * to an envelope would say somebody was here on a night they were not.
  */
-function Nights({ nights }: { nights: string[] }) {
+function Nights({
+  nights,
+  format,
+}: {
+  nights: string[];
+  format: ClubDateFormat;
+}) {
   // `collapseNightRuns` is the tree's existing answer to "turn sorted nights
   // into contiguous runs" and it sorts and de-duplicates on the way, which a
   // local version would only do by accident of its caller (INV-SSOT).
@@ -223,14 +235,14 @@ function Nights({ nights }: { nights: string[] }) {
       {runs
         .map((run) =>
           run.firstNight === run.lastNight
-            ? formatNight(run.firstNight)
-            : `${formatNight(run.firstNight)} - ${formatNight(run.lastNight)}`
+            ? formatNight(run.firstNight, format)
+            : `${formatNight(run.firstNight, format)} - ${formatNight(run.lastNight, format)}`
         )
         .join(", ")}
     </span>
   );
 }
 
-function formatNight(night: string): string {
-  return formatClubDate(requireCalendarDate(night));
+function formatNight(night: string, format: ClubDateFormat): string {
+  return formatClubDate(requireCalendarDate(night), format);
 }

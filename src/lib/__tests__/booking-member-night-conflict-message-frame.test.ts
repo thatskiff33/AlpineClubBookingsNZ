@@ -25,6 +25,7 @@
  * `withTimeZone`, which catches a host-local-getter implementation that a
  * config mock cannot see.
  */
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 
 /*
@@ -80,19 +81,19 @@ describe("member-night conflict copy renders the night KEY, not a projection", (
   });
 
   it("names the nights the member chose, not the day before", () => {
-    expect(describeBookingMemberNightConflictNights(bob)).toBe(
+    expect(describeBookingMemberNightConflictNights(bob, CLUB_FORMAT_TEST)).toBe(
       `Already on a booking for ${RENDERED}.`,
     );
   });
 
   it("the summary sentence names them too", () => {
-    expect(buildBookingMemberNightConflictSummary([bob])).toBe(
+    expect(buildBookingMemberNightConflictSummary([bob], CLUB_FORMAT_TEST)).toBe(
       `Bob Jones is already on a booking for ${RENDERED}.`,
     );
   });
 
   it("and the whole 409 message", () => {
-    expect(buildBookingMemberNightConflictMessage([bob])).toBe(
+    expect(buildBookingMemberNightConflictMessage([bob], CLUB_FORMAT_TEST)).toBe(
       `Bob Jones is already on a booking for ${RENDERED}. ` +
         "Ask whoever made that booking, or the club, to take them off it.",
     );
@@ -109,7 +110,7 @@ describe("member-night conflict copy renders the night KEY, not a projection", (
         "2026-06-15",
       ],
     };
-    expect(describeBookingMemberNightConflictNights(many)).toBe(
+    expect(describeBookingMemberNightConflictNights(many, CLUB_FORMAT_TEST)).toBe(
       "Already on a booking for 11 Jun 2026, 12 Jun 2026, 13 Jun 2026 and 2 more nights.",
     );
   });
@@ -122,7 +123,7 @@ describe("member-night conflict copy renders the night KEY, not a projection", (
       describeBookingMemberNightConflictNights({
         memberName: "Bob Jones",
         conflictingNights: ["2026-02-30"],
-      }),
+      }, CLUB_FORMAT_TEST),
     ).toBe("Already on a booking for 2026-02-30.");
   });
 
@@ -132,12 +133,12 @@ describe("member-night conflict copy renders the night KEY, not a projection", (
     // other half of the discrimination, and it is why the two axes are both
     // here: either one alone leaves a whole class of wrong implementation green.
     withTimeZone("Pacific/Pago_Pago", () => {
-      expect(describeBookingMemberNightConflictNights(bob)).toBe(
+      expect(describeBookingMemberNightConflictNights(bob, CLUB_FORMAT_TEST)).toBe(
         `Already on a booking for ${RENDERED}.`,
       );
     });
     withTimeZone("Pacific/Kiritimati", () => {
-      expect(describeBookingMemberNightConflictNights(bob)).toBe(
+      expect(describeBookingMemberNightConflictNights(bob, CLUB_FORMAT_TEST)).toBe(
         `Already on a booking for ${RENDERED}.`,
       );
     });

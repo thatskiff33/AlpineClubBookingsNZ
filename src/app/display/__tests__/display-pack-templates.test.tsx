@@ -34,6 +34,7 @@ import type {
   DisplayStateBooking,
   DisplayStateGuest,
 } from "@/lib/lodge-display-state";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * The club timezone these renders are about (CT-4, #2870).
@@ -166,7 +167,8 @@ async function renderBoard(def: Def, state: DisplayState) {
       cssOverrides: def.cssOverrides,
       footerHtml: def.footerHtml,
     },
-    state
+    state,
+    CLUB_FORMAT_TEST
   );
   queue.push({
     match: (url) => url.includes("/api/display/state"),

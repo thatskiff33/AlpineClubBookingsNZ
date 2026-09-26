@@ -342,6 +342,7 @@ describe("club-currency conversion (#3354)", () => {
     mocks.settingsFindUnique.mockResolvedValue({ monthlyBudgetCents: 1000 });
     await checkAiBudget();
     expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith();
   });
 
   it("FAILS CLOSED when the rate cannot be read", async () => {
@@ -366,6 +367,7 @@ describe("club-currency conversion (#3354)", () => {
       increment: 1218,
     });
     expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledTimes(1);
+    expect(rateMocks.loadAiSpendCurrency).toHaveBeenCalledWith();
   });
 
   it("books the NZD estimate unchanged at the identity rate", async () => {

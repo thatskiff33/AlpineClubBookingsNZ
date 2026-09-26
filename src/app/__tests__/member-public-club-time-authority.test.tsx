@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -202,8 +203,8 @@ const STAMP = "2026-04-16T02:30:00.000Z";
 const NIGHT_IN = "2026-04-16T00:00:00.000Z";
 const NIGHT_OUT = "2026-04-18T00:00:00.000Z";
 
-const denver = bindClubTime(requireClubTimeZone(CLUB_ZONE));
-const auckland = bindClubTime(requireClubTimeZone(LEGACY_REFERENCE_ZONE));
+const denver = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST);
+const auckland = bindClubTime(requireClubTimeZone(LEGACY_REFERENCE_ZONE), CLUB_FORMAT_TEST);
 const frozenClock = fixedClubClock(new Date(FROZEN_INSTANT));
 
 const hostTimeZone = captureHostTimeZone();
@@ -217,7 +218,7 @@ afterEach(() => {
 function renderInClubZone(ui: React.ReactElement, zone = CLUB_ZONE) {
   return render(
     <ClubFormatTestProvider>
-      <ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>
+      <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{ui}</ClubTimeProvider>
     </ClubFormatTestProvider>,
   );
 }
@@ -375,7 +376,7 @@ describe("CT-4 group E: an instant and a calendar day, side by side, do NOT merg
     expect(denver.instantDate(new Date(STAMP))).toBe("15 Apr 2026");
     expect(auckland.instantDate(new Date(STAMP))).toBe("16 Apr 2026");
     expect(
-      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN))),
+      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN)), CLUB_FORMAT_TEST),
     ).toBe("16 Apr 2026");
     expect(denver.instantDate(new Date(NIGHT_IN))).toBe("15 Apr 2026");
 
@@ -578,10 +579,10 @@ describe("CT-4 group E: a calendar day consults NO zone at all", () => {
   it("renders the stored nights under a club zone that would have shifted them", async () => {
     expect(denver.instantDate(new Date(NIGHT_IN))).toBe("15 Apr 2026");
     expect(
-      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN))),
+      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN)), CLUB_FORMAT_TEST),
     ).toBe("16 Apr 2026");
     expect(denver.instantDate(new Date(NIGHT_IN))).not.toBe(
-      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN))),
+      formatClubDate(calendarDateOfDateOnlyInstant(new Date(NIGHT_IN)), CLUB_FORMAT_TEST),
     );
 
     pointTheBrowserSomewhereElse();

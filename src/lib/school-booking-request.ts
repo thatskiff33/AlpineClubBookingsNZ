@@ -1105,6 +1105,7 @@ export async function approveSchoolBookingRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
         heldBookingId: request.heldBookingId ?? null,
       });
 
@@ -2503,6 +2504,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         // value rather than reading the club's zone under these locks
         // (`INV-LOCK-004`).
         today: clubTodayDateOnly,
+        format,
         heldBookingId: null,
       });
       // #3029 (W9): placeholder guests link no member, so nothing is seeded —

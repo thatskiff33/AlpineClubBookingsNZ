@@ -742,11 +742,14 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     // it. A default is how the environment reaches callers that never asked for
     // it, so it is the shape to look for first in whatever remains.
     //
-    // The four left are structural rather than deferred: the config module that
-    // defines the value, and three modules that legitimately describe the
-    // ENVIRONMENT rather than the club. Lowering this further needs a reason
-    // beyond tidiness — read each one before assuming it is a leftover.
-    expect(naming, naming.join("\n")).toHaveLength(4);
+    // #3566 took the sixth, `induction-display.ts`: its module-level formatter
+    // was frozen to `APP_TIME_ZONE` and now takes the caller's club binding.
+    //
+    // The three left are structural rather than deferred: the config module that
+    // defines the value, and the two AI budget ledgers' month keys, which
+    // describe the ENVIRONMENT rather than the club. Lowering this further needs
+    // a reason beyond tidiness; read each one before assuming it is a leftover.
+    expect(naming, naming.join("\n")).toHaveLength(3);
   });
 
   it("counts the local-midnight constructions no selector can reach", () => {

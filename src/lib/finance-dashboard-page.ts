@@ -1,4 +1,9 @@
-import { dateOnlyInstantOf, parseInstant, type BoundClubTime } from "@/lib/club-time";
+import {
+  type BoundClubTime,
+  type ClubDateFormat,
+  dateOnlyInstantOf,
+  parseInstant,
+} from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { clubFormatValues } from "@/lib/club-format-server";
 import {
@@ -157,14 +162,17 @@ async function buildSyncStatus(club: BoundClubTime): Promise<{
   }
 }
 
-function buildSelectionLabels(selection: FinanceDashboardSelection) {
+function buildSelectionLabels(
+  selection: FinanceDashboardSelection,
+  format: ClubDateFormat,
+) {
   return {
     view: FINANCE_DASHBOARD_VIEW_LABELS[selection.view],
     range: FINANCE_DASHBOARD_RANGE_LABELS[selection.range],
     compare: FINANCE_DASHBOARD_COMPARE_LABELS[selection.compare],
     forward: FINANCE_DASHBOARD_FORWARD_LABELS[selection.forward],
-    primaryWindow: financeDashboardWindowDetail(selection.primary),
-    comparisonWindow: financeDashboardWindowDetail(selection.comparison),
+    primaryWindow: financeDashboardWindowDetail(selection.primary, format),
+    comparisonWindow: financeDashboardWindowDetail(selection.comparison, format),
     // #2919: in All-Lodges mode at a multi-lodge club, say WHOSE season set the
     // forward window — dates alone never did. That string is the one the range
     // resolver already built (`label`), reused rather than rebuilt so there is
@@ -172,7 +180,7 @@ function buildSelectionLabels(selection: FinanceDashboardSelection) {
     // selected, or a single-lodge club) keeps the dates-only wording it had.
     forwardWindow: selection.forwardWindow.seasonLodgeName
       ? selection.forwardWindow.label
-      : financeDashboardWindowDetail(selection.forwardWindow),
+      : financeDashboardWindowDetail(selection.forwardWindow, format),
   };
 }
 
@@ -252,10 +260,11 @@ export async function buildFinanceDashboardPageModel(input: {
   const selection = resolveFinanceDashboardSelection({
     searchParams: input.searchParams,
     today: dateOnlyInstantOf(club.today()),
+    format,
     seasons,
     financialYearEndMonth,
   });
-  const labels = buildSelectionLabels(selection);
+  const labels = buildSelectionLabels(selection, format);
 
   let viewModel: FinanceDashboardViewModel;
   let ratios: FinanceDashboardRatioExplorerModel | null = null;
@@ -291,7 +300,7 @@ export async function buildFinanceDashboardPageModel(input: {
       format,
     });
   } else if (selection.view === "sync-health") {
-    viewModel = await buildSyncHealthDashboard(selection);
+    viewModel = await buildSyncHealthDashboard(selection, format);
   } else {
     viewModel = await buildBalanceOrWorkingCapitalDashboard({
       selection,

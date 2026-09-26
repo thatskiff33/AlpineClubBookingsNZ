@@ -149,4 +149,20 @@ describe("AdminHealthPage", () => {
       screen.queryByText(/10:15 local New Zealand time/)
     ).not.toBeNull();
   });
+
+  it("writes the compact stamp with a two-digit day on New Zealand defaults (#3566)", async () => {
+    // The `compactDateTime` house shape replaced a local formatter with
+    // `day: "2-digit"`. A day of the month from 1 to 9 is the only case where
+    // that differs from `numeric` ("03 May" vs "3 May"), so the byte-identity
+    // proof needs one: 2026-05-02T22:16Z is 3 May, 10:16 am in Auckland.
+    const response = healthResponse();
+    response.cronHealth.jobs[0].latestRunAt = "2026-05-02T22:16:00.000Z";
+    fetchMock.mockResolvedValue({ ok: true, json: async () => response });
+    render(<BackgroundJobsPage />);
+
+    await waitFor(() =>
+      expect(screen.queryByText("Finance daily sync")).not.toBeNull()
+    );
+    expect(screen.queryByText("Latest run: 03 May, 10:16 am")).not.toBeNull();
+  });
 });

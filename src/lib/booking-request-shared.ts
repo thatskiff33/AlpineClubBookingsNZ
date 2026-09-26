@@ -45,6 +45,7 @@ import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
 import { requiredGuestPriceCents } from "@/lib/required-price-cents";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 /** A held booking's owner failed re-validation and a fresh contact was
  * substituted at conversion (issue #1255 residual-risk decision 1). */
@@ -279,6 +280,11 @@ export async function buildApprovalGuestCreates(
      * pooled connection while all of that is held: `INV-LOCK-004`.
      */
     today: Date;
+    /**
+     * The club's date format, for the person-night guard's refusal (#3566),
+     * resolved by the caller before its transaction for the reason `today` is.
+     */
+    format: ClubDateFormat;
   }
 ): Promise<HeldBookingGuestInput[]> {
   const {
@@ -291,6 +297,7 @@ export async function buildApprovalGuestCreates(
     adminMemberId,
     heldBookingId,
     today,
+    format,
   } = params;
 
   const unratedGuestCreates = guests.map((guest, index) => {
@@ -382,7 +389,7 @@ export async function buildApprovalGuestCreates(
     // Supplied from outside this transaction (`INV-LOCK-004`) — see the
     // `today` parameter above.
     today,
-  });
+  }, format);
 
   return guestCreates;
 }

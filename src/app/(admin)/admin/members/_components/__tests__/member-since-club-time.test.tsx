@@ -6,11 +6,12 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import type { Member } from "../../_types";
 import { MemberTable } from "../member-table";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * "Member since" is the mandatory regression anchor on #2870 (CT-4) — the
@@ -160,7 +161,7 @@ function renderInClubZone(members: Member[], zone: string = CLUB_ZONE) {
     />,
     {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     },
   );
@@ -180,7 +181,7 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
     //
     // This premise is true on every host, because both readings are computed
     // from explicit zones and neither consults the machine.
-    const clubAnswer = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
+    const clubAnswer = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).instantDate(
       new Date(WIRE_VALUE),
     );
     expect(clubAnswer).toBe(DENVER_CIVIL_DAY);
@@ -245,12 +246,12 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
       // rightly refuses as a CLUB zone — a runner with `TZ=UTC` makes
       // `APP_TIME_ZONE` a fixed offset, which `requireClubTimeZone` throws on.
       answerFor: (zone) =>
-        new Intl.DateTimeFormat(APP_LOCALE, {
+        new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
           timeZone: zone,
           dateStyle: "medium",
         }).format(new Date(MID_DAY_INSTANT)),
     });
-    const environmentDay = new Intl.DateTimeFormat(APP_LOCALE, {
+    const environmentDay = new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
       timeZone: APP_TIME_ZONE,
       dateStyle: "medium",
     }).format(new Date(MID_DAY_INSTANT));

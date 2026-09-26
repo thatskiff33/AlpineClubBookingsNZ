@@ -7,7 +7,9 @@ import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseInstant,
+  type ClubDateFormat,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * One night of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870).
@@ -28,7 +30,7 @@ import {
  * string "Invalid Date", which only `toLocaleDateString` produces — so this
  * fallback is a FIX rather than a preserved behaviour.
  */
-function formatStayDay(value: string): string {
+function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -38,7 +40,7 @@ function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -63,6 +65,7 @@ export function BookingRequestVerifyClient({
   token: string;
   clubLodgeName: string;
 }) {
+  const format = useClubFormat();
   const [result, setResult] = useState<VerifyResult>({ outcome: "loading" });
 
   useEffect(() => {
@@ -114,8 +117,8 @@ export function BookingRequestVerifyClient({
               <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                 {result.lodgeName ? <p className="mb-1">Lodge: {result.lodgeName}</p> : null}
                 <p>
-                  Dates: {formatStayDay(result.checkIn)} to{" "}
-                  {formatStayDay(result.checkOut)}
+                  Dates: {formatStayDay(result.checkIn, format)} to{" "}
+                  {formatStayDay(result.checkOut, format)}
                 </p>
                 {typeof result.guestCount === "number" ? (
                   <p className="mt-1">Guests: {result.guestCount}</p>

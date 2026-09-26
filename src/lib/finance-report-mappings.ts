@@ -235,7 +235,7 @@ function snapshotEnd(snapshot: FinanceSnapshotRecord): Date {
  * date-only encoding, so a caller that wires a real timestamp in here fails
  * loudly rather than quietly labelling the wrong period.
  */
-function formatSnapshotPeriodEnd(value: Date): string {
+function formatSnapshotPeriodEnd(value: Date, format: ClubFormat): string {
   return formatClubDate(
     calendarDateOfDateOnlyInstant(
       requireStoredCalendarDay(value, {
@@ -245,6 +245,7 @@ function formatSnapshotPeriodEnd(value: Date): string {
           "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
       }),
     ),
+    format,
   );
 }
 
@@ -677,12 +678,13 @@ function loadSnapshotLines(input: {
   kind: FinanceReportCategoryKindValue;
   categories: ActiveCategory[];
   chart: ChartOfAccountsContext;
+  format: ClubFormat;
 }) {
   return input.snapshots.map((snapshot) => {
     const payload = readPnlReportPayload(snapshot.payload);
     const label =
       (payload ? readPnlPeriodLabel(payload) : null) ??
-      formatSnapshotPeriodEnd(snapshotEnd(snapshot));
+      formatSnapshotPeriodEnd(snapshotEnd(snapshot), input.format);
     const lines = payload
       ? categorizeLines({
           lines: extractPnlLines({
@@ -851,12 +853,14 @@ export async function buildFinanceMappedPnlSummary(
     kind: input.kind,
     categories,
     chart,
+    format: input.format,
   });
   const comparisonLines = loadSnapshotLines({
     snapshots: comparisonSnapshots,
     kind: input.kind,
     categories,
     chart,
+    format: input.format,
   }).flatMap((snapshot) => snapshot.lines);
   const selectedLines = selectedBySnapshot.flatMap((snapshot) => snapshot.lines);
 
@@ -1007,6 +1011,7 @@ export async function getFinanceReportMappingsState(format: ClubFormat): Promise
       kind,
       categories: activeCategories,
       chart,
+      format,
     }).flatMap((snapshot) => snapshot.lines);
   });
 

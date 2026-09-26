@@ -8,9 +8,10 @@
  * thing a first boot after the upgrade can copy from. That is the whole of their
  * remaining role: `resolveClubFormat` consults the seed only when nothing is
  * persisted, and the boot backfill persists it once so that stops being true.
- * The transitional `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and `APP_LOCALE`
- * constants in `src/config/operational.ts` still derive from the same variables
- * for the call sites #3564 to #3566 have not migrated yet; #3567 retires them.
+ * The `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and `APP_LOCALE` constants in
+ * `src/config/operational.ts` still derive from the same variables; since #3566
+ * nothing outside that file reads the first and last, and #3567 retires them
+ * (and decides where the charge currency, `APP_STRIPE_CURRENCY`, comes from).
  *
  * WHY THIS IS ITS OWN MODULE rather than sitting beside the validators, and it
  * is the reason `club-time-zone-env.ts` records for `TZ`, transferred without a
@@ -46,6 +47,9 @@ import {
   CLUB_LOCALE_FALLBACK,
   normaliseClubCurrencyCode,
   normaliseClubLocale,
+  resolveClubFormat,
+  type ClubFormat,
+  type ClubFormatCandidate,
 } from "@/lib/club-format";
 
 /**
@@ -181,4 +185,17 @@ export function decideClubFormatBackfill(): ClubFormatBackfillDecision {
     ),
     locale: decide(classifyEnvironmentClubLocaleSeed(), CLUB_LOCALE_FALLBACK),
   };
+}
+
+/**
+ * The club's format from a STORED row, falling back per field to the environment
+ * seed and then to the shipped defaults — `resolveClubFormat` with this module's
+ * seed as its second leg. The ONE spelling of that pairing (#3566): the request
+ * reader, the AI spend reader, the currency-change clear and the email cache all
+ * resolve through it, so none of them can drift onto a different fallback.
+ */
+export function resolveStoredClubFormat(
+  stored: ClubFormatCandidate | null | undefined,
+): ClubFormat {
+  return resolveClubFormat(stored, readEnvironmentClubFormatSeed());
 }

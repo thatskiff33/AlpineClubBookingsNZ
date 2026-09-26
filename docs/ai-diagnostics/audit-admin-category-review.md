@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  488
+row-producing sites:  489
 uncategorised:        0
-category values: admin 108, booking 105, xero 37, family 35, payment 48,
+category values: admin 109, booking 105, xero 37, family 35, payment 48,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -732,6 +732,16 @@ that a booking officer changed or cleared one guest's dietary/allergy note for a
 stay. `booking` because that note is booking data read by booking officers; the
 row carries the guest id and a changed flag and never the note itself
 (`INV-PRIV-022`).
+
+#3566 then added one more (`admin` 108 -> 109, 488 -> 489, RE-MEASURED with
+`npm run audit:census` on the tree merged with #3029 rather than added to the
+literal):
+`AI_SPEND_CURRENCY_RATE_CLEARED`, the record that changing the club's currency
+cleared the stored AI spend conversion rate, which records no currency of its
+own and would otherwise go on pricing the new currency at the old one's rate.
+`admin` for the reason `AI_SPEND_CURRENCY_RATE_UPDATED` is: installation
+configuration, readable with `support:view` alone, carrying two currency codes,
+a ratio and an administrator id and no member data.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

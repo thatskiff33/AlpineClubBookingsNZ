@@ -14,6 +14,7 @@ import {
   formatClubDate,
   parseInstant,
   type BoundClubTime,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -74,7 +75,7 @@ type Action = "ACCEPT" | "CANCEL" | "MODIFY" | "QUERY";
  * not the string "Invalid Date", which only `toLocaleDateString` produces — so
  * this fallback is a FIX rather than a preserved behaviour.
  */
-function formatStayDay(value: string): string {
+function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -84,7 +85,7 @@ function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -286,8 +287,8 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               ) : null}
               <p>
                 <span className="text-muted-foreground">Dates:</span>{" "}
-                {formatStayDay(context.checkIn)} to{" "}
-                {formatStayDay(context.checkOut)}
+                {formatStayDay(context.checkIn, format)} to{" "}
+                {formatStayDay(context.checkOut, format)}
               </p>
               <p>
                 <span className="text-muted-foreground">Guests:</span>{" "}

@@ -14,6 +14,7 @@ import {
 } from "@/lib/club-time";
 import { divergentClubZone } from "./helpers/club-time-zone";
 import { withTimeZone } from "./helpers/timezone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * Proof that the calendar subsystem's zone-authority suites STAY discriminating
@@ -108,7 +109,7 @@ const FIXTURES: Array<{
     {
       name: "calendar-client: chip time label",
       derive: (z) =>
-        formatClubInstantTime(requireInstant("2026-04-16T10:30:00.000Z"), z),
+        formatClubInstantTime(requireInstant("2026-04-16T10:30:00.000Z"), z, CLUB_FORMAT_TEST),
     },
     {
       name: "calendar-client: grid window lower bound",
@@ -120,7 +121,7 @@ const FIXTURES: Array<{
     },
     {
       name: "components: month heading from the club's today",
-      derive: (z) => formatClubMonthYear(startOfCalendarMonth(clubToday(z))),
+      derive: (z) => formatClubMonthYear(startOfCalendarMonth(clubToday(z)), CLUB_FORMAT_TEST),
       /*
         A MONTH heading is coarser than a day and this is where that bites. The
         three days that exist at the pinned instant are 30 June, 1 July and

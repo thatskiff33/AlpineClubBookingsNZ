@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 import {
   captureHostTimeZone,
@@ -103,7 +104,7 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
     (zone) => {
       withTimeZone(zone, () => {
         expect(calendarDayFromPayload(ISO_ENCODING)).toBe(BARE_DAY);
-        expect(formatPayloadCalendarDay(ISO_ENCODING)).toBe("1 Apr 2026");
+        expect(formatPayloadCalendarDay(ISO_ENCODING, CLUB_FORMAT_TEST)).toBe("1 Apr 2026");
       });
     },
   );
@@ -113,7 +114,7 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
     (zone) => {
       withTimeZone(zone, () => {
         expect(calendarDayFromPayload(BARE_DAY)).toBe(BARE_DAY);
-        expect(formatPayloadCalendarDay(BARE_DAY)).toBe("1 Apr 2026");
+        expect(formatPayloadCalendarDay(BARE_DAY, CLUB_FORMAT_TEST)).toBe("1 Apr 2026");
       });
     },
   );
@@ -187,7 +188,7 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
 
       const fresh = await import("../calendar-day");
       expect(fresh.calendarDayFromPayload(ISO_ENCODING)).toBe(BARE_DAY);
-      expect(fresh.formatPayloadCalendarDay(ISO_ENCODING)).toBe("1 Apr 2026");
+      expect(fresh.formatPayloadCalendarDay(ISO_ENCODING, CLUB_FORMAT_TEST)).toBe("1 Apr 2026");
     } finally {
       hostTimeZone.restore();
       // Hand the registry back, or the next file inherits a module graph built
@@ -197,8 +198,8 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
   });
 
   it("uses the caller's fallback for an unreadable value", () => {
-    expect(formatPayloadCalendarDay(null)).toBe("—");
-    expect(formatPayloadCalendarDay("rubbish", "rubbish")).toBe("rubbish");
-    expect(formatPayloadCalendarDay(null, "-")).toBe("-");
+    expect(formatPayloadCalendarDay(null, CLUB_FORMAT_TEST)).toBe("—");
+    expect(formatPayloadCalendarDay("rubbish", CLUB_FORMAT_TEST, "rubbish")).toBe("rubbish");
+    expect(formatPayloadCalendarDay(null, CLUB_FORMAT_TEST, "-")).toBe("-");
   });
 });

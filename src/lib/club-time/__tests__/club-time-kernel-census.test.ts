@@ -162,7 +162,7 @@ describe("the kernel owns exactly one formatter factory", () => {
     const body = source.slice(source.indexOf("export function formatCalendarDateShape"));
     expect(body.length).toBeGreaterThan(0);
     expect(body).toMatch(
-      /formatHouseShape\(\s*shape,\s*new Date\(`\$\{date\}T00:00:00\.000Z`\),\s*"UTC",?\s*\)/,
+      /formatHouseShape\(\s*shape,\s*new Date\(`\$\{date\}T00:00:00\.000Z`\),\s*"UTC",\s*format,?\s*\)/,
     );
   });
 
@@ -174,9 +174,48 @@ describe("the kernel owns exactly one formatter factory", () => {
       mentions,
       "INV-CONFIG-002: the kernel takes the club's zone as an argument and never reads " +
         "the environment for it. `APP_TIME_ZONE` is process.env.TZ, which is precisely " +
-        "the competing authority this epic exists to retire. The locale still comes from " +
-        "configuration; the zone never does.",
+        "the competing authority this epic exists to retire.",
     ).toEqual([]);
+  });
+
+  it("never reads the locale from configuration either (#3566)", () => {
+    /*
+      Stage 4 of programme #3205 took `APP_LOCALE` out of `intl.ts`, the last
+      configuration read in the kernel: every rendering now takes the club's
+      persisted locale as a REQUIRED `format` argument. A kernel module that
+      imported `@/config/operational` again would hand every date in the product
+      back to the build's `NEXT_PUBLIC_LOCALE` (browser) or the server's `LOCALE`
+      — which could differ from each other, and from the club's setting.
+    */
+    const mentions = kernelFiles
+      .filter(
+        (file) =>
+          file.text.includes("APP_LOCALE") ||
+          file.text.includes("@/config/operational"),
+      )
+      .map((file) => file.rel);
+    expect(
+      mentions,
+      "INV-CONFIG-006: the kernel takes the club's locale as an argument — a " +
+        "`ClubDateFormat`, from `clubTime()` / `clubFormatValues()` on the server or " +
+        "`useClubTime()` / `useClubFormat()` in the browser — and never reads " +
+        "`APP_LOCALE` or anything else from `@/config/operational`.",
+    ).toEqual([]);
+  });
+
+  it("keeps the two projection formatters on en-US, never the club's locale (#3566)", () => {
+    /*
+      `clubZoneParts` and `clubZoneDateString` parse their parts back into
+      numbers. A club locale with non-Latin digits (`ar-EG`, `hi-IN-u-nu-deva`)
+      would break `Number(...)` there, silently, so these two stay pinned to
+      "en-US" while every DISPLAY formatter takes the club's locale.
+    */
+    const source =
+      kernelFiles.find((file) => file.rel === "src/lib/club-time/intl.ts")?.text ??
+      "";
+    expect(source).toMatch(/`parts\|\$\{timeZone\}`,\s*"en-US",/);
+    expect(source).toMatch(/`date-parts\|\$\{timeZone\}`,\s*"en-US",/);
+    expect(source).toMatch(/`display\|\$\{locale\}\|\$\{timeZone\}\|\$\{shape\}`,\s*locale,/);
   });
 
   it("never asks the host or the browser what zone it is in", () => {
@@ -396,5 +435,271 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
         "which is what pinning a lodge night to UTC midnight and then reading a part " +
         "back off it does. A lodge night is a calendar day; format it as one.",
     ).toEqual([]);
+  });
+});
+
+/**
+ * THE TREE-WIDE GUARD (#3566, owner decision 5): no date formatter outside the
+ * shared machinery.
+ *
+ * `club-time/intl.ts` owns the only `Intl.DateTimeFormat` factory the product
+ * renders dates with. Before #3566 five screens and one email kept a formatter
+ * of their own — the lobby clock, the stuck-states and health stamps, the audit
+ * log's stamp, the induction date and the chore-roster email — each a second
+ * authority that the memo, the club's locale and `house-shapes.test.ts`'s
+ * byte-identity proof all missed, and one of them (the chore roster) wrote every
+ * club's dates the New Zealand way. They were moved onto house shapes; this
+ * refuses the next one.
+ *
+ * WHAT IT SEES, each a probe class the #3628 review found the first version
+ * blind to and each mutation-proven by planting it in the tree:
+ *
+ *  - ANY mention of `DateTimeFormat` as a word — so a destructured
+ *    (`const { DateTimeFormat } = Intl`), aliased (`const F = Intl.DateTimeFormat`)
+ *    or bracketed (`Intl["DateTimeFormat"]`) formatter counts, not only
+ *    `new Intl.DateTimeFormat(`. `DateTimeFormatOptions` is a different word;
+ *  - `toLocaleDateString` / `toLocaleTimeString` by name, dotted, bracketed or
+ *    detached;
+ *  - `toLocaleString(...)` whose arguments carry a DATE option key
+ *    (`dateStyle`, `month`, `hour`, `timeZone`, ...) — the number form, with a
+ *    bare locale, stays legal;
+ *  - an import of `date-fns/locale`, and a `locale:` option in any module that
+ *    imports `date-fns` — the date-fns adapters render English patterns, and a
+ *    locale smuggled in there is a second authority for the club's language;
+ *  - `Date.prototype`, however reached, so `Date.prototype.toLocaleString.call(…)`
+ *    and a destructured `toLocaleString` off the prototype count;
+ *  - a `toLocaleString(...)` whose options it cannot see into — a non-literal
+ *    second argument, a spread — as well as one with a literal date key;
+ *  - `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` and `.cts` modules as well as `.ts`
+ *    and `.tsx`.
+ *
+ * The exemptions are PINNED TO AN EXACT COUNT of hits, so a second formatter
+ * added to a whole-file exemption fails as surely as one anywhere else.
+ *
+ * The `INV-DATE-015` eslint arms refuse a bare `toLocale*` and a zone-less
+ * `Intl.DateTimeFormat`; they cannot refuse a ZONED formatter built with every
+ * argument right and simply in the wrong module. This can.
+ *
+ * Comments are stripped first, because this repository documents a defect at
+ * the site it removed it. Tests are outside the population by construction:
+ * a transcription of the pre-kernel formatters is how `house-shapes.test.ts`
+ * proves byte identity. The known limit: `d.toLocaleString("en-NZ")` on a Date
+ * with no options cannot be told from the number form without types.
+ */
+const SRC_ROOT = path.join(ROOT, "src");
+
+/** Modules allowed a hit, each with its EXACT hit count and the reason. */
+const DATE_FORMATTER_EXEMPTIONS = new Map<string, { hits: number; reason: string }>([
+  [
+    "src/lib/club-time/intl.ts",
+    {
+      hits: 6,
+      reason:
+        "THE ONE HOME: the memoised factory every house shape and every projection in the product goes through — the construction, the memo's and two signatures' types, and two error messages naming it.",
+    },
+  ],
+  [
+    "src/lib/club-format.ts",
+    {
+      hits: 1,
+      reason:
+        "A VALIDATION PROBE, not a rendering: `normaliseClubLocale` asks the runtime whether it will build a formatter for a locale tag at all, and discards it after `resolvedOptions()`. Nothing is formatted.",
+    },
+  ],
+  [
+    "src/lib/club-time-zone.ts",
+    {
+      hits: 2,
+      reason:
+        "TWO VALIDATION PROBES, not renderings: the zone normalisers ask the runtime to accept an IANA identifier and report its canonical name through `resolvedOptions().timeZone`. Nothing is formatted.",
+    },
+  ],
+  [
+    "src/lib/ai-assistant-usage.ts",
+    {
+      hits: 1,
+      reason:
+        "An `en-CA` ISO MONTH-KEY EXTRACTOR for the AI page-help budget ledger (`yyyy-MM`), an encoding rather than a display string, and an `ENVIRONMENT_ZONE_ADAPTERS` ratchet entry with its own reason in `eslint.config.mjs`.",
+    },
+  ],
+  [
+    "src/lib/ai-diagnostics-usage.ts",
+    {
+      hits: 1,
+      reason:
+        "The same `en-CA` ISO month-key extractor for the diagnostics budget ledger, on the same ratchet for the same reason.",
+    },
+  ],
+]);
+
+const DATE_OPTION_KEYS =
+  /\b(?:dateStyle|timeStyle|weekday|era|year|month|day|dayPeriod|hour|minute|second|fractionalSecondDigits|timeZone|timeZoneName|hour12|hourCycle)\s*:/;
+
+/** The balanced argument text of the call whose `(` is at `open`. */
+function callArguments(source: string, open: number): string {
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  return source.slice(open + 1);
+}
+
+/** The top-level, comma-separated arguments of a call's argument text. */
+function topLevelArguments(text: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "(" || char === "{" || char === "[") depth += 1;
+    else if (char === ")" || char === "}" || char === "]") depth -= 1;
+    else if (char === "," && depth === 0) {
+      args.push(text.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  const last = text.slice(start).trim();
+  if (last.length > 0) args.push(last);
+  return args;
+}
+
+/**
+ * Whether a `toLocaleString(...)` call's arguments can carry DATE options.
+ *
+ * A literal date key does, and so does anything this scanner cannot see into:
+ * an options argument that is not an object literal (`d.toLocaleString(l,
+ * opts)`), an object literal with a spread, or a spread argument list. The
+ * number form this codebase writes — no arguments, or a bare locale — is the
+ * only shape left legal.
+ */
+function toLocaleStringCanCarryDateOptions(argumentText: string): boolean {
+  if (DATE_OPTION_KEYS.test(argumentText)) return true;
+  const args = topLevelArguments(argumentText);
+  if (args.some((arg) => arg.startsWith("..."))) return true;
+  if (args.length < 2) return false;
+  const options = args[1];
+  return !options.startsWith("{") || /\.\.\./.test(options);
+}
+
+/** Every date-formatter hit in `source` (comments already stripped). */
+export function findDateFormatterConstructions(source: string): string[] {
+  const hits: string[] = [];
+  for (const match of source.matchAll(/\bDateTimeFormat\b/g)) hits.push(match[0]);
+  for (const match of source.matchAll(/\btoLocale(?:Date|Time)String\b/g)) {
+    hits.push(match[0]);
+  }
+  for (const match of source.matchAll(/\btoLocaleString\b\s*(?:["'`]\s*\]\s*)?\(/g)) {
+    const open = (match.index ?? 0) + match[0].length - 1;
+    if (toLocaleStringCanCarryDateOptions(callArguments(source, open))) {
+      hits.push("toLocaleString(date)");
+    }
+  }
+  // `Date.prototype.toLocaleString.call(d, l, { month: "long" })`, and
+  // `const { toLocaleString: tls } = Date.prototype` — the date formatter
+  // reached off the prototype, where no call site names it on a Date.
+  for (const match of source.matchAll(/\bDate\s*(?:\.\s*prototype\b|\[\s*["'`]prototype["'`]\s*\])/g)) {
+    hits.push(match[0]);
+  }
+  for (const match of source.matchAll(/["'`]date-fns\/locale(?:\/[^"'`]*)?["'`]/g)) {
+    hits.push(match[0]);
+  }
+  if (/["'`]date-fns(?:\/[^"'`]*)?["'`]/.test(source)) {
+    for (const match of source.matchAll(/\blocale\s*:/g)) hits.push(`date-fns ${match[0]}`);
+  }
+  return hits;
+}
+
+const SCANNED_EXTENSION = /\.[cm]?[jt]sx?$/;
+
+function productionSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) {
+      if (name === "__tests__" || name === "node_modules") continue;
+      productionSourceFiles(full, out);
+    } else if (SCANNED_EXTENSION.test(name) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery", () => {
+  it("counts the shapes it claims to, and not their near misses", () => {
+    const count = (source: string) => findDateFormatterConstructions(source).length;
+    expect(count('new Intl.DateTimeFormat("en-NZ", { timeZone })')).toBe(1);
+    expect(count("Intl.DateTimeFormat(locale, opts).format(d)")).toBe(1);
+    expect(count("new Intl . DateTimeFormat (x)")).toBe(1);
+    // The probe classes the #3628 review found the first version blind to.
+    expect(count("const { DateTimeFormat } = Intl; new DateTimeFormat(l)")).toBe(2);
+    expect(count("const F = Intl.DateTimeFormat;")).toBe(1);
+    expect(count('new Intl["DateTimeFormat"]("de-CH")')).toBe(1);
+    expect(count('d.toLocaleDateString("en-NZ")')).toBe(1);
+    expect(count("d.toLocaleTimeString()")).toBe(1);
+    expect(count('d["toLocaleDateString"]()')).toBe(1);
+    expect(count("const f = d.toLocaleDateString;")).toBe(1);
+    expect(count('d.toLocaleString("en-NZ", { dateStyle: "long" })')).toBe(1);
+    expect(count('d["toLocaleString"]("en-NZ", { month: "short" })')).toBe(1);
+    // Round 2 of the #3628 review: the prototype and the opaque options.
+    expect(count('Date.prototype.toLocaleString.call(d, l, { month: "long" })')).toBe(1);
+    expect(count("const { toLocaleString: tls } = Date.prototype; tls.call(d, l, o);")).toBe(1);
+    expect(count('Date["prototype"].toLocaleString.call(d)')).toBe(1);
+    expect(count("d.toLocaleString(l, opts)")).toBe(1);
+    expect(count("d.toLocaleString(l, { ...opts })")).toBe(1);
+    expect(count("d.toLocaleString(...args)")).toBe(1);
+    expect(count('import { enNZ } from "date-fns/locale";')).toBe(1);
+    expect(
+      count('import { format } from "date-fns"; format(d, "PP", { locale: enNZ });'),
+    ).toBe(1);
+    // A number's thousands separators and a type annotation are not a date formatter.
+    expect(count("n.toLocaleString()")).toBe(0);
+    expect(count("n.toLocaleString(locale)")).toBe(0);
+    expect(count("n.toLocaleString(locale, { maximumFractionDigits: 0 })")).toBe(0);
+    expect(count("n.toLocaleString(format.locale)")).toBe(0);
+    expect(count("Intl.DateTimeFormatOptions")).toBe(0);
+    // `locale:` is only suspect beside date-fns.
+    expect(count("const format = { locale: club.locale };")).toBe(0);
+  });
+
+  it("finds none outside the declared exemptions, in TypeScript or JavaScript", () => {
+    const files = productionSourceFiles(SRC_ROOT);
+    // The walk must really see the tree, or an empty offender list is vacuous.
+    expect(files.length).toBeGreaterThan(1000);
+    const offenders = files
+      .map((file) => ({ rel: rel(file), text: stripComments(readFileSync(file, "utf8")) }))
+      .filter(
+        (file) =>
+          !DATE_FORMATTER_EXEMPTIONS.has(file.rel) &&
+          findDateFormatterConstructions(file.text).length > 0,
+      )
+      .map((file) => file.rel);
+    expect(
+      offenders,
+      "INV-CONFIG-006 (#3566): these modules build or reach a date formatter of their own. " +
+        "Render through a house shape in `@/lib/club-time` (`formatClub*` with the club's " +
+        "format, or a `BoundClubTime` method), which follows the club's persisted zone AND " +
+        "locale and is covered by `house-shapes.test.ts`. A genuinely new shape is declared in " +
+        "`club-time/intl.ts` `HOUSE_SHAPES`, with a `format.ts` export beside the others. A " +
+        "validation probe or an ISO extractor that renders nothing goes on " +
+        `DATE_FORMATTER_EXEMPTIONS with its exact count and reason. Offenders: ${offenders.join(", ") || "(none)"}`,
+    ).toEqual([]);
+  });
+
+  it("holds every exemption to its EXACT count, so nothing rides in beside it", () => {
+    for (const [relative, { hits, reason }] of DATE_FORMATTER_EXEMPTIONS) {
+      const text = stripComments(readFileSync(path.join(ROOT, relative), "utf8"));
+      expect(
+        findDateFormatterConstructions(text).length,
+        `${relative} is exempt for exactly ${hits} date-formatter hit(s). A different ` +
+          "count means a formatter was added beside the one it is exempt for (move it onto " +
+          "a house shape) or removed (lower the count, or delete the exemption at zero).",
+      ).toBe(hits);
+      expect(reason.trim().length).toBeGreaterThanOrEqual(40);
+    }
   });
 });

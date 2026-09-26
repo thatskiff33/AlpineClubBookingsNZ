@@ -616,8 +616,8 @@ export function PolicyExceptionRequestsPanel({
                         <span className="text-muted-foreground">
                           Proposed dates:
                         </span>{" "}
-                        {formatStayDateOrNull(item.proposedCheckIn) ?? "—"} to{" "}
-                        {formatStayDateOrNull(item.proposedCheckOut) ?? "—"}
+                        {formatStayDateOrNull(item.proposedCheckIn, clubTime.format) ?? "—"} to{" "}
+                        {formatStayDateOrNull(item.proposedCheckOut, clubTime.format) ?? "—"}
                       </div>
                       <div>
                         <span className="text-muted-foreground">Guests:</span>{" "}

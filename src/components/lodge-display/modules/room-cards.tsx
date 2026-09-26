@@ -6,6 +6,8 @@ import {
   type StaySegment,
   type StayStatus,
 } from "./status-helpers";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // Tonight's rooms (issue #115; visual reference: origin five-panel mock O2 in
 // Grads/lobby-display/origin-five-panel.html). A grid of room cards for a
@@ -34,15 +36,16 @@ interface RoomPerson {
 // The SEGMENT's dates, not the row's envelope (#2735) — the card's dot is per
 // segment, so the span beside it has to be too, or a card shows "Mon 13 – Thu
 // 16" for someone whose next bed here is three days away.
-function spanText(segment: StaySegment): string {
+function spanText(segment: StaySegment, format: ClubDateFormat): string {
   if (segment.status === "departing") return "leaves today";
-  return `${shortDay(segment.stayStart)} – ${shortDay(segment.stayEnd)}`;
+  return `${shortDay(segment.stayStart, format)} – ${shortDay(segment.stayEnd, format)}`;
 }
 
 /** The people from one booking row who are present in this room tonight. */
 function peopleTonight(
   booking: DisplayStateBooking,
-  tonight: string
+  tonight: string,
+  format: ClubDateFormat,
 ): RoomPerson[] {
   if (booking.guests === null) {
     const segment = staySegmentOn(booking, tonight);
@@ -52,7 +55,7 @@ function peopleTonight(
         key: booking.key,
         label: `${booking.label} · ${booking.guestCount}`,
         status: segment.status,
-        span: spanText(segment),
+        span: spanText(segment, format),
         group: true,
         headcount: booking.guestCount,
       },
@@ -66,7 +69,7 @@ function peopleTonight(
       key: `${booking.key}-${index}`,
       label: guest.label,
       status: segment.status,
-      span: spanText(segment),
+      span: spanText(segment, format),
       group: false,
       headcount: 1,
     });
@@ -80,6 +83,7 @@ export function RoomCards({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   // Allocation off: no rooms to draw. Degrade to a short, honest note rather
   // than an empty grid — the arrivals / status boards handle the roomless view.
   if (state.rooms === null) {
@@ -99,7 +103,7 @@ export function RoomCards({
       {state.rooms.map((room) => {
         const people = state.bookings
           .filter((booking) => booking.roomId === room.id)
-          .flatMap((booking) => peopleTonight(booking, tonight));
+          .flatMap((booking) => peopleTonight(booking, tonight, format));
         const headcount = people.reduce((sum, person) => sum + person.headcount, 0);
 
         if (people.length === 0) {

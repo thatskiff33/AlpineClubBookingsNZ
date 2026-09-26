@@ -9,6 +9,7 @@ import { FinanceDashboardClient } from "@/app/(finance)/finance/_components/fina
 import { parseDateOnly } from "@/lib/date-only";
 import { resolveFinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
 import type { FinanceDashboardPageModel } from "@/lib/finance-dashboard-page/model";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const mocks = vi.hoisted(() => ({
   routerReplace: vi.fn(),
@@ -38,6 +39,7 @@ function buildModel(
   const selection = resolveFinanceDashboardSelection({
     searchParams,
     today: TODAY,
+    format: CLUB_FORMAT_TEST,
     financialYearEndMonth: 3,
   });
 
@@ -225,7 +227,7 @@ describe("FinanceDashboardClient CSV stamp carries the club's day (CT-4, #2870)"
 
   function exportUnder(zone: string) {
     render(
-      <ClubTimeProvider zone={zone}>
+      <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
         <FinanceDashboardClient
           model={buildModel({ view: "costs" })}
           currentSearch="view=costs"
@@ -239,10 +241,10 @@ describe("FinanceDashboardClient CSV stamp carries the club's day (CT-4, #2870)"
   it("names the file with a behind-UTC club's day", () => {
     // PREMISE AS AN ANSWER: the two zones really are on different days here.
     expect(
-      bindClubTime(requireClubTimeZone(CLUB_ZONE)).today(frozenClock),
+      bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).today(frozenClock),
     ).toBe("2026-06-30");
     expect(
-      bindClubTime(requireClubTimeZone(LEGACY_REFERENCE_ZONE)).today(
+      bindClubTime(requireClubTimeZone(LEGACY_REFERENCE_ZONE), CLUB_FORMAT_TEST).today(
         frozenClock,
       ),
     ).toBe("2026-07-01");

@@ -27,7 +27,11 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
 import { isRosterData, RosterEditor, type RosterData } from "@/components/admin/roster-editor"
 import { useClubTime } from "@/components/club-time-provider"
-import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
+import {
+  formatClubLongWeekdayDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
@@ -45,9 +49,9 @@ import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 // six.
 
 /** The roster day as a heading. Falsy/malformed renders as itself, not a throw. */
-function formatRosterDay(date: string): string {
+function formatRosterDay(date: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(date)
-  return day ? formatClubLongWeekdayDate(day) : date
+  return day ? formatClubLongWeekdayDate(day, format) : date
 }
 
 const ROSTER_STATUS_OVERLAY: Record<
@@ -529,7 +533,7 @@ export default function RosterPage() {
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <CardTitle>Roster for {formatRosterDay(selectedDate)}</CardTitle>
+                    <CardTitle>Roster for {formatRosterDay(selectedDate, clubTime.format)}</CardTitle>
                     {/* #2622: the count is everyone in the lodge on this
                         operational day, which includes the people checking out
                         this morning — not just tonight's sleepers. */}

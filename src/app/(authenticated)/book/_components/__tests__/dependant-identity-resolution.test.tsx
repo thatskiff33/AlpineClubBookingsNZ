@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { GuestsStep } from "@/app/(authenticated)/book/_components/guests-step";
 import { DependantIdentityResolution } from "@/app/(authenticated)/book/_components/dependant-identity-resolution";

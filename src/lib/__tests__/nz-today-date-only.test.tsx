@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import fs from "node:fs";
 import path from "node:path";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -150,7 +151,7 @@ describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", (
   it("the public booking-request form's earliest selectable night is the NZ day", async () => {
     render(
       <ClubFormatTestProvider>
-        <ClubTimeProvider zone={CLUB_ZONE}>
+        <ClubTimeProvider zone={CLUB_ZONE} locale={CLUB_FORMAT_TEST.locale}>
           <BookingRequestForm club={STUB_CLUB} />
         </ClubTimeProvider>
       </ClubFormatTestProvider>,
@@ -169,7 +170,7 @@ describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", (
   it("the public school-booking form's earliest selectable night is the NZ day", async () => {
     render(
       <ClubFormatTestProvider>
-        <ClubTimeProvider zone={CLUB_ZONE}>
+        <ClubTimeProvider zone={CLUB_ZONE} locale={CLUB_FORMAT_TEST.locale}>
           <SchoolBookingForm club={STUB_CLUB} />
         </ClubTimeProvider>
       </ClubFormatTestProvider>,

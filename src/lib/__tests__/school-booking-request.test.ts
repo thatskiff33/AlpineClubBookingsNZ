@@ -358,7 +358,7 @@ function memberNightConflictError() {
       canSelfRemove: false,
       isSelfGuest: false,
     },
-  ]);
+  ], CLUB_FORMAT_TEST);
 }
 
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
@@ -2308,7 +2308,8 @@ describe("approveSchoolBookingRequest", () => {
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         excludeBookingId: undefined,
-      })
+      }),
+      CLUB_FORMAT_TEST,
     );
     const guardGuests = mockedAssertNoConflicts.mock.calls[0][1].guests;
     expect(guardGuests).toHaveLength(3);

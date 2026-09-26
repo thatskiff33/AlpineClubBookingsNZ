@@ -1,4 +1,5 @@
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
+import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-format-copy";
 
 /**
  * Club Currency & Locale — the maintenance surface for the two settings that
@@ -18,21 +19,11 @@ import { ClubFormatPanel } from "@/components/admin/club-format-panel";
  * canonical view-only banner. The enforcement is server-side on both verbs of
  * `/api/admin/club-format` — `"any-admin"` on the read, Full Admin on the write.
  *
- * THE BLURB SAYS WHAT IS TRUE TODAY, WHICH IS STILL LESS THAN IT WILL SAY.
- * Stage 1 recorded the setting and no screen read it. Stage 2 (#3564) moved the
- * ten `"use client"` screens onto it — the currency label beside a fee or a
- * spend cap, the audit and health stamps, the promo counts, the lobby
- * display's date — so the setting now visibly does something.
- *
- * WHAT IT STILL DOES NOT DO, and the blurb has to keep saying so: every
- * AMOUNT is written by `formatCents` and the finance formatters, and every
- * date by the club-time kernel, all of which build their `Intl` objects at
- * module load from `CURRENCY` and `LOCALE`. Those are #3565; the remaining
- * server-side readers are #3566. So an operator who removes the server
- * variables today gets a page showing `CHF` beside amounts written in New
- * Zealand dollars, which is worse than either answer alone — and is exactly
- * why "keep them in step" is still the instruction. Each disclaimer goes with
- * the stage that makes its claim true; this one shrank rather than vanished.
+ * THE BLURB SAYS WHAT IS TRUE TODAY. Stage 1 recorded the setting, stage 2
+ * (#3564) moved the browser screens onto it, #3565 every amount and #3566 every
+ * date, email, the AI spend currency and sorting. What it reaches, and the one
+ * thing it does not, is rendered from `@/lib/club-format-copy`, shared with the
+ * confirmation panel and the contextual help so the three cannot disagree.
  */
 export default function ClubFormatPage() {
   return (
@@ -45,22 +36,9 @@ export default function ClubFormatPage() {
           and not of whoever is looking: a member reading the site from another
           country should see the club&apos;s currency, not their own.
         </p>
+        <p className="text-sm text-muted-foreground">{CLUB_FORMAT_REACH}</p>
         <p className="text-sm text-muted-foreground">
-          These were server settings (<code>CURRENCY</code> and{" "}
-          <code>LOCALE</code>) until now. They were copied here once, and this
-          page is the only thing that changes them from now on — editing them on
-          the server no longer changes <em>this setting</em>.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          <strong>Leave the server settings in place, and in step.</strong> The
-          admin screens now show the currency you choose here, and the lobby
-          display writes its date your way. What is still written from the
-          server&rsquo;s <code>CURRENCY</code> and <code>LOCALE</code> is every{" "}
-          <em>amount</em> — every price, invoice figure and statement line —
-          and every date the rest of the site prints. Those move across in the
-          changes that follow. If the two disagree, you will see your chosen
-          code beside amounts written the old way, so keep them the same until
-          this note goes.
+          {CLUB_FORMAT_SERVER_SETTINGS}
         </p>
       </div>
       <ClubFormatPanel />

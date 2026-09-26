@@ -211,6 +211,7 @@ export async function buildBookingDetailEditorData({
           // already resolved for its stay-boundary questions, so one page cannot
           // answer in two zones.
           timeZone: club.zone,
+          format: club.format,
         });
         // MG4 (#2309) adds the SUB-STATE beside the badge, because the edit
         // panel needs to tell "still being asked" from "the club put them
