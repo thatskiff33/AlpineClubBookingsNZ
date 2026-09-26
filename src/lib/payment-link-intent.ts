@@ -12,7 +12,6 @@ import {
 } from "@/lib/booking-owner";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
@@ -383,7 +382,6 @@ export async function createPaymentIntentForPaymentLink(
   const paymentIntent = await createPaymentIntent({
     format,
     amountCents: booking.finalPriceCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
     metadata: {
       bookingId: booking.id,

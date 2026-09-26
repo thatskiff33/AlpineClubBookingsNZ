@@ -5,7 +5,6 @@ import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import {
   queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import logger from "@/lib/logger";
 import {
   enqueueAdditionalPaymentIntentRecovery,
@@ -275,7 +274,6 @@ export async function createModificationAdditionalPaymentIntent({
     const pi = await createPaymentIntent({
       format,
       amountCents: result.additionalAsk.amountCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId,
       metadata: {
         bookingId,

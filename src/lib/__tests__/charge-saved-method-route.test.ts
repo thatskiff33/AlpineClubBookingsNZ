@@ -478,9 +478,8 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(mockChargePaymentMethod).toHaveBeenCalledWith({
         amountCents: 12500,
-        // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-        // caller states it. Same value the default supplied.
-        currency: "nzd",
+        // #3567 D1: no `currency` argument; the charge currency is worked out
+        // from `format` inside stripe.ts, so a caller cannot pass a second answer.
         customerId: "cus_123",
         paymentMethodId: "pm_123",
         metadata: { bookingId: "booking-1", memberId: "member-1" },

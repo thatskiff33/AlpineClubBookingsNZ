@@ -445,6 +445,18 @@ describe("PUT /api/admin/club-format — the write", () => {
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it.each(["JPY", "KWD"])(
+    "refuses %s, a real currency that does not count in hundredths (#3567 D3)",
+    async (currencyCode) => {
+      const response = await put({ currencyCode, locale: "en-NZ", confirmed: true });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toMatch(
+        /two decimal places/i,
+      );
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses an invalid locale BEFORE writing the valid currency beside it", async () => {
     // A save that stored one field and refused the other would leave the
     // operator looking at a half-applied form with no way to tell which landed.

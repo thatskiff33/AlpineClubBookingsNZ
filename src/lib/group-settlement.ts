@@ -32,7 +32,6 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -321,7 +320,6 @@ export async function createGroupSettlementIntent(
   const paymentIntent = await createPaymentIntent({
     format,
     amountCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
     metadata: {
       type: "group_settlement",

@@ -59,6 +59,8 @@
  * `server-only`, for the reason recorded there.
  */
 
+import { currencyHasTwoDecimalPlaces } from "@/lib/club-currency-minor-unit";
+
 /**
  * The generic New Zealand defaults — used ONLY where no prior effective
  * configuration exists at all. They are distribution defaults, not an assumption
@@ -322,12 +324,16 @@ export function resolveClubFormat(
  * never disagree about a value the operator is shown, sorted so the list reads
  * the same on every runtime, and unioned with `CLUB_CURRENCY_FALLBACK` so the
  * documented default is always offerable even on a runtime whose list omits it.
+ * A currency that does not count in hundredths is not offered, because saving
+ * one is refused (#3567 D3; `club-currency-minor-unit.ts`).
  */
 export function listSelectableClubCurrencyCodes(): string[] {
   const offered = new Set<string>([CLUB_CURRENCY_FALLBACK]);
   try {
     for (const code of Intl.supportedValuesOf("currency")) {
-      if (hasCurrencyCodeShape(code)) offered.add(code.toUpperCase());
+      if (hasCurrencyCodeShape(code) && currencyHasTwoDecimalPlaces(code)) {
+        offered.add(code.toUpperCase());
+      }
     }
   } catch {
     // A runtime without supportedValuesOf still offers the documented default.

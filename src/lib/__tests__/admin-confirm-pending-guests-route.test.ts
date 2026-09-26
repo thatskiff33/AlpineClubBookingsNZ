@@ -364,11 +364,8 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     // `source`, which is what made Stripe refuse the shared key.
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
       amountCents: 10000,
-      // #3563 (INV-SSOT-003, owner decision D5): `chargePaymentMethod` no
-      // longer defaults the currency, so every caller states it. The value is
-      // exactly what the deleted default supplied — the point of the change is
-      // that the read is visible at the call site, not that it moved.
-      currency: "nzd",
+      // #3567 D1: no `currency` argument; the charge currency is worked out
+      // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
       metadata: { bookingId: "b1", memberId: "m1" },

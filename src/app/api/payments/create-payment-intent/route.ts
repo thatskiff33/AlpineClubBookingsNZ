@@ -5,7 +5,6 @@ import {
 } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
@@ -699,7 +698,6 @@ export async function POST(request: NextRequest) {
     const paymentIntent = await createPaymentIntent({
       format,
       amountCents: effectivePriceCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,

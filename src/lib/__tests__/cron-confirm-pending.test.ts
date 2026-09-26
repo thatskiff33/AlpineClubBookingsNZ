@@ -753,9 +753,8 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockChargePaymentMethod).toHaveBeenCalledWith({
       format: CLUB_FORMAT_TEST,
       amountCents: 10000,
-      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-      // caller states it. Same value the default supplied.
-      currency: "nzd",
+      // #3567 D1: no `currency` argument; the charge currency is worked out
+      // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
       metadata: { bookingId: "b1", memberId: "member_b1" },

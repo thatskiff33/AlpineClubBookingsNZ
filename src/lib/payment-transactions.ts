@@ -4,7 +4,6 @@ import {
   PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
@@ -26,7 +25,12 @@ export type PaymentStore = Prisma.TransactionClient | typeof prisma;
 type StripeRefundLedgerInput = {
   id: string;
   amount: number;
-  currency?: string | null;
+  /**
+   * The currency Stripe refunded in, which is the charge's own. REQUIRED, with no
+   * fallback (owner decision D4 on #3567): Stripe always sets it, and a row
+   * that invented one would record a currency nobody refunded in.
+   */
+  currency: string;
   status?: string | null;
   reason?: string | null;
   created?: number | null;
@@ -42,8 +46,18 @@ function stripeCreatedAtToDate(created: number | null | undefined) {
   return new Date(created * 1000);
 }
 
-function normalizeRefundCurrency(currency: string | null | undefined) {
-  return (currency ?? APP_STRIPE_CURRENCY).toLowerCase();
+/**
+ * Stripe's refund currency as the ledger stores it, lower-cased. An empty value
+ * fails loudly rather than being guessed: `PaymentRefund.currency` has no
+ * database default either since #3567, and a refund recorded in the wrong
+ * currency would falsify the payments history reconciled against Stripe and Xero.
+ */
+function normalizeRefundCurrency(refundId: string, currency: string) {
+  const code = typeof currency === "string" ? currency.trim().toLowerCase() : "";
+  if (!code) {
+    throw new Error(`Stripe refund ${refundId} carries no currency; refusing to record it without one.`);
+  }
+  return code;
 }
 
 function normalizeRefundStatus(status: string | null | undefined) {
@@ -495,7 +509,7 @@ export async function recordStripeRefundLedgerEntry({
     stripeChargeId,
     stripePaymentIntentId,
     amountCents: refund.amount,
-    currency: normalizeRefundCurrency(refund.currency),
+    currency: normalizeRefundCurrency(refund.id, refund.currency),
     status: normalizeRefundStatus(refund.status),
     reason: refund.reason ?? null,
     stripeCreatedAt,

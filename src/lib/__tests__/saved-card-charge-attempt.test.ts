@@ -747,9 +747,8 @@ describe("chargeSavedCardAttempt", () => {
     expect(intent).toBe(succeeded);
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
       amountCents: 10000,
-      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-      // caller states it. Same value the default supplied.
-      currency: "nzd",
+      // #3567 D1: no `currency` argument; the charge currency is worked out
+      // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
       metadata: { bookingId: BOOKING, memberId: MEMBER },

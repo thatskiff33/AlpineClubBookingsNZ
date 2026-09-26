@@ -12,6 +12,10 @@ import {
 } from "@/lib/club-format";
 import { stateFromResolved, stateFromRow } from "@/lib/club-format-admin-state";
 import {
+  currencyHasTwoDecimalPlaces,
+  twoDecimalPlacesRequiredMessage,
+} from "@/lib/club-currency-minor-unit";
+import {
   CLUB_FORMAT_SETTINGS_ID,
   CLUB_FORMAT_SETTINGS_SELECT,
   resolveClubFormatWithSource,
@@ -151,6 +155,14 @@ export async function PUT(request: Request) {
   if (!currencyCode) {
     return NextResponse.json(
       { error: INVALID_CURRENCY_MESSAGE },
+      { status: 400 },
+    );
+  }
+  // Card charges follow this currency (#3567 D1), so one that does not count
+  // in hundredths would be charged 100x or a tenth of what is shown (D3).
+  if (!currencyHasTwoDecimalPlaces(currencyCode)) {
+    return NextResponse.json(
+      { error: twoDecimalPlacesRequiredMessage(currencyCode) },
       { status: 400 },
     );
   }
