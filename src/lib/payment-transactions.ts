@@ -512,6 +512,7 @@ async function recordStripeRefundLedgerEntry({
     created: inserted.count > 0,
     amountCents: refund.amount,
     status: data.status,
+    stripeCreatedAt,
   };
 }
 
@@ -536,10 +537,93 @@ function runAtomically<T>(
 const REFUND_MIRROR_CAS_ATTEMPTS = 5;
 
 /**
+ * The one compare-and-set loop behind every INCREMENT of a transaction's
+ * `refundedAmountCents` (#3640; the #3032 discipline): read the row, compute
+ * the next value from what was read, write it only while the row still holds
+ * that value, and on a miss re-read and recompute. It never writes a stale
+ * absolute value, so a concurrent writer's increment survives.
+ *
+ * `writeStatus` re-derives the row's refund status from the new value; the
+ * #1491 fold leaves status alone, as it always has.
+ */
+async function compareAndSetRefundedAmount(
+  db: PaymentStore,
+  paymentTransactionId: string,
+  nextFrom: (row: { amountCents: number; refundedAmountCents: number }) => number,
+  { writeStatus }: { writeStatus: boolean }
+): Promise<{ previousCents: number; nextCents: number }> {
+  for (let attempt = 0; attempt < REFUND_MIRROR_CAS_ATTEMPTS; attempt += 1) {
+    const current = await db.paymentTransaction.findUnique({
+      where: { id: paymentTransactionId },
+      select: { amountCents: true, refundedAmountCents: true },
+    });
+    if (!current) {
+      throw new Error(`Payment transaction ${paymentTransactionId} not found`);
+    }
+    const nextCents = nextFrom(current);
+    const claimed = await db.paymentTransaction.updateMany({
+      where: {
+        id: paymentTransactionId,
+        refundedAmountCents: current.refundedAmountCents,
+      },
+      data: writeStatus
+        ? {
+            refundedAmountCents: nextCents,
+            status: applyRefundStatus(
+              PaymentStatus.SUCCEEDED,
+              current.amountCents,
+              nextCents
+            ),
+          }
+        : { refundedAmountCents: nextCents },
+    });
+    if (claimed.count === 1) {
+      return { previousCents: current.refundedAmountCents, nextCents };
+    }
+  }
+
+  throw new Error(
+    `Refund mirror for payment transaction ${paymentTransactionId} kept moving under ${REFUND_MIRROR_CAS_ATTEMPTS} compare-and-set attempts`
+  );
+}
+
+/**
+ * Stripe retries an undelivered webhook for up to three days. With no ledger
+ * row on the install at all, a refund older than this that the club has no row
+ * for predates the ledger (see `refundLedgerStart`).
+ */
+const PRE_LEDGER_FALLBACK_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * When the `PaymentRefund` ledger started on THIS install (#3640): the earliest
+ * row it holds, read before the caller inserts anything. With no row at all,
+ * `now` minus Stripe's retry window.
+ *
+ * Why it matters. The ledger has no backfill (2026-05-09, and later on an
+ * install that deployed later), and the old max-based total had already folded
+ * those older refunds into the mirror through Stripe's `amount_refunded`. A
+ * `charge.refunded` sync lists EVERY refund on the charge, so the first sync
+ * after such a refund inserts its row for the first time - and "newly
+ * recorded" must not mean "newly refunded" for it. Every writer since the
+ * ledger started records its row as it reflects the refund, so a refund Stripe
+ * made before the earliest row, arriving rowless, is one the mirror already
+ * counts. The ledger floor still lifts a mirror that somehow missed one.
+ */
+async function refundLedgerStart(db: PaymentStore, now: Date): Promise<Date> {
+  const earliest = await db.paymentRefund.aggregate({
+    _min: { createdAt: true },
+  });
+  return (
+    earliest._min.createdAt ??
+    new Date(now.getTime() - PRE_LEDGER_FALLBACK_WINDOW_MS)
+  );
+}
+
+/**
  * #3640 - THE one way a Stripe card refund reaches a transaction's
- * `refundedAmountCents` mirror (`INV-SSOT`). The inline refund, the
- * `charge.refunded` webhook sync and the superseded-payment refund recovery all
- * write through here.
+ * `refundedAmountCents` mirror (`INV-PAY-104`, `INV-SSOT`). The inline refund,
+ * the `charge.refunded` webhook sync and the superseded-payment refund recovery
+ * all write through here.
  *
  * ## The refund is ADDED, never maxed
  *
@@ -549,8 +633,9 @@ const REFUND_MIRROR_CAS_ATTEMPTS = 5;
  * `max(stored, card refunds on record)`, so a card refund made AFTER a credit
  * vanished: $100 credit then a $50 card refund read $100, not $150, and a later
  * 100%-tier cancel paid $450 against $400 taken. Now only a refund this call
- * NEWLY recorded, in a counted status (`isRecordedRefundStatus`), is added. A
- * replay records nothing new and adds nothing.
+ * NEWLY recorded, in a counted status (`isRecordedRefundStatus`), made since
+ * the ledger started (`refundLedgerStart`), is added. A replay records nothing
+ * new and adds nothing; a pre-ledger refund getting its first row adds nothing.
  *
  * The card refunds on record - and, from the webhook, Stripe's own
  * `amount_refunded` - remain a FLOOR, never the value: the mirror can never read
@@ -562,10 +647,9 @@ const REFUND_MIRROR_CAS_ATTEMPTS = 5;
  *
  * - `created` is answered by the INSERT (`recordStripeRefundLedgerEntry`), so
  *   two writers recording one refund cannot both add it.
- * - The mirror write is a compare-and-set on the value it was computed from,
- *   re-read and retried on a miss - the #3032 discipline. It is never a stale
- *   absolute write, and a concurrent credit allocation's own CAS refuses rather
- *   than overwrite it.
+ * - The mirror write is `compareAndSetRefundedAmount` - never a stale absolute
+ *   write, and a concurrent credit allocation's own CAS refuses rather than
+ *   overwrite it.
  * - The ledger rows and the mirror write commit TOGETHER (`runAtomically`): a
  *   crash between them would otherwise leave a row whose replay reports "not
  *   created" and never adds it.
@@ -594,6 +678,7 @@ export async function recordStripeRefundsAgainstTransaction({
   store?: PaymentStore;
 }) {
   return runAtomically(store, async (db) => {
+    const ledgerStart = await refundLedgerStart(db, new Date());
     let createdRefundsCount = 0;
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
@@ -614,7 +699,10 @@ export async function recordStripeRefundsAgainstTransaction({
       }
       createdRefundsCount += 1;
       createdRefundAmountCents += recorded.amountCents;
-      if (isRecordedRefundStatus(recorded.status)) {
+      const predatesLedger =
+        recorded.stripeCreatedAt !== null &&
+        recorded.stripeCreatedAt.getTime() < ledgerStart.getTime();
+      if (isRecordedRefundStatus(recorded.status) && !predatesLedger) {
         newlyCountedCents += recorded.amountCents;
       }
     }
@@ -624,55 +712,62 @@ export async function recordStripeRefundsAgainstTransaction({
       paymentTransactionId
     );
 
-    for (let attempt = 0; attempt < REFUND_MIRROR_CAS_ATTEMPTS; attempt += 1) {
-      const current = await db.paymentTransaction.findUnique({
-        where: { id: paymentTransactionId },
-        select: { amountCents: true, refundedAmountCents: true },
-      });
-      if (!current) {
-        throw new Error(`Payment transaction ${paymentTransactionId} not found`);
-      }
-      const nextRefundedAmountCents = Math.min(
-        current.amountCents,
-        Math.max(
-          current.refundedAmountCents + newlyCountedCents,
-          ledgerRefundedAmountCents,
-          stripeRefundedAmountCents,
-          0
-        )
-      );
-      const claimed = await db.paymentTransaction.updateMany({
-        where: {
-          id: paymentTransactionId,
-          refundedAmountCents: current.refundedAmountCents,
-        },
-        data: {
-          refundedAmountCents: nextRefundedAmountCents,
-          status: applyRefundStatus(
-            PaymentStatus.SUCCEEDED,
-            current.amountCents,
-            nextRefundedAmountCents
-          ),
-        },
-      });
-      if (claimed.count === 1) {
-        return {
-          createdRefundsCount,
-          createdRefundAmountCents,
-          ledgerRefundedAmountCents,
-          refundedAmountCents: nextRefundedAmountCents,
-          appliedCents: Math.max(
-            nextRefundedAmountCents - current.refundedAmountCents,
+    const { previousCents, nextCents } = await compareAndSetRefundedAmount(
+      db,
+      paymentTransactionId,
+      (row) =>
+        Math.min(
+          row.amountCents,
+          Math.max(
+            row.refundedAmountCents + newlyCountedCents,
+            ledgerRefundedAmountCents,
+            stripeRefundedAmountCents,
             0
-          ),
-        };
-      }
-    }
-
-    throw new Error(
-      `Refund mirror for payment transaction ${paymentTransactionId} kept moving under ${REFUND_MIRROR_CAS_ATTEMPTS} compare-and-set attempts`
+          )
+        ),
+      { writeStatus: true }
     );
+
+    return {
+      createdRefundsCount,
+      createdRefundAmountCents,
+      ledgerRefundedAmountCents,
+      refundedAmountCents: nextCents,
+      appliedCents: Math.max(nextCents - previousCents, 0),
+    };
   });
+}
+
+/**
+ * #1491's fold, made safe (#3640): attribute up to `amountCents` of mirror-only
+ * refund history (a folded modification credit note) to one captured row,
+ * capped at that row's headroom, as an INCREMENT through the shared
+ * compare-and-set. The cancel claim runs it under `lock(1)`, but the
+ * `charge.refunded` webhook takes no lock: an absolute `read + bump` write would
+ * erase a card refund the webhook committed in between. Returns the cents
+ * actually attributed.
+ */
+export async function foldIntoTransactionRefundedAmount({
+  paymentTransactionId,
+  amountCents,
+  store,
+}: {
+  paymentTransactionId: string;
+  amountCents: number;
+  store: PaymentStore;
+}): Promise<number> {
+  const { previousCents, nextCents } = await compareAndSetRefundedAmount(
+    store,
+    paymentTransactionId,
+    (row) =>
+      row.refundedAmountCents +
+      Math.min(
+        Math.max(row.amountCents - row.refundedAmountCents, 0),
+        Math.max(amountCents, 0)
+      ),
+    { writeStatus: false }
+  );
+  return nextCents - previousCents;
 }
 
 async function sumRecordedRefundsForTransaction(

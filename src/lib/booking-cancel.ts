@@ -33,6 +33,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import {
   applyLocalRefundAllocation,
+  foldIntoTransactionRefundedAmount,
   markPaymentIntentTransactionFailed,
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -1456,16 +1457,17 @@ async function performBookingCancellation(
         if (foldedCents <= 0) {
           break;
         }
-        const headroomCents = row.amountCents - row.refundedAmountCents;
-        if (headroomCents <= 0) {
+        if (row.amountCents - row.refundedAmountCents <= 0) {
           continue;
         }
-        const bumpCents = Math.min(headroomCents, foldedCents);
-        await tx.paymentTransaction.update({
-          where: { id: row.id },
-          data: { refundedAmountCents: row.refundedAmountCents + bumpCents },
+        // An increment through the shared compare-and-set (#3640), never
+        // `read + bump`: the charge.refunded webhook takes no lock, so a card
+        // refund it commits between this read and the write must survive.
+        foldedCents -= await foldIntoTransactionRefundedAmount({
+          paymentTransactionId: row.id,
+          amountCents: foldedCents,
+          store: tx,
         });
-        foldedCents -= bumpCents;
       }
     }
 
