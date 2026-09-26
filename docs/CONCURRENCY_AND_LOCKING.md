@@ -3215,9 +3215,29 @@ no lock, and while the fence keeps most concurrent edits off that booking, a
 consent-authority guest removal is exempt (owner decision D-14) and does move
 money. The write is now a compare-and-set on the exact value the slice was
 computed from, the same status-guarded-claim idiom used everywhere else here: it
-CANNOT lose the update, and a caller under `lock(1)` never sees it fire. The
-completion maps the refusal to a 409 with its transaction rolled back and its
-task still `OPEN`.
+CANNOT lose the update. The completion maps the refusal to a 409 with its
+transaction rolled back and its task still `OPEN`.
+
+**#3640 corrected two things this paragraph used to claim.** A caller under
+`lock(1)` CAN see the guard fire: the Stripe card-refund writers (the
+`charge.refunded` sync, the superseded-payment recovery) take no advisory lock,
+so a dashboard refund can move a row under booking-cancel's credit disposition.
+And a single-shot refusal there rolled a member's cancel back with a 500. So the
+allocation now goes through the one compare-and-set every write of the column
+uses (`compareAndSetRefundedAmount` in `payment-transactions.ts`): it re-reads
+and re-checks headroom on each attempt, absorbs a concurrent move that leaves
+room, and throws `RefundAllocationRacedError` only when the headroom is gone.
+
+The card-refund writer itself (`INV-PAY-104`) runs one interactive transaction
+per call through `withStoreTransaction`: `PaymentRefund` rows inserted with
+`ON CONFLICT DO NOTHING` in refund-id order, then the transaction row's
+compare-and-set, then the `Payment` aggregate and its booking-ledger lines -
+refund rows, transaction row, payment row, the order every other writer of the
+two rows takes. No provider call runs inside it. These statements were
+autocommit before #3640, so they now carry Prisma's interactive-transaction
+limits (2 s to start, 5 s to finish): a webhook queued behind a cancel claim
+holding the transaction row can time out (P2028) - loud, rolled back whole, and
+retried by Stripe.
 
 `src/lib/__tests__/edit-financial-review-races.realdb.test.ts` proves both halves
 against a real server, forcing the interleaving with a third connection rather
