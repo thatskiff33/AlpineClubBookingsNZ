@@ -362,7 +362,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `failed` counts as cash between those two events, bounded by the
   `refundedAmountCents` clamp and corrected by the next run.
 
-## INV-PAY-104
+## INV-PAY-103
 
 - **A card refund ADDS to a transaction's `refundedAmountCents` exactly the
   money it newly recorded, through one writer** (#3640). The mirror also counts
@@ -375,11 +375,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `ON CONFLICT DO NOTHING` insert recorded it, in a counted status, made no
   earlier than the second the ledger-writers migration finished on this install
   (an older one is already in the mirror); it subtracts a counted refund it sees
-  move to failed or cancelled. Rows, mirror and payment aggregate commit in one
-  transaction; card refunds on record stay a floor.
+  move to failed or cancelled, never below the payment's account credit plus
+  its card refunds still counted (a refund the old formula never added, failing
+  later, takes nothing). Rows, mirror and aggregate commit in one transaction.
 - **Every later write of that column is one compare-and-set**, re-read and
   retried: the writer above, #1491's fold and `applyLocalRefundAllocation`, which
-  re-checks headroom on each attempt and refuses only when it is gone.
+  refuses only when headroom is gone. All take the `Payment` row first
+  (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
 - The exception is group settlement (`INV-PAY-031`–`037`): it refunds child
   payments that have no transaction rows and writes their `Payment` mirror
   directly.

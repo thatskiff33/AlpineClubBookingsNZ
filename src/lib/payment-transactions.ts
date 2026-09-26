@@ -697,7 +697,7 @@ async function reversalFloorForTransaction(
 
 /**
  * When the refund ledger's writers arrived on THIS install, in whole seconds
- * (#3640, `INV-PAY-104`): the `finished_at` of `REFUND_LEDGER_WRITERS_MIGRATION`.
+ * (#3640, `INV-PAY-103`): the `finished_at` of `REFUND_LEDGER_WRITERS_MIGRATION`.
  * Null when that migration has no finished row, which means the install never
  * ran pre-ledger code against this database.
  *
@@ -750,7 +750,7 @@ async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null
 
 /**
  * #3640 - THE one way a Stripe card refund reaches a transaction's
- * `refundedAmountCents` mirror (`INV-PAY-104`, `INV-SSOT`). The inline refund,
+ * `refundedAmountCents` mirror (`INV-PAY-103`, `INV-SSOT`). The inline refund,
  * the `charge.refunded` webhook sync and the superseded-payment refund recovery
  * all write through here.
  *

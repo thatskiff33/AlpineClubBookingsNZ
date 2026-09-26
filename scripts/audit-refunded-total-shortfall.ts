@@ -1,6 +1,6 @@
 /**
  * Read-only audit of payments whose stored refunded total is below their card
- * refunds plus account-credit settlements (#3640, `INV-PAY-104`). It reports
+ * refunds plus account-credit settlements (#3640, `INV-PAY-103`). It reports
  * apart the part the old max-based arithmetic can account for (a card refund
  * that met a credit) and a shortfall with another cause.
  *

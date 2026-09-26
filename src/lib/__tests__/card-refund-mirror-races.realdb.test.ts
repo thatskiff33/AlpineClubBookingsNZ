@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof of the one card-refund writer (#3640, `INV-PAY-104`).
+ * Real-PostgreSQL proof of the one card-refund writer (#3640, `INV-PAY-103`).
  *
  * `recordStripeRefundsAgainstTransaction` ADDS a refund it newly recorded to the
  * transaction's `refundedAmountCents`, and two things a mock can only imitate
@@ -110,11 +110,15 @@ function stripeRefund(id: string, amount: number) {
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let recordStripeRefundsAgainstTransaction: (typeof import("@/lib/payment-transactions"))["recordStripeRefundsAgainstTransaction"];
 let applyLocalRefundAllocation: (typeof import("@/lib/payment-transactions"))["applyLocalRefundAllocation"];
+let foldIntoTransactionRefundedAmount: (typeof import("@/lib/payment-transactions"))["foldIntoTransactionRefundedAmount"];
+let lockPaymentForRefundedTotal: (typeof import("@/lib/payment-transactions"))["lockPaymentForRefundedTotal"];
 let lockHolderClient: PrismaClient;
 let observerClient: PrismaClient;
+/** Plays the cancel claim, on its own backend so its pid is known. */
+let cancelClient: PrismaClient;
 
 (RUN ? describe : describe.skip)(
-  "the card-refund writer adds each refund exactly once — real PostgreSQL (#3640, INV-PAY-104)",
+  "the card-refund writer adds each refund exactly once — real PostgreSQL (#3640, INV-PAY-103)",
   { timeout: RACE_TEST_TIMEOUT_MS },
   () => {
     async function deleteFixtures() {
@@ -185,6 +189,7 @@ let observerClient: PrismaClient;
 
       const pending = writers.map((write) => write());
       let seen = 0;
+      let settled: PromiseSettledResult<unknown>[] = [];
       try {
         const startedAt = process.hrtime.bigint();
         while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
@@ -193,12 +198,13 @@ let observerClient: PrismaClient;
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
       } finally {
-        // Release and WAIT for the writers on every path, so a failed barrier
-        // cannot leave them committing while the next test deletes fixtures.
+        // Release and WAIT for the writers on every path - a failed barrier or
+        // a throwing observer included - so none is left committing while the
+        // next test deletes fixtures.
         releaseLock.resolve();
+        settled = await Promise.allSettled(pending);
+        await holder;
       }
-      const settled = await Promise.allSettled(pending);
-      await holder;
       if (seen < 2) {
         throw new Error(`Timed out waiting for both writers to queue behind pid ${holderPid} — saw ${seen}. ${diagnostic}`);
       }
@@ -214,6 +220,62 @@ let observerClient: PrismaClient;
         store: prisma,
       });
 
+    /**
+     * #3640 (delta review, D1): the paid-path cancel claim's row order, played
+     * on its own backend - `lockPaymentForRefundedTotal` first (as
+     * `booking-cancel.ts` now does), optionally #1491's fold (a transaction
+     * row), then failing the unpaid top-up (the `Payment` row), then the
+     * credit allocation (the transaction row again). A card refund's webhook
+     * is released at the point named by `webhookAt`, and the claim carries on
+     * only once that webhook is queued behind it - so the interleaving that
+     * deadlocked is forced, not hoped for.
+     */
+    async function cancelClaimRacingWebhook(options: {
+      fold: boolean;
+      webhookAt: "after-fold" | "after-top-up";
+    }): Promise<PromiseSettledResult<unknown>[]> {
+      let cancelPid = 0;
+      let webhook: Promise<unknown> | null = null;
+      const releaseWebhook = async () => {
+        webhook = write("re_race_3640_topup", 3_000)();
+        const startedAt = process.hrtime.bigint();
+        let seen = 0;
+        while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
+          seen = await blockedByHolder(cancelPid);
+          if (seen >= 1) return;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error(
+          `The webhook never queued behind the cancel claim (pid ${cancelPid}) — saw ${seen}.`,
+        );
+      };
+      const claim = cancelClient.$transaction(
+        async (tx) => {
+          const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+          cancelPid = rows[0]?.pid ?? 0;
+          await lockPaymentForRefundedTotal(tx, PAYMENT_ID);
+          if (options.fold) {
+            await foldIntoTransactionRefundedAmount({
+              paymentTransactionId: TRANSACTION_ID,
+              amountCents: 1_000,
+              store: tx,
+            });
+          }
+          if (options.webhookAt === "after-fold") await releaseWebhook();
+          await tx.payment.update({
+            where: { id: PAYMENT_ID },
+            data: { additionalPaymentStatus: "FAILED" },
+          });
+          if (options.webhookAt === "after-top-up") await releaseWebhook();
+          await applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 5_000, store: tx });
+        },
+        { maxWait: 5_000, timeout: 15_000 },
+      );
+      const settledClaim = await Promise.allSettled([claim]);
+      const settledWebhook = await Promise.allSettled(webhook ? [webhook] : []);
+      return [...settledClaim, ...settledWebhook];
+    }
+
     async function mirrorCents(): Promise<number> {
       const row = await prisma.paymentTransaction.findUniqueOrThrow({
         where: { id: TRANSACTION_ID },
@@ -226,7 +288,12 @@ let observerClient: PrismaClient;
       assertSafeCardRefundRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
-      ({ recordStripeRefundsAgainstTransaction, applyLocalRefundAllocation } = await import("@/lib/payment-transactions"));
+      ({
+        recordStripeRefundsAgainstTransaction,
+        applyLocalRefundAllocation,
+        foldIntoTransactionRefundedAmount,
+        lockPaymentForRefundedTotal,
+      } = await import("@/lib/payment-transactions"));
 
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
@@ -240,7 +307,8 @@ let observerClient: PrismaClient;
       };
       lockHolderClient = createSeparateClient("race-3640-lock-holder");
       observerClient = createSeparateClient("race-3640-observer");
-      await Promise.all([lockHolderClient.$connect(), observerClient.$connect()]);
+      cancelClient = createSeparateClient("race-3640-cancel-claim");
+      await Promise.all([lockHolderClient.$connect(), observerClient.$connect(), cancelClient.$connect()]);
       const startRows = await observerClient.$queryRaw<Array<{ finished_at: Date }>>`
         SELECT "finished_at" FROM "_prisma_migrations"
         WHERE "migration_name" = '20260509090000_enrich_payment_refund_ledger'
@@ -302,7 +370,11 @@ let observerClient: PrismaClient;
     afterAll(async () => {
       if (!prisma) return;
       await deleteFixtures();
-      await Promise.all([lockHolderClient?.$disconnect(), observerClient?.$disconnect()]);
+      await Promise.all([
+        lockHolderClient?.$disconnect(),
+        observerClient?.$disconnect(),
+        cancelClient?.$disconnect(),
+      ]);
     });
 
     it("two writers recording the SAME refund at once add it once", async () => {
@@ -348,6 +420,30 @@ let observerClient: PrismaClient;
         if (outcome.status === "rejected") throw outcome.reason;
       }
       expect(await mirrorCents()).toBe(CREDIT_CENTS + 5_000 + 3_000);
+    });
+
+    // #3640 (delta review, D1). Before the Payment-first lock the webhook held
+    // the transaction row and waited for the Payment row, while the claim held
+    // the Payment row and waited for the transaction row: PostgreSQL broke the
+    // cycle by aborting one side (40P01).
+    it("a cancel failing an unpaid top-up, racing a card refund's webhook, does not deadlock", async () => {
+      const settled = await cancelClaimRacingWebhook({ fold: false, webhookAt: "after-top-up" });
+
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") throw outcome.reason;
+      }
+      expect(settled).toHaveLength(2);
+      expect(await mirrorCents()).toBe(CREDIT_CENTS + 5_000 + 3_000);
+    });
+
+    it("... nor when the claim's #1491 fold took the transaction row before the top-up write", async () => {
+      const settled = await cancelClaimRacingWebhook({ fold: true, webhookAt: "after-fold" });
+
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") throw outcome.reason;
+      }
+      expect(settled).toHaveLength(2);
+      expect(await mirrorCents()).toBe(CREDIT_CENTS + 1_000 + 5_000 + 3_000);
     });
   },
 );

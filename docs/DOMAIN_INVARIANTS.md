@@ -225,7 +225,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
-| `INV-PAY-104` | A card refund adds only newly recorded money, through one writer |
+| `INV-PAY-103` | A card refund adds only newly recorded money, through one writer |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
 | `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |

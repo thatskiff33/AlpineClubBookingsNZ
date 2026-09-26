@@ -5,7 +5,7 @@
  * Before #3640 a Stripe card refund was folded into `refundedAmountCents` with
  * `max(stored, card refunds on record)`, so a card refund made AFTER an
  * account-credit settlement vanished from the total: $100 credit then a $50
- * card refund stored $100, not $150. #3640 stops new cases (`INV-PAY-104`) and
+ * card refund stored $100, not $150. #3640 stops new cases (`INV-PAY-103`) and
  * does not touch old ones. This lists them, so the owner can decide on a repair
  * with the evidence in front of them.
  *
@@ -195,7 +195,7 @@ export function formatRefundedTotalShortfallReport(
     ` card refunds ${formatCents(finding.cardRefundCents, format)}, account credit ${formatCents(finding.accountCreditCents, format)})`;
 
   const lines = [
-    "Refunded-total shortfall audit (#3640, INV-PAY-104) - read only",
+    "Refunded-total shortfall audit (#3640, INV-PAY-103) - read only",
     "",
     `${result.scannedPayments} captured payment(s) scanned.`,
     `${attributed.length} short because a card refund met an account credit under the old refund arithmetic, ${formatCents(result.totalAttributableCents, format)} in all.`,

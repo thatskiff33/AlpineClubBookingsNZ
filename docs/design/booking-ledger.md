@@ -457,7 +457,7 @@ No row is "unknown". Codes:
 | 047 | C | the identity *is* `owed(b)`; (1) construction and (2) the fence exist to keep a stored copy true — retired with the copy; (3) is the census |
 | 048, 009, 010, 011, 012 | U | the credit election (a pre-settlement intent, not money) |
 | 050 | L | a Stripe refund note renders a `CARD_REFUND` line; the "refunded-amount mirror" no longer exists to be rendered by mistake |
-| 104 | P | the transaction mirror's card-refund increment (#3640); a `CARD_REFUND` line posts once per refund row by construction, so it retires with the column |
+| 103 | P | the transaction mirror's card-refund increment (#3640); a `CARD_REFUND` line posts once per refund row by construction, so it retires with the column |
 | 051, 067, 060, 068, 096, 097, 099, 100 | U | the review task's lifecycle; it anchors `ADJUSTMENT` lines and is otherwise unchanged |
 | 052–054, 073–080 | U | saved-card handling |
 | 055, 081–090 | L | one attempt = one `PaymentTransaction` = at most one `CARD_CAPTURE` line (anchor uniqueness per transaction id) |

@@ -1589,7 +1589,7 @@ somebody who would rather query a replica by hand.
 ### Audit refunded totals left short by the old refund arithmetic (#3640)
 
 Before #3640 a card refund made after an account-credit settlement was lost from
-the payment's refunded total (`INV-PAY-104` now stops new cases). A payment left
+the payment's refunded total (`INV-PAY-103` now stops new cases). A payment left
 that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
