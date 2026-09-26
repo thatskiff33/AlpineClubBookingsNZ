@@ -466,7 +466,12 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
  *  - an import of `date-fns/locale`, and a `locale:` option in any module that
  *    imports `date-fns` — the date-fns adapters render English patterns, and a
  *    locale smuggled in there is a second authority for the club's language;
- *  - `.js`, `.jsx`, `.mjs` and `.cjs` modules as well as TypeScript.
+ *  - `Date.prototype`, however reached, so `Date.prototype.toLocaleString.call(…)`
+ *    and a destructured `toLocaleString` off the prototype count;
+ *  - a `toLocaleString(...)` whose options it cannot see into — a non-literal
+ *    second argument, a spread — as well as one with a literal date key;
+ *  - `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` and `.cts` modules as well as `.ts`
+ *    and `.tsx`.
  *
  * The exemptions are PINNED TO AN EXACT COUNT of hits, so a second formatter
  * added to a whole-file exemption fails as surely as one anywhere else.
@@ -544,6 +549,43 @@ function callArguments(source: string, open: number): string {
   return source.slice(open + 1);
 }
 
+/** The top-level, comma-separated arguments of a call's argument text. */
+function topLevelArguments(text: string): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "(" || char === "{" || char === "[") depth += 1;
+    else if (char === ")" || char === "}" || char === "]") depth -= 1;
+    else if (char === "," && depth === 0) {
+      args.push(text.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  const last = text.slice(start).trim();
+  if (last.length > 0) args.push(last);
+  return args;
+}
+
+/**
+ * Whether a `toLocaleString(...)` call's arguments can carry DATE options.
+ *
+ * A literal date key does, and so does anything this scanner cannot see into:
+ * an options argument that is not an object literal (`d.toLocaleString(l,
+ * opts)`), an object literal with a spread, or a spread argument list. The
+ * number form this codebase writes — no arguments, or a bare locale — is the
+ * only shape left legal.
+ */
+function toLocaleStringCanCarryDateOptions(argumentText: string): boolean {
+  if (DATE_OPTION_KEYS.test(argumentText)) return true;
+  const args = topLevelArguments(argumentText);
+  if (args.some((arg) => arg.startsWith("..."))) return true;
+  if (args.length < 2) return false;
+  const options = args[1];
+  return !options.startsWith("{") || /\.\.\./.test(options);
+}
+
 /** Every date-formatter hit in `source` (comments already stripped). */
 export function findDateFormatterConstructions(source: string): string[] {
   const hits: string[] = [];
@@ -553,7 +595,15 @@ export function findDateFormatterConstructions(source: string): string[] {
   }
   for (const match of source.matchAll(/\btoLocaleString\b\s*(?:["'`]\s*\]\s*)?\(/g)) {
     const open = (match.index ?? 0) + match[0].length - 1;
-    if (DATE_OPTION_KEYS.test(callArguments(source, open))) hits.push("toLocaleString(date)");
+    if (toLocaleStringCanCarryDateOptions(callArguments(source, open))) {
+      hits.push("toLocaleString(date)");
+    }
+  }
+  // `Date.prototype.toLocaleString.call(d, l, { month: "long" })`, and
+  // `const { toLocaleString: tls } = Date.prototype` — the date formatter
+  // reached off the prototype, where no call site names it on a Date.
+  for (const match of source.matchAll(/\bDate\s*(?:\.\s*prototype\b|\[\s*["'`]prototype["'`]\s*\])/g)) {
+    hits.push(match[0]);
   }
   for (const match of source.matchAll(/["'`]date-fns\/locale(?:\/[^"'`]*)?["'`]/g)) {
     hits.push(match[0]);
@@ -564,7 +614,7 @@ export function findDateFormatterConstructions(source: string): string[] {
   return hits;
 }
 
-const SCANNED_EXTENSION = /\.(?:tsx?|jsx?|mjs|cjs)$/;
+const SCANNED_EXTENSION = /\.[cm]?[jt]sx?$/;
 
 function productionSourceFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -595,6 +645,13 @@ describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery
     expect(count("const f = d.toLocaleDateString;")).toBe(1);
     expect(count('d.toLocaleString("en-NZ", { dateStyle: "long" })')).toBe(1);
     expect(count('d["toLocaleString"]("en-NZ", { month: "short" })')).toBe(1);
+    // Round 2 of the #3628 review: the prototype and the opaque options.
+    expect(count('Date.prototype.toLocaleString.call(d, l, { month: "long" })')).toBe(1);
+    expect(count("const { toLocaleString: tls } = Date.prototype; tls.call(d, l, o);")).toBe(1);
+    expect(count('Date["prototype"].toLocaleString.call(d)')).toBe(1);
+    expect(count("d.toLocaleString(l, opts)")).toBe(1);
+    expect(count("d.toLocaleString(l, { ...opts })")).toBe(1);
+    expect(count("d.toLocaleString(...args)")).toBe(1);
     expect(count('import { enNZ } from "date-fns/locale";')).toBe(1);
     expect(
       count('import { format } from "date-fns"; format(d, "PP", { locale: enNZ });'),
@@ -603,6 +660,7 @@ describe("INV-CONFIG-006 / #3566: no date formatter outside the shared machinery
     expect(count("n.toLocaleString()")).toBe(0);
     expect(count("n.toLocaleString(locale)")).toBe(0);
     expect(count("n.toLocaleString(locale, { maximumFractionDigits: 0 })")).toBe(0);
+    expect(count("n.toLocaleString(format.locale)")).toBe(0);
     expect(count("Intl.DateTimeFormatOptions")).toBe(0);
     // `locale:` is only suspect beside date-fns.
     expect(count("const format = { locale: club.locale };")).toBe(0);
