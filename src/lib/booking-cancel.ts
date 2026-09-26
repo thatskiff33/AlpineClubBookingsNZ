@@ -31,6 +31,7 @@ import {
 } from "./xero-operation-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -1477,9 +1478,12 @@ async function performBookingCancellation(
     // Computed BEFORE the credit restore so the applied-credit slice can be
     // tiered off the same base/tier as the card slice (#1164 / D7).
     const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-    const refundableBaseCents =
-      Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
-      payment.changeFeeCents;
+    const refundableBaseCents = cancelRefundableBaseCents({
+      amountCents: payment.amountCents,
+      refundedAmountCents: payment.refundedAmountCents,
+      finalPriceCents: fresh.finalPriceCents,
+      changeFeeCents: payment.changeFeeCents,
+    });
     // #3123 — THE REFUND TIER. The club's day, resolved before this
     // transaction opened (`INV-LOCK-004`); it used to be the container's,
     // projected out of `APP_TIME_ZONE`, which tiered every club behind

@@ -14,10 +14,18 @@
  *     READ COMMITTED the loser's guarded UPDATE re-checks its predicate against
  *     the winner's committed row, matches nothing, and retries from the new value.
  *
- * Neither case hopes for the interleaving. A third connection holds the
- * transaction ROW (`FOR UPDATE`), both writers are released only once both are
- * queued behind it, and the queue is read from `pg_blocking_pids` on a fourth
- * connection - the method `edit-financial-review-races.realdb.test.ts` uses.
+ *  3. A member's cancel settling its credit (`applyLocalRefundAllocation`) while
+ *     a dashboard refund's webhook lands: the allocation's compare-and-set
+ *     misses, re-reads, and succeeds against the fresh total instead of rolling
+ *     the cancel back.
+ *
+ * None of the cases hopes for the interleaving. A third connection holds the
+ * transaction ROW with `FOR NO KEY UPDATE` - which does not block the refund
+ * insert's foreign-key check (`FOR KEY SHARE`) but does block an UPDATE - so
+ * every writer reads the mirror, reaches its compare-and-set and queues there;
+ * both are released only once both are queued, read from `pg_blocking_pids` on
+ * a fourth connection (the method `edit-financial-review-races.realdb.test.ts`
+ * uses). The loser's miss is therefore structural, not scheduling.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -79,6 +87,13 @@ function deferred() {
   return { promise, resolve };
 }
 
+/**
+ * When the ledger-writers migration finished on this database, in seconds - the
+ * writer's own "pre-ledger" boundary. Read in `beforeAll`; the refunds below are
+ * dated a minute after it, so the writer counts them.
+ */
+let ledgerStartSeconds = 0;
+
 function stripeRefund(id: string, amount: number) {
   return {
     id,
@@ -86,8 +101,7 @@ function stripeRefund(id: string, amount: number) {
     currency: "nzd",
     status: "succeeded",
     reason: "requested_by_customer",
-    // After this suite's own ledger-start row (2020), so the writer counts it.
-    created: Date.parse("2026-06-01T00:00:00.000Z") / 1000,
+    created: ledgerStartSeconds + 60,
     charge: "ch_race_3640",
     payment_intent: "pi_race_3640",
   };
@@ -141,10 +155,10 @@ let observerClient: PrismaClient;
      * Run both writers while a third connection holds the transaction row, and
      * release it only once BOTH are queued behind it.
      */
-    async function raceBehindRowLock<T>(
-      writers: [() => Promise<T>, () => Promise<T>],
+    async function raceBehindRowLock(
+      writers: [() => Promise<unknown>, () => Promise<unknown>],
       diagnostic: string,
-    ): Promise<PromiseSettledResult<T>[]> {
+    ): Promise<PromiseSettledResult<unknown>[]> {
       const lockHeld = deferred();
       const releaseLock = deferred();
       let holderPid = 0;
@@ -154,7 +168,7 @@ let observerClient: PrismaClient;
           async (tx) => {
             const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
             holderPid = rows[0]?.pid ?? 0;
-            await tx.$executeRaw`SELECT id FROM "PaymentTransaction" WHERE id = ${TRANSACTION_ID} FOR UPDATE`;
+            await tx.$executeRaw`SELECT id FROM "PaymentTransaction" WHERE id = ${TRANSACTION_ID} FOR NO KEY UPDATE`;
             lockHeld.resolve();
             await releaseLock.promise;
           },
@@ -170,22 +184,24 @@ let observerClient: PrismaClient;
       }
 
       const pending = writers.map((write) => write());
+      let seen = 0;
       try {
         const startedAt = process.hrtime.bigint();
-        let seen = 0;
         while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
           seen = await blockedByHolder(holderPid);
           if (seen >= 2) break;
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
-        if (seen < 2) {
-          throw new Error(`Timed out waiting for both writers to queue behind pid ${holderPid} — saw ${seen}. ${diagnostic}`);
-        }
       } finally {
+        // Release and WAIT for the writers on every path, so a failed barrier
+        // cannot leave them committing while the next test deletes fixtures.
         releaseLock.resolve();
       }
       const settled = await Promise.allSettled(pending);
       await holder;
+      if (seen < 2) {
+        throw new Error(`Timed out waiting for both writers to queue behind pid ${holderPid} — saw ${seen}. ${diagnostic}`);
+      }
       return settled;
     }
 
@@ -225,6 +241,13 @@ let observerClient: PrismaClient;
       lockHolderClient = createSeparateClient("race-3640-lock-holder");
       observerClient = createSeparateClient("race-3640-observer");
       await Promise.all([lockHolderClient.$connect(), observerClient.$connect()]);
+      const startRows = await observerClient.$queryRaw<Array<{ finished_at: Date }>>`
+        SELECT "finished_at" FROM "_prisma_migrations"
+        WHERE "migration_name" = '20260509090000_enrich_payment_refund_ledger'
+          AND "finished_at" IS NOT NULL
+        LIMIT 1
+      `;
+      ledgerStartSeconds = Math.floor((startRows[0]?.finished_at ?? new Date(0)).getTime() / 1000);
 
       await deleteFixtures();
       await prisma.member.create({
@@ -271,20 +294,6 @@ let observerClient: PrismaClient;
           status: "SUCCEEDED",
         },
       });
-      // The install's ledger start, pinned early and owned by this suite, so the
-      // writer's "made before the ledger" test never depends on what other
-      // suites sharing this database left behind. No transaction: it counts
-      // toward no mirror.
-      await prisma.paymentRefund.create({
-        data: {
-          id: "race-3640-ledger-start",
-          paymentId: PAYMENT_ID,
-          stripeRefundId: "re_race_3640_ledger_start",
-          amountCents: 1,
-          status: "succeeded",
-          createdAt: new Date("2020-01-01T00:00:00.000Z"),
-        },
-      });
       // A $100 account-credit settlement: no refund row, only the mirror.
       await applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: CREDIT_CENTS, store: prisma });
       expect(await mirrorCents()).toBe(CREDIT_CENTS);
@@ -304,7 +313,7 @@ let observerClient: PrismaClient;
 
       const results = settled.map((outcome) => {
         if (outcome.status === "rejected") throw outcome.reason;
-        return outcome.value;
+        return outcome.value as { createdRefundsCount: number };
       });
       expect(results.map((result) => result.createdRefundsCount).sort()).toEqual([0, 1]);
       expect(await prisma.paymentRefund.count({ where: { stripeRefundId: "re_race_3640_same" } })).toBe(1);
@@ -321,6 +330,23 @@ let observerClient: PrismaClient;
         if (outcome.status === "rejected") throw outcome.reason;
       }
       // $100 credit + $50 + $30. A stale absolute write would leave $130 or $150.
+      expect(await mirrorCents()).toBe(CREDIT_CENTS + 5_000 + 3_000);
+    });
+
+    it("a member's credit settlement racing a dashboard refund's webhook keeps both, without refusing", async () => {
+      const settled = await raceBehindRowLock(
+        [
+          () => applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: 5_000, store: prisma }),
+          write("re_race_3640_dashboard", 3_000),
+        ],
+        "The allocation and the webhook should both reach the mirror's compare-and-set and queue on the transaction row.",
+      );
+
+      for (const outcome of settled) {
+        // The old single-shot guard threw RefundAllocationRacedError here and
+        // rolled the member's cancel back.
+        if (outcome.status === "rejected") throw outcome.reason;
+      }
       expect(await mirrorCents()).toBe(CREDIT_CENTS + 5_000 + 3_000);
     });
   },

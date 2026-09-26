@@ -25,7 +25,10 @@ import {
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
-import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import {
+  cancelRefundableBaseCents,
+  getRemainingRefundableCents,
+} from "@/lib/booking-payment-state";
 import { calculateRefundAmount } from "@/lib/policies/cancellation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -1350,19 +1353,33 @@ describe("#3640 / INV-PAY-104 - a card refund adds to the refunded total", () =>
       await writeCardRefund(ctx);
 
       const remainingCents = getRemainingRefundableCents(ctx.payment);
-      const paidAmountCents =
-        ctx.payment.amountCents - ctx.payment.refundedAmountCents;
-      const refundableBaseCents = Math.min(paidAmountCents, finalPriceCents);
+      // The cancel's own base derivation, not a copy of it (review of #3640):
+      // the executed cancel and its preview both call this.
+      const cancelBase = (changeFeeCents: number) =>
+        cancelRefundableBaseCents({
+          amountCents: ctx.payment.amountCents,
+          refundedAmountCents: ctx.payment.refundedAmountCents,
+          finalPriceCents,
+          changeFeeCents,
+        });
+      const tier100 = [{ daysBeforeStay: 0, refundPercentage: 100 }];
       const { refundAmountCents: cancelRefundCents } = calculateRefundAmount(
-        refundableBaseCents,
+        cancelBase(0),
         30,
-        [{ daysBeforeStay: 0, refundPercentage: 100 }],
+        tier100,
       );
 
       expect(remainingCents).toBe(25000);
       expect(cancelRefundCents).toBe(25000);
       expect(CREDIT_CENTS + CARD_REFUND_CENTS + cancelRefundCents).toBe(
         PAID_CENTS,
+      );
+      // With a $20 change fee from an earlier edit, the fee stays with the club
+      // and the member still never gets back more than they paid.
+      const withFee = calculateRefundAmount(cancelBase(2000), 30, tier100);
+      expect(withFee.refundAmountCents).toBe(23000);
+      expect(CREDIT_CENTS + CARD_REFUND_CENTS + withFee.refundAmountCents).toBe(
+        PAID_CENTS - 2000,
       );
 
       // And the ledger itself refuses the old over-payment: the $300 the

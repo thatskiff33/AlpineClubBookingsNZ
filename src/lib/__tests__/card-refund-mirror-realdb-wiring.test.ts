@@ -25,5 +25,7 @@ describe("the card-refund writer's race proof stays wired into CI (#3640)", () =
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("two writers recording the SAME refund at once add it once");
     expect(suite).toContain("two writers recording DIFFERENT refunds at once lose neither");
+    expect(suite).toContain("a member's credit settlement racing a dashboard refund's webhook keeps both, without refusing");
+    expect(suite).toContain("FOR NO KEY UPDATE");
   });
 });
