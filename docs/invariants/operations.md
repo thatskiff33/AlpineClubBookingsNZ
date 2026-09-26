@@ -5,7 +5,8 @@ Audience: Developer, Agent.
 Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
-already stored in a column mean, and what may be used as test input — and
+already stored in a column mean, what may be used as test input, and which money
+seams a test may mock (`INV-OPS-015`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -20,8 +21,9 @@ these rules against real writers rather than restating them.
 Read this file when you are writing raw SQL, taking a row lock or an advisory
 lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
-rows already written no longer match the code, deploying to production, or
-choosing credentials or data for CI and local validation.
+rows already written no longer match the code, deploying to production,
+choosing credentials or data for CI and local validation, or mocking a money
+seam in a test that asserts money.
 
 `INV-OPS-005` to `INV-OPS-011` are the `FamilyGroupMember.role` column drop,
 re-homed here from `membership-lifecycle.md` by #2706: they are migration
@@ -705,6 +707,9 @@ behaviourally.
 - Why: #3340 under-charged two members $135 because every suite that touched
   `queueSupersededAdditionalIntentCancellations` mocked it, so the ask sizing and
   the retirement never ran together (#486 → #543 → #3340; process record #3341).
+- It sits under `INV-OPS` rather than `INV-SSOT` because it governs what a test
+  may stand in for — the family of `INV-OPS-003`/`004` on test inputs — not
+  where a fact is defined.
 - Enforced by that census, which fails naming this ID. Its limits are in its
   docblock — chiefly that stubbing the seam's own collaborators (a ledger read
   answering `[]`) leaves the seam "real" and inert, which is why the witness

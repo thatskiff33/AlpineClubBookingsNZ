@@ -1,9 +1,8 @@
 # CODEOWNERS — the money surface only (#3341, owner decision 26 Sep 2026).
 #
-# A pull request touching any path below needs the owner's GitHub Approve once
-# "Require review from Code Owners" is on for `main` (CONTRIBUTING.md ->
-# "Branch protection"). Everything else keeps the ordinary merge path. This is
-# NOT a repo-wide review requirement; do not add paths outside money movement.
+# What an entry here means for a pull request: AGENTS.md -> "Pre-authorisation
+# and attributability" (the rule's one home). Do not add paths outside money
+# movement; the owned surface is bounded by codeowners-census.test.ts.
 #
 # Syntax is gitignore's: `*` does not cross `/`, so `src/lib/*credit*.ts`
 # matches `src/lib/member-credit.ts` and NOT `src/lib/__tests__/...`. Every

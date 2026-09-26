@@ -262,32 +262,37 @@ owner approval. Always merge with a merge commit; never squash or force-push.
 
 ### Branch protection
 
-This is the owner's checklist for `main`, so the configuration can be rebuilt
-from the repository. The list of **required status checks** lives in one place,
-the table in `AGENTS.md` → "Completion and Merge", together with the `gh api`
-command that reads the live settings; it is not restated here.
+This is the owner's checklist for the one change still to make to `main`, so
+the configuration can be rebuilt from the repository. Two things are stated
+once, elsewhere, and only linked from here:
 
-**Already applied** (measured 19 Aug 2026; the checks, the zero count and the
-push block re-confirmed on #3341, 26 Sep 2026):
+- **what is applied today** — the required checks, the approval count, the
+  push block and `enforce_admins` — is `AGENTS.md` → "Completion and Merge",
+  with the `gh api` command that reads the live settings (an agent login cannot
+  run it: it sees only the required checks);
+- **the code-owner rule itself** — what needs an Approve and how agents treat
+  it — is `AGENTS.md` → "Pre-authorisation and attributability".
 
-- the nine required status checks in that table, with `strict` off;
-- a pull request is required, with `required_approving_review_count: 0`;
-- force-pushes and branch deletion are blocked;
-- `enforce_admins` is off, so an admin can still merge past any of it.
-
-**Decided, waiting for the owner to apply** — owner decision of 26 Sep 2026
-on #3341 (option A): review is required **only** on the money surface, through
-[`.github/CODEOWNERS`](.github/CODEOWNERS). Agents must not make this change;
-it is a repository setting.
+**Decided, waiting for the owner to apply** (owner decisions of 26 Sep 2026 on
+#3341: code-owner review, option A; stale approvals dismissed on push). Agents
+must not make this change; it is a repository setting.
 
 1. Once the pull request that adds `.github/CODEOWNERS` has reached `main`
    (GitHub reads the file from the pull request's base branch), open
    Settings → Branches → the classic rule for `main`. Not the ruleset called
    "Protect Main Branch": it is disabled, and editing it changes nothing.
-2. Under "Require a pull request before merging", tick **Require review from
-   Code Owners**. Leave **Required approvals at 0** and every other setting as
-   it is.
-3. Test it on two throwaway branches off `main`, each opened as a pull request
+2. Under "Require a pull request before merging":
+   - tick **Require review from Code Owners**;
+   - tick **Dismiss stale pull request approvals when new commits are pushed**;
+   - leave **Require approvals UNTICKED**. The API reports that as
+     `required_approving_review_count: 0`; ticking it offers no 0 and sets 1,
+     which is the repo-wide review step 5 forbids.
+
+   Change nothing else, and save.
+3. Read the settings back with the `gh api` command in `AGENTS.md` →
+   "Completion and Merge". Expect `approvals: 0`, `code_owners: true` and
+   `dismiss_stale: true`, with the nine checks unchanged.
+4. Test it on two throwaway branches off `main`, each opened as a pull request
    by `thatskiff33-agents` (GitHub never counts a code owner's approval of
    their own pull request):
    - **A** changes one line of an owned file, for example a blank line at the
@@ -296,15 +301,16 @@ it is a repository setting.
 
    Expected: once its checks pass, **A** reports "Review required" from
    `@thatskiff33` and stays blocked for the agent account, while **B** can be
-   merged. Record what actually happened on #3341, then close both pull
-   requests unmerged and delete the branches.
-4. **If A is not blocked while the count is 0, do not raise the count to 1.**
-   A count of 1 requires an approval on every pull request, which is the
+   merged. Then Approve **A**, confirm it unblocks, push a second commit to it,
+   and confirm the Approve is dismissed and it blocks again. Record what
+   actually happened on #3341, then close both pull requests unmerged and
+   delete the branches.
+5. **If A is not blocked while approvals are unticked, do not tick them.** A
+   count of 1 requires an approval on every pull request, which is the
    repo-wide review the 18 Aug 2026 decision rejected and #3341 kept out of
    scope. Record the result on #3341 and bring the trade-off back to the owner
    as a decision instead.
 
-When it is on, a money pull request needs the owner's **Approve** in GitHub as
-well as the approval comment `AGENTS.md` requires: the Approve is the
-mechanical lock, and the comment is still the gate agents check before
-merging. Every other pull request merges exactly as before.
+Once it is on, a money pull request **you author yourself** can only merge by
+admin bypass: GitHub never counts the sole code owner's Approve of their own
+pull request.
