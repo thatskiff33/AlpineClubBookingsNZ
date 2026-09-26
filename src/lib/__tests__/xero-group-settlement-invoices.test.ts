@@ -163,11 +163,11 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
-  createXeroInvoiceForGroupSettlement,
   voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
-} from "@/lib/xero-group-settlement-invoices";
+} from "@/lib/xero-group-settlement-invoice-voids";
 
 function settlement(status: GroupBookingStatus) {
   return {

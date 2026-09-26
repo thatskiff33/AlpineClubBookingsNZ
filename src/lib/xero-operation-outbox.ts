@@ -49,11 +49,11 @@ import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-cred
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
-  createXeroInvoiceForGroupSettlement,
   voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
-} from "@/lib/xero-group-settlement-invoices";
+} from "@/lib/xero-group-settlement-invoice-voids";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import {
   readXeroInvoiceEmailInstruction,

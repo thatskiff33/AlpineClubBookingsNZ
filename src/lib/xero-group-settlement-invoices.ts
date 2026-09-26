@@ -13,11 +13,7 @@
  * Xero payment to record here — it is always emailed and reconciled on payment.
  */
 
-import {
-  Invoice,
-  LineAmountTypes,
-  LineItem,
-} from "xero-node";
+import { Invoice, LineAmountTypes, LineItem } from "xero-node";
 import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -66,219 +62,14 @@ import {
   GROUP_SETTLEMENT_INVOICE_ROLE,
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
+import {
+  nextGroupSettlementInvoiceIdempotencyKey,
+  voidCancelledGroupSettlementInvoice,
+} from "./xero-group-settlement-invoice-voids";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
-}
-
-async function voidCancelledGroupSettlementInvoice(params: {
-  settlementId: string;
-  invoiceId: string;
-  invoiceNumber: string | null;
-  syncOperationId?: string;
-  createResponse?: unknown;
-}): Promise<void> {
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const idempotencyKey = buildXeroIdempotencyKey(
-    "group-settlement",
-    params.settlementId,
-    "invoice-void-after-cancel",
-    params.invoiceId,
-    "v1"
-  );
-  const response = await callXeroApi(
-    () =>
-      xero.accountingApi.updateInvoice(
-        tenantId,
-        params.invoiceId,
-        {
-          invoices: [
-            {
-              invoiceID: params.invoiceId,
-              status: Invoice.StatusEnum.VOIDED,
-            },
-          ],
-        },
-        undefined,
-        idempotencyKey
-      ),
-    {
-      operation: "updateInvoice",
-      resourceType: "INVOICE",
-      workflow: "createXeroInvoiceForGroupSettlement",
-      context: `voidInvoice(cancelled group settlement ${params.settlementId})`,
-    }
-  );
-
-  const link = {
-    localModel: "GroupBookingSettlement",
-    localId: params.settlementId,
-    xeroObjectType: "INVOICE",
-    xeroObjectId: params.invoiceId,
-    xeroObjectNumber: params.invoiceNumber,
-    xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
-    role: GROUP_SETTLEMENT_INVOICE_ROLE,
-  } as const;
-
-  if (params.syncOperationId) {
-    await completeXeroSyncOperation(params.syncOperationId, {
-      status: "SUCCEEDED",
-      responsePayload: {
-        cancelledAfterInvoiceCreation: true,
-        createInvoice: params.createResponse ?? null,
-        voidInvoice: response.body ?? null,
-        invoiceEmailSuppressed: true,
-      },
-      xeroObjectType: "INVOICE",
-      xeroObjectId: params.invoiceId,
-      xeroObjectNumber: params.invoiceNumber,
-      xeroObjectUrl: buildXeroInvoiceUrl(params.invoiceId),
-      extraLinks: [link],
-    });
-  } else {
-    await upsertXeroObjectLink(link);
-  }
-}
-
-/** Replayable outbox handler for the compensating VOID after group cancel. */
-export async function voidXeroInvoiceForCancelledGroupSettlement(
-  settlementId: string,
-  options: { syncOperationId: string }
-): Promise<void> {
-  const settlement = await prisma.groupBookingSettlement.findUnique({
-    where: { id: settlementId },
-    select: {
-      id: true,
-      xeroInvoiceId: true,
-      xeroInvoiceNumber: true,
-      groupBooking: { select: { status: true } },
-    },
-  });
-  if (!settlement) {
-    throw new Error(`Group settlement not found: ${settlementId}`);
-  }
-  if (settlement.groupBooking.status !== GroupBookingStatus.CANCELLED) {
-    throw new Error(`Cannot VOID an active group settlement: ${settlementId}`);
-  }
-  if (!settlement.xeroInvoiceId) {
-    throw new Error(`Cancelled group settlement has no Xero invoice: ${settlementId}`);
-  }
-  await voidCancelledGroupSettlementInvoice({
-    settlementId: settlement.id,
-    invoiceId: settlement.xeroInvoiceId,
-    invoiceNumber: settlement.xeroInvoiceNumber,
-    syncOperationId: options.syncOperationId,
-  });
-}
-
-/**
- * #3642 (`INV-PAY-106`): replayable outbox handler for the VOID of an invoice a
- * LIVE group's settlement abandoned (the reaper released it, or a later settle
- * attempt replaced it). The group is not cancelled, so the handler above
- * refuses it; the invoice is named by the operation, because the abandoning
- * transaction already cleared the settlement's pointer.
- *
- * Voids through the same idempotent `updateInvoice` call as the cancellation
- * VOID, under an invoice-specific key. A Xero refusal (an invoice that was paid
- * before the VOID ran) fails the operation for the outbox's retry and alerting;
- * the payment itself is caught by the inbound reconciliation, which recognises
- * an abandoned invoice by its deactivated object link and alerts the operators.
- */
-export async function voidXeroInvoiceForAbandonedGroupSettlement(
-  settlementId: string,
-  xeroInvoiceId: string,
-  options: { syncOperationId: string }
-): Promise<void> {
-  const settlement = await prisma.groupBookingSettlement.findUnique({
-    where: { id: settlementId },
-    select: { id: true, xeroInvoiceId: true },
-  });
-  if (!settlement) {
-    throw new Error(`Group settlement not found: ${settlementId}`);
-  }
-  // Defensive: an abandoned invoice is never re-bound (a replacement is always
-  // a NEW invoice), so a settlement pointing at this one means the VOID was
-  // queued in error. Never void the invoice a settlement still settles on.
-  if (settlement.xeroInvoiceId === xeroInvoiceId) {
-    logger.error(
-      { settlementId, xeroInvoiceId },
-      "Refusing to void a group settlement invoice the settlement still points at"
-    );
-    await completeXeroSyncOperation(options.syncOperationId, {
-      status: "SUCCEEDED",
-      responsePayload: { skippedInvoiceStillLinkedToSettlement: true },
-    });
-    return;
-  }
-
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const response = await callXeroApi(
-    () =>
-      xero.accountingApi.updateInvoice(
-        tenantId,
-        xeroInvoiceId,
-        {
-          invoices: [
-            { invoiceID: xeroInvoiceId, status: Invoice.StatusEnum.VOIDED },
-          ],
-        },
-        undefined,
-        buildXeroIdempotencyKey(
-          "group-settlement",
-          settlementId,
-          "invoice-void-after-abandon",
-          xeroInvoiceId,
-          "v1"
-        )
-      ),
-    {
-      operation: "updateInvoice",
-      resourceType: "INVOICE",
-      workflow: "createXeroInvoiceForGroupSettlement",
-      context: `voidInvoice(abandoned group settlement ${settlementId})`,
-    }
-  );
-  await completeXeroSyncOperation(options.syncOperationId, {
-    status: "SUCCEEDED",
-    responsePayload: {
-      abandonedBySettlement: true,
-      voidInvoice: response.body ?? null,
-    },
-    xeroObjectType: "INVOICE",
-    xeroObjectId: xeroInvoiceId,
-    xeroObjectUrl: buildXeroInvoiceUrl(xeroInvoiceId),
-  });
-}
-
-/**
- * #3642: the Xero idempotency key for this settlement's NEXT invoice. The first
- * invoice keeps the original key; each later one (after an abandoned invoice)
- * is keyed by how many invoices the settlement has already linked, active or
- * not, so a fresh invoice is never answered with Xero's replay of the voided
- * one, while a retry of the SAME attempt, which has linked nothing new, still
- * reuses its key and is deduplicated by Xero.
- */
-async function nextGroupSettlementInvoiceIdempotencyKey(
-  settlementId: string
-): Promise<string> {
-  const priorInvoices = await prisma.xeroObjectLink.count({
-    where: {
-      localModel: "GroupBookingSettlement",
-      localId: settlementId,
-      xeroObjectType: "INVOICE",
-      role: GROUP_SETTLEMENT_INVOICE_ROLE,
-    },
-  });
-  return priorInvoices === 0
-    ? buildXeroIdempotencyKey("group-settlement", settlementId, "invoice", "v1")
-    : buildXeroIdempotencyKey(
-        "group-settlement",
-        settlementId,
-        "invoice",
-        `after-${priorInvoices}`,
-        "v1"
-      );
 }
 
 /**
@@ -353,9 +144,8 @@ export async function createXeroInvoiceForGroupSettlement(
     return null;
   }
 
-  // #3642 (`INV-PAY-106`): only a settlement still bound to an Internet
-  // Banking invoice gets one. A queued CREATE that outlived its settlement
-  // (released by the reaper, or taken over by a card attempt) raises nothing.
+  // #3642 (`INV-PAY-106`): a queued CREATE that outlived its settlement (released
+  // by the reaper, or taken over by a card attempt) raises nothing.
   if (!isGroupSettlementBoundToInvoice(settlement)) {
     if (options?.syncOperationId) {
       await completeXeroSyncOperation(options.syncOperationId, {
@@ -471,8 +261,7 @@ export async function createXeroInvoiceForGroupSettlement(
     lineAmountTypes: LineAmountTypes.Inclusive,
   });
 
-  const invoiceIdempotencyKey =
-    await nextGroupSettlementInvoiceIdempotencyKey(settlementId);
+  const invoiceIdempotencyKey = await nextGroupSettlementInvoiceIdempotencyKey(settlementId);
   let operationId = options?.syncOperationId ?? null;
   const requestPayload = { invoices: [buildInvoice(contactId)] };
 
@@ -550,11 +339,9 @@ export async function createXeroInvoiceForGroupSettlement(
       if (!fresh) {
         throw new Error(`Group settlement not found: ${settlementId}`);
       }
-      // #3642: the settlement was released (or taken over by card) while
-      // createInvoices was in flight. The invoice is abandoned on arrival: its
-      // VOID is queued, it is linked INACTIVE (so the inbound reconciliation
-      // still recognises a payment on it, and the next invoice gets a fresh
-      // idempotency key), and the settlement is never pointed at it.
+      // #3642: released (or taken over by card) while createInvoices was in
+      // flight, so abandoned on arrival: VOID queued, linked INACTIVE (still
+      // recognised if paid; keys the next invoice), never pointed at.
       if (
         fresh.groupBooking.status !== GroupBookingStatus.CANCELLED &&
         !isGroupSettlementBoundToInvoice(fresh)
@@ -704,9 +491,8 @@ export async function createXeroInvoiceForGroupSettlement(
             organiserEmail: null as string | null,
           };
         }
-        // #3642: released while the invoice was being raised. The reaper that
-        // released it has already retired this invoice (it cleared the pointer
-        // and queued the VOID in the same commit), so it is simply not emailed.
+        // #3642: released meanwhile. The reaper already retired this invoice
+        // (pointer cleared, VOID queued in the same commit): just don't email.
         if (
           !isGroupSettlementBoundToInvoice(fresh) ||
           fresh.xeroInvoiceId !== createdInvoice.invoiceID
@@ -831,9 +617,8 @@ export async function createXeroInvoiceForGroupSettlement(
         }
       }
       if (emailGate.abandoned) {
-        // #3642: never emailed. The link is written INACTIVE so the next
-        // invoice for this settlement is not mistaken for "already linked";
-        // the reaper that released the settlement queued this invoice's VOID.
+        // #3642: never emailed; linked INACTIVE so it is not "already linked".
+        // The reaper that released the settlement queued this invoice's VOID.
         await completeXeroSyncOperation(operationId!, {
           status: "SUCCEEDED",
           responsePayload: {

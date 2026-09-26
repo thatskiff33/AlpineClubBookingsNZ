@@ -153,6 +153,9 @@ vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
 
 vi.mock("@/lib/xero-group-settlement-invoices", () => ({
   createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+}));
+vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
+  voidXeroInvoiceForAbandonedGroupSettlement: vi.fn(),
   voidXeroInvoiceForCancelledGroupSettlement:
     mocks.voidXeroInvoiceForCancelledGroupSettlement,
 }));
