@@ -16,12 +16,34 @@ const mocks = vi.hoisted(() => {
     two different answers and see which one the code obeys.
   */
   const txEnvironmentSafetyFindUnique = vi.fn();
+  /*
+    #3642: the fenced reads now also decide whether the settlement is still
+    BOUND to an Internet Banking invoice, and whether it still points at the
+    invoice just created. The row a fence reads is therefore modelled like the
+    database: an Internet Banking settlement awaiting its invoice unless the
+    test says otherwise, with whatever the post-create update persisted laid
+    over it (reset per test).
+  */
+  const persisted: { current: Record<string, unknown> } = { current: {} };
   const tx = {
     $executeRaw: vi.fn(),
     environmentSafetySettings: { findUnique: txEnvironmentSafetyFindUnique },
     groupBookingSettlement: {
-      findUnique: settlementFindUnique,
-      update: settlementUpdate,
+      findUnique: vi.fn(async (args: unknown) => {
+        const row = await settlementFindUnique(args);
+        return row
+          ? {
+              source: "INTERNET_BANKING",
+              status: "PENDING",
+              ...row,
+              ...persisted.current,
+            }
+          : row;
+      }),
+      update: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        persisted.current = { ...persisted.current, ...args.data };
+        return settlementUpdate(args);
+      }),
     },
   };
   const accountingApi = {
@@ -31,6 +53,7 @@ const mocks = vi.hoisted(() => {
   };
   return {
     tx,
+    persisted,
     txEnvironmentSafetyFindUnique,
     globalEnvironmentSafetyFindUnique: vi.fn(),
     settlementFindUnique,
@@ -44,6 +67,9 @@ const mocks = vi.hoisted(() => {
     failSync: vi.fn(),
     upsertLink: vi.fn(),
     enqueueVoid: vi.fn(),
+    enqueueAbandonVoid: vi.fn(),
+    // #3642: prior invoices linked to the settlement pick the Xero key epoch.
+    linkCount: vi.fn().mockResolvedValue(0),
     transaction: vi.fn(),
     transactionDepth: 0,
   };
@@ -74,6 +100,7 @@ vi.mock("@/lib/prisma", () => ({
     emailLog: { create: mocks.emailLogCreate },
     season: { findFirst: vi.fn().mockResolvedValue(null) },
     xeroSyncOperation: { update: vi.fn() },
+    xeroObjectLink: { count: mocks.linkCount },
   },
 }));
 
@@ -131,6 +158,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
   enqueueXeroGroupSettlementInvoiceVoidOperation: mocks.enqueueVoid,
+  enqueueXeroGroupSettlementInvoiceAbandonVoidOperation: mocks.enqueueAbandonVoid,
 }));
 
 import { prisma } from "@/lib/prisma";
@@ -144,6 +172,9 @@ function settlement(status: GroupBookingStatus) {
   return {
     id: "settle-1",
     createdAt: new Date("2026-06-01"),
+    // #3642: an Internet Banking settlement still waiting on its invoice.
+    source: "INTERNET_BANKING",
+    status: "PENDING",
     xeroInvoiceId: null,
     xeroInvoiceNumber: null,
     groupBooking: {
@@ -198,6 +229,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       }
     });
     mocks.settlementUpdate.mockResolvedValue({});
+    mocks.persisted.current = {};
     mocks.enqueueVoid.mockResolvedValue({ queueOperationId: "void-op-1" });
     vi.mocked(prisma.booking.findMany).mockResolvedValue([
       {

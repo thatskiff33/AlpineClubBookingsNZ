@@ -1693,13 +1693,11 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
   }
 
   const settlement = await prisma.groupBookingSettlement.findFirst({
-    where: { xeroInvoiceId: invoiceId },
-    select: {
-      id: true,
-      status: true,
-      source: true,
-      stripePaymentIntentId: true,
+    where: {
+      xeroInvoiceId: invoiceId,
+      source: PaymentSource.INTERNET_BANKING,
     },
+    select: { id: true, status: true, stripePaymentIntentId: true },
   });
 
   // #3642: an invoice the settlement no longer points at. Its object link is
@@ -1755,12 +1753,11 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
 
   if (settlement.status === PaymentStatus.SUCCEEDED) {
     // Settled by THIS invoice, a re-fetch of the same payment: nothing to do.
-    // Settled by a card (the settlement carries its intent, or is no longer an
-    // Internet Banking settlement): the organiser has paid twice, and before
-    // #3642 the second payment was kept without a word.
-    const settledByCard =
-      settlement.source !== PaymentSource.INTERNET_BANKING ||
-      settlement.stripePaymentIntentId !== null;
+    // Settled by a card: the Internet Banking path nulls the intent pointer,
+    // so an intent on a settled row means a card paid it (the pre-#3642 card
+    // path left the invoice and source behind). The organiser has paid twice,
+    // and before #3642 the second payment was kept without a word.
+    const settledByCard = settlement.stripePaymentIntentId !== null;
     if (settledByCard && cashEvidence === "cash") {
       logger.error(
         { invoiceId, settlementId },

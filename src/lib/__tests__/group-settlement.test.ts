@@ -45,6 +45,8 @@ const mocks = vi.hoisted(() => ({
   adultMemberHostingPolicyFindMany: vi.fn().mockResolvedValue([]),
   hostingCoverageReevaluationCreate: vi.fn().mockResolvedValue({ id: "hcr_1" }),
   hostingCoverageReevaluationFindMany: vi.fn().mockResolvedValue([]),
+  // #3642: retiring an invoice the settlement abandoned.
+  abandonInvoice: vi.fn(),
 }));
 
 // The transaction client exposes the same nested method mocks; the callback runs
@@ -122,6 +124,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroInvoice,
   enqueueXeroGroupSettlementInvoiceOperation: mocks.enqueueSettlementInvoice,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickXero,
+}));
+vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
+  abandonGroupSettlementInvoiceInTx: mocks.abandonInvoice,
 }));
 vi.mock("@/lib/module-settings", async (importOriginal) => ({
   // #2307 pulled @/lib/admin-modules into this suite's graph (via the
@@ -1500,10 +1505,24 @@ describe("applyGroupSettlementSucceeded", () => {
   });
 });
 
+/** #3642: the settlement row the settle lock re-reads: bound to `xinv_1`. */
+function boundInvoiceRow(overrides: Record<string, unknown> = {}) {
+  return {
+    status: PaymentStatus.PENDING,
+    amountCents: 9000,
+    source: PaymentSource.INTERNET_BANKING,
+    xeroInvoiceId: "xinv_1",
+    groupBooking: { status: GroupBookingStatus.OPEN },
+    ...overrides,
+  };
+}
+
 describe("applyGroupSettlementSucceededFromInvoice", () => {
   it("returns not_found when no settlement matches the invoice", async () => {
     mocks.settlementFindFirst.mockResolvedValue(null);
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_x", CLUB_FORMAT_TEST);
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_x", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
     expect(result.outcome).toBe("not_found");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1516,7 +1535,9 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
       groupBookingId: GROUP_ID,
       groupBooking: { organiserBookingId: ORG_BOOKING },
     });
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
     expect(result.outcome).toBe("already_settled");
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
@@ -1540,7 +1561,7 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         organiserBooking: { checkIn: new Date(), checkOut: new Date() },
       },
     });
-    mocks.settlementFindUnique.mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    mocks.settlementFindUnique.mockResolvedValueOnce(boundInvoiceRow());
     // The children were repriced after the combined invoice was issued.
     mocks.bookingFindMany
       .mockResolvedValueOnce([
@@ -1552,7 +1573,9 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 9500, checkIn: new Date(), checkOut: new Date() },
       ]);
 
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
 
     expect(result.outcome).toBe("amount_mismatch");
     expect(result.settledBookingIds).toEqual([]);
@@ -1580,8 +1603,8 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         organiserBooking: { checkIn: new Date(), checkOut: new Date() },
       },
     });
-    // Inside the lock: re-confirm still unpaid.
-    mocks.settlementFindUnique.mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    // Inside the lock: re-confirm still unpaid, and still bound to this invoice.
+    mocks.settlementFindUnique.mockResolvedValueOnce(boundInvoiceRow());
     mocks.bookingFindMany
       // Pre-lock discovery: acquire every child lodge before any write.
       .mockResolvedValueOnce([
@@ -1609,7 +1632,9 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         },
       ]);
 
-    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST);
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
 
     expect(result.outcome).toBe("settled");
     expect(result.settledBookingIds).toEqual(["child-1", "child-2"]);
@@ -1640,5 +1665,261 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
     // Notifications still fire: organiser receipt + one per joiner.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
+  });
+});
+
+// #3642 (INV-PAY-106): a settlement waiting on its emailed Internet Banking
+// invoice is bound to it. It may not be re-sized or switched to card; an
+// invoice it has abandoned is retired before anything replaces it; and a
+// payment is judged against the settlement's total under the settle lock.
+describe("a settlement bound to its Internet Banking invoice (#3642)", () => {
+  const BOUND = {
+    id: "settle-1",
+    status: PaymentStatus.PENDING,
+    source: PaymentSource.INTERNET_BANKING,
+    amountCents: 9000,
+    xeroInvoiceId: "xinv_1",
+    stripePaymentIntentId: null,
+  };
+
+  /** Two children already CONFIRMED by the first click, plus `extra`. */
+  function childrenOnTheInvoice(extra: Array<{ id: string; cents: number }> = []) {
+    const rows = [
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.CONFIRMED },
+      ...extra.map((c) => ({
+        id: c.id,
+        finalPriceCents: c.cents,
+        status: BookingStatus.PAYMENT_PENDING,
+      })),
+    ];
+    mocks.bookingFindMany.mockResolvedValue(rows);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
+      const row = rows.find((r) => r.id === where.id)!;
+      return {
+        ...row,
+        lodgeId: "lodge-1",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+        guests: [],
+      };
+    });
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+  }
+
+  /** Two PAYMENT_PENDING children totalling 9000, as on a first settle. */
+  function freshChildren() {
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      finalPriceCents: 4500,
+      lodgeId: "lodge-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+  }
+
+  beforeEach(() => {
+    mocks.abandonInvoice.mockResolvedValue(undefined);
+  });
+
+  it("re-sends the same invoice when the organiser asks again at the same total", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: BOUND }));
+    childrenOnTheInvoice();
+    mocks.settlementFindUnique.mockResolvedValue(BOUND);
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking");
+
+    expect(result.outcome).toBe("invoice_sent");
+    expect(result.amountCents).toBe(9000);
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+  });
+
+  it("refuses to re-size a bound settlement when someone joined after the invoice went out (scenario A)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: BOUND }));
+    // C joined at $20 after the $90 invoice was emailed.
+    childrenOnTheInvoice([{ id: "child-3", cents: 2000 }]);
+    mocks.settlementFindUnique.mockResolvedValue(BOUND);
+    let refusedInsideTheClaim = false;
+    mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) => {
+      try {
+        return await cb(txClient);
+      } catch (err) {
+        // The refusal is thrown INSIDE the transaction that claimed child-3, so
+        // the claim rolls back with it: C holds no bed that is on no bill.
+        if (mocks.bookingUpdateMany.mock.calls.length > 0) refusedInsideTheClaim = true;
+        throw err;
+      }
+    });
+
+    await expect(
+      createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking")
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "GROUP_SETTLEMENT_INVOICE_OUTSTANDING",
+      details: { invoicedCents: 9000 },
+    });
+    expect(refusedInsideTheClaim).toBe(true);
+    // Never re-sized underneath the emailed invoice, never a second invoice.
+    expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueueSettlementInvoice).not.toHaveBeenCalled();
+  });
+
+  it("refuses a card payment on a bound settlement before claiming a bed or minting an intent (scenario B)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: BOUND }));
+    childrenOnTheInvoice();
+
+    await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).rejects.toMatchObject({
+      status: 409,
+      code: "GROUP_SETTLEMENT_INVOICE_OUTSTANDING",
+    });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a card claim when an invoice was bound after the attempt read the settlement", async () => {
+    mocks.groupBookingFindUnique
+      .mockResolvedValueOnce(organiserPaysGroup())
+      .mockResolvedValue({ status: GroupBookingStatus.OPEN });
+    freshChildren();
+    mocks.settlementFindUnique.mockResolvedValue(BOUND);
+
+    await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).rejects.toMatchObject({
+      status: 409,
+      code: "GROUP_SETTLEMENT_INVOICE_OUTSTANDING",
+    });
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("cancels the fresh intent when an invoice was bound while the card attempt was minting it", async () => {
+    // Not bound when the beds were claimed; bound by the time the intent attaches.
+    mocks.groupBookingFindUnique
+      .mockResolvedValueOnce(organiserPaysGroup())
+      .mockResolvedValue({ status: GroupBookingStatus.OPEN });
+    freshChildren();
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(null) // the commit transaction
+      .mockResolvedValueOnce(BOUND); // the attach transaction
+
+    await expect(createGroupSettlementIntent("ABCD2345", ORGANISER)).rejects.toMatchObject({
+      status: 409,
+      code: "GROUP_SETTLEMENT_INVOICE_OUTSTANDING",
+    });
+    expect(mocks.createPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mocks.settlementUpsert).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_settle_1");
+  });
+
+  it("retires a released settlement's invoice and records the card source when the organiser then pays by card", async () => {
+    const released = { ...BOUND, status: PaymentStatus.FAILED };
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: released }));
+    freshChildren();
+    mocks.settlementFindUnique.mockResolvedValue(released);
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_1",
+    });
+    expect(mocks.abandonInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.settlementUpsert.mock.invocationCallOrder[0]
+    );
+    expect(mocks.settlementUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          source: PaymentSource.STRIPE,
+          stripePaymentIntentId: "pi_settle_1",
+        }),
+      })
+    );
+  });
+
+  it("retires a released settlement's invoice before raising a fresh one for the new total", async () => {
+    const released = { ...BOUND, status: PaymentStatus.FAILED };
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: released }));
+    childrenOnTheInvoice([{ id: "child-3", cents: 2000 }]);
+    mocks.settlementFindUnique.mockResolvedValue(released);
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking");
+
+    expect(result).toMatchObject({ outcome: "invoice_sent", amountCents: 11000 });
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_1",
+    });
+    expect(mocks.abandonInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueSettlementInvoice.mock.invocationCallOrder[0]
+    );
+  });
+
+  function paidInvoiceSettlement() {
+    mocks.settlementFindFirst.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.PENDING,
+      amountCents: 9000,
+      stripeCustomerId: null,
+      xeroInvoiceId: "xinv_1",
+      xeroInvoiceNumber: "INV-0042",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: { email: "org@example.com", firstName: "Olive", lastName: "Organiser" },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+  }
+
+  it("refuses to settle the group when the invoice was paid for less than the settlement's total", async () => {
+    paidInvoiceSettlement();
+    mocks.settlementFindUnique.mockResolvedValueOnce(boundInvoiceRow());
+
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 6000,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "amount_mismatch",
+      settledBookingIds: [],
+      mismatch: { reason: "collected", recordedCents: 9000, collectedCents: 6000 },
+    });
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("judges the payment against the settlement's total under the lock, not the caller's copy", async () => {
+    paidInvoiceSettlement(); // the pre-lock copy says 9000
+    mocks.settlementFindUnique.mockResolvedValueOnce(boundInvoiceRow({ amountCents: 11000 }));
+
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
+
+    expect(result.mismatch).toMatchObject({ reason: "collected", recordedCents: 11000 });
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses to settle from an invoice the settlement no longer uses", async () => {
+    paidInvoiceSettlement();
+    mocks.settlementFindUnique.mockResolvedValueOnce(boundInvoiceRow({ xeroInvoiceId: "xinv_2" }));
+
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1", CLUB_FORMAT_TEST, {
+      collectedCents: 9000,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "amount_mismatch",
+      mismatch: { reason: "invoice_superseded" },
+    });
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
   });
 });

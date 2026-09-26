@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   memberCreditNoteAllocationAggregate: vi.fn(),
   memberCreditNoteAllocationFindMany: vi.fn(),
   linkFindMany: vi.fn(),
+  linkFindFirst: vi.fn(),
   auditLogCreate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
@@ -131,6 +132,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroObjectLink: {
       findMany: mocks.linkFindMany,
+      // #3642: the group-settlement arm looks up an abandoned invoice's link.
+      findFirst: mocks.linkFindFirst,
     },
     auditLog: {
       create: mocks.auditLogCreate,
@@ -514,6 +517,7 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.memberCreditCreate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditFindMany.mockResolvedValue([]);
     mocks.linkFindMany.mockResolvedValue([]);
+    mocks.linkFindFirst.mockResolvedValue(null);
     mocks.memberCreditUpdate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
     mocks.auditLogCreate.mockResolvedValue({});
@@ -3820,9 +3824,11 @@ describe("processStoredXeroInboundEvents", () => {
         }),
       })
     );
+    // #3642: the invoice's cash rides along, compared under the settle lock.
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
       "inv_settle_1",
       CLUB_FORMAT_TEST,
+      { collectedCents: 24690 },
     );
   });
 
@@ -3899,6 +3905,7 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
       "inv_settle_retry",
       CLUB_FORMAT_TEST,
+      { collectedCents: 24690 },
     );
     expect(mocks.inboundUpdate).toHaveBeenCalledWith({
       where: { id: "evt_settle_retry" },
