@@ -81,6 +81,13 @@ const SECRET_ROUTE = join(
 
 const CHASE_MODULE = join(process.cwd(), "src", "lib", "additional-payment-chase.ts");
 const REAPER_MODULE = join(process.cwd(), "src", "lib", "xero-waiting-invoice-reaper.ts");
+const WEBHOOK_MODULE = join(process.cwd(), "src", "lib", "stripe-webhook-service.ts");
+const LATE_CAPTURE_MODULE = join(
+  process.cwd(),
+  "src",
+  "lib",
+  "xero-supplementary-invoice-late-capture.ts",
+);
 
 function parse(path: string) {
   return ts.createSourceFile(
@@ -193,6 +200,19 @@ describe("the member's additional-payment card", () => {
       );
       expect(declaration, `${caller} not found`).not.toBeNull();
       expect(callsFunction(declaration!, callee), `${caller} -> ${callee}`).toBe(true);
+    }
+  });
+
+  it("keeps a capture's refund routing and its Xero invoice on ONE predicate", () => {
+    // #3641: the webhook refunds a capture on exactly the bookings the
+    // late-capture release leaves a retired invoice unsent for. Two spellings
+    // of "which captures are refunded" is how a BUMPED booking's capture was
+    // kept with no invoice and no alert.
+    for (const file of [WEBHOOK_MODULE, LATE_CAPTURE_MODULE]) {
+      expect(
+        callsFunction(parse(file), "isLateCaptureRefundedBookingStatus"),
+        file,
+      ).toBe(true);
     }
   });
 });
