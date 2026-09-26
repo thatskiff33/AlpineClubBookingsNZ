@@ -39,7 +39,7 @@ import { captureHostTimeZone, withTimeZone } from "./helpers/timezone";
  * so the tests for them are plain and the same on every host. The fetch window,
  * the day/time inputs and the event times are INSTANTS, so those tests use
  * `divergentClubZone`: a club zone that answers differently from both
- * `APP_TIME_ZONE` (which is what a provider-blind implementation reaches) and the
+ * the environment's zone (which is what a provider-blind implementation reaches) and the
  * host's own clock (which is what the host-local getters this replaces reached).
  */
 
@@ -118,7 +118,7 @@ describe("the grid is calendar dates, and needs no zone", () => {
   it("titles the month from the calendar date, so a club west of Greenwich is not a month early", () => {
     /*
       The defect this closes. `formatMonthTitle` built `Date.UTC(year, month, 1)`
-      and read it through an `APP_TIME_ZONE`-pinned formatter, which is the
+      and read it through an environment-zone-pinned formatter, which is the
       identity only for a club EAST of Greenwich: for `America/Denver` the
       encoding of 1 April 2026 reads back as 31 March, so the heading over an
       April grid said "March 2026". `formatClubMonthYear` takes a calendar date
@@ -192,7 +192,7 @@ describe("the grid is indifferent to the HOST's zone", () => {
  * running the suite once.
  *
  * A calendar-date formatter is pinned at MODULE LOAD, so `withTimeZone` above
- * cannot move it — and `APP_TIME_ZONE` is read at load too. Owner decision 3 on
+ * cannot move it — and the environment's zone is read at load too. Owner decision 3 on
  * #2870 measured exactly this gap: a formatter that dropped its `"UTC"` pin for
  * the environment's zone killed 0 of 193 assertions with `TZ` unset and 0 at
  * `TZ=UTC`, because a host at or east of Greenwich makes the wrong pin an
@@ -200,10 +200,12 @@ describe("the grid is indifferent to the HOST's zone", () => {
  *
  * It is caught here, for this subsystem, by re-importing the module under a
  * behind-UTC environment zone: `vi.resetModules()` plus a dynamic import
- * re-evaluates `@/config/operational`, so `APP_TIME_ZONE` really becomes
- * `America/Denver` for that copy of the module. A `"UTC"` pin is unaffected; an
- * `APP_TIME_ZONE` pin renders the day BEFORE the one it was handed, because the
- * value it is reading is a UTC-midnight encoding.
+ * re-evaluates the module graph under the new `TZ` (the premise re-reads
+ * `ENVIRONMENT_CLUB_ZONE`, the environment's claim, to prove it moved — the
+ * `@/config/operational` constant it used to read was deleted in #3567). A
+ * `"UTC"` pin is unaffected; a pin on the environment's zone renders the day
+ * BEFORE the one it was handed, because the value it is reading is a
+ * UTC-midnight encoding.
  *
  * This is not the whole of CT-6's hostile-zone proof (#2991) — it covers this
  * module's two calendar-date shapes and nothing else — but it is the shape that
@@ -220,13 +222,13 @@ describe("the day label does not follow the ENVIRONMENT's zone either", () => {
 
   async function dayLabelUnderEnvironmentZone(
     environmentZone: string,
-  ): Promise<{ appTimeZone: string; label: string }> {
+  ): Promise<{ environmentClubZone: string; label: string }> {
     process.env.TZ = environmentZone;
     vi.resetModules();
-    const operational = await import("@/config/operational");
+    const environment = await import("@/lib/__tests__/helpers/environment-club-zone");
     const calendarClient = await import("@/lib/calendar-client");
     return {
-      appTimeZone: operational.APP_TIME_ZONE,
+      environmentClubZone: environment.ENVIRONMENT_CLUB_ZONE,
       label: calendarClient.formatDayKeyLong("2026-04-16", CLUB_FORMAT_TEST),
     };
   }
@@ -236,7 +238,7 @@ describe("the day label does not follow the ENVIRONMENT's zone either", () => {
     // The premise: the re-import really did move the environment's zone. Without
     // this the assertion below would be checking nothing.
     expect(
-      behind.appTimeZone,
+      behind.environmentClubZone,
       "the re-imported module graph did not pick up the pinned TZ, so this assertion proves nothing",
     ).toBe("America/Denver");
     expect(behind.label).toBe("Thursday, 16 April 2026");
@@ -244,7 +246,7 @@ describe("the day label does not follow the ENVIRONMENT's zone either", () => {
 
   it("renders the same day for an environment zone far ahead of UTC", async () => {
     const ahead = await dayLabelUnderEnvironmentZone("Pacific/Kiritimati");
-    expect(ahead.appTimeZone).toBe("Pacific/Kiritimati");
+    expect(ahead.environmentClubZone).toBe("Pacific/Kiritimati");
     expect(ahead.label).toBe("Thursday, 16 April 2026");
   });
 });
@@ -486,7 +488,7 @@ describe("event labels read the club's clock", () => {
     const label = formatEventTime(makeEvent(), zone, CLUB_FORMAT_TEST);
     expect(label).toBe(expected);
     // Both wrong answers really are different labels, so the assertion above is
-    // discriminating: a chip built from `APP_TIME_ZONE` or from the host's own
+    // discriminating: a chip built from the environment's zone or from the host's own
     // `getHours()` would read as one of these.
     expect(label).not.toBe(environmentAnswer);
     expect(label).not.toBe(hostAnswer);

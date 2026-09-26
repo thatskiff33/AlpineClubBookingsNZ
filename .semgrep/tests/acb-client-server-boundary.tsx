@@ -65,12 +65,12 @@ import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
 // The club's currency and locale seed (#3563, programme #3205). Marked
 // `server-only` on arrival, and a fixture here for the same reason as its
-// timezone sibling above — plus a sharper one. `NEXT_PUBLIC_CURRENCY` and
-// `NEXT_PUBLIC_LOCALE` have no `Dockerfile` build argument at all, so in the
-// published image a client-side read does not merely answer from the build:
-// it inlines `undefined`, falls through to the shipped New Zealand defaults,
-// and every non-NZ club silently reads NZD. That is the defect programme
-// #3205 exists to fix (INV-CONFIG-006).
+// timezone sibling above — plus a sharper one. It reads the server's CURRENCY /
+// LOCALE, which a browser bundle does not have (they are not NEXT_PUBLIC_, and
+// since #3567 the NEXT_PUBLIC_ twins are not read at all), so a client-side read
+// would find nothing, fall through to the shipped New Zealand defaults, and
+// every non-NZ club would silently read NZD. That is the defect programme #3205
+// existed to fix (INV-CONFIG-006).
 // ruleid: acb-client-server-boundary
 import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
 

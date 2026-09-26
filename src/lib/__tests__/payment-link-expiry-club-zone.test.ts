@@ -17,9 +17,9 @@
  *
  * `divergentClubZone` (`helpers/club-time-zone.ts`) is the epic's hoisted
  * chooser: it takes the derivation and returns a persisted zone whose answer is
- * proven to differ from BOTH `APP_TIME_ZONE`'s answer and the host's own. That
- * is what a hand-picked literal cannot promise — `APP_TIME_ZONE` with no `TZ`
- * IS `Pacific/Auckland`, so a suite persisting Auckland cannot tell the
+ * proven to differ from BOTH the environment zone's answer and the host's own.
+ * That is what a hand-picked literal cannot promise — the environment zone with
+ * no `TZ` IS `Pacific/Auckland`, so a suite persisting Auckland cannot tell the
  * persisted zone from the environment however much it asserts, and a
  * hand-picked `America/Denver` stops discriminating on a Denver developer's
  * machine without going red.
@@ -173,7 +173,7 @@ function lastInstantOfCivilDay(zone: string, day: string): Date {
 
 /**
  * The club's zone, and the expiry instant it implies, chosen so that neither
- * `APP_TIME_ZONE`'s answer nor the host's can match it.
+ * the environment zone's answer nor the host's can match it.
  *
  * A premise failure here is a FAILURE and never a skip (owner decision, #2870).
  */
@@ -323,7 +323,7 @@ describe("the premise: three zones, three different expiry instants", () => {
 });
 
 describe("the mint stores the CLUB's end of the check-in day", () => {
-  it("reissuePaymentLinkForToken mints on the persisted zone, not APP_TIME_ZONE", async () => {
+  it("reissuePaymentLinkForToken mints on the persisted zone, not the environment zone", async () => {
     mocks.paymentLinkFindUnique.mockResolvedValue(requestOriginLink());
 
     await reissuePaymentLinkForToken(RAW_TOKEN);
@@ -331,7 +331,7 @@ describe("the mint stores the CLUB's end of the check-in day", () => {
     expect(
       mocks.paymentLinkCreate.mock.calls[0]?.[0]?.data?.expiresAt,
       "INV-CONFIG-002: the pay page and the approval email both state this " +
-        "instant in the club's persisted zone. Minting it from APP_TIME_ZONE " +
+        "instant in the club's persisted zone. Minting it from the environment zone " +
         "makes the stored deadline a different moment from the one the member " +
         "was told.",
     ).toEqual(CLUB_EXPIRY);
@@ -508,8 +508,8 @@ describe("every payment-link expiry goes through the one helper", () => {
     const offenders: string[] = [];
     for (const file of OWNERS) {
       const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
-      // The retired adapter defaults its second argument to `APP_TIME_ZONE`, so
-      // a call with one argument is silently the environment's day.
+      // The retired adapter used to default its second argument to the
+      // environment zone, so a call with one argument was the environment's day.
       const unzoned = source.match(
         /endOf(?:DateOnlyForTimeZone|ClubDay(?:Inclusive|Exclusive))\(/g,
       );

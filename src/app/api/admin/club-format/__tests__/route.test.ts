@@ -114,6 +114,18 @@ const primeEmail = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("@/lib/email-templates-club-time", () => ({
   primeEmailClubTimeZone: primeEmail,
 }));
+// #3567 D2: the read carries the in-flight card payments a currency change
+// would catch. The counts themselves are club-format-in-flight.test.ts's.
+const IN_FLIGHT = {
+  unpaidCardPayments: 2,
+  pendingSavedCardCharges: 1,
+  unansweredSavedCardAttempts: 1,
+  openRecoveryRetries: 0,
+};
+const countInFlight = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-in-flight", () => ({
+  countInFlightCardPayments: countInFlight,
+}));
 vi.mock("next/headers", () => ({
   headers: async () =>
     new Headers({
@@ -277,6 +289,7 @@ beforeEach(() => {
   delete process.env.NEXT_PUBLIC_LOCALE;
   signInAsFullAdmin();
   setPersisted(PERSISTED_ROW);
+  countInFlight.mockResolvedValue(IN_FLIGHT);
   h.tx.behaviour.set("clubFormatSettings.upsert", (args) => {
     const data = (args as { create: { currencyCode: string; locale: string } })
       .create;
@@ -299,7 +312,7 @@ beforeEach(() => {
   is, holding neither `support` (the area this path resolves to, so an omitted
   `permission` would refuse it the read) nor `overview`.
 */
-const VALID_CHANGE = { currencyCode: "CHF", locale: "de-CH", confirmed: true };
+const VALID_CHANGE = { currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true };
 
 describe("who may read and who may change (#3596)", () => {
   it("a Full Admin: reads 200, changes 200", async () => {
@@ -368,7 +381,21 @@ describe("GET /api/admin/club-format — the read", () => {
         unusableStoredCurrency: null,
         unusableStoredLocale: null,
       },
+      inFlight: IN_FLIGHT,
     });
+  });
+
+  it("gives the in-flight payment counts to a Full Admin only; another admin gets null (#3567 review)", async () => {
+    signInWithGrid({ financeLevel: "VIEW" });
+    const body = (await (await get()).json()) as { inFlight: unknown };
+    expect(body.inFlight).toBeNull();
+    expect(countInFlight).not.toHaveBeenCalled();
+  });
+
+  it("answers null in-flight counts when they cannot be read, never zero", async () => {
+    countInFlight.mockResolvedValue(null);
+    const body = (await (await get()).json()) as { inFlight: unknown };
+    expect(body.inFlight).toBeNull();
   });
 
   it("reports the environment when nothing is persisted", async () => {
@@ -385,6 +412,7 @@ describe("GET /api/admin/club-format — the read", () => {
         unusableStoredCurrency: null,
         unusableStoredLocale: null,
       },
+      inFlight: IN_FLIGHT,
     });
   });
 
@@ -417,7 +445,7 @@ describe("PUT /api/admin/club-format — the write", () => {
   it("refuses a support editor, who the path map alone would admit", async () => {
     signInWithGrid({ supportLevel: "EDIT" });
     expect(
-      (await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true }))
+      (await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true }))
         .status,
     ).toBe(403);
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
@@ -443,6 +471,42 @@ describe("PUT /api/admin/club-format — the write", () => {
       /three-letter currency code/i,
     );
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["JPY", "KWD"])(
+    "refuses %s, a real currency that does not count in hundredths (#3567 D3)",
+    async (currencyCode) => {
+      const response = await put({ currencyCode, locale: "en-NZ", confirmed: true });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toMatch(
+        /two decimal places/i,
+      );
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a currency change without its own tick, and writes nothing (#3567 D2)", async () => {
+    // Card charges follow the currency, so the ordinary confirmation is not enough.
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(
+      /Stripe account and the Xero base currency/,
+    );
+    expect(txDelegatesTouched()).toEqual(["clubFormatSettings"]);
+    expect(h.tx.client.clubFormatSettings.upsert).not.toHaveBeenCalled();
+    expect(h.tx.client.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("judges a currency change against the ENVIRONMENT seed when nothing is persisted", async () => {
+    setPersisted(null);
+    // AUD is what the club is already effectively on, so recording it needs no second tick.
+    expect((await put({ currencyCode: "AUD", locale: "en-AU", confirmed: true })).status).toBe(200);
+    // NZD is a change away from the environment's AUD, so it does.
+    expect((await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true })).status).toBe(400);
+  });
+
+  it("does not ask for the currency tick on a locale-only change", async () => {
+    expect((await put({ currencyCode: "NZD", locale: "en-AU", confirmed: true })).status).toBe(200);
   });
 
   it("refuses an invalid locale BEFORE writing the valid currency beside it", async () => {
@@ -478,6 +542,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       currencyCode: "chf",
       locale: "DE-ch",
       confirmed: true,
+      currencyChangeConfirmed: true,
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -507,7 +572,7 @@ describe("PUT /api/admin/club-format — the write", () => {
   });
 
   it("runs Serializable, because the recorded BEFORE value has to be true", async () => {
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(h.prisma.$transaction.mock.calls[0][1]).toEqual({
       isolationLevel: "Serializable",
     });
@@ -542,7 +607,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       a hand-picked list of things not to call. The third table is the AI spend
       rate, which a currency change CLEARS (#3566) — a clear, not a conversion.
     */
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(txDelegatesTouched()).toEqual([
       "aiSpendCurrencySettings",
       "auditLog",
@@ -556,7 +621,7 @@ describe("PUT /api/admin/club-format — the write", () => {
   });
 
   it("audits the before and after pair, and nothing else", async () => {
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     const row = auditedRow();
     expect(row).toMatchObject({
       action: "CLUB_FORMAT_UPDATED",
@@ -593,7 +658,7 @@ describe("PUT /api/admin/club-format — the write", () => {
 
   it("records a null BEFORE when nothing was persisted", async () => {
     setPersisted(null);
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(auditedRow().metadata).toEqual({
       before: null,
       after: { currencyCode: "CHF", locale: "de-CH" },
@@ -608,6 +673,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       currencyCode: "CHF",
       locale: "de-CH",
       confirmed: true,
+      currencyChangeConfirmed: true,
     });
     expect(response.status).toBe(503);
   });
@@ -617,7 +683,7 @@ describe("PUT /api/admin/club-format — the write", () => {
       Object.assign(new Error("relation does not exist"), { code: "P2021" }),
     );
     await expect(
-      put({ currencyCode: "CHF", locale: "de-CH", confirmed: true }),
+      put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true }),
     ).rejects.toThrow(/relation does not exist/);
   });
 });
@@ -639,7 +705,7 @@ describe("PUT /api/admin/club-format — a currency change clears the AI spend r
 
   it("deletes the stored rate and audits the clear beside the currency change", async () => {
     h.tx.behaviour.set("aiSpendCurrencySettings.findUnique", () => STORED_RATE);
-    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(response.status).toBe(200);
     const deleteMany = h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<
       typeof vi.fn
@@ -664,7 +730,7 @@ describe("PUT /api/admin/club-format — a currency change clears the AI spend r
   });
 
   it("writes no clear and no extra audit row when no rate was stored", async () => {
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(
       h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
     ).not.toHaveBeenCalled();
@@ -689,7 +755,7 @@ describe("PUT /api/admin/club-format — a currency change clears the AI spend r
       h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
     ).not.toHaveBeenCalled();
     // And a first save of a DIFFERENT currency does clear it.
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(
       h.tx.client.aiSpendCurrencySettings.deleteMany as ReturnType<typeof vi.fn>,
     ).toHaveBeenCalledTimes(1);
@@ -698,7 +764,7 @@ describe("PUT /api/admin/club-format — a currency change clears the AI spend r
 
 describe("PUT /api/admin/club-format — emails follow a change at once (#3566)", () => {
   it("re-primes the email cache AFTER the transaction commits, on a real change", async () => {
-    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    const response = await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(response.status).toBe(200);
     expect(primeEmail).toHaveBeenCalledTimes(1);
     // After the transaction, never inside it: a read on the module client under
@@ -718,7 +784,7 @@ describe("PUT /api/admin/club-format — emails follow a change at once (#3566)"
     h.prisma.$transaction.mockRejectedValueOnce(
       Object.assign(new Error("could not serialize access"), { code: "P2034" }),
     );
-    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true });
+    await put({ currencyCode: "CHF", locale: "de-CH", confirmed: true, currencyChangeConfirmed: true });
     expect(primeEmail).not.toHaveBeenCalled();
   });
 });
