@@ -1619,10 +1619,11 @@ capacity cards were touched in #2724 but remain explicit, owner-accepted
 departures under #3441: `/admin/lodges/[id]` edits one per-lodge capacity field
 without Edit/Cancel and enables Save only when the value differs from the saved
 value; the setup `LodgeCapacityCard` edits capacity, hut-leader lookahead and
-school soft-cap fields without Edit/Cancel, and its Save is disabled only while
-loading or saving. Both retain `AdminViewOnlySectionBanner` and
-`ViewOnlyActionButton` gating. This is an inventory of known departures, not a
-measured assertion that the entire admin tree has no others. New or modified
+school soft-cap fields without Edit/Cancel, and its Save is not dirty-gated.
+Once a lodge is selected, its own disabled prop checks loading or saving.
+Both retain a view-only banner and a permission-gated Save button. This
+inventory names known departures; it is not a measured assertion that the
+entire admin tree has no others. New or modified
 settings sections still owe the staged pattern unless an explicit decision
 records an exception. Booking Policies has NO divergent left. Every settings
 control in that area now stages behind a per-card Edit → Save/Cancel: the
