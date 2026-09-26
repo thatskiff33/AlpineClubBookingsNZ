@@ -912,9 +912,9 @@ format and the rules. In short:
   is not, which is what stops an allowance drifting away from the tree the way
   the old ledger did, and stops one being written once and reached for later;
 - it is **one-shot**. It only has effect on the change that introduces it, so
-  after merge it is inert — the grown length *is* the base ref by then, and the
-  file can be swept out of the directory in bulk whenever somebody tidies, the
-  same way compiled changelog fragments are;
+  after merge it is inert — the grown length *is* the base ref by then. The
+  release compiler retires committed allowance fragments alongside compiled
+  changelog fragments; it leaves untracked or locally edited files alone;
 - an allowance the check **did not need** fails too, rather than passing
   quietly. That is either a mistake or a file that shrank, and leaving one lying
   around is how a per-change note turns back into a stored exceptions list;
@@ -1783,13 +1783,24 @@ Before cutting a public reference release:
 
    That adds `## <version> - <date>` to `CHANGELOG.md` from the per-PR fragments
    in `changelog.d/` (plus any entry still written directly under
-   `## Unreleased`), deletes the fragments it consumed, and leaves the
-   `## Unreleased` heading and its sentinel-marked pointer note in place. Commit
-   the compiled `CHANGELOG.md` and the fragment deletions together, then read the
-   new section end to end and edit it for order and duplication before pushing —
+   `## Unreleased`), deletes the fragments it consumed and the committed,
+   clean `size-allowances.d/*.md` fragments made inert by their merge to main,
+   and leaves the `## Unreleased` heading and its sentinel-marked pointer note
+   in place. Commit the compiled `CHANGELOG.md` and both sets of fragment
+   deletions together, then read the new section end to end and edit it for
+   order and duplication before pushing —
    `changelog.d/README.md` documents the convention. If the run prints
    `WARNING: unrecognised content left under "## Unreleased"`, resolve that
-   first: the text it echoes was neither released nor deleted.
+   first: the text it echoes was neither released nor deleted. A release-prep
+   checkout with locally edited allowance files must resolve those edits before
+   compiling; untracked drafts and `size-allowances.d/README.md` are preserved.
+   Refresh `origin/main` before this step: the compiler checks that it is an
+   ancestor of the release-prep checkout and retires only allowance fragments
+   present on that ref, never a branch-only draft. It cannot detect an unfetched
+   remote update while offline; the printed reminder is not proof of freshness.
+   If a file removal fails during apply, the compiler restores the original
+   changelog and fragments so you can fix the I/O cause and retry. If that
+   restoration itself fails, stop and inspect the named files before retrying.
 3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
    guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
    validation, and public/private workflow drift.

@@ -188,6 +188,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/eligible-family": "bookings",
   "/api/admin/bookings/[id]/exclusive-hold": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
+  // #3029: one guest's dietary/allergy note for this stay, bookings:edit.
+  "/api/admin/bookings/[id]/guest-dietary": "bookings",
   // B5 (#2262): a bookings-prefixed path deliberately resolved to finance by
   // SPECIAL_ROUTE_AREA_PATTERNS — recording or reversing a cash settlement is a
   // money action, gated finance:edit.

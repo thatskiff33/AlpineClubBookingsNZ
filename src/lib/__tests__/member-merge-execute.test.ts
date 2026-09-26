@@ -129,10 +129,21 @@ function reconcileSubjectRows(ids: string[]) {
  * So the filter is honoured rather than ignored. Prisma would have; a mock that
  * does not is not modelling the database, it is modelling one caller.
  */
+/**
+ * #2941: stored dietary/allergy values the dietary door returns for its own
+ * explicit-select read (`INV-PRIV-022`). Empty by default, so every other case
+ * in this file merges exactly as a pre-#2941 row would.
+ */
+let dietaryForTest: Record<string, string | null> = {};
+
 function memberFindManyForTest(args: unknown) {
   const where = (args as { where?: Record<string, unknown> }).where ?? {};
+  const select = (args as { select?: Record<string, unknown> }).select;
   const ids = (where.id as { in?: string[] } | undefined)?.in;
   if (!ids) return null;
+  if (select && "dietaryRequirements" in select) {
+    return ids.map((id) => ({ id, dietaryRequirements: dietaryForTest[id] ?? null }));
+  }
   const narrowing = ["role", "lastName", "canLogin", "active"].filter(
     (key) => key in where,
   );
@@ -307,6 +318,61 @@ describe("executeMemberMerge", () => {
     expect(auditSpy.create).toHaveBeenCalledTimes(1);
     // Loser hard-deleted.
     expect(memberSpy.delete).toHaveBeenCalledWith({ where: { id: LOSER_ID } });
+  });
+
+  it("carries the loser's dietary value to a blank master and redacts it in the MEMBER_MERGED audit (#2941)", async () => {
+    const VALUE = "Severe peanut allergy";
+    dietaryForTest = { [LOSER_ID]: VALUE };
+    try {
+      const { client, member, auditLog } = makeClient();
+      const core: MemberMergePreviewCore = {
+        fieldMerge: mergeMemberFields(
+          master as unknown as Record<string, unknown>,
+          { ...loser, dietaryRequirements: VALUE } as unknown as Record<string, unknown>,
+        ).diff,
+        relationMoves: [],
+        collisions: [],
+        blockers: [],
+        warnings: [],
+      };
+      await executeMemberMerge({
+        masterId: MASTER_ID,
+        loserId: LOSER_ID,
+        actorMemberId: ACTOR_ID,
+        previewToken: buildMemberMergePreviewToken(
+          MASTER_ID,
+          LOSER_ID,
+          master.updatedAt,
+          loser.updatedAt,
+          core,
+        ),
+        confirmationText: "MERGE Dup Person",
+        db: client as never,
+      });
+
+      const update = (member as { update: ReturnType<typeof vi.fn> }).update;
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: MASTER_ID },
+          data: expect.objectContaining({ dietaryRequirements: VALUE }),
+        }),
+      );
+      const auditArgs = (auditLog as { create: ReturnType<typeof vi.fn> }).create
+        .mock.calls[0]?.[0] as { data: { metadata: Record<string, unknown> } };
+      const metadata = auditArgs.data.metadata;
+      expect(JSON.stringify(metadata)).not.toContain("peanut");
+      const row = (metadata.fieldOutcome as Array<Record<string, unknown>>).find(
+        (entry) => entry.field === "dietaryRequirements",
+      );
+      expect(row).toMatchObject({
+        loser: "[REDACTED]",
+        result: "[REDACTED]",
+        source: "loser",
+      });
+      expect(metadata.fieldsChanged).toContain("dietaryRequirements");
+    } finally {
+      dietaryForTest = {};
+    }
   });
 
   it("re-checks under the complete participant locks and rolls back when Xero recovery proof appears after preview", async () => {

@@ -11,16 +11,21 @@ vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
+// The member re-read is projected through the layout's own `select` (#3603), so
+// a field the layout stops selecting stops reaching its checks.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique, "Member"),
+      },
+      clubTheme: {
+        findUnique: vi.fn(async () => null),
+      },
     },
-    clubTheme: {
-      findUnique: vi.fn(async () => null),
-    },
-  },
-}));
+  };
+});
 
 // The layout now loads the app fonts and injects the club theme (#2102); stub
 // the font loader so importing it stays light and does not pull in
@@ -135,6 +140,43 @@ describe("lodge layout authentication", () => {
     await expect(LodgeLayout({ children: "secure" })).rejects.toThrow(
       "redirect:/login"
     );
+  });
+
+  // #3603: the signed-in account must still be allowed to sign in. The
+  // admitted control is "renders lodge pages for an active authenticated user"
+  // above, and the one below with canLogin: true.
+  it("redirects a signed-in account whose login is switched off back to login", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", accessRoles: ["LODGE"], canLogin: true },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin: false,
+      forcePasswordChange: false,
+      twoFactorEnabled: false,
+    });
+
+    const { default: LodgeLayout } = await import("@/app/(lodge)/layout");
+
+    await expect(LodgeLayout({ children: "secure" })).rejects.toThrow(
+      "redirect:/login"
+    );
+  });
+
+  it("renders lodge pages for the same account with login enabled", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", accessRoles: ["LODGE"], canLogin: true },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      canLogin: true,
+      forcePasswordChange: false,
+      twoFactorEnabled: false,
+    });
+
+    const { default: LodgeLayout } = await import("@/app/(lodge)/layout");
+
+    await expect(LodgeLayout({ children: "secure" })).resolves.toBeTruthy();
   });
 
   it("redirects authenticated users who must change their password", async () => {

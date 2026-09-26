@@ -243,6 +243,7 @@ function financeManager() {
     financeAccessLevel: "NONE" as const,
     accessRoles: [{ role: "FINANCE_ADMIN" as const }],
     active: true,
+    canLogin: true,
     forcePasswordChange: false,
     twoFactorEnabled: false,
   };

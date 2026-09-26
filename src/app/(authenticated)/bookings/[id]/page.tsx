@@ -17,6 +17,7 @@ import { BookingLinkedPartySections } from "./_components/booking-linked-party-s
 import { BookingConsentCards } from "./_components/booking-consent-cards";
 import { BookingStatusBanners } from "./_components/booking-status-banners";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
+import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
 import { resolveBookingDetailViewer } from "./_lib/booking-detail-viewer";
 import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
@@ -46,6 +47,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 // than a hand-rolled filter. Folding it into the import below would satisfy the
 // compiler and break the guard.
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
+import { loadBookingDetailGuestDietary } from "./_lib/booking-detail-guest-dietary";
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
@@ -57,6 +59,11 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "consent", label: "Consent" },
   { id: "non-member-guests", label: "Non-member Guests" },
   { id: "group", label: "Group Booking" },
+  // #3029: booking administrators only, and filtered out server-side for
+  // everybody else like "Bed Allocation" below — see `guestDietary`. Declared
+  // here because the card renders straight after the linked-party sections
+  // (which hold "non-member-guests" and "group") and before stay preferences.
+  { id: "dietary", label: "Dietary/Allergy" },
   { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
   /*
@@ -242,6 +249,12 @@ export default async function BookingDetailPage({
     payment,
   });
 
+  const guestDietary = await loadBookingDetailGuestDietary({
+    sessionUserId: session.user.id,
+    booking,
+    viewer,
+  });
+
   const adminTools = await loadBookingDetailAdminTools({
     booking,
     modules,
@@ -271,7 +284,8 @@ export default async function BookingDetailPage({
       <SectionNav
         sections={BOOKING_SECTIONS.filter(
           (section) =>
-            section.id !== "bed-allocation" || showBedAllocationPanel,
+            (section.id !== "bed-allocation" || showBedAllocationPanel) &&
+            (section.id !== "dietary" || guestDietary !== null),
         )}
         className="mb-6 lg:mb-0"
       />
@@ -341,6 +355,14 @@ export default async function BookingDetailPage({
         party={party}
         bookingLodgeEmailSettings={bookingLodgeEmailSettings}
       />
+
+      {guestDietary && (
+        <BookingGuestDietaryCard
+          bookingId={booking.id}
+          guests={guestDietary.guests}
+          canEdit={guestDietary.canEdit}
+        />
+      )}
 
       <BookingReviewNotices
         booking={booking}

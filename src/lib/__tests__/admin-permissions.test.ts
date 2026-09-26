@@ -45,16 +45,16 @@ describe("admin permission bundles", () => {
     });
 
     expect(Object.values(matrix).every((level) => level === "edit")).toBe(true);
-    expect(hasAdminPortalAccess({ accessRoles: ["ADMIN"] })).toBe(true);
+    expect(hasAdminPortalAccess({ canLogin: true, accessRoles: ["ADMIN"] })).toBe(true);
   });
 
   it("keeps read-only admin users at view access", () => {
     expect(
-      getAdminPermissionLevel({ accessRoles: ["ADMIN_READONLY"] }, "bookings"),
+      getAdminPermissionLevel({ canLogin: true, accessRoles: ["ADMIN_READONLY"] }, "bookings"),
     ).toBe("view");
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["ADMIN_READONLY"] },
+        { canLogin: true, accessRoles: ["ADMIN_READONLY"] },
         { area: "bookings", level: "edit" },
       ),
     ).toBe(false);
@@ -86,10 +86,10 @@ describe("admin permission bundles", () => {
     discovered on disk as a finance-only user.
   */
   it("gives a finance-only grid portal standing, and no other area with it", () => {
-    const financeViewer = { accessRoles: ["FINANCE_USER"] };
+    const financeViewer = { canLogin: true, accessRoles: ["FINANCE_USER"] };
 
     expect(hasAdminPortalAccess(financeViewer)).toBe(true);
-    expect(hasAdminPortalAccess({ accessRoles: ["FINANCE_ADMIN"] })).toBe(true);
+    expect(hasAdminPortalAccess({ canLogin: true, accessRoles: ["FINANCE_ADMIN"] })).toBe(true);
 
     // The standing buys the finance area and nothing else.
     expect(
@@ -114,15 +114,15 @@ describe("admin permission bundles", () => {
 
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["FINANCE_ADMIN"] },
+        { canLogin: true, accessRoles: ["FINANCE_ADMIN"] },
         { area: "finance", level: "edit" },
       ),
     ).toBe(true);
   });
 
   it("gives no portal standing to a member holding no admin area at all", () => {
-    expect(hasAdminPortalAccess({ accessRoles: ["USER"] })).toBe(false);
-    expect(hasAdminPortalAccess({ accessRoles: [] })).toBe(false);
+    expect(hasAdminPortalAccess({ canLogin: true, accessRoles: ["USER"] })).toBe(false);
+    expect(hasAdminPortalAccess({ canLogin: true, accessRoles: [] })).toBe(false);
     // canLogin:false empties the matrix, so a suspended admin loses standing.
     expect(
       hasAdminPortalAccess({ accessRoles: ["ADMIN"], canLogin: false }),
@@ -149,10 +149,10 @@ describe("booking detail read-only admin-view guard (issue #1289)", () => {
     isBookingOwner: boolean;
     isLinkedGuestViewer: boolean;
   }) => {
-    const isAdmin = hasAdminAccess({ accessRoles: viewer.accessRoles });
+    const isAdmin = hasAdminAccess({ canLogin: true, accessRoles: viewer.accessRoles });
     const canManageBooking = viewer.isBookingOwner || isAdmin;
     const canViewAsAdmin = hasAdminAreaAccess(
-      { accessRoles: viewer.accessRoles },
+      { canLogin: true, accessRoles: viewer.accessRoles },
       { area: "bookings", level: "view" },
     );
     return (
@@ -165,19 +165,19 @@ describe("booking detail read-only admin-view guard (issue #1289)", () => {
     // wiring cannot pass on the mirror alone.
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { canLogin: true, accessRoles: ["ADMIN_BOOKINGS"] },
         { area: "bookings", level: "view" },
       ),
     ).toBe(true);
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["ADMIN_READONLY"] },
+        { canLogin: true, accessRoles: ["ADMIN_READONLY"] },
         { area: "bookings", level: "view" },
       ),
     ).toBe(true);
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["USER"] },
+        { canLogin: true, accessRoles: ["USER"] },
         { area: "bookings", level: "view" },
       ),
     ).toBe(false);
@@ -251,7 +251,7 @@ describe("booking detail read-only admin-view guard (issue #1289)", () => {
 // ---------------------------------------------------------------------------
 describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
   const identity = (accessRoles: AppAccessRole[], isBookingOwner: boolean) => {
-    const subject = { accessRoles };
+    const subject = { canLogin: true, accessRoles };
     const isAdmin = hasAdminAccess(subject);
     const canAdminEditBookings = hasAdminAreaAccess(subject, {
       area: "bookings",
@@ -376,14 +376,14 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
     // modify/quote/change-requests authorize via bookingManagementAuthorizationRole.
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { canLogin: true, accessRoles: ["ADMIN_BOOKINGS"] },
         { area: "bookings", level: "edit" },
       ),
     ).toBe(true);
     // A read-only admin (bookings:view, no edit) is NOT admitted.
     expect(
       hasAdminAreaAccess(
-        { accessRoles: ["ADMIN_READONLY"] },
+        { canLogin: true, accessRoles: ["ADMIN_READONLY"] },
         { area: "bookings", level: "edit" },
       ),
     ).toBe(false);
@@ -443,10 +443,10 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
 
   const canSeePanel = (accessRoles: AppAccessRole[], isBookingOwner = false) =>
     !isBookingOwner &&
-    hasAdminAreaAccess({ accessRoles }, { area: "bookings", level: "view" });
+    hasAdminAreaAccess({ canLogin: true, accessRoles }, { area: "bookings", level: "view" });
 
   const canResend = (accessRoles: AppAccessRole[]) => {
-    const subject = { accessRoles };
+    const subject = { canLogin: true, accessRoles };
     return (
       hasAdminAccess(subject) ||
       hasAdminAreaAccess(subject, { area: "bookings", level: "edit" })
@@ -591,7 +591,7 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
   };
 
   const canSeePanel = (accessRoles: AppAccessRole[]) => {
-    const subject = { accessRoles };
+    const subject = { canLogin: true, accessRoles };
     return (
       hasAdminAccess(subject) ||
       hasAdminAreaAccess(subject, { area: "bookings", level: "edit" })
@@ -644,8 +644,11 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
     // so the entry is filtered out before it is ever sent.
     const source = bookingPageSource();
 
+    // #3029 adds a second admin-only entry ("dietary") under the same rule, so
+    // the filter now joins two server-side clauses; the bed-allocation clause
+    // is still pinned verbatim, and so is the dietary one.
     expect(source).toMatch(
-      /sections=\{BOOKING_SECTIONS\.filter\(\s*\(section\) =>\s*section\.id !== "bed-allocation" \|\| showBedAllocationPanel,\s*\)\}/,
+      /sections=\{BOOKING_SECTIONS\.filter\(\s*\(section\) =>\s*\(section\.id !== "bed-allocation" \|\| showBedAllocationPanel\) &&\s*\(section\.id !== "dietary" \|\| guestDietary !== null\),\s*\)\}/,
     );
   });
 
@@ -726,40 +729,40 @@ describe("in-booking bed allocation panel visibility (#2252)", () => {
 describe("bookingManagementAuthorizationRole (issue #1313 option A2)", () => {
   it("maps a Booking Officer (bookings:edit) onto the admin-on-behalf ADMIN path", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_BOOKINGS"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["ADMIN_BOOKINGS"] }),
     ).toBe("ADMIN");
   });
 
   it("leaves a Full Admin at ADMIN (byte-identical to authorizationRoleFromAccessRoles)", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["ADMIN"] }),
     ).toBe("ADMIN");
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN"] }),
-    ).toBe(authorizationRoleFromAccessRoles({ accessRoles: ["ADMIN"] }));
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["ADMIN"] }),
+    ).toBe(authorizationRoleFromAccessRoles({ canLogin: true, accessRoles: ["ADMIN"] }));
   });
 
   it("keeps a plain member at USER", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["USER"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["USER"] }),
     ).toBe("USER");
   });
 
   it("keeps a read-only admin (bookings:view, no edit) at USER", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_READONLY"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["ADMIN_READONLY"] }),
     ).toBe("USER");
   });
 
   it("keeps a scoped admin without bookings:edit (Membership Officer) at USER", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_MEMBERSHIP"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["ADMIN_MEMBERSHIP"] }),
     ).toBe("USER");
   });
 
   it("preserves a non-admin legacy role (LODGE) rather than forcing ADMIN", () => {
     expect(
-      bookingManagementAuthorizationRole({ accessRoles: ["LODGE"] }),
+      bookingManagementAuthorizationRole({ canLogin: true, accessRoles: ["LODGE"] }),
     ).toBe("LODGE");
   });
 
@@ -788,17 +791,17 @@ describe("admin route requirements", () => {
       level: "view",
     });
     expect(
-      canOpenAdminPath({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
+      canOpenAdminPath({ canLogin: true, accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
     ).toBe(true);
     expect(
-      canOpenAdminPath({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/members"),
+      canOpenAdminPath({ canLogin: true, accessRoles: ["ADMIN_CONTENT"] }, "/admin/members"),
     ).toBe(false);
   });
 
   it("resolves the two adjudicated admission special cases (#2975)", () => {
     // The fee console admits on view of EITHER bookings or finance (#1933), and
     // the map's own `bookings` prefix would refuse a finance-only grid.
-    const financeOnly = { accessRoles: ["FINANCE_USER" as const] };
+    const financeOnly = { canLogin: true, accessRoles: ["FINANCE_USER" as const] };
     expect(canOpenAdminPath(financeOnly, "/admin/fees")).toBe(true);
     expect(canOpenAdminPath(financeOnly, "/admin/bookings")).toBe(false);
 
@@ -806,12 +809,12 @@ describe("admin route requirements", () => {
     // map resolves that path to `overview`, which a finance-only grid lacks.
     expect(canOpenAdminPath(financeOnly, "/admin/ai-diagnostics")).toBe(true);
     expect(canOpenAdminPath(financeOnly, "/admin/dashboard")).toBe(false);
-    expect(canOpenAdminPath({ accessRoles: [] }, "/admin/ai-diagnostics")).toBe(
+    expect(canOpenAdminPath({ canLogin: true, accessRoles: [] }, "/admin/ai-diagnostics")).toBe(
       false,
     );
 
     // A path the map cannot resolve is refused, not defaulted.
-    expect(canOpenAdminPath({ accessRoles: ["ADMIN" as const] }, "/dashboard")).toBe(
+    expect(canOpenAdminPath({ canLogin: true, accessRoles: ["ADMIN" as const] }, "/dashboard")).toBe(
       false,
     );
   });
@@ -823,7 +826,7 @@ describe("admin route requirements", () => {
     // map registers that path under `lodge`, so without the OR rule the admin
     // layout would redirect them away from the setting with no message at all.
     for (const role of ["FINANCE_ADMIN", "ADMIN_MEMBERSHIP"] as const) {
-      const bookingsOnly = { accessRoles: [role] };
+      const bookingsOnly = { canLogin: true, accessRoles: [role] };
       expect(getAdminPermissionMatrix(bookingsOnly).lodge).toBe("none");
       expect(getAdminPermissionMatrix(bookingsOnly).bookings).not.toBe("none");
       expect(canOpenAdminPath(bookingsOnly, "/admin/rooms-beds")).toBe(true);
@@ -841,11 +844,11 @@ describe("admin route requirements", () => {
 
     // And it is not a hole: an area that is neither lodge nor bookings is still
     // refused, and the rule does not leak onto neighbouring lodge paths.
-    const contentOnly = { accessRoles: ["ADMIN_CONTENT" as const] };
+    const contentOnly = { canLogin: true, accessRoles: ["ADMIN_CONTENT" as const] };
     expect(canOpenAdminPath(contentOnly, "/admin/rooms-beds")).toBe(false);
     expect(
       canOpenAdminPath(
-        { accessRoles: ["FINANCE_ADMIN" as const] },
+        { canLogin: true, accessRoles: ["FINANCE_ADMIN" as const] },
         "/admin/roster",
       ),
     ).toBe(false);
@@ -894,13 +897,14 @@ describe("admin route requirements", () => {
   it("shows every admission path to exactly the admins it admits (#3596)", () => {
     const financeOnly = getAdminPermissionMatrix({
       accessRoles: ["FINANCE_USER" as const],
+      canLogin: true,
     });
-    const noArea = getAdminPermissionMatrix({ accessRoles: [] });
+    const noArea = getAdminPermissionMatrix({ accessRoles: [], canLogin: true });
     for (const pathname of ANY_ADMIN_ADMISSION_PATHS) {
       expect(
         canViewAdminHrefWithMatrix(financeOnly, pathname),
         `${pathname}: a finance-only admin is admitted, so must see the link`,
-      ).toBe(canOpenAdminPath({ accessRoles: ["FINANCE_USER" as const] }, pathname));
+      ).toBe(canOpenAdminPath({ accessRoles: ["FINANCE_USER" as const], canLogin: true }, pathname));
       expect(canViewAdminHrefWithMatrix(financeOnly, pathname)).toBe(true);
       expect(
         canViewAdminHrefWithMatrix(noArea, pathname),
@@ -926,7 +930,7 @@ describe("admin route requirements", () => {
     // other area NONE. `ADMIN_CONTENT` is not a substitute — it carries
     // `overview: VIEW` as well as content, so it legitimately opens
     // /admin/dashboard and would make this loop assert something false.
-    const financeOnly = { accessRoles: ["FINANCE_USER" as const] };
+    const financeOnly = { canLogin: true, accessRoles: ["FINANCE_USER" as const] };
     for (const pathname of [
       "/admin/promo-codes",
       "/admin/bookings",
@@ -1018,6 +1022,7 @@ describe("admin route requirements", () => {
     // role to drop membership:view. The endpoints demand bookings:edit
     // explicitly, so this actor passes while a membership-only viewer does not.
     const officerNoMembershipView = {
+      canLogin: true,
       accessRoles: [] as AppAccessRole[],
       adminPermissionMatrix: {
         overview: "view",
@@ -1037,6 +1042,7 @@ describe("admin route requirements", () => {
     ).toBe(true);
 
     const membershipViewerNoBookings = {
+      canLogin: true,
       accessRoles: [] as AppAccessRole[],
       adminPermissionMatrix: {
         overview: "view",
@@ -1058,6 +1064,7 @@ describe("admin route requirements", () => {
     // A bookings VIEWER (not editor) is also rejected — the explicit edit gate
     // is enforced, not merely bookings-area presence.
     const bookingsViewerOnly = {
+      canLogin: true,
       accessRoles: [] as AppAccessRole[],
       adminPermissionMatrix: {
         overview: "view",
@@ -1146,10 +1153,10 @@ describe("definition-backed access roles", () => {
 
   it("keeps the legacy bundle as fallback for bare enum rows", () => {
     expect(
-      getAdminPermissionLevel({ accessRoles: ["ADMIN_BOOKINGS"] }, "bookings"),
+      getAdminPermissionLevel({ canLogin: true, accessRoles: ["ADMIN_BOOKINGS"] }, "bookings"),
     ).toBe("edit");
     expect(
-      getAdminPermissionLevel({ accessRoles: ["FINANCE_USER"] }, "finance"),
+      getAdminPermissionLevel({ canLogin: true, accessRoles: ["FINANCE_USER"] }, "finance"),
     ).toBe("view");
   });
 
@@ -1176,28 +1183,28 @@ describe("definition-backed access roles", () => {
 
 describe("matrix-derived finance access", () => {
   it("treats finance edit as manager and finance view as viewer", () => {
-    expect(hasFinanceManagerAccess({ accessRoles: ["FINANCE_ADMIN"] })).toBe(
+    expect(hasFinanceManagerAccess({ canLogin: true, accessRoles: ["FINANCE_ADMIN"] })).toBe(
       true,
     );
-    expect(hasFinanceViewerAccess({ accessRoles: ["FINANCE_USER"] })).toBe(
+    expect(hasFinanceViewerAccess({ canLogin: true, accessRoles: ["FINANCE_USER"] })).toBe(
       true,
     );
-    expect(hasFinanceManagerAccess({ accessRoles: ["FINANCE_USER"] })).toBe(
+    expect(hasFinanceManagerAccess({ canLogin: true, accessRoles: ["FINANCE_USER"] })).toBe(
       false,
     );
-    expect(hasFinanceViewerAccess({ accessRoles: ["USER"] })).toBe(false);
+    expect(hasFinanceViewerAccess({ canLogin: true, accessRoles: ["USER"] })).toBe(false);
   });
 
   it("gives Full Admin manager access and scoped admins viewer access via their matrices", () => {
     // Intentional widening vs the legacy enum-keyed helpers.
-    expect(hasFinanceManagerAccess({ accessRoles: ["ADMIN"] })).toBe(true);
-    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_READONLY"] })).toBe(
+    expect(hasFinanceManagerAccess({ canLogin: true, accessRoles: ["ADMIN"] })).toBe(true);
+    expect(hasFinanceViewerAccess({ canLogin: true, accessRoles: ["ADMIN_READONLY"] })).toBe(
       true,
     );
-    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_BOOKINGS"] })).toBe(
+    expect(hasFinanceViewerAccess({ canLogin: true, accessRoles: ["ADMIN_BOOKINGS"] })).toBe(
       true,
     );
-    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_CONTENT"] })).toBe(
+    expect(hasFinanceViewerAccess({ canLogin: true, accessRoles: ["ADMIN_CONTENT"] })).toBe(
       false,
     );
   });
@@ -1207,16 +1214,18 @@ describe("matrix-derived finance access", () => {
     // deleted (#3264): the legacy column is display/back-compat only.
     expect(
       hasFinanceManagerAccess({
+        canLogin: true,
         role: "USER",
         financeAccessLevel: "MANAGER",
         accessRoles: [{ role: "FINANCE_USER" }],
       }),
     ).toBe(false);
     expect(
-      hasFinanceManagerAccess({ financeAccessLevel: "MANAGER", accessRoles: [] }),
+      hasFinanceManagerAccess({ canLogin: true, financeAccessLevel: "MANAGER", accessRoles: [] }),
     ).toBe(false);
     expect(
       hasFinanceViewerAccess({
+        canLogin: true,
         role: "LODGE",
         financeAccessLevel: "NONE",
         accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
@@ -1246,17 +1255,17 @@ describe("matrix-derived finance access", () => {
   it("maps matrices to the legacy financeAccessLevel compatibility values", () => {
     expect(
       financeAccessLevelFromMatrix(
-        getAdminPermissionMatrix({ accessRoles: ["FINANCE_ADMIN"] }),
+        getAdminPermissionMatrix({ canLogin: true, accessRoles: ["FINANCE_ADMIN"] }),
       ),
     ).toBe("MANAGER");
     expect(
       financeAccessLevelFromMatrix(
-        getAdminPermissionMatrix({ accessRoles: ["ADMIN_MEMBERSHIP"] }),
+        getAdminPermissionMatrix({ canLogin: true, accessRoles: ["ADMIN_MEMBERSHIP"] }),
       ),
     ).toBe("VIEWER");
     expect(
       financeAccessLevelFromMatrix(
-        getAdminPermissionMatrix({ accessRoles: ["USER"] }),
+        getAdminPermissionMatrix({ canLogin: true, accessRoles: ["USER"] }),
       ),
     ).toBe("NONE");
   });
@@ -1442,7 +1451,7 @@ describe("admin API authorization matrix (issue #1132)", () => {
       if (!requirement) return [];
 
       return ALWAYS_DENIED_IDENTITIES.flatMap(({ label, accessRoles }) =>
-        hasAdminAreaAccess({ accessRoles }, requirement)
+        hasAdminAreaAccess({ canLogin: true, accessRoles }, requirement)
           ? [`${pathname}#${method}: unexpectedly allows ${label}`]
           : [],
       );
@@ -1462,7 +1471,7 @@ describe("admin API authorization matrix (issue #1132)", () => {
           const expected =
             LEVEL_RANK[grantedLevel] >= LEVEL_RANK[requirement.level];
           const actual = hasAdminAreaAccess(
-            { accessRoles: [role as AppAccessRole] },
+            { canLogin: true, accessRoles: [role as AppAccessRole] },
             requirement,
           );
 
@@ -1502,12 +1511,13 @@ describe("embedded session permission matrix (#1367)", () => {
   // A session.user whose ONLY role is a custom definition granting
   // bookings:edit — the enum claim is empty, the matrix carries the grant.
   const customOfficerSessionUser = {
+    canLogin: true,
     accessRoles: [] as AppAccessRole[],
     adminPermissionMatrix: { ...ALL_NONE, bookings: "edit" },
   };
 
   it("grants a custom-role session user the same gates as a seeded Booking Officer", () => {
-    const seededOfficer = { accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole] };
+    const seededOfficer = { canLogin: true, accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole] };
 
     for (const requirement of [
       { area: "bookings", level: "view" },
@@ -1524,6 +1534,7 @@ describe("embedded session permission matrix (#1367)", () => {
     // The cancel service's on-behalf role mapping (#1313 option A2) follows.
     expect(bookingManagementAuthorizationRole(customOfficerSessionUser)).toBe(
       bookingManagementAuthorizationRole({
+        canLogin: true,
         accessRoles: ["ADMIN_BOOKINGS"],
       }),
     );
@@ -1548,6 +1559,7 @@ describe("embedded session permission matrix (#1367)", () => {
     // the jwt refresh embedded that narrowed matrix. The enum claim alone
     // would re-derive the WIDER legacy bundle — it must not win.
     const narrowedOfficer = {
+      canLogin: true,
       accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole],
       adminPermissionMatrix: { ...ALL_NONE, bookings: "view" },
     };
@@ -1564,6 +1576,7 @@ describe("embedded session permission matrix (#1367)", () => {
     expect(
       hasAdminAreaAccess(
         {
+          canLogin: true,
           accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole],
           adminPermissionMatrix: "garbage",
         },

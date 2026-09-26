@@ -100,6 +100,10 @@ import {
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 import logger from "@/lib/logger";
+import {
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
 // #2483: the club's own applied-credit total, so the admin's hand-written
 // invoice asks for the same figure the member's confirmation does.
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
@@ -128,7 +132,13 @@ import {
   sameSchoolGuestList,
   unchangedSchoolGuestPrefixLength,
 } from "@/lib/school-booking-constants";
-import { nameField } from "@/lib/zod-helpers";
+import {
+  schoolTeacherSchema,
+  storedSchoolTeacherListSchema,
+} from "@/lib/school-teacher-schema";
+
+// Keep the existing route import surface while the schema lives in one module.
+export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 /**
@@ -168,14 +178,6 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
 // ---------------------------------------------------------------------------
 // Input shapes
 // ---------------------------------------------------------------------------
-
-export const schoolTeacherSchema = z.object({
-  firstName: nameField(),
-  lastName: nameField(),
-  // PIN email goes here when present; otherwise it falls back to the school
-  // contact email at approval time.
-  email: z.string().email().max(200).optional().nullable(),
-});
 
 type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
 
@@ -265,7 +267,7 @@ export function generateSchoolGuests(input: {
 }
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
-  const parsed = z.array(schoolTeacherSchema).safeParse(raw);
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
   if (!parsed.success) {
     throw new BookingRequestError("Stored school teachers are invalid", 500);
   }
@@ -937,6 +939,9 @@ export async function approveSchoolBookingRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
+  // transaction for the same reason (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -1238,7 +1243,8 @@ export async function approveSchoolBookingRequest(input: {
             actor: memberGuestActor,
             policy: memberGuestPolicy,
             bookingCheckIn: request.checkIn,
-          }
+          },
+          guestDietarySeeding
         );
         memberGuestNotificationRows = reassigned.memberGuestNotificationRows;
         displacedMemberGuestIds = reassigned.displacedMemberIds;
@@ -1316,6 +1322,13 @@ export async function approveSchoolBookingRequest(input: {
           policy: memberGuestPolicy,
           bookingCheckIn: request.checkIn,
         });
+        // #3029 (W8): a linked member is seeded from their profile; a teacher
+        // member this approval invented has no profile value to seed from.
+        const guestDietary = await resolveBookingGuestDietary(
+          tx,
+          guestDietarySeeding,
+          consentPlan.guests,
+        );
         const createdBooking = await tx.booking.create({
           data: {
             // #3369: the SCHOOL owns its booking. `Booking_owner_exactly_one`
@@ -1335,7 +1348,9 @@ export async function approveSchoolBookingRequest(input: {
             // Exclusive whole-lodge hold when the request asked for it (#121).
             ...exclusiveHoldData,
             guests: {
-              create: consentPlan.guests.map(toPipelineGuestCreateData),
+              create: consentPlan.guests.map((guest, index) =>
+                toPipelineGuestCreateData(guest, guestDietary[index]),
+              ),
             },
           },
           select: { id: true, guests: { select: { id: true, memberId: true } } },
@@ -2335,6 +2350,9 @@ export async function approveMemberWholeLodgeRequest(input: {
   const clubTodayDateOnly = dateOnlyInstantOf(
     clubToday(await readClubTimeZoneOutsideRequest()),
   );
+  // #3029 (`INV-MOD-059`): the dietary seeding toggle, read before the same
+  // transaction for the same reason (`INV-LOCK-004`).
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -2487,6 +2505,13 @@ export async function approveMemberWholeLodgeRequest(input: {
         today: clubTodayDateOnly,
         heldBookingId: null,
       });
+      // #3029 (W9): placeholder guests link no member, so nothing is seeded —
+      // resolved through the one door all the same.
+      const guestDietary = await resolveBookingGuestDietary(
+        tx,
+        guestDietarySeeding,
+        guestCreates,
+      );
 
       const booking = await tx.booking.create({
         data: {
@@ -2509,7 +2534,11 @@ export async function approveMemberWholeLodgeRequest(input: {
           // points. It is what nests each guest's canonical night set, and this
           // create used to hand `guestCreates` to Prisma raw — the one write
           // point that would have kept producing night-less guests.
-          guests: { create: guestCreates.map(toPipelineGuestCreateData) },
+          guests: {
+            create: guestCreates.map((guest, index) =>
+              toPipelineGuestCreateData(guest, guestDietary[index]),
+            ),
+          },
         },
         select: { id: true },
       });

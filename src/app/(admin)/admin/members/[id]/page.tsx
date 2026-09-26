@@ -24,7 +24,7 @@ import {
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import {
   canAdminRequestMembershipCancellation,
   NON_MEMBER_ROLE_VALUES,
@@ -659,9 +659,7 @@ export default function MemberDetailPage({
   }, [loading, member, openSection]);
 
   const isSelf = session?.user?.id === id;
-  const actorIsFullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
+  const actorIsFullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   const xeroRecoveryAlert = (
     <FocusedActionError

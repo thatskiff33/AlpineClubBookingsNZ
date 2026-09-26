@@ -7,6 +7,7 @@ import {
   ALLOWANCE_DIR,
   readSizeAllowances,
 } from "../lib/file-size-allowances";
+import { isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 
 /**
  * The reader for the deliberate escape from the ratchet (owner decision,
@@ -34,6 +35,27 @@ function newTree(files: Record<string, string> = {}): string {
 }
 
 describe("readSizeAllowances", () => {
+  it("shares the release compiler's portable filename rule", () => {
+    expect(isSafeAllowanceName("2991 old allowance.md")).toBe(true);
+    expect(isSafeAllowanceName("2991-āwhina.md")).toBe(true);
+    expect(isSafeAllowanceName("_fork-sync.md")).toBe(true);
+    expect(isSafeAllowanceName("-2991-fix.md")).toBe(true);
+    expect(isSafeAllowanceName("2991:old.md")).toBe(false);
+    expect(isSafeAllowanceName("CON.md")).toBe(false);
+    expect(isSafeAllowanceName("bad\u200e.md")).toBe(false);
+    expect(isSafeAllowanceName("../outside.md")).toBe(false);
+    expect(isSafeAllowanceName("2991-old.txt")).toBe(false);
+  });
+
+  it("refuses an unsafe direct-child filename through the reader", () => {
+    const root = newTree({
+      "bad\u200e.md": "file: src/lib/a.ts\nlines: 1200\nreason: keep this policy beside its existing consumers.\n",
+    });
+    const { allowances, problems } = readSizeAllowances(root);
+    expect(allowances).toEqual([]);
+    expect(problems[0]?.problem).toContain("unsafe allowance filename");
+  });
+
   it("reads file, length and reason, and ignores the prose around them", () => {
     const root = newTree({
       "2980-policy.md": [

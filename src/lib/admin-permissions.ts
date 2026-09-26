@@ -4,7 +4,7 @@ import {
   hasAdminAccess,
   isAccessRole,
   type AccessRoleDefinitionLevelFields,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
 
@@ -601,13 +601,13 @@ export function mergeAdminPermissionMatrices(
 }
 
 /**
- * AccessRoleInput extended with the matrix a JWT session carries (#1367).
+ * PrivilegeCheckInput extended with the matrix a JWT session carries (#1367).
  * `session.user.accessRoles` is enum-only (definition-backed custom roles
  * have `role: null` and vanish from it), so the auth `jwt` callback embeds
  * the merged matrix computed from the DB-joined member instead, and every
- * session.user-based check reads it here.
+ * session.user-based check reads it here. `canLogin` is required (#3603).
  */
-export type AdminPermissionInput = AccessRoleInput & {
+export type AdminPermissionInput = PrivilegeCheckInput & {
   adminPermissionMatrix?: unknown;
 };
 

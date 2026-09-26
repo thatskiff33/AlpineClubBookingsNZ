@@ -59,6 +59,10 @@ can book that lodge. There is no way to hide yourself from it. If that worries
 you, talk to your club — they choose whether the roster runs at all, and how
 much of a name it shows.
 
+**Nobody's dietary or allergy notes are here.** The roster never shows them, for
+you or anyone else. Only the club's booking officers and the hut leader running
+a stay see a stay's notes.
+
 **Some bookings will not be here.** The list shows only stays that are paid or
 finished. A booking somebody has made but not yet paid for does not appear, so
 the lodge may end up busier than the list suggests.

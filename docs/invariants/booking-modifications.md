@@ -1929,3 +1929,38 @@ single line, the reason under `requestPayload.priceLines`. Never a partial set.
 Pinned by the `booking-modification-lines`, `booking-modification-document-lines`
 and `xero-modification-line-items` suites, one sum assertion per edit site, and
 the supplementary-invoice and refund-document suites.
+
+## INV-MOD-059
+
+A booking guest's dietary/allergy value (`BookingGuest.dietaryRequirements`,
+#3029) is a SNAPSHOT of one stay. Who may read it is `INV-PRIV-022`; this is its
+lifecycle.
+
+- **Seeded once**, when the row is first created, from the linked member's
+  CURRENT profile value, only while the toggle is ON (read before the
+  transaction, `INV-LOCK-004`), and never while
+  that member's consent to be on the booking is PENDING. A non-member starts
+  empty. Turning the toggle ON backfills nothing.
+- **Independent afterwards.** A profile edit never rewrites it; the one admin
+  edit (`bookings:edit`, matched to the occupant the editor saw) never writes the
+  profile and is not a booking modification (`INV-MOD-001`).
+- **Preserved** by date moves, removal, promotion, price repair and
+  arrive/depart, which never name the column.
+- **One same-occupant rule** (`isSameBookingGuestOccupant`): the same member id;
+  for a non-member, a generated placeholder being named, or the same name or an
+  unambiguous spelling correction at the same age tier. A non-member renamed
+  (modification or school list), rewritten or linked to anybody else loses the
+  value; a member now on the row is seeded from their own profile. A row that
+  passes keeps its value, and one becoming a member's is filled only if empty,
+  as a granted consent is.
+- **Rebuilds carry by identity, never position.** An approval that rebuilds
+  or rewrites a held party locks its rows first; a rebuild carries a value only
+  on a member id, or an exact non-member name and tier, unique on both sides.
+  The cross-lodge offer carries every row; an admin copy re-seeds
+  (`INV-GUEST-011`).
+- **Limits.** Any hold release (correction, release route, quote expiry,
+  cancellation) strands a value entered on the held booking; the next hold
+  starts afresh. Drain limits: the migration ledger.
+
+Pinned by `member-dietary-booking-lifecycle.test.ts` and the writer census in
+`member-dietary-access-census.test.ts`.

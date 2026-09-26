@@ -122,6 +122,7 @@ const ORG_SESSION = {
     name: "Kaimai High School",
     role: "SCHOOL",
     accessRoles: ["ORG"],
+    canLogin: true,
   },
 };
 
@@ -242,6 +243,7 @@ describe("canViewCalendarEvents drives every calendar write gate too", () => {
       canEditCalendarEvents({
         role: "ADMIN",
         accessRoles: ["ADMIN"],
+        canLogin: true,
         adminPermissionMatrix: LODGE_EDIT_MATRIX,
       }),
     ).toBe(true);

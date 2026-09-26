@@ -9,6 +9,7 @@ import {
   LAST_FULL_ADMIN_GUARD_MESSAGE,
   PRIVILEGED_TARGET_GUARD_MESSAGE,
 } from "@/lib/admin-account-guards";
+import { LOGIN_HOLDER_SIGN_OUT_NOTICE } from "@/lib/admin-family-group-ui-helpers";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveEmail } from "@/lib/member-utils";
 import {
@@ -23,9 +24,6 @@ import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-
-const SESSION_LAG_WARNING =
-  "The previous holder's session may remain valid for up to 8 hours after the swap.";
 
 const loginHolderSchema = z.object({
   email: z.string().email(),
@@ -240,10 +238,12 @@ export async function POST(
       }
 
       if (currentHolder) {
+        // Same holder: never write false, it would sign them out (#3603).
+        const holderStays = currentHolder.id === newHolderId;
         await tx.member.update({
           where: { id: currentHolder.id },
           data: {
-            canLogin: false,
+            ...(holderStays ? {} : { canLogin: false }),
             email: requestedEmail,
             // #2716: pointer and CHOICE together. These are adults sharing one
             // login, pointed at the holder BY HAND. That is now ESTABLISHED
@@ -390,7 +390,7 @@ export async function POST(
               memberId: touchedMember.id,
               ...(currentHolder?.id === touchedMember.id &&
               currentHolder.id !== newHolderId
-                ? { sessionLagWarning: SESSION_LAG_WARNING }
+                ? { sessionNotice: LOGIN_HOLDER_SIGN_OUT_NOTICE }
                 : {}),
             }),
           },

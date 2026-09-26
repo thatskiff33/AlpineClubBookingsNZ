@@ -62,6 +62,7 @@ export default async function TwoFactorEnrollPage({
     landingPreference: session.user.postLoginLanding,
     permissionInput: {
       adminPermissionMatrix: session.user.adminPermissionMatrix,
+      canLogin: session.user.canLogin,
     },
   });
 

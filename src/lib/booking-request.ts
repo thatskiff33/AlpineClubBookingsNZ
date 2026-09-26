@@ -75,6 +75,15 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
+  bookingGuestDietaryCreateData,
+  bookingGuestDietaryUpdateData,
+  planHeldPartyRebuildDietary,
+  planHeldPartyRewriteDietary,
+  resolveBookingGuestDietary,
+  resolveBookingGuestDietarySeeding,
+  type BookingGuestDietarySeeding,
+} from "@/lib/member-dietary-booking-writes";
+import {
   priceBookingGuests,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -94,6 +103,7 @@ import { MEMBER_WHOLE_LODGE_GUEST_NAME_PREFIX } from "@/lib/placeholder-guest-na
 import { prisma } from "@/lib/prisma";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
@@ -1704,15 +1714,32 @@ export async function reassignHeldBookingGuests(
   tx: Prisma.TransactionClient,
   bookingId: string,
   guestCreates: HeldBookingGuestInput[],
-  memberGuest: ReassignMemberGuestContext
+  memberGuest: ReassignMemberGuestContext,
+  /**
+   * #3029 (`INV-MOD-059`): whether a guest who is NEW to the party is seeded from
+   * their dietary/allergy profile — the toggle, read by the caller before its
+   * transaction. REQUIRED for the same reason `memberGuest` is: both branches
+   * below rewrite who is on a row, and a missing answer could only mean leaving
+   * one person's allergy note on somebody else's row.
+   */
+  guestDietarySeeding: BookingGuestDietarySeeding
 ): Promise<ReassignHeldBookingGuestsResult> {
   const existing = await tx.bookingGuest.findMany({
     where: { bookingId },
     // MG4 (#2309) widens this select from `{ id }`. The two extra columns are
     // what make a SUBSTITUTION visible: without the old `memberId` this
     // function cannot tell "row 3 keeps Priya" from "row 3 is now Sione", and
-    // the person who was quietly dropped is never told.
-    select: { id: true, memberId: true, consentStatus: true },
+    // the person who was quietly dropped is never told. #3029 adds the name
+    // and age tier, which is how a NON-member row is recognised as the same
+    // person, so their dietary note stays and nobody else inherits it.
+    select: {
+      id: true,
+      memberId: true,
+      consentStatus: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+    },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
@@ -1779,6 +1806,16 @@ export async function reassignHeldBookingGuests(
     rows.filter((row) => !alreadyNotifiedMemberIds.has(row.targetMemberId));
 
   if (existing.length !== guestCreates.length) {
+    // #3029 (W13): decided BEFORE the delete, while the old rows still exist to
+    // be read. A value is carried only to the same person, matched by a key
+    // unique on both sides — never by position, because these two lists are
+    // different lengths and do not line up.
+    const rebuildDietary = await planHeldPartyRebuildDietary(
+      tx,
+      guestDietarySeeding,
+      bookingId,
+      planned,
+    );
     await tx.bookingGuest.deleteMany({ where: { bookingId } });
     // One `create` per guest rather than one `createMany` (#2739), then ONE
     // `createMany` for the whole party's night rows.
@@ -1803,7 +1840,7 @@ export async function reassignHeldBookingGuests(
       priceCents: number;
       priceSource: "SOLD" | "EVEN_SPLIT";
     }> = [];
-    for (const guest of planned) {
+    for (const [index, guest] of planned.entries()) {
       const row = await tx.bookingGuest.create({
         data: {
           bookingId,
@@ -1817,6 +1854,7 @@ export async function reassignHeldBookingGuests(
           priceCents: guest.priceCents,
           rateMembershipTypeId: guest.rateMembershipTypeId ?? null,
           ...(guest.memberGuestConsent ?? {}),
+          ...bookingGuestDietaryCreateData(rebuildDietary[index]),
         },
         select: { id: true, memberId: true },
       });
@@ -1864,7 +1902,18 @@ export async function reassignHeldBookingGuests(
     return { guest, previous };
   });
 
-  for (const { guest, previous } of rewrites) {
+  // #3029 (W14): the positional pairing above decides identity, price and
+  // nights; it must not decide whose dietary note a row holds. The same person
+  // keeps theirs untouched; a substituted member is seeded from their own
+  // profile; a row that has become a non-member is cleared.
+  const rewriteDietary = await planHeldPartyRewriteDietary(
+    tx,
+    guestDietarySeeding,
+    bookingId,
+    rewrites.map(({ guest, previous }) => ({ previous, next: guest })),
+  );
+
+  for (const [rewriteIndex, { guest, previous }] of rewrites.entries()) {
     /**
      * Is this row still the SAME person it was before the swap?
      *
@@ -1916,6 +1965,7 @@ export async function reassignHeldBookingGuests(
          */
         ...(guest.memberGuestConsent ??
           (sameOccupant ? {} : CONSENT_FREE_GUEST_COLUMNS)),
+        ...bookingGuestDietaryUpdateData(rewriteDietary[rewriteIndex]),
       },
     });
   }
@@ -2121,6 +2171,10 @@ export async function approveBookingRequest(input: {
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
     displacedMemberGuestIds: string[];
   };
+
+  // #3029 (W7/W13/W14, `INV-MOD-059`): read before the transaction below
+  // (`INV-LOCK-004`) and handed to every guest write it makes.
+  const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
@@ -2342,7 +2396,8 @@ export async function approveBookingRequest(input: {
             actor: memberGuestActor,
             policy: memberGuestPolicy,
             bookingCheckIn: request.checkIn,
-          }
+          },
+          guestDietarySeeding
         );
         memberGuestNotificationRows = reassigned.memberGuestNotificationRows;
         displacedMemberGuestIds = reassigned.displacedMemberIds;
@@ -2442,6 +2497,12 @@ export async function approveBookingRequest(input: {
           bookingCheckIn: request.checkIn,
         });
 
+        const guestDietary = await resolveBookingGuestDietary(
+          tx,
+          guestDietarySeeding,
+          consentPlan.guests,
+        );
+
         const createdBooking = await tx.booking.create({
           data: {
             memberId: member.id,
@@ -2456,7 +2517,9 @@ export async function approveBookingRequest(input: {
             notes: request.message,
             createdById: input.adminMemberId,
             guests: {
-              create: consentPlan.guests.map(toPipelineGuestCreateData),
+              create: consentPlan.guests.map((guest, index) =>
+                toPipelineGuestCreateData(guest, guestDietary[index]),
+              ),
             },
           },
           select: { id: true, guests: { select: { id: true, memberId: true } } },
@@ -2836,9 +2899,9 @@ export function buildBookingRequestListWhere(
 /**
  * The stored teachers/parent helpers, as the ADMIN QUEUE reads them.
  *
- * The names go through `nameField()` — the same helper `schoolTeacherSchema`
- * uses — because the panel and the server now answer the SAME question from
- * these two reads (#3412, review round 5, finding E). The panel builds the
+ * The names and email go through the same `schoolTeacherSchema` the acting
+ * path uses, because the panel and the server must answer the SAME question
+ * from these two reads (#3412, #3485). The panel builds the
  * party it is about to quote by putting these names in front of the generated
  * children and comparing that list to the stored one; the server rebuilds it
  * through `parseSchoolTeachers`, which trims and collapses CR/LF. A raw
@@ -2851,21 +2914,16 @@ export function buildBookingRequestListWhere(
  * misplaced-link warning fired against the teacher's own row, which disabled
  * Save quote too. Both doors shut on a request nothing was wrong with.
  *
- * A name the helper rejects (empty, or over 100 characters) now yields the same
- * empty list this parser has always returned for a shape it cannot read. That
- * is the answer the server already gives such a row — `parseSchoolTeachers`
- * refuses it outright — so the two reads agree there as well.
+ * A rejected teacher name or email yields the same empty list this parser has
+ * always returned for an unreadable shape, plus a school-only attention flag.
+ * The acting path refuses the entire list, so showing a partial one would
+ * misstate the party and could shift position-based guest/member links.
  */
-function parseAdminTeachers(raw: unknown) {
-  const schema = z.array(
-    z.object({
-      firstName: nameField(),
-      lastName: nameField(),
-      email: z.string().nullable().optional(),
-    })
-  );
-  const parsed = schema.safeParse(raw);
-  return parsed.success ? parsed.data : [];
+function readAdminTeachersForDisplay(raw: unknown) {
+  const parsed = storedSchoolTeacherListSchema.safeParse(raw);
+  return parsed.success
+    ? { teachers: parsed.data, needsAttention: false }
+    : { teachers: [], needsAttention: true };
 }
 
 export function serializeBookingRequestForAdmin(
@@ -2897,13 +2955,14 @@ export function serializeBookingRequestForAdmin(
   // is refused before it gets here; decline is the path that reaches this
   // serialiser with a flagged row, and it is the intended one.)
   //
-  // The two stored blobs are flagged SEPARATELY (#2342 review finding D). One
+  // The stored blobs are flagged SEPARATELY (#2342 review finding D). One
   // OR'd flag forced the panel to describe both failures whichever had
   // happened, so a row whose links were fine was told its links were hidden,
   // and a row whose names were fine was told to distrust them. Each flag means
   // exactly one thing: that blob failed its schema.
   const guestDisplay = readBookingRequestGuestsForDisplay(request.guests);
   const linkedDisplay = readLinkedGuestMembersForDisplay(request.linkedGuestMembers);
+  const teacherDisplay = readAdminTeachersForDisplay(request.teachers);
   return {
     id: request.id,
     type: request.type,
@@ -2935,7 +2994,7 @@ export function serializeBookingRequestForAdmin(
     // payload only: no member-facing serialiser reads this function.
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
-    teachers: parseAdminTeachers(request.teachers),
+    teachers: teacherDisplay.teachers,
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,
@@ -2953,6 +3012,11 @@ export function serializeBookingRequestForAdmin(
     // `linkedGuestMembers` above is then empty — no half-trusted links.
     ...(linkedDisplay.needsAttention
       ? { linkedMemberDataNeedsAttention: true }
+      : {}),
+    // General requests do not have a teacher blob. On school requests the flag
+    // names this blob alone; no partial list is trusted or displayed.
+    ...(request.type === BookingRequestType.SCHOOL && teacherDisplay.needsAttention
+      ? { teacherDataNeedsAttention: true }
       : {}),
     message: request.message,
     indicativePriceCents: request.indicativePriceCents,
