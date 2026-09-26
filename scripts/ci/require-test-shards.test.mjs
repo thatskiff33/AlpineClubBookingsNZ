@@ -28,16 +28,29 @@ describe("required verify's independent test-shard gate", () => {
     const matrixJob = workflow.jobs["test-shard"];
     expect(verify.needs).toBeUndefined();
     expect(verify.if).toBeUndefined();
+    expect(verify["continue-on-error"]).toBeUndefined();
     expect(verify.permissions.actions).toBe("read");
     expect(verify.permissions.contents).toBe("read");
-    expect(verify.steps.some((step) => step.run === "node scripts/ci/require-test-shards.mjs")).toBe(true);
+    const gateStep = verify.steps.find((step) => step.run === "node scripts/ci/require-test-shards.mjs");
+    expect(gateStep).toBeDefined();
+    expect(gateStep?.if).toBeUndefined();
+    expect(gateStep?.["continue-on-error"]).toBeUndefined();
     expect(verify.steps.some((step) => /(?:^|\s)npm test(?:\s|$)/.test(step.run ?? ""))).toBe(false);
+    expect(matrixJob.if).toBeUndefined();
+    expect(matrixJob["continue-on-error"]).toBeUndefined();
+    // Both jobs run the suite/build under one effective test environment.
+    // The pre-install workflow parser cannot expand YAML aliases, and a
+    // workflow-wide env would reach unrelated jobs, so pin complete equality.
+    expect(matrixJob.env).toEqual(verify.env);
     expect(matrixJob.strategy["fail-fast"]).toBe("false");
     expect(matrixJob.strategy.matrix.shard.map(Number)).toEqual([1, 2, 3, 4]);
     expect(matrixJob.strategy.matrix.shard).toHaveLength(EXPECTED_SHARD_COUNT);
     expect(matrixJob.name).toBe(`Test shard (${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT})`);
     expect(matrixJob.steps.find((step) => step.uses?.startsWith("actions/checkout"))?.with?.["fetch-depth"]).toBe("0");
-    expect(matrixJob.steps.some((step) => step.run === `npm test -- --shard=${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT}`)).toBe(true);
+    const testStep = matrixJob.steps.find((step) => step.run === `npm test -- --shard=${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT}`);
+    expect(testStep).toBeDefined();
+    expect(testStep?.if).toBeUndefined();
+    expect(testStep?.["continue-on-error"]).toBeUndefined();
     expect(workflow.jobs.verify.steps.at(-1).name).toBe("File-size budget ratchet");
   });
 
