@@ -6,7 +6,7 @@ alone: the two settlement conflicts and their shared record live in
 dead" questions in `src/lib/card-intent-retirement.ts`, the locked intent
 attach both card doors share in `src/lib/card-intent-attach.ts`, and the new
 admin alert in `src/lib/email/admin-alerts-settlement.ts`.
-`invoice-paid-effects.ts` ends shorter than it started. These files still grow.
+These files still grow.
 
 file: src/app/api/payments/switch-to-internet-banking/route.ts
 lines: 550
@@ -53,3 +53,11 @@ reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with
   the comment saying why it is locked.
+
+file: src/lib/xero-inbound/invoice-paid-effects.ts
+lines: 1718
+reason: the second-instrument marker has to be written inside this settle
+  transaction, beside the bank receipt it describes, so the two commit or roll
+  back together; the call sits at the two points the loop returns the
+  conflict. The detection, the marker writer and the alert all live in
+  `settlement-conflicts.ts`, which is where the rest of the growth went.

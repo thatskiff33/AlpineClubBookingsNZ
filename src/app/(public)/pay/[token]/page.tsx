@@ -456,9 +456,7 @@ export default function PayByLinkPage() {
                 {intentLoading ? "Preparing..." : "Pay by card"}
               </Button>
             ) : (
-              // #3638 (`INV-PAY-102`): the booking has switched to Internet
-              // Banking, so the card door would refuse; say so up front and
-              // leave the bank-transfer details below as the way to pay.
+              // #3638 (`INV-PAY-102`): switched to Internet Banking; the card door would refuse.
               <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
                 This booking is being paid by internet banking, so it can&apos;t be paid by
                 card here. Use the bank-transfer details below.
