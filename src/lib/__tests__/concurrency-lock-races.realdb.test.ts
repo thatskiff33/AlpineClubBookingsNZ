@@ -139,6 +139,13 @@ import "./booking-ledger-settlement-sync.realdb.test";
 // credit, and a hand-back completed through the real resolver. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3599-` fixtures.
 import "./booking-ledger-credit-sync.realdb.test";
+// #3640 reuses it to prove the one card-refund writer adds each refund exactly
+// once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
+// and add it once, and two recording DIFFERENT refunds both survive the mirror's
+// compare-and-set - each forced behind a held row lock, not raced for. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3640-`
+// fixtures.
+import "./card-refund-mirror-races.realdb.test";
 // #2941 reuses it to prove the application client's dietary/allergy omission
 // against PostgreSQL itself: absent from a plain read, a nested relation, an
 // interactive-transaction read and create/update results, present only through
