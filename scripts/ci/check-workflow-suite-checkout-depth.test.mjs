@@ -448,9 +448,10 @@ describe("this repository", () => {
 
     expect(problems).toEqual([]);
     expect(workflowCount).toBeGreaterThan(0);
-    // `verify` and the clock-rollover canary. If this number moves, a workflow
-    // started or stopped running the suite and that is worth a deliberate look.
-    expect(fullSuiteJobs).toBe(2);
+    // #3431 moved CI's full suite to Vitest's four-file shards. The canary is
+    // now the one unsharded run; require-test-shards.test.mjs pins the matrix
+    // checkout depth and partition, so neither path can quietly lose coverage.
+    expect(fullSuiteJobs).toBe(1);
   });
 
   it("runs the file-size ratchet as verify's actual final step", () => {
@@ -472,17 +473,18 @@ describe("this repository", () => {
     });
   });
 
-  it("sees the whole suite in ci.yml's `verify` and in the canary", () => {
+  it("sees ci.yml's sharded suite and the canary's unsharded suite", () => {
     const read = (name) =>
       readFileSync(path.join(REPO_ROOT, ".github", "workflows", name), "utf8");
 
-    const verify = parseWorkflowYaml(read("ci.yml")).jobs.verify;
+    const jobs = parseWorkflowYaml(read("ci.yml")).jobs;
     expect(
-      verify.steps
+      jobs["test-shard"].steps
         .filter((step) => typeof step.run === "string")
         .flatMap((step) => classifyRunScript(step.run))
         .map((invocation) => invocation.kind),
-    ).toContain("full-suite");
+    ).toContain("targeted");
+    expect(jobs.verify.steps.some((step) => step.run === "node scripts/ci/require-test-shards.mjs")).toBe(true);
 
     const canary = parseWorkflowYaml(read("clock-rollover-canary.yml")).jobs[
       "wound-forward-suite"
