@@ -34,8 +34,7 @@ import {
   createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
-import type { CashRefundMethod } from "@/lib/xero-refund-method";
-import type { ModificationNoteWording } from "@/lib/xero-refund-method";
+import type { CashRefundMethod, ModificationNoteWording } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
@@ -2243,12 +2242,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
   } & ModificationNoteWording,
   options?: {
     createdByMemberId?: string;
-    /**
-     * The caller's transaction client, so the outbox row commits with the state
-     * change that owes it (#3535: the internet-banking hold-expiry release,
-     * `INV-PAY-017`). Every read and the insert go through it, so the dedupe
-     * below sees that transaction's own uncommitted rows. Defaults to `prisma`.
-     */
+    /** The caller's transaction (#3535, `INV-PAY-017`): reads, dedupe and insert commit with it. */
     store?: Prisma.TransactionClient;
   }
 ) {
