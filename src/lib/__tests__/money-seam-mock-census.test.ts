@@ -45,10 +45,12 @@
  *   - AN INDIRECT MOCK OF THE SEAM'S OWN COLLABORATORS. Mocking the query the
  *     seam reads to return `[]` — exactly what #543 did — leaves the seam
  *     "real" and inert. The census cannot tell an honest empty ledger from a
- *     muzzled one. The compensating control is the witness pin below: each
- *     seam must run unmocked in at least one suite that asserts its money, and
- *     `superseded-additional-ask-integration.test.ts` does so over a ledger that
- *     actually holds the row being retired.
+ *     muzzled one. The compensating control is the PINNED witness below,
+ *     `superseded-additional-ask-integration.test.ts`, which runs every seam
+ *     over a ledger that actually holds the row being retired. The per-seam
+ *     witness check beside it is only a heuristic: a source-scanning census
+ *     that names a seam in an `expect` satisfies it without running anything
+ *     (`booking-ledger-census.test.ts` does, measured when this landed).
  *   - An assertion that pins the ask only through a figure spelled outside the
  *     seam's vocabulary, or an `expect` built in a helper in another file.
  *   - A module that re-exports a seam under another path. None exists today.
