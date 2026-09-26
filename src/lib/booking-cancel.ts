@@ -1457,12 +1457,9 @@ async function performBookingCancellation(
         if (foldedCents <= 0) {
           break;
         }
-        if (row.amountCents - row.refundedAmountCents <= 0) {
-          continue;
-        }
-        // An increment through the shared compare-and-set (#3640), never
-        // `read + bump`: the charge.refunded webhook takes no lock, so a card
-        // refund it commits between this read and the write must survive.
+        // Capped at the row's headroom, as an increment through the shared
+        // compare-and-set (#3640): the charge.refunded webhook takes no lock,
+        // so a card refund it commits between this read and the write survives.
         foldedCents -= await foldIntoTransactionRefundedAmount({
           paymentTransactionId: row.id,
           amountCents: foldedCents,
