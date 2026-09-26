@@ -17,10 +17,7 @@ import logger from "@/lib/logger";
 import { BookingEventType, BookingStatus, PaymentSource } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
-import {
-  SWITCHED_TO_INTERNET_BANKING_CODE,
-  attachMintedCardIntent,
-} from "@/lib/card-intent-attach";
+import { attachMintedCardIntent } from "@/lib/card-intent-attach";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
@@ -50,6 +47,7 @@ import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
+  SWITCHED_TO_INTERNET_BANKING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -94,14 +92,7 @@ class PaymentIntentReviewPendingError extends Error {
  * needs one arm for it.
  */
 function switchedToInternetBankingResponse() {
-  return NextResponse.json(
-    {
-      error:
-        "This booking is being paid by Internet Banking, so it can't be paid by card. Reload the booking to see the invoice details.",
-      code: SWITCHED_TO_INTERNET_BANKING_CODE,
-    },
-    { status: 409 }
-  );
+  return NextResponse.json(SWITCHED_TO_INTERNET_BANKING_BODY, { status: 409 });
 }
 
 export async function POST(request: NextRequest) {

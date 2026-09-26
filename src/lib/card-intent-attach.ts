@@ -34,9 +34,6 @@ import logger from "@/lib/logger";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 
-/** The machine-readable code both doors' Internet Banking refusal carries. */
-export const SWITCHED_TO_INTERNET_BANKING_CODE = "SWITCHED_TO_INTERNET_BANKING";
-
 export type CardIntentAttachOutcome =
   | "attached"
   | "switchedToInternetBanking"
