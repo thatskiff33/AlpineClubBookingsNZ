@@ -95,6 +95,7 @@ function makeStrandRow(
     bookingId: "booking_1",
     bookingStatus: "PAYMENT_PENDING",
     paymentStatus: "PENDING",
+    transactions: [],
     amountCents: 10000,
     creditAppliedCents: 3000,
     finalPriceCents: 10000,
@@ -123,12 +124,24 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     expect(finding?.strandExposureCents).toBe(3000);
   });
 
-  it("flags a paid IB booking as a REALIZED double-pay", () => {
+  it("flags a transaction-proven paid IB booking as a REALIZED double-pay", () => {
     const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({ paymentStatus: "SUCCEEDED", bookingStatus: "PAID" }),
+      makeStrandRow({
+        paymentStatus: "SUCCEEDED",
+        bookingStatus: "PAID",
+        transactions: [{ status: "SUCCEEDED" }],
+      }),
     );
     expect(finding?.realized).toBe(true);
     expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("keeps an IB row pending when a credit-note repair changed only its mirror", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({ paymentStatus: "REFUNDED", bookingStatus: "PAID" }),
+    );
+
+    expect(finding?.realized).toBe(false);
   });
 
   it("surfaces the stale mirror on a switched (card-origin) payment", () => {

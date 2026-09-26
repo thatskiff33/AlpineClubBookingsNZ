@@ -51,6 +51,7 @@ import {
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -65,11 +66,7 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
 }
 
 function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
-  return (
-    status === PaymentStatus.SUCCEEDED ||
-    status === PaymentStatus.PARTIALLY_REFUNDED ||
-    status === PaymentStatus.REFUNDED
-  );
+  return isCapturedTransactionStatus(status);
 }
 
 // F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A

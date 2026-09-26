@@ -17,6 +17,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -86,11 +87,7 @@ export async function POST(
       return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
     }
 
-    if (
-      paymentTransaction.status === "SUCCEEDED" ||
-      paymentTransaction.status === "PARTIALLY_REFUNDED" ||
-      paymentTransaction.status === "REFUNDED"
-    ) {
+    if (isCapturedTransactionStatus(paymentTransaction.status)) {
       const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
         paymentIntentId
       );

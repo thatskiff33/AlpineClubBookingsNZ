@@ -1605,6 +1605,11 @@ expected clearing, actual (enqueued) clearing, and the open delta. It reads only
 local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
 hold released, which is exactly what the pre-fix release enqueued.
 
+Its applied-credit strand section reports an already-realized loss only when a
+captured `PaymentTransaction` proves cash arrived. The aggregate payment status
+is a mutable mirror and is not cash evidence: an inbound Xero credit-note repair
+can change it on an Internet-Banking payment that was never paid.
+
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json

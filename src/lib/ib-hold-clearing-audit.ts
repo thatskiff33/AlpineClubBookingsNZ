@@ -25,6 +25,7 @@ import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import type { ClubFormat } from "@/lib/club-format";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 export interface IbHoldClearingRow {
   paymentId: string;
@@ -276,6 +277,10 @@ export interface IbAppliedCreditStrandRow {
   bookingId: string;
   bookingStatus: string;
   paymentStatus: string;
+  /** Durable settlement evidence. Aggregate `Payment.status` is a mutable
+   * mirror and may show REFUNDED after an inbound Xero credit-note repair on an
+   * Internet-Banking payment that never captured cash (INV-PAY-018). */
+  transactions: Array<{ status: PaymentStatus }>;
   /** payment.amountCents mirror. */
   amountCents: number;
   /** payment.creditAppliedCents mirror (0 on a card-origin switched payment,
@@ -353,16 +358,6 @@ export interface IbAppliedCreditStrandAuditResult {
   pendingExposureCents: number;
 }
 
-// A payment is "realized" once cash has been captured. Internet-Banking payments
-// flip to SUCCEEDED when the Xero invoice reconciles to PAID; the refunded
-// variants imply an earlier capture. Everything else (PENDING / PROCESSING /
-// FAILED) has not taken the member's money yet.
-const REALIZED_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "REFUNDED",
-  "PARTIALLY_REFUNDED",
-]);
-
 /**
  * Pure per-row classification. Returns a finding only when the ledger shows
  * applied credit still consumed against this booking; otherwise null.
@@ -379,7 +374,9 @@ export function deriveIbAppliedCreditStrandFinding(
     paymentId: row.paymentId,
     bookingStatus: row.bookingStatus,
     paymentStatus: row.paymentStatus,
-    realized: REALIZED_PAYMENT_STATUSES.has(row.paymentStatus),
+    realized: row.transactions.some((transaction) =>
+      isCapturedTransactionStatus(transaction.status),
+    ),
     amountCents: row.amountCents,
     creditAppliedCents: row.creditAppliedCents,
     finalPriceCents: row.finalPriceCents,
@@ -421,6 +418,7 @@ export async function auditIbAppliedCreditStrands(options?: {
       // #2397: the generalised mirror's third term.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
+      transactions: { select: { status: true } },
       booking: { select: { finalPriceCents: true, status: true } },
     },
     orderBy: { createdAt: "asc" },
@@ -454,6 +452,7 @@ export async function auditIbAppliedCreditStrands(options?: {
       bookingId: payment.bookingId,
       bookingStatus: payment.booking.status,
       paymentStatus: payment.status,
+      transactions: payment.transactions,
       amountCents: payment.amountCents,
       creditAppliedCents: payment.creditAppliedCents,
       finalPriceCents: payment.booking.finalPriceCents,
