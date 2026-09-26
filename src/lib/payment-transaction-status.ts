@@ -22,11 +22,25 @@ import { PaymentStatus } from "@prisma/client";
  * Money was taken. A refunded transaction stays captured — its capture
  * happened; the refund is a separate fact with its own line.
  */
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
+/**
+ * The `PaymentTransaction.status` values whose money was captured. Prisma
+ * readers use this list; in-memory readers use the predicate below.
+ */
+export const CAPTURED_TRANSACTION_STATUS_LIST = [
   PaymentStatus.SUCCEEDED,
   PaymentStatus.PARTIALLY_REFUNDED,
   PaymentStatus.REFUNDED,
-]);
+] as const satisfies readonly PaymentStatus[];
+
+const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>(
+  CAPTURED_TRANSACTION_STATUS_LIST
+);
+
+/** Captured rows that still hold cash after refunds. */
+export const CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST = [
+  PaymentStatus.SUCCEEDED,
+  PaymentStatus.PARTIALLY_REFUNDED,
+] as const satisfies readonly PaymentStatus[];
 
 /**
  * #3170 exported this. "Has this transaction's money actually been taken?" had

@@ -66,6 +66,7 @@ import {
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
 } from "@/lib/booking-payment-state";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import {
   bookingHasCapacityOverride,
@@ -1161,7 +1162,7 @@ async function settleBookingPaymentInTransaction(
             paymentId: payment.id,
             kind: PaymentTransactionKind.PRIMARY,
             status: {
-              in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+              in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
             },
             OR: [
               {
@@ -2634,7 +2635,7 @@ export async function reverseManualBookingPayment({
         paymentId: payment.id,
         source: PaymentSource.STRIPE,
         status: {
-          in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+          in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
         },
       },
       select: { id: true },

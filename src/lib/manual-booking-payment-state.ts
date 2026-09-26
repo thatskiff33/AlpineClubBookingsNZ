@@ -1,11 +1,12 @@
 import "server-only";
 
-import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   isManualSettleFromPaymentStatus,
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
 } from "@/lib/booking-payment-state";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import type { BookingManualPaymentState } from "@/components/admin/booking-manual-payment-controls";
 
@@ -180,7 +181,7 @@ export async function getBookingManualPaymentState(
             paymentId: payment.id,
             source: PaymentSource.STRIPE,
             status: {
-              in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+              in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
             },
           },
           select: { id: true },

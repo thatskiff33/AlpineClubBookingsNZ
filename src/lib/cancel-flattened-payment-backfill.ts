@@ -15,18 +15,11 @@
 import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { applyLegacyRefundStatus } from "@/lib/xero-booking-repair-payments";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 // The full client, not a nested TransactionClient: the apply path opens its own
 // $transaction, so it must not run inside another one.
 type BackfillStore = typeof prisma;
-
-// The statuses booking-cancel's #1489 capture discriminator treats as ledger
-// capture evidence (a PaymentTransaction row that holds/held money).
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 // Minimal shape needed to reproduce the #1489 capture discriminator and the
 // repair-pass synthesis. Kept independent of the heavier bookingRepairSelect.
@@ -68,7 +61,7 @@ export function paymentHasCaptureEvidence(
   payment: FlattenedCandidatePayment
 ): boolean {
   const hasCapturedLedgerRow = payment.transactions.some((transaction) =>
-    CAPTURED_TRANSACTION_STATUSES.has(transaction.status)
+    isCapturedTransactionStatus(transaction.status)
   );
   return (
     hasCapturedLedgerRow ||
