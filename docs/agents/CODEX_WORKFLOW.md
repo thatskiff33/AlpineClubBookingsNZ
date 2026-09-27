@@ -256,13 +256,13 @@ Only then verify the worktree is clean, its head is merged into the intended
 base, and run `git worktree remove` on that exact path. Do not use `-Force` to
 paper over a failed safety check.
 
-**A pnpm worktree: remove `node_modules` first, with the helper.** pnpm's strict
-layout builds `node_modules` from about 2,700 directory junctions per worktree
-here, and `git worktree remove` cannot delete them. Measured on git
-2.53.0.windows.1 (#3673): it deregistered the worktree, deleted part of it, and
-stopped with "Directory not empty", leaving a half-deleted folder git no longer
-knows about. The helper does the removal in the order that works and refuses
-before deleting anything when a check fails:
+**A pnpm worktree: remove it with the helper, never with bare git.** pnpm's
+strict layout builds `node_modules` from about 2,700 directory junctions per
+worktree here. Measured on git 2.53.0.windows.1 (#3673), `git worktree remove`
+cannot delete them (it deregistered the worktree, deleted part of it and stopped
+with "Directory not empty"), and it FOLLOWS a junction it meets anywhere in the
+tree and deletes the target's contents. So the helper deletes the directory
+itself and asks git only to forget the registration:
 
 ```powershell
 pnpm run worktree:remove C:\path\to\exact-worktree                     # merged into origin/main
@@ -271,30 +271,30 @@ pnpm run worktree:remove C:\path\to\exact-worktree --allow-unmerged      # an ab
 ```
 
 Run it from outside the worktree it removes (the main checkout is the usual
-place). It refuses, before deleting anything:
+place). Before deleting anything it refuses:
 
 - the main checkout, a path that is not a registered worktree, or a locked one;
 - being run from inside the target (the current directory or `INIT_CWD`);
 - a top-level `node_modules` that is itself a link (the legacy shape above, which
   needs the manual unlink);
-- **any other symlink or junction anywhere in the worktree.** Review reproduced
-  that `git worktree remove` on Windows follows a junction it meets and empties
-  the target, including one inside a git-ignored folder such as `.cache/`, which
-  `git status` never shows. The refusal lists the links; delete the links (not
-  their targets) and run it again;
+- any symlink, junction or other reparse point outside the top-level
+  `node_modules` and `.next` (both generated, and full of links: a built
+  worktree's `.next` held 200). A link is anything `readdir` or `lstat` flags,
+  or a directory whose real path is not its own path, which is how a junction
+  to a `\\?\Volume{…}` path or a mount point shows up (`lstat` calls those
+  plain directories). The refusal lists them; delete the links, not their
+  targets, and run it again;
+- any folder it cannot read, since it could hide a link;
 - uncommitted or untracked work, and an unmerged HEAD without `--allow-unmerged`.
 
-Then it deletes the top-level `node_modules` with Node's `fs.rmSync`, which
-unlinks each junction instead of descending through it, and runs
-`git worktree remove` without `--force` on a tree that has no links left in it.
-What is guaranteed is exactly that: nothing is deleted before every check passes,
-`node_modules`' own links are unlinked rather than followed, and git never sees a
-link. (The junctions under `node_modules` point into that worktree's own
-`node_modules/.pnpm` because the global virtual store stays off,
-`enableGlobalVirtualStore: false`, and package files are hard links into the
-shared store, which unlinking does not change.) If a removal already failed
-half-way, check the folder for links as above, then `cmd /c rmdir /s /q <path>`
-and `git worktree prune`.
+What is then guaranteed: the whole directory is deleted with Node's `fs.rmSync`,
+which removes a link itself rather than descending into it (verified on Windows
+for drive-letter and volume-path junctions, so it also covers a link that
+appears after the checks); if anything is left on disk the registration is
+**kept** and the tool says so, so the lane stays visible to git and can be
+retried; only when the directory is gone does it run `git worktree prune` and
+check that git no longer lists it. (`prune` also forgets any other registration
+whose directory is already missing; locked ones are kept.)
 
 ### 4. Preserve progress while lanes run
 

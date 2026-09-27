@@ -23,6 +23,11 @@ updates:
       # whole minor-and-patch group red. Dependabot puts a dependency in the
       # FIRST group that matches, which is why this one comes first.
       install-scripts:
+        # Minor and patch only, as in the group below: a major version still
+        # arrives as a PR of its own.
+        update-types:
+          - minor
+          - patch
         patterns:
           - "prisma"
           - "@prisma/*"

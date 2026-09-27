@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const NPM_COMMAND =
-  /(?<![\w/.@-])npm (?:run|test|ci|install|i|exec|start|audit)\b|(?<![\w-])npx(?:\s|$)/g;
+  /(?<![\w/.@-])npm (?:--?[\w-]+(?:=\S+)? )*(?:run|test|ci|install|i|exec|start|audit|update|up)\b|(?<![\w-])npx(?:\s|$)/g;
 
 const SCOPE = [
   "AGENTS.md",

@@ -75,6 +75,10 @@
     "psql", // src/lib/backup.ts + scripts/audit-access-role-membership-cleanup.ts
     "pg_dump", // src/lib/backup.ts logical backups
     "gunzip", // src/lib/backup.ts restore path
+    // Windows system tools the worktree-removal suite uses to build a
+    // volume-path junction and an unreadable folder (#3673).
+    "mountvol",
+    "icacls",
     "k6" // load/ harness, run via the `load:*` scripts (#1884); host binary, not a dep
   ],
   "ignoreIssues": {

@@ -417,11 +417,19 @@ describe("repository agent workflow contract", () => {
     const files = [
       "AGENTS.md",
       "CONTRIBUTING.md",
-      ...readdirSync(resolve(process.cwd(), "docs/agents"))
-        .filter((name) => name.endsWith(".md"))
-        .map((name) => `docs/agents/${name}`),
+      // Recursive: skills (`codex/**/SKILL.md`), profiles and the workflow and
+      // label examples are copied from as literally as the top-level guides.
+      ...readdirSync(resolve(process.cwd(), "docs/agents"), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.(?:md|toml|ya?ml)$/.test(entry.name))
+        .map((entry) =>
+          `${entry.parentPath}/${entry.name}`
+            .replace(/\\/g, "/")
+            .slice(resolve(process.cwd()).replace(/\\/g, "/").length + 1),
+        ),
     ];
     expect(files).toContain("docs/agents/CODEX_WORKFLOW.md");
+    expect(files).toContain("docs/agents/codex/skills/alpineclub-issue-worker/SKILL.md");
+    expect(files.some((file) => file.startsWith("docs/agents/examples/"))).toBe(true);
     const found: string[] = [];
     for (const file of files) {
       readRepoFile(file)
