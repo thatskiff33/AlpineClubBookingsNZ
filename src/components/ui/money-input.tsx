@@ -39,7 +39,7 @@ export interface MoneyInputProps extends NativeMoneyInputProps {
 function hasThirdFractionalDigit(value: string): boolean {
   // Preserve malformed text for the caller's visible validation. Only reject the
   // one edit this control owns: a plain decimal amount gaining a third digit.
-  return /^[+-]?\d*\.\d{3,}$/.test(value);
+  return /^[+-]?\d*\.\d{3,}$/.test(value.trim());
 }
 
 function formatCents(cents: number): string {
@@ -87,21 +87,33 @@ export function MoneyInput({
     : parseDecimalDollarsToCents;
   const controlsDisabled = disabled || readOnly;
 
+  const canStep = (direction: 1 | -1) => {
+    if (controlsDisabled) return false;
+    const parsed = parser(value);
+    if (parsed === null) return false;
+    const next = parsed + direction * 100;
+    if (!Number.isSafeInteger(next)) return false;
+    if (!allowNegative && next < 0) return false;
+    if (validBound(minCents) && next < minCents) return false;
+    if (validBound(maxCents) && next > maxCents) return false;
+    // The exact parser owns the int32-safe cents ceiling for this boundary.
+    return parser(formatCents(next)) !== null;
+  };
+
   const changeValue = (next: string) => {
     if (!hasThirdFractionalDigit(next)) onValueChange(next);
   };
 
   const step = (direction: 1 | -1) => {
-    if (controlsDisabled) return;
+    if (!canStep(direction)) return;
     const parsed = parser(value);
-    if (parsed === null) return;
+    if (parsed === null) return; // narrowed by canStep; keeps the value explicit.
     const next = parsed + direction * 100;
-    if (!Number.isSafeInteger(next)) return;
-    if (!allowNegative && next < 0) return;
-    if (validBound(minCents) && next < minCents) return;
-    if (validBound(maxCents) && next > maxCents) return;
     onValueChange(formatCents(next));
   };
+
+  const increaseDisabled = !canStep(1);
+  const decreaseDisabled = !canStep(-1);
 
   return (
     <div className="space-y-1">
@@ -135,7 +147,7 @@ export function MoneyInput({
             className={cn(
               "flex h-[18px] w-7 items-center justify-center rounded-t-md border border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
             )}
-            disabled={controlsDisabled}
+            disabled={increaseDisabled}
             onClick={() => step(1)}
           >
             <ChevronUp aria-hidden="true" className="size-3" />
@@ -146,7 +158,7 @@ export function MoneyInput({
             className={cn(
               "flex h-[18px] w-7 items-center justify-center rounded-b-md border-x border-b border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
             )}
-            disabled={controlsDisabled}
+            disabled={decreaseDisabled}
             onClick={() => step(-1)}
           >
             <ChevronDown aria-hidden="true" className="size-3" />

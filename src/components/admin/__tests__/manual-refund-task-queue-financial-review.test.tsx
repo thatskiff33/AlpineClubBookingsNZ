@@ -647,7 +647,7 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
 
     const dialog = screen.getByRole("dialog");
     const buttonName = (button: HTMLElement) =>
-      (button.textContent ?? "").trim();
+      button.getAttribute("aria-label") ?? (button.textContent ?? "").trim();
     /*
       The inventory, pinned. A new control on this dialog fails HERE and has to
       be added below - at which point the loop underneath presses it and proves
@@ -656,7 +656,29 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     */
     expect(
       new Set(within(dialog).getAllByRole("button").map(buttonName)),
-    ).toEqual(new Set(["Close", "Cancel", "Close with no adjustment"]));
+    ).toEqual(
+      new Set([
+        "Close",
+        "Cancel",
+        "Close with no adjustment",
+        "Increase amount by one dollar",
+        "Decrease amount by one dollar",
+      ]),
+    );
+
+    // The two controls attached to the blank second night must not invent its
+    // value. Target them by their accessible names, rather than weakening the
+    // dialog's exhaustive button inventory to ignore the shared money control.
+    for (const name of [
+      "Increase amount by one dollar",
+      "Decrease amount by one dollar",
+    ]) {
+      const controls = within(dialog).getAllByRole("button", { name });
+      expect(controls).toHaveLength(2);
+      const blankNightControl = controls[1];
+      expect(blankNightControl).toBeDisabled();
+      fireEvent.click(blankNightControl);
+    }
 
     const waysOut = new Set(["Close", "Cancel"]);
     const confirm = within(dialog).getByRole("button", {

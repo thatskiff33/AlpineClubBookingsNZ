@@ -31,11 +31,14 @@ describe("MoneyInput", () => {
     expect(input).toHaveProperty("value", "35.00");
   });
 
-  it("rejects a pasted third fractional digit while retaining other invalid text", () => {
+  it("rejects a pasted third fractional digit, including parser-trimmed whitespace", () => {
     render(<Harness />);
     const input = screen.getByRole("textbox");
 
     fireEvent.change(input, { target: { value: "35.000" } });
+    expect(input).toHaveProperty("value", "12.34");
+
+    fireEvent.change(input, { target: { value: " 35.000 " } });
     expect(input).toHaveProperty("value", "12.34");
 
     fireEvent.change(input, { target: { value: "$35.00" } });
@@ -54,7 +57,7 @@ describe("MoneyInput", () => {
     expect(input).toHaveProperty("value", "11.34");
   });
 
-  it("does not step past cents bounds or from invalid text", () => {
+  it("disables unavailable step directions at bounds, malformed drafts, and the canonical ceiling", () => {
     const onValueChange = vi.fn();
     const { rerender } = render(
       <MoneyInput value="0.00" onValueChange={onValueChange} minCents={0} maxCents={0} />,
@@ -62,8 +65,16 @@ describe("MoneyInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Decrease amount by one dollar" }));
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "ArrowUp" });
     expect(onValueChange).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Increase amount by one dollar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Decrease amount by one dollar" }) as HTMLButtonElement).disabled).toBe(true);
 
     rerender(<MoneyInput value="bad" onValueChange={onValueChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Increase amount by one dollar" }));
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Increase amount by one dollar" }) as HTMLButtonElement).disabled).toBe(true);
+
+    rerender(<MoneyInput value="21474836.47" onValueChange={onValueChange} />);
+    expect((screen.getByRole("button", { name: "Increase amount by one dollar" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Increase amount by one dollar" }));
     expect(onValueChange).not.toHaveBeenCalled();
   });
