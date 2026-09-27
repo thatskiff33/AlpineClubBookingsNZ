@@ -82,7 +82,6 @@ import {
   adminSupersededPaymentRefundTemplate,
   adminLateCaptureAutoRefundTemplate,
   adminLateCaptureHandBackConflictTemplate,
-  adminInternetBankingHoldKeptTemplate,
   adminManualRefundTaskTemplate,
   adminManualSettlementConflictTemplate,
   adminSecondInstrumentSettlementConflictTemplate,
@@ -91,6 +90,7 @@ import {
   adminXeroRepeatedFailureTemplate,
   adminXeroSyncErrorTemplate,
 } from "@/lib/email-templates/admin-finance";
+import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import {
   adminAccountDeletionRequestedTemplate,
   adminFamilyGroupRequestTemplate,

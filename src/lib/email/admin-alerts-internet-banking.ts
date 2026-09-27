@@ -1,4 +1,4 @@
-import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-finance";
+import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import {
   internetBankingHoldKeptParagraph,
   type InternetBankingHoldKeptReason,

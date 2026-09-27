@@ -1,15 +1,14 @@
 /**
  * Admin alerts raised by a money EVENT: a payment failure, a duplicate or late
  * capture, a settlement conflict, a hand-back that needs doing by hand, a
- * refund appeal, an expired internet banking hold kept because money may be
- * paid against it, and the two Xero sync faults.
+ * refund appeal, and the two Xero sync faults.
  *
  * The family boundary is `src/lib/email/admin-alerts-finance.ts`. The two
  * SCHEDULED reconciliation reports from the same sender live in
  * `./admin-xero-reports` — split off for size, and because a report renders a
- * whole tabular document rather than a single alert. The kept-hold alert's
- * sender is `src/lib/email/admin-alerts-internet-banking.ts` (#3643, split
- * off for size).
+ * whole tabular document rather than a single alert. The expired internet
+ * banking hold alert (#3643) lives in `./admin-internet-banking`, split off for
+ * size.
  */
 import { escapeHtml } from "./escape";
 import {
@@ -24,8 +23,6 @@ import {
 } from "./layout";
 import {
   duplicateCaptureRefundOutcomeParagraph,
-  internetBankingHoldKeptParagraph,
-  type InternetBankingHoldKeptReason,
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
@@ -39,7 +36,6 @@ import {
   emailClubDateTime,
 } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import { formatBookingReference } from "@/lib/booking-reference";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
@@ -568,61 +564,6 @@ export function adminManualRefundTaskTemplate(data: {
       { label: "Amount to refund", value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
     ])}
-    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
-  `);
-}
-
-// ---- #3643: Admin Alert — expired internet banking hold kept ----
-//
-// The hold-expiry job could not simply release an expired hold: money may be
-// paid against its invoice, or Xero could not be read (`INV-PAY-107`). The
-// reason paragraph is the whole instruction; the table carries what the
-// treasurer needs to find the money.
-export function adminInternetBankingHoldKeptTemplate(data: {
-  reason: InternetBankingHoldKeptReason;
-  memberName: string;
-  bookingId: string;
-  checkIn: Date;
-  checkOut: Date;
-  holdUntil: Date;
-  /** Null when Xero could not be read, so nobody knows. */
-  paidCents: number | null;
-  amountOwingCents: number | null;
-  xeroInvoiceNumber: string | null;
-  xeroInvoiceUrl: string | null;
-  reviewUrl: string;
-},
-  format: ClubFormat,
-): string {
-  return layout(`
-    ${heading("Internet Banking Hold Needs Attention")}
-    ${alertBox(internetBankingHoldKeptParagraph(data.reason), "warning")}
-    ${infoTable([
-      { label: "Member", value: escapeHtml(data.memberName) },
-      {
-        label: "Booking",
-        value: `${escapeHtml(formatBookingReference(data.bookingId))} (${escapeHtml(data.bookingId)})`,
-      },
-      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
-      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Hold deadline", value: emailClubDateTime(data.holdUntil) },
-      {
-        label: "Paid so far",
-        value: data.paidCents === null ? "unknown" : formatCents(data.paidCents, format),
-      },
-      {
-        label: "Still owing",
-        value:
-          data.amountOwingCents === null
-            ? "unknown"
-            : formatCents(data.amountOwingCents, format),
-      },
-      {
-        label: "Xero invoice",
-        value: data.xeroInvoiceNumber ? escapeHtml(data.xeroInvoiceNumber) : "unknown",
-      },
-    ])}
-    ${data.xeroInvoiceUrl ? button("Open the invoice in Xero", data.xeroInvoiceUrl) : ""}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
   `);
 }

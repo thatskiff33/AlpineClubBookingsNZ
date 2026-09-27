@@ -39,7 +39,7 @@ reason: one import; the superseded-intent cancel now reads the shared
   predicate instead of spelling the rule inline.
 
 file: src/lib/email-message-registry.ts
-lines: 2130
+lines: 2131
 reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with

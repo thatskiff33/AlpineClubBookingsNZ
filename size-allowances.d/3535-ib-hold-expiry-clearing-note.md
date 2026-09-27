@@ -49,7 +49,7 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1730
+lines: 1734
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
