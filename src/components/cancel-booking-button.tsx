@@ -20,6 +20,10 @@ import {
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  ForcedCreditRefundNote,
+  NoRefundablePaymentNote,
+} from "@/components/cancel-booking-payment-notes";
 
 interface CancelPreview {
   refundAmountCents: number;
@@ -437,17 +441,7 @@ export function CancelBookingButton({
 
         {!preview.hasPayment ? (
           <div className="space-y-1">
-            {preview.paymentSettledByHand ? (
-              <p className="text-sm text-muted-foreground" data-testid="payment-settled-by-hand">
-                Xero shows a payment against this booking that the app cannot hand back as
-                account credit. Cancelling treats the booking as unpaid: no refund or credit is
-                given, and the treasurer is alerted to settle that payment by hand.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No payment has been taken for this booking. No refund applies.
-              </p>
-            )}
+            <NoRefundablePaymentNote settledByHand={preview.paymentSettledByHand} />
             {preview.creditRestoredCents > 0 && (
               <p className="text-sm text-success-11">
                 {formatCents(preview.creditRestoredCents, format)} of previously applied
@@ -477,17 +471,11 @@ export function CancelBookingButton({
               </p>
             )}
             {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "credit" && (
-              <div className="space-y-1" data-testid="forced-credit-refund">
-                <p>
-                  <span className="font-medium text-success-11">
-                    Hold {formatCents(preview.creditRefundAmountCents, format)} as account credit
-                  </span>
-                  <span className="text-muted-foreground ml-1">({preview.creditRefundPercentage}% refund)</span>
-                </p>
-                <p className="text-muted-foreground">
-                  This booking was paid by internet banking, so any refund is held as account credit.
-                </p>
-              </div>
+              <ForcedCreditRefundNote
+                creditRefundAmountCents={preview.creditRefundAmountCents}
+                creditRefundPercentage={preview.creditRefundPercentage}
+                format={format}
+              />
             )}
             {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">

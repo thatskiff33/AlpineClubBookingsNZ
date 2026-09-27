@@ -20,7 +20,7 @@ import {
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
 import { prisma } from "@/lib/prisma";
-import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alerts-shared";
 import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -315,8 +315,17 @@ export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
  * failure degrades to the limiter's own in-process fallback, never to "no
  * budget", so an outage of the counter cannot stall releases.
  */
+export const HOLD_READ_DAILY_BUDGET: RateLimitConfig = {
+  // One unit per expired hold read (1 + supplementary invoices calls), so the
+  // job never spends more than a known share of the tenant's 5,000-a-day Xero
+  // limit; the per-run cap spreads it, this bounds it. Unread holds wait.
+  id: "ib-hold-xero-reads",
+  limit: 400,
+  windowSeconds: 24 * 60 * 60,
+};
+
 export async function takeHoldReadBudget(): Promise<boolean> {
-  const result = await checkRateLimit(rateLimiters.internetBankingHoldXeroReads, "club");
+  const result = await checkRateLimit(HOLD_READ_DAILY_BUDGET, "club");
   return result.success;
 }
 

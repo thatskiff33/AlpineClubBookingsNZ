@@ -91,10 +91,7 @@ vi.mock("@/lib/alert-cooldown", () => ({
   settleOwedAlert: mocks.settleOwedAlert,
 }));
 
-vi.mock("@/lib/rate-limit", () => ({
-  checkRateLimit: mocks.checkRateLimit,
-  rateLimiters: { internetBankingHoldXeroReads: { id: "ib-hold-xero-reads", limit: 400, windowSeconds: 86400 } },
-}));
+vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
 
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",

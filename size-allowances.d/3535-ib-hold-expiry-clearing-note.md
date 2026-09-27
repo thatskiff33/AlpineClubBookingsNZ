@@ -13,7 +13,7 @@ reason: the transaction-client option and the wording choice belong on the
   the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
-lines: 2576
+lines: 2591
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
@@ -24,10 +24,12 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   part-payment recognition - the read before the dispatch, the record inside
   the paid claim, the clearing note after it - whose bodies live in
   `internet-banking-part-payment-at-cancel.ts`; the calls must sit at those
-  three points of the cancel's own sequence.
+  three points of the cancel's own sequence. The delta round adds the officer
+  gate and the no-note unpaid cancel of DECISION 2, and the throw that rolls a
+  refused claim back, at the same points.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1831
+lines: 1846
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -37,8 +39,9 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   the predicates themselves live in `xero-clearing-allocations.ts`.
   #3638 (same epic) adds one predicate call so the late-capture arm does not
   read an admin-only settlement marker as a recorded refund decision.
-  #3643 (same epic) adds the manual-review answer to a recorded part payment,
-  whose predicate lives in `xero-inbound/object-links.ts`.
+  #3643 (same epic) adds the manual-review answer to a recorded or recognised
+  part payment, naming it; the predicates live in `xero-inbound/object-links.ts`
+  and `part-payment-recognition-reason.ts`.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1610

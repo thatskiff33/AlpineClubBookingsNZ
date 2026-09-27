@@ -419,13 +419,6 @@ export const rateLimiters = {
   magicLinkRequest: { id: "magic-link-request", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset submission: 10 per hour */
   resetPassword: { id: "reset-password", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
-  /**
-   * #3643: the hold-expiry job's live Xero reads, club-wide, per day. One unit
-   * per expired hold read (1 + supplementary invoices calls), so the job can
-   * never spend more than a known share of the tenant's 5,000-a-day limit; the
-   * per-run cap (20) spreads it, this bounds it. Unread holds wait a day.
-   */
-  internetBankingHoldXeroReads: { id: "ib-hold-xero-reads", limit: 400, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** General API: 100 per minute */
   api: { id: "api", limit: 100, windowSeconds: 60 } as RateLimitConfig,
   /** Booking creation: 20 per hour */
