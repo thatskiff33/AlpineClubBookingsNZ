@@ -489,8 +489,14 @@ export async function releaseExpiredInternetBankingHolds(
     // #3643 (`INV-PAY-107`): has anybody paid? Read live from Xero BEFORE the
     // release transaction — a provider call never runs inside it. Money
     // against the invoice, or an invoice nobody can read, keeps the hold.
-    const evidence = await readHoldPaymentEvidence(candidate);
-    if (evidence.kind === "paid" || evidence.kind === "unreadable") {
+    // Only a booking the release could act on is asked about: one no longer
+    // CONFIRMED is skipped by the transaction's guard set, and an alert
+    // saying it was "not cancelled" would be false.
+    const evidence =
+      candidate.booking.status === BookingStatus.CONFIRMED
+        ? await readHoldPaymentEvidence(candidate)
+        : null;
+    if (evidence?.kind === "paid" || evidence?.kind === "unreadable") {
       result.kept += 1;
       await alertKeptHold(candidate, evidence, clubToday, format);
       continue;

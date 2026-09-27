@@ -941,6 +941,21 @@ describe("releaseExpiredInternetBankingHolds keeps a hold with money against it 
     expect(mocks.claimAlertCooldown).not.toHaveBeenCalled();
   });
 
+  it("does not ask Xero or alert about a booking the release would skip anyway", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    const notConfirmed = makeExpiredPayment({
+      booking: { ...makeExpiredPayment().booking, status: "CANCELLED" },
+    });
+    mocks.paymentFindMany.mockResolvedValue([notConfirmed]);
+    mocks.txPaymentFindUnique.mockResolvedValue(notConfirmed);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 0, skipped: 1, released: 0 });
+    expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).not.toHaveBeenCalled();
+  });
+
   it("releases a hold with no issued invoice (nothing to pay against) as before", async () => {
     mocks.readHoldPaymentEvidence.mockResolvedValue({ kind: "no-invoice" });
 

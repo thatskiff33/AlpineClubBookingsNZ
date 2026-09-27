@@ -1382,7 +1382,11 @@ Never-captured cancellation and Internet-Banking hold expiry acquire global
 booking lock(1) first and the per-member credit-ledger lock second. While
 holding both, they query for any non-complete applied-credit deallocation
 before their first write. If one exists they defer the whole transition; a
-later retry computes the clearing amount from provider-converged slices. The
+later retry computes the clearing amount from provider-converged slices. Hold
+expiry also re-reads the booking's recorded invoice-payment links under both
+locks before its first write and keeps the hold if one exists (`INV-PAY-107`,
+#3643); its live Xero read of the invoice runs before the transaction, never
+inside it, and no lock is added. The
 paid/captured cancel (refund) path does not take the credit-ledger lock or this
 fence: it restores credit from the payment mirror (mirror-based and capped) and
 never sizes clearing from slices. Legacy inbound rows missing
