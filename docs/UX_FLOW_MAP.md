@@ -1561,6 +1561,17 @@ admin and finance trees are token-only and
 `src/lib/__tests__/brand-color-source-contract.test.ts` fails the build on any
 raw neutral outside its per-file allowlist.
 
+## Public quote acceptance and officer review (#3415)
+
+The public quote link remains a requester confirmation after acceptance: it
+shows the accepted dates, headcount and total without offering a second action.
+Acceptance places the request in the officer queue as **Accepted**. That card
+shows the accepted quote and offers only **Approve** or **Decline**; it does not
+reopen quote, contact, party or member-link editing. Approval creates the
+booking and its normal payment or school-invoice work. Decline releases the
+request-owned hold and the requester sees the recorded outcome on the same
+read-only link.
+
 ## Review Prompts
 
 For every journey, verify the next action, failure state, pending state,

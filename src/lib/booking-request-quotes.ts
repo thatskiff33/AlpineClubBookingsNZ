@@ -1194,17 +1194,6 @@ async function loadQuoteByToken(token: string) {
   return quote;
 }
 
-async function loadSentQuoteByToken(token: string) {
-  const quote = await loadQuoteByToken(token);
-  if (quote.status !== BookingRequestQuoteStatus.SENT) {
-    throw new BookingRequestQuoteError("This quote is no longer active.", 409);
-  }
-  if (!quote.responseTokenExpiresAt || quote.responseTokenExpiresAt < new Date()) {
-    throw new BookingRequestQuoteError("This quote has expired.", 410);
-  }
-  return quote;
-}
-
 export async function getBookingRequestQuoteContext(token: string) {
   const quote = await loadQuoteByToken(token);
   const isAccepted = quote.status === BookingRequestQuoteStatus.ACCEPTED;
@@ -1273,7 +1262,9 @@ export async function respondToBookingRequestQuote(input: {
     if (
       input.optionId && input.optionId !== acceptedOptionId ||
       loadedQuote.bookingRequest.acceptedQuoteId !== loadedQuote.id ||
-      ![BookingRequestStatus.ACCEPTED, BookingRequestStatus.APPROVED, BookingRequestStatus.CONVERTED].includes(loadedQuote.bookingRequest.status)
+      (loadedQuote.bookingRequest.status !== BookingRequestStatus.ACCEPTED &&
+        loadedQuote.bookingRequest.status !== BookingRequestStatus.APPROVED &&
+        loadedQuote.bookingRequest.status !== BookingRequestStatus.CONVERTED)
     ) {
       throw new BookingRequestQuoteError(
         "This quote was already accepted with a different response or the booking request has since changed.",
