@@ -26,7 +26,11 @@
     "scripts/branding/generate-calendar-icons.mjs",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
-    "scripts/codex/issue-to-prompt.mjs"
+    "scripts/codex/issue-to-prompt.mjs",
+    // Transpiled by the `theme:vendor-transpile` script, never imported. knip
+    // traced it through that script while it was `npx -y esbuild@… <file>`,
+    // but it does not parse `pnpm dlx` (#3673), so it needs saying here.
+    "scripts/theme/vendor/generate-radix-colors.tsx"
     // NOTE: the five documented operator CLIs listed here until #2850 —
     // xero-booking-repair, xero-refund-note-link-repair,
     // backfill-orphaned-applied-credits, audit-ib-hold-clearing and
@@ -45,7 +49,7 @@
     // justification was hollow too: knip already follows the dynamic
     // `import("./instrumentation.node")` in `src/instrumentation.ts`, which the
     // Next plugin supplies as an entry, so the carve-out changed nothing.
-    // Verified by removing it and re-running `npx knip` (exit 0).
+    // Verified by removing it and re-running `pnpm exec knip` (exit 0).
   ],
   // The k6 load harness (#1884) is operator-invoked tooling that runs under the
   // k6 binary, not Node/Next — its scripts import k6-runtime modules (k6/http,

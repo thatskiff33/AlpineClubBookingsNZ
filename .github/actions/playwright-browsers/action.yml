@@ -6,7 +6,7 @@ description: >
 
 # WHY THIS EXISTS, measured rather than assumed (run 32304150140, 19 Aug 2026).
 #
-# The old step was `npx playwright install --with-deps chromium` behind a
+# The old step was `pnpm exec playwright install --with-deps chromium` behind a
 # three-attempt retry, run in both E2E jobs. It normally took ~25s. On that run
 # it took 9m15s, and the breakdown is the whole point:
 #
@@ -61,7 +61,7 @@ runs:
       # blip — but it now wraps ten seconds of work rather than nine minutes.
       run: |
         for attempt in 1 2 3; do
-          if npx playwright install chromium; then
+          if pnpm exec playwright install chromium; then
             exit 0
           fi
           echo "::warning::Playwright browser download attempt ${attempt} failed; retrying in $((attempt * 15))s"
@@ -99,7 +99,7 @@ runs:
                    /etc/apt/sources.list.d/azure-cli.list \
                    /etc/apt/sources.list.d/azure-cli.sources || true
         for attempt in 1 2 3; do
-          if npx playwright install-deps chromium; then
+          if pnpm exec playwright install-deps chromium; then
             break
           fi
           if [ "${attempt}" = "3" ]; then

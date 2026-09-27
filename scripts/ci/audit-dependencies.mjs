@@ -43,6 +43,26 @@ import { pathToFileURL } from "node:url";
  * a loud warning — was rejected because a green tick is what people read, not
  * the summary underneath it.
  *
+ * ## The move to pnpm (27 September 2026, issue #3673)
+ *
+ * The repository moved from npm to pnpm, and this gate moved from `npm audit` to
+ * `pnpm audit` with the same semantics: the same `high` threshold, the same
+ * lockfile-only, install-free reading of the tree, the same three verdicts plus
+ * "could not run", the same retry-then-still-fail policy and the same budgets.
+ * Only the tool changed. pnpm asks the same service npm did — the bulk advisory
+ * endpoint `…/-/npm/v1/security/advisories/bulk` on the configured registry,
+ * which here is npmjs.org — so the outage this script names is still an
+ * npmjs.org outage.
+ *
+ * One flag is new, `--config.fetch-retries=0`, and it is load-bearing. pnpm
+ * retries a failed request to the advisory endpoint on its own (twice by
+ * default, waiting 10 seconds and then a minute), which would duplicate the
+ * retry policy below and spend the per-attempt budget on every 503. Measured on
+ * pnpm 11.27.1 against an endpoint answering 503: with its own retries pnpm
+ * waited 10 seconds and then a minute before giving up; without them it gave up
+ * in about two seconds. This script owns the retry policy, so pnpm makes exactly
+ * one request per attempt.
+ *
  * The half of the value that is not the retry is the **wording**: every outcome
  * below prints a verdict line that names the case in capitals, so nobody has to
  * infer "the registry was down" from a warning buried in the log.
@@ -51,8 +71,8 @@ import { pathToFileURL } from "node:url";
  *
  * `CLEAN` is only ever reported when a real audit report was parsed AND every
  * severity count in it is a finite number AND nothing at or above the threshold
- * is in them AND npm itself exited 0. Every other shape — an unparseable body,
- * an npm error object, a report with no `metadata.vulnerabilities`, a counts
+ * is in them AND pnpm itself exited 0. Every other shape — an unparseable body,
+ * a pnpm error object, a report with no `metadata.vulnerabilities`, a counts
  * object missing a severity or carrying a non-numeric one — is inconclusive, and
  * inconclusive is never success. That is structural rather than a rule to
  * remember: there is exactly one branch that can exit 0, and it needs the
@@ -64,20 +84,29 @@ import { pathToFileURL } from "node:url";
  * arm on every branch, permanently and silently, with no test failing. Requiring
  * each severity to be present and finite is what stops that.
  *
- * npm's own exit code is consulted for the same reason. `--audit-level=high` is
- * on the command, so npm exits 0 exactly when it found nothing at or above the
- * threshold: a non-zero exit sitting beside counts we read as clean means npm
+ * pnpm's own exit code is consulted for the same reason. `--audit-level=high` is
+ * on the command, so pnpm exits 0 exactly when it lists nothing at or above the
+ * threshold: a non-zero exit sitting beside counts we read as clean means pnpm
  * and this script disagree, and a disagreement is not a pass. That is the one
  * signal in the whole pipeline that no report-shape drift can fake, and the
  * command this script replaced was structurally immune because it read nothing
  * else.
  *
- * `inconclusive` is deliberately **not** retried: a usage error, a broken
- * lockfile or a report shape this gate cannot read will not fix itself, and
- * burning the retry budget on it only delays the report its reader needs. The
- * cost is that an outage arriving in a shape matching neither the npm error
- * codes nor the phrase list — an HTML proxy error page, say — gets a one-shot
- * red rather than a retried one. Widen the lists rather than retrying
+ * The counts decide, not pnpm's advisory list. They differ in one known way:
+ * an advisory named in pnpm's `auditConfig.ignoreGhsas` setting is dropped from
+ * the list and from pnpm's exit code but is still counted in
+ * `metadata.vulnerabilities` (measured on pnpm 11.27.1). So that setting does
+ * not clear this gate — it fails closed, as `VULNERABILITY FOUND` with the
+ * ignored advisory counted but not listed. The recorded way to accept a
+ * finding is still an override with its reasoning in docs/MAINTENANCE.md.
+ *
+ * `inconclusive` is deliberately **not** retried: a usage error, a missing
+ * lockfile, an endpoint that refuses the request (a 4xx other than 429) or a
+ * report shape this gate cannot read will not fix itself, and burning the retry
+ * budget on it only delays the report its reader needs. The cost is that an
+ * outage arriving in a shape matching neither the error codes, the HTTP status
+ * nor the phrase list — an HTML proxy error page served with a 200, say — gets a
+ * one-shot red rather than a retried one. Widen the lists rather than retrying
  * everything.
  *
  * ## What it deliberately does not do
@@ -89,18 +118,18 @@ import { pathToFileURL } from "node:url";
  * vacuously green. Conditions go on steps. See `AGENTS.md` → "Completion and
  * Merge".
  *
- * Source-only and install-free by design: it shells out to `npm audit`, which
- * reads `package-lock.json`, so the job needs no `npm ci`.
+ * Source-only and install-free by design: it shells out to `pnpm audit`, which
+ * reads `pnpm-lock.yaml`, so the job needs no `pnpm install`.
  */
 
 /**
- * The severity threshold, stated once. Both the flag handed to `npm audit` and
+ * The severity threshold, stated once. Both the flag handed to `pnpm audit` and
  * the severities this script counts as failing are derived from it, so the
- * threshold cannot drift between "what npm was asked" and "what we judged".
+ * threshold cannot drift between "what pnpm was asked" and "what we judged".
  */
 export const AUDIT_LEVEL = "high";
 
-/** Severities in ascending order, as `npm audit --json` reports them. */
+/** Severities in ascending order, as `pnpm audit --json` reports them. */
 export const SEVERITY_ORDER = ["info", "low", "moderate", "high", "critical"];
 
 /** The severities at or above {@link AUDIT_LEVEL}: the ones that fail the check. */
@@ -108,8 +137,23 @@ export const FAILING_SEVERITIES = SEVERITY_ORDER.slice(
   SEVERITY_ORDER.indexOf(AUDIT_LEVEL),
 );
 
-/** The command this gate runs. `--json` is what makes the outcome classifiable. */
-export const AUDIT_COMMAND = ["audit", `--audit-level=${AUDIT_LEVEL}`, "--json"];
+/**
+ * The command this gate runs. `--json` is what makes the outcome classifiable.
+ *
+ * `--config.fetch-retries=0` switches off pnpm's own retries, because this
+ * script owns the retry policy (see "The move to pnpm" above): with it, one
+ * attempt is one request, bounded by pnpm's default `fetch-timeout` of 60
+ * seconds, which fits inside {@link ATTEMPT_TIMEOUT_MS}. Do not add
+ * `--config.fetch-timeout=…` beside it: on pnpm 11.27.1 that spelling arrives
+ * as a string and fails every request at once with `fetch failed` (measured),
+ * which this script would then report as an outage.
+ */
+export const AUDIT_COMMAND = [
+  "audit",
+  `--audit-level=${AUDIT_LEVEL}`,
+  "--json",
+  "--config.fetch-retries=0",
+];
 
 /**
  * The retry budget, chosen deliberately (#3254 asked for the reasoning to be
@@ -122,7 +166,7 @@ export const AUDIT_COMMAND = ["audit", `--audit-level=${AUDIT_LEVEL}`, "--json"]
  * failures were. It is deliberately NOT generous enough to sit out a real
  * outage: the 4 September one ran for hours, and a runner spending ten minutes
  * discovering that helps nobody. Fail fast, say plainly that it was an outage,
- * and let the person re-run when npm is back.
+ * and let the person re-run when npmjs.org is back.
  */
 export const RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
 
@@ -133,96 +177,173 @@ export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
  * How long ONE attempt may run before it is killed and counted as unreachable.
  *
  * Without this the "at most 65 seconds of waiting" above is an assumption rather
- * than a bound: the backoff is bounded, but each attempt was not. There is no
- * `.npmrc` here, so npm's defaults apply — `fetch-timeout` 300000ms and
- * `fetch-retries` 2 — and a request to an endpoint that black-holes packets
- * (no answer and no reset, a different failure from the measured timeout and
- * 503, both of which answered fast) can sit for minutes. Four of those would
- * blow the job's own `timeout-minutes: 10`, GitHub would cancel the runner
- * mid-attempt, and the check would report failure with NO verdict line at
- * all — precisely the unexplained red this script exists to abolish, made up to
- * four times more likely by the retry loop than the single-shot command was.
+ * than a bound: the backoff is bounded, but each attempt was not. (When this was
+ * written for npm, npm's defaults — `fetch-timeout` 300000ms and
+ * `fetch-retries` 2 — let one attempt against an endpoint that black-holes
+ * packets sit for minutes.) Today pnpm's `fetch-timeout` default of 60000ms
+ * bounds its single request, since {@link AUDIT_COMMAND} switches its retries
+ * off — but that is pnpm's bound, not this script's, and a pnpm that stalls
+ * anywhere else would still have none. Four unbounded attempts could blow the
+ * job's own `timeout-minutes: 10`, GitHub would cancel the runner mid-attempt,
+ * and the check would report failure with NO verdict line at all — precisely
+ * the unexplained red this script exists to abolish, made up to four times more
+ * likely by the retry loop than the single-shot command was.
  *
  * 90 seconds is the budget. The arithmetic against the ten-minute ceiling:
  * 4 x 90s of attempts + 65s of backoff = 425s worst case, leaving over two and a
- * half minutes for checkout and `setup-node` (which take well under one). It is
- * also roughly nine times the longest a healthy `npm audit` takes on this
- * lockfile, so a slow-but-working registry is never mistaken for a dead one.
+ * half minutes for checkout, pnpm and `setup-node` (which take well under one).
+ * It leaves pnpm's 60-second request timeout room to report its own failure
+ * first — measured: against an endpoint that accepts the connection and never
+ * answers, one attempt ended in pnpm's own `fetch failed` after about 77 seconds
+ * on a Windows workstation; were it ever slower, the kill reaches the same
+ * verdict — and it is about twenty times the longest a healthy `pnpm audit` took
+ * on this lockfile when measured (under five seconds), so a slow-but-working
+ * registry is never mistaken for a dead one.
  */
 export const ATTEMPT_TIMEOUT_MS = 90_000;
 
 /**
- * npm error codes that mean "the request did not get an answer", not "your tree
- * has a problem". Anything matching is retried; anything else is not, because a
+ * Error codes that mean "the request did not get an answer", not "your tree has
+ * a problem". Anything matching is retried; anything else is not, because a
  * usage or lockfile error will not fix itself and burning 65 seconds on it just
  * delays a report the reader needs.
+ *
+ * pnpm itself reports a request that got no answer — connection refused, a DNS
+ * failure, its own 60-second timeout — as the bare code `pnpm` with the message
+ * `fetch failed` (all measured), which is too generic to list here; the phrase
+ * list below catches it. These are the lower-level codes of the same failures,
+ * for when one surfaces as the code.
  */
 const NETWORK_ERROR_CODES = new Set([
-  "E429",
-  "E500",
-  "E502",
-  "E503",
-  "E504",
   "EAI_AGAIN",
   "ECONNRESET",
   "ECONNREFUSED",
   "ENOTFOUND",
   "EPIPE",
-  "ERR_SOCKET_TIMEOUT",
   "ETIMEDOUT",
-  "FETCH_ERROR",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
 ]);
 
 /**
- * Phrases npm prints when the advisory endpoint misbehaves. Codes are checked
- * first; this catches the shapes that arrive as prose, including the exact three
- * measured on 4 September 2026.
+ * Phrases printed when the advisory endpoint misbehaves. Codes and the HTTP
+ * status are checked first; this catches the shapes that arrive as prose. The
+ * first entry is what pnpm says for every request that got no answer; the rest
+ * are the proxy, socket and resolver wordings of the same thing, including the
+ * wordings of the three failures measured on 4 September 2026.
  */
 const NETWORK_ERROR_PHRASES = [
-  "audit endpoint returned an error",
+  "fetch failed",
   "network timeout",
   "service unavailable",
   "socket hang up",
   "gateway time-out",
+  "gateway timeout",
   "bad gateway",
   "getaddrinfo",
   "econnreset",
+  "econnrefused",
+  "enotfound",
   "etimedout",
   "eai_again",
-  "request to https://registry.npmjs.org",
   "too many requests",
 ];
 
 /**
- * Pulls the JSON body out of a captured stdout. npm writes the report to stdout
- * on its own, but a stray warning or a proxy banner ahead of it would break a
- * naive `JSON.parse`, so the first balanced-looking object is taken instead.
+ * pnpm reports every non-2xx, non-404 answer from the advisory endpoint under
+ * one code, `ERR_PNPM_AUDIT_BAD_RESPONSE`, with the status in the message:
+ * `The audit endpoint (at …) responded with 503: Service Unavailable`. The
+ * status is what separates an outage from a refusal, so it is read out.
  */
-export function extractJson(stdout) {
-  if (typeof stdout !== "string") return undefined;
-  const start = stdout.indexOf("{");
-  const end = stdout.lastIndexOf("}");
-  if (start === -1 || end <= start) return undefined;
-  try {
-    const parsed = JSON.parse(stdout.slice(start, end + 1));
-    return parsed && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+const HTTP_STATUS_PATTERN = /\bresponded with (\d{3})\b/i;
+
+/**
+ * An answer that means "try again later": rate limiting, or the service failing
+ * on its own side. Any other status — a 401, 403, 404, 410 — is the endpoint
+ * refusing this request, which will not change on a retry.
+ */
+function isOutageStatus(status) {
+  return status === 429 || (status >= 500 && status <= 599);
 }
 
 /**
- * npm's own last word, for the `Last error:` line. When the report is
- * unparseable the parser's reason ("no parseable JSON report") is accurate about
- * the parser and useless about the outage, so the line npm actually printed is
- * carried through in front of it where there is one.
+ * Pulls the JSON body out of a captured stdout. pnpm writes the report to
+ * stdout on its own (with `--json` its warnings go to stderr), but a stray line
+ * ahead of it — a proxy banner, a wrapper's notice — would break a naive
+ * `JSON.parse`. The report is pretty-printed and starts on a line of its own, so
+ * each object that starts a line is tried first; then, for a banner that shares
+ * its line with the report, the first brace anywhere. A stray line that itself
+ * carries a brace (pnpm's own wording `Failed to replace env in config:
+ * ${NPM_TOKEN}`, say) therefore does not hide the report behind it.
  */
-function npmSaid(stderr) {
-  const lines = String(stderr ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.find((line) => /^npm\s+(error|err!|warn)\b/i.test(line)) ?? lines[0];
+export function extractJson(stdout) {
+  if (typeof stdout !== "string") return undefined;
+  const end = stdout.lastIndexOf("}");
+  if (end === -1) return undefined;
+  const starts = [];
+  for (let index = stdout.indexOf("{"); index !== -1 && index < end; ) {
+    if (index === 0 || stdout[index - 1] === "\n") starts.push(index);
+    index = stdout.indexOf("{", index + 1);
+  }
+  const first = stdout.indexOf("{");
+  if (first !== -1 && !starts.includes(first)) starts.push(first);
+  for (const start of starts) {
+    try {
+      const parsed = JSON.parse(stdout.slice(start, end + 1));
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // Not the report; try the next candidate.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Keeps a message readable on one line. pnpm puts the endpoint's whole response
+ * body into its BAD_RESPONSE message, and an outage page can be kilobytes of
+ * HTML — which would otherwise become the `Last error:` line and the job
+ * summary.
+ */
+const MAX_REASON_LENGTH = 400;
+function oneLine(text) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > MAX_REASON_LENGTH ? `${flat.slice(0, MAX_REASON_LENGTH)}…` : flat;
+}
+
+/**
+ * pnpm's own last word, for the `Last error:` line. When the report is
+ * unparseable the parser's reason ("no parseable JSON report") is accurate about
+ * the parser and useless about the outage, so the line pnpm actually printed is
+ * carried through in front of it where there is one. pnpm prints its errors as
+ * `[ERR_PNPM_…] message` (or ` ERR_PNPM_…  message`) and its warnings as
+ * `[WARN] …`; an error line is preferred over a warning, and an `npm error` /
+ * `npm warn` line from anything npm-shaped on the path is recognised too.
+ *
+ * pnpm prints a prose error to stdout (measured without `--json`), and npm
+ * printed its errors to stderr, so both streams are searched for those lines —
+ * no line of a JSON report can look like one. Failing that, the first line of
+ * stderr is quoted, or of stdout when stdout held no JSON at all, so a line of a
+ * report is never quoted back as pnpm's last word.
+ */
+const ERROR_LINE = /^(\[(ERR_PNPM_\w+|ERROR)\]|ERR_PNPM_\w+\b|npm\s+(error|err!)\b)/i;
+const WARN_LINE = /^(\[WARN\]|WARN\b|npm\s+warn\b)/i;
+function pnpmSaid({ stdout, stderr, stdoutIsProse }) {
+  const linesOf = (text) =>
+    String(text ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  const errLines = linesOf(stderr);
+  const outLines = linesOf(stdout);
+  const all = [...errLines, ...outLines];
+  const said =
+    all.find((line) => ERROR_LINE.test(line)) ??
+    all.find((line) => WARN_LINE.test(line)) ??
+    errLines[0] ??
+    (stdoutIsProse ? outLines[0] : undefined);
+  return said === undefined ? undefined : oneLine(said);
 }
 
 /**
@@ -249,18 +370,64 @@ function unreadableSeverities(counts) {
 function looksLikeNetworkFailure({ code, text }) {
   if (code && NETWORK_ERROR_CODES.has(String(code).toUpperCase())) return true;
   const haystack = String(text ?? "").toLowerCase();
+  // An HTTP status is the endpoint's own statement of what happened, so where
+  // there is one it decides, and a refusal is not re-read as an outage because
+  // the page that carried it happened to contain an outage-sounding word.
+  const status = HTTP_STATUS_PATTERN.exec(haystack);
+  if (status) return isOutageStatus(Number(status[1]));
   return NETWORK_ERROR_PHRASES.some((phrase) => haystack.includes(phrase));
 }
 
 /**
- * Turns one captured `npm audit --json` run into a verdict.
+ * A fix exists when pnpm names a real patched range. The advisory service uses
+ * `<0.0.0` — a range nothing satisfies — for "no patched version", and an absent
+ * or empty value says the same.
+ */
+function hasPublishedFix(patchedVersions) {
+  if (typeof patchedVersions !== "string") return false;
+  const range = patchedVersions.trim();
+  return range !== "" && range !== "<0.0.0";
+}
+
+/**
+ * The failing advisories, one line per distinct finding, for the report. pnpm
+ * keys `advisories` by advisory id and several can name the same package; an
+ * entry identical in every field printed is listed once.
+ */
+function failingAdvisories(advisories) {
+  if (!advisories || typeof advisories !== "object") return [];
+  const seen = new Set();
+  return Object.values(advisories)
+    .filter((entry) => FAILING_SEVERITIES.includes(entry?.severity))
+    .map((entry) => ({
+      name: String(entry.module_name ?? "unknown package"),
+      severity: String(entry.severity),
+      range: entry.vulnerable_versions ? String(entry.vulnerable_versions) : undefined,
+      fixAvailable: hasPublishedFix(entry.patched_versions),
+    }))
+    .filter((advisory) => {
+      const key = JSON.stringify([
+        advisory.name,
+        advisory.severity,
+        advisory.range,
+        advisory.fixAvailable,
+      ]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Turns one captured `pnpm audit --json` run into a verdict.
  *
  * Returns `{ outcome, ... }` where `outcome` is one of:
  * - `"clean"` — a report was parsed and nothing at or above the threshold is in
  *   it. **The only outcome that may exit 0.**
  * - `"vulnerable"` — a report was parsed and it carries a failing advisory.
  * - `"unreachable"` — the advisory service did not answer. Retryable.
- * - `"inconclusive"` — npm failed for some other reason, or answered with
+ * - `"inconclusive"` — pnpm failed for some other reason, or answered with
  *   something that is not an audit report. Not retried, and never success.
  */
 export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut = false }) {
@@ -278,28 +445,35 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
     return {
       outcome: "unreachable",
       reason:
-        killed ?? `npm audit was killed after ${ATTEMPT_TIMEOUT_MS} ms without answering.`,
+        killed ?? `pnpm audit was killed after ${ATTEMPT_TIMEOUT_MS} ms without answering.`,
       exitCode,
     };
   }
 
-  const npmError = parsed && typeof parsed.error === "object" ? parsed.error : undefined;
-  if (npmError) {
-    const detail = [npmError.summary, npmError.detail].filter(Boolean).join(" ");
-    const outcome = looksLikeNetworkFailure({ code: npmError.code, text: detail })
+  // pnpm's error object is `{ code, message }`; npm's was `{ code, summary,
+  // detail }`. Both are read, so a shape between the two still names its cause.
+  const pnpmError = parsed && typeof parsed.error === "object" ? parsed.error : undefined;
+  if (pnpmError) {
+    const said = [pnpmError.message, pnpmError.summary, pnpmError.detail]
+      .filter(Boolean)
+      .join(" ");
+    // Judged on everything pnpm said; only the line printed is shortened.
+    const outcome = looksLikeNetworkFailure({ code: pnpmError.code, text: said })
       ? "unreachable"
       : "inconclusive";
-    return {
-      outcome,
-      reason: detail.trim() || `npm audit failed with ${npmError.code ?? "no code"}`,
-      exitCode,
-    };
+    const detail = oneLine(said);
+    // Written the way pnpm itself prints it, `[ERR_PNPM_…] message`, when the
+    // code says anything; pnpm's bare `pnpm` code does not.
+    const code = typeof pnpmError.code === "string" ? pnpmError.code : undefined;
+    let reason = detail || `pnpm audit failed with ${code ?? "no code"}`;
+    if (detail && code && /^ERR_/i.test(code)) reason = `[${code}] ${detail}`;
+    return { outcome, reason, exitCode };
   }
 
   const counts = parsed?.metadata?.vulnerabilities;
   if (!parsed || !hasCompleteCounts(counts)) {
     // No report, or a report whose severity counts this gate cannot read. If the
-    // noise npm made looks like the network, say so — that is the case this
+    // noise pnpm made looks like the network, say so — that is the case this
     // whole script exists to name — otherwise be honest that we do not know, and
     // fail either way.
     const outcome = looksLikeNetworkFailure({ text: combined })
@@ -307,19 +481,19 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
       : "inconclusive";
     let reason;
     if (!parsed) {
-      reason = "npm audit produced no parseable JSON report.";
+      reason = "pnpm audit produced no parseable JSON report.";
     } else if (!counts || typeof counts !== "object") {
-      reason = "npm audit returned JSON with no `metadata.vulnerabilities` counts.";
+      reason = "pnpm audit returned JSON with no `metadata.vulnerabilities` counts.";
     } else {
       reason =
-        "npm audit returned severity counts this gate could not read: expected a " +
+        "pnpm audit returned severity counts this gate could not read: expected a " +
         `number for each of ${SEVERITY_ORDER.join(", ")}, and did not get one for ` +
         `${unreadableSeverities(counts).join(", ")}.`;
     }
-    const npmLine = npmSaid(stderr);
+    const pnpmLine = pnpmSaid({ stdout, stderr, stdoutIsProse: !parsed });
     return {
       outcome,
-      reason: npmLine ? `${npmLine} — ${reason}` : reason,
+      reason: pnpmLine ? `${pnpmLine} — ${reason}` : reason,
       exitCode,
     };
   }
@@ -332,29 +506,22 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
     0,
   );
 
-  const advisories = Object.values(parsed.vulnerabilities ?? {})
-    .filter((entry) => FAILING_SEVERITIES.includes(entry?.severity))
-    .map((entry) => ({
-      name: String(entry.name ?? "unknown package"),
-      severity: String(entry.severity),
-      range: entry.range ? String(entry.range) : undefined,
-      fixAvailable: Boolean(entry.fixAvailable),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  if (failing > 0) {
+    const advisories = failingAdvisories(parsed.advisories);
+    return { outcome: "vulnerable", severityCounts, advisories, exitCode };
+  }
 
-  if (failing > 0) return { outcome: "vulnerable", severityCounts, advisories, exitCode };
-
-  // The counts say clean. npm was asked with `--audit-level=high`, so it exits 0
-  // exactly when it agrees — and a disagreement means one of the two is reading
-  // a shape the other is not. Never resolve that in favour of green.
+  // The counts say clean. pnpm was asked with `--audit-level=high`, so it exits
+  // 0 exactly when it agrees — and a disagreement means one of the two is
+  // reading a shape the other is not. Never resolve that in favour of green.
   if (exitCode !== 0) {
     return {
       outcome: "inconclusive",
       severityCounts,
       exitCode,
       reason:
-        `npm audit exited ${exitCode === null ? "on a signal" : exitCode} while its own ` +
-        `severity counts report nothing at ${AUDIT_LEVEL} or above. npm and this gate ` +
+        `pnpm audit exited ${exitCode === null ? "on a signal" : exitCode} while its own ` +
+        `severity counts report nothing at ${AUDIT_LEVEL} or above. pnpm and this gate ` +
         "disagree, so nothing has been cleared.",
     };
   }
@@ -363,27 +530,29 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
 }
 
 /**
- * Spawns the real `npm audit`, capturing both streams, and kills an attempt that
- * exceeds {@link ATTEMPT_TIMEOUT_MS}. A killed attempt resolves with
+ * Spawns the real `pnpm audit`, capturing both streams, and kills an attempt
+ * that exceeds {@link ATTEMPT_TIMEOUT_MS}. A killed attempt resolves with
  * `timedOut: true`, which {@link classifyAuditRun} reads as unreachable — so an
  * endpoint that never answers is retried and then named as an outage, instead of
  * running the job into its own ceiling with no verdict printed.
  */
-export function runNpmAudit({ cwd = process.cwd(), timeoutMs = ATTEMPT_TIMEOUT_MS } = {}) {
+export function runPnpmAudit({ cwd = process.cwd(), timeoutMs = ATTEMPT_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
-    // `shell: true` on Windows only, because `npm` there is `npm.cmd` and Node
-    // refuses to spawn a batch file without a shell. It prints a DEP0190
-    // deprecation warning about unescaped arguments; that warning is about
-    // arguments an attacker could influence, and every element of
+    // `shell: true` on Windows only, because `pnpm` there is usually `pnpm.cmd`
+    // and Node refuses to spawn a batch file without a shell. It prints a
+    // DEP0190 deprecation warning about unescaped arguments; that warning is
+    // about arguments an attacker could influence, and every element of
     // AUDIT_COMMAND is a module-level constant in this file. CI runs on Linux,
     // where the shell is not used at all.
-    const child = spawn("npm", AUDIT_COMMAND, {
+    const child = spawn("pnpm", AUDIT_COMMAND, {
       cwd,
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
       // Node kills the child itself once the budget is up. On Linux — which is
       // where CI runs, and the only place this bound has to hold — the signal
-      // reaches `npm` directly, because no shell is interposed.
+      // reaches `pnpm` directly, because no shell is interposed (and CI installs
+      // the exact `packageManager` version, so pnpm does not hand off to a
+      // second pnpm process of another version).
       timeout: timeoutMs,
       killSignal: "SIGKILL",
     });
@@ -404,7 +573,7 @@ export function runNpmAudit({ cwd = process.cwd(), timeoutMs = ATTEMPT_TIMEOUT_M
           exitCode,
           stdout,
           stderr:
-            `${stderr}\nnpm audit did not answer within ${timeoutMs} ms and was killed ` +
+            `${stderr}\npnpm audit did not answer within ${timeoutMs} ms and was killed ` +
             `with ${signal}.`,
           timedOut: true,
         });
@@ -424,7 +593,7 @@ const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * network or a real wait.
  */
 export async function auditWithRetries({
-  run = runNpmAudit,
+  run = runPnpmAudit,
   sleep = realSleep,
   delays = RETRY_DELAYS_MS,
   onAttempt = () => {},
@@ -533,8 +702,8 @@ export function formatReport(result) {
         "vulnerability nor a registry outage.",
       `  ${reason}`,
       "",
-      "  npm answered with something that is not an audit report, so nothing has been",
-      "  cleared. Read the npm output above; a missing or malformed package-lock.json",
+      "  pnpm answered with something that is not an audit report, so nothing has been",
+      "  cleared. Read the pnpm output above; a missing or malformed pnpm-lock.yaml",
       "  is the usual cause.",
     ],
   };

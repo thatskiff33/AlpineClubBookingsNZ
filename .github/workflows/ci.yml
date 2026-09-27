@@ -1,12 +1,13 @@
 name: CI
 
-# Residual risk accepted for the `npm audit --audit-level=high` gate, which
+# Residual risk accepted for the `pnpm audit --audit-level=high` gate, which
 # lives in the `dependency-audit` job below (#2946), not in `verify`:
 # - `next-auth@5.0.0-beta.31` / `@auth/core@0.41.2` still declare an optional
 #   `nodemailer@^7.0.7` peer while this repo validates `nodemailer@8.0.6`.
-# - `package.json` carries a scoped `overrides["next-auth"].nodemailer` entry
-#   pinned to this repo's own `nodemailer` until Auth.js expands that optional
-#   peer range. (An earlier version of this note said an `.npmrc` pinned
+# - `pnpm-workspace.yaml` carries scoped `next-auth>nodemailer` and
+#   `@auth/core>nodemailer` overrides pinned to this repo's own `nodemailer`
+#   until Auth.js expands that optional peer range (until #3673 this was npm's
+#   `overrides["next-auth"].nodemailer` in `package.json`). (An earlier version of this note said an `.npmrc` pinned
 #   `legacy-peer-deps=true`; that file was deleted long ago and the scoped
 #   override is what does the work now.) See `docs/MAINTENANCE.md` for the
 #   public maintenance baseline.
@@ -49,14 +50,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
-          cache: npm
 
+      # Lockfile-only, like the required `Dependency audit` job below: `pnpm
+      # audit` reads `pnpm-lock.yaml` and needs no install, so no store cache.
       - name: Audit dependency graph
-        run: npm audit --audit-level=high --package-lock-only
+        run: pnpm audit --audit-level=high
 
   # #2946: THE DEPENDENCY AUDIT IS A JOB OF ITS OWN, AND IT MUST STAY ONE.
   #
@@ -65,7 +71,7 @@ jobs:
   # `prisma` (#2945) — nobody here changed anything. The step failed, and because
   # Actions skips every LATER step in a job once one fails, `verify` stopped
   # running lint, the file-size ratchet, `prisma generate`, typecheck, knip,
-  # `npm test` and the build, on every branch, while the other required checks
+  # `pnpm test` and the build, on every branch, while the other required checks
   # stayed green. A pull request in that window read as "one unrelated dependency
   # thing is red, everything else passed"; in fact the suite had not run at all.
   # When #2947 restored the gate, the very first real run of the suite failed
@@ -82,12 +88,15 @@ jobs:
   # advisory is a supply-chain decision a human should make — upgrade, override
   # or accept — not a report nobody reads.
   #
-  # There is deliberately no `npm ci` here. Measured on npm 11.16.0 / Node 24:
-  # `npm audit --audit-level=high` builds its tree from `package-lock.json` and
-  # returns the same verdict with and without `node_modules` present — exit 0 on
-  # this lock either way, exit 1 either way with the deepmerge-ts advisory planted
+  # There is deliberately no install here. Measured on npm 11.16.0 / Node 24:
+  # `npm audit --audit-level=high` built its tree from `package-lock.json` and
+  # returned the same verdict with and without `node_modules` present — exit 0 on
+  # that lock either way, exit 1 either way with the deepmerge-ts advisory planted
   # back into the lock. Skipping the install keeps this gate from reddening for
   # anything except an advisory, which is the entire point of separating it.
+  # Since #3673 the gate is `pnpm audit`, which likewise reads `pnpm-lock.yaml`
+  # alone (measured on pnpm 11.27.1: same all-zero verdict as npm gave on the
+  # lockfile it was imported from, with no `node_modules`).
   #
   # The step below no longer runs that bare command — since #3254 it runs the
   # wrapper around it, for the reasons written at the step itself. The audit
@@ -108,7 +117,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # No `cache: npm`: nothing here installs, so there is no npm cache to hit.
+      # pnpm itself, for `pnpm audit`; its version comes from `packageManager`
+      # in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.1.0
+
+      # No `cache: pnpm`: nothing here installs, so there is no store to hit.
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
@@ -128,12 +142,12 @@ jobs:
       # the advisory service is still unreachable, because a required security
       # gate that could not do its job does not get to report success: green
       # keeps meaning "the audit really ran and found nothing". The accepted cost
-      # is that a sustained npm outage blocks merges. What the script adds is
-      # that the failure SAYS WHICH CASE IT IS on its first line, so nobody has
+      # is that a sustained npm registry outage blocks merges. What the script
+      # adds is that the failure SAYS WHICH CASE IT IS on its first line, so nobody has
       # to infer "the registry was down" from a warning buried in the log.
       #
       # The threshold is unchanged: high or worse fails. The script needs no
-      # install — `npm audit` reads `package-lock.json` — and carries no skip,
+      # install — `pnpm audit` reads `pnpm-lock.yaml` — and carries no skip,
       # no soft-failure escape, and no environment switch that softens the
       # verdict.
       #
@@ -210,8 +224,8 @@ jobs:
           path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
           if-no-files-found: ignore
 
-      # No `cache: npm`: the filter step below uses only Node's own modules, so
-      # nothing installs and there is no npm cache to hit.
+      # No `cache: pnpm`: the filter step below uses only Node's own modules, so
+      # nothing installs and there is no pnpm store to hit.
       - name: Set up Node.js
         if: always()
         uses: actions/setup-node@v7.0.0
@@ -507,11 +521,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Validate PR concurrency declaration
         if: github.event_name == 'pull_request'
@@ -540,6 +558,24 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/check-pr-changelog-fragment.mjs
 
+      # #3673: this repository installs with pnpm, and `pnpm-lock.yaml` is the
+      # only lockfile. An npm lockfile in the tree means somebody ran npm by
+      # habit and committed what it wrote (npm refuses to install here since
+      # `.npmrc` sets `engine-strict`, and `.gitignore` ignores the file, so it
+      # takes `git add -f` or an older npm). Two lockfiles disagree silently —
+      # Dependabot, the audit and a reader would each trust a different one —
+      # so it fails here, before the install, rather than being noticed later.
+      - name: Refuse an npm lockfile
+        run: |
+          found=0
+          for lockfile in package-lock.json npm-shrinkwrap.json; do
+            if [ -e "$lockfile" ]; then
+              echo "::error file=$lockfile::$lockfile is an npm lockfile. This repository installs with pnpm; delete it and run \`pnpm install\` (see CONTRIBUTING.md, #3673)."
+              found=1
+            fi
+          done
+          exit "$found"
+
       # #2909: every workflow job that runs the unit suite must check out full
       # git history, because part of that suite drives git against this
       # repository's own commits (HEAD^1, origin/main). The clock canary once ran
@@ -561,7 +597,7 @@ jobs:
       # Both properties are what make the routing table in AGENTS.md usable
       # instead of decorative, and neither is self-maintaining — the issue's own
       # watchpoint names the routing table as the part most likely to rot.
-      # Needs nothing but git and Node, so it runs before `npm ci` and fails in
+      # Needs nothing but git and Node, so it runs before the install and fails in
       # seconds rather than after the install.
       - name: Check doc index integrity (reachability + invariant ids)
         env:
@@ -572,14 +608,14 @@ jobs:
         run: node scripts/ci/check-doc-index-integrity.mjs
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # `Audit dependencies` used to sit here, between the install and the lint.
       # It is now the separate `dependency-audit` job above (#2946) — read the
       # comment there before moving it back. Nothing in this job may depend on
       # the audit's outcome.
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       # #2687: the file-size budgets in docs/MAINTENANCE.md, enforced as a
       # regression ratchet. Current debt may stay; new debt and debt growth may
@@ -612,7 +648,7 @@ jobs:
       # A base the checkout cannot reach — an all-zero `before` from a
       # ref-creating push, or a commit orphaned by a force-push — FAILS in the
       # ratchet rather than passing with no evidence, the same way
-      # `npm run pr:check` treats an unresolvable base.
+      # `pnpm run pr:check` treats an unresolvable base.
       #
       # THAT IS WHY `github.event.created == false` IS IN THE EXPRESSION, and it
       # is not decoration. This comment used to say both cases were "blocked on
@@ -666,7 +702,7 @@ jobs:
       # typecheck, suite, build, or security proofs that diagnose the release.
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       # Fails fast on type errors (app + test projects) before the slower
       # test suite and next build steps. tsc's heap crossed the Node default
@@ -674,7 +710,7 @@ jobs:
       # locally — so the ceiling is raised here rather than letting the gate
       # die of OOM (exit 134) instead of reporting type errors.
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
@@ -682,10 +718,10 @@ jobs:
       # dependency is introduced. Config and carve-outs live in knip.jsonc.
       # Inherits the job-level DATABASE_URL so prisma.config.ts resolves.
       - name: Dead-code check (knip)
-        run: npx knip
+        run: pnpm exec knip
 
       - name: Test
-        run: npm test
+        run: pnpm test
 
       # #2352: the public website's render modes are load-bearing and nothing else
       # notices when one changes — a route that quietly stops being per-request
@@ -701,7 +737,7 @@ jobs:
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ci/check-website-render-modes.mjs
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       # Must run AFTER the build: production CSP is nonce-only and Next stamps
       # its nonce into inline bootstrap scripts only during DYNAMIC rendering,
@@ -771,7 +807,7 @@ jobs:
       - name: File-size budget ratchet
         env:
           BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
-        run: npm run quality:budget -- --base "$BUDGET_BASE"
+        run: pnpm run quality:budget --base "$BUDGET_BASE"
 
   migration-drift:
     name: Migration drift check
@@ -828,7 +864,7 @@ jobs:
           # over the very pair it exists to catch.
           fetch-depth: 0
 
-      # Fails fast (no database or npm install needed) if any migration matching
+      # Fails fast (no database or dependency install needed) if any migration matching
       # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, if
       # a new migration reuses an existing timestamp prefix, or — since #3002 —
       # if a migration this change adds is a CONTRACT whose `previous_expand_release`
@@ -860,20 +896,24 @@ jobs:
       - name: Check data-migration verification coverage
         run: bash scripts/check-data-migration-verification.sh
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Create shadow database
         run: psql "$DATABASE_URL" -c "CREATE DATABASE drift_shadow"
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       # #1881: never let the opt-in real-Postgres lock harness silently skip in
       # CI. It uses a separate loopback-only service/database and the harness's
@@ -881,13 +921,13 @@ jobs:
       - name: Migrate dedicated advisory-lock race database
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
-        run: npx prisma migrate deploy
+        run: pnpm exec prisma migrate deploy
 
       - name: Test advisory-lock race protocol against dedicated PostgreSQL
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
-        run: npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
 
       # #2672: the member-merge partner-share safety case is a set of claims
       # about PostgreSQL itself — that a widened lodge derivation really makes a
@@ -904,7 +944,7 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
-        run: npx vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
       # #2374 (AID-5): PROVE the dedicated SELECT-only AI Diagnostics database
       # role cannot write, cannot run DDL, cannot create a TEMP table, cannot read
@@ -921,7 +961,7 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
-        run: npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -931,7 +971,7 @@ jobs:
       - name: Test guarded Xero member-grouping migration against PostgreSQL
         env:
           XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/xero-member-grouping-migration.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/xero-member-grouping-migration.test.ts
 
       # #2269 / #2418: the email-override annotation strip writes an audit row
       # per changed row, and that half was pinned by string-matching the SQL
@@ -941,7 +981,7 @@ jobs:
       - name: Test email override annotation strip against PostgreSQL
         env:
           EMAIL_OVERRIDE_ANNOTATION_STRIP_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/email-message-annotation-strip.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/email-message-annotation-strip.test.ts
 
       # #2430 (owner decision on PR #2466): the public Book Now default-off
       # migration also REWRITES DATA — it switches the button off for every
@@ -952,7 +992,7 @@ jobs:
       - name: Test the public Book Now default-off migration against PostgreSQL
         env:
           PUBLIC_BOOK_NOW_DEFAULT_OFF_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/public-book-now-default-off-migration.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/public-book-now-default-off-migration.test.ts
 
       # F28 (#1888): wire the real-DB BookingGuest stay-range trigger suite so it
       # is no longer a silent no-op. It self-provisions a throwaway schema and
@@ -962,7 +1002,7 @@ jobs:
       - name: Test guarded BookingGuest stay-range triggers against PostgreSQL
         env:
           BOOKING_GUEST_RANGE_TRIGGER_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/booking-guest-range-triggers.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/booking-guest-range-triggers.test.ts
 
       # #3030 (epic #2797): the ManualRefundTask money constraints. A CHECK
       # asserted against a mocked Prisma client is not tested - the mock accepts
@@ -975,19 +1015,19 @@ jobs:
       - name: Test ManualRefundTask money constraints against PostgreSQL
         env:
           MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts
 
       # Fails (exit 2) if the committed migrations do not reproduce
       # schema.prisma — the parity gate enforced at deploy time. See issue #760.
       - name: Check migrations reproduce schema.prisma
-        run: npm run db:check-drift
+        run: pnpm run db:check-drift
 
       # The drift check above cannot see raw-SQL partial indexes (Prisma cannot
       # express them), so apply the migrations for real and assert the partial
       # indexes match the committed manifest — a dropped/renamed index or an
       # undocumented new one fails here. See issue #1664.
       - name: Apply migrations to the drift database
-        run: npx prisma migrate deploy
+        run: pnpm exec prisma migrate deploy
 
       - name: Check partial indexes match the manifest
         run: bash scripts/check-partial-indexes.sh
@@ -1044,22 +1084,26 @@ jobs:
       - name: Check data-migration verification coverage
         run: bash scripts/check-data-migration-verification.sh
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       - name: Verify data migrations against PostgreSQL
         env:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
-        run: npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
 
       # #3369: the other half of the same proof. The fixture framework above can
       # say what a migration DOES; it has no way to say that one must REFUSE, so
@@ -1069,7 +1113,7 @@ jobs:
       - name: Prove the school backfill refuses an unclassified row
         env:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
-        run: npx vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+        run: pnpm exec vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
 
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is

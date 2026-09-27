@@ -1,13 +1,27 @@
 FROM node:24.17-alpine AS base
-RUN npm install -g npm@11.14.0 && npm cache clean --force
+# pnpm, at exactly the version package.json pins in `packageManager` (#3673).
+# Read from package.json rather than written here a second time, so the image
+# cannot drift from CI and the lockfile; only that one field is copied in, so
+# this layer is rebuilt only when package.json changes. The runner stage below
+# never has pnpm: it does not install anything.
+COPY package.json /tmp/package-manager/package.json
+RUN npm install -g "$(node -p "require('/tmp/package-manager/package.json').packageManager")" \
+  && npm cache clean --force \
+  && rm -rf /tmp/package-manager
 
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+# The store lives on a BuildKit cache mount, so repeat builds reuse downloaded
+# packages the way `/root/.npm` did for npm. A cache mount is a different
+# filesystem from the image layer, so pnpm copies files into node_modules rather
+# than hard-linking them — which is what an image needs anyway: node_modules must
+# be self-contained, with no link back to a store that is not in the image.
+RUN --mount=type=cache,target=/pnpm/store \
+  pnpm install --frozen-lockfile --store-dir=/pnpm/store
 
 # Build the application
 FROM base AS builder
@@ -28,7 +42,7 @@ ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 
 # Deployed-code knowledge bundle (AID-3, #2372). Generated here in the builder,
 # where the dependencies exist (a plain `docker compose build` on a club's
-# server has no host Node/npm toolchain, so generation cannot run outside the
+# server has no host Node/pnpm toolchain, so generation cannot run outside the
 # image). The commit SHA is INJECTED at build time via GIT_COMMIT_SHA because
 # `.git` is absent from the build context; KNOWLEDGE_BUNDLE_OBSERVED_AT pins the
 # observed-at for a byte-reproducible artifact. Both are passed by CI / the
@@ -44,7 +58,7 @@ ARG GIT_COMMIT_SHA=""
 ENV GIT_COMMIT_SHA=$GIT_COMMIT_SHA
 ARG KNOWLEDGE_BUNDLE_OBSERVED_AT=""
 ENV KNOWLEDGE_BUNDLE_OBSERVED_AT=$KNOWLEDGE_BUNDLE_OBSERVED_AT
-RUN npm run diagnostics:bundle
+RUN pnpm run diagnostics:bundle
 
 # Release identifier for the per-release public-website CSP nonce (#2352 D1).
 # Declared in the BUILDER as well as the runner on purpose: a bundle that inlines
@@ -77,8 +91,8 @@ ENV RELEASE_ID=$RELEASE_ID
 # build line below needs no change.
 ARG NODE_OPTIONS=""
 
-RUN npx prisma generate
-RUN npm run build
+RUN pnpm exec prisma generate
+RUN pnpm run build
 
 # Production image
 FROM node:24.17-alpine AS runner
@@ -132,7 +146,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # alongside the standalone trace, so the runtime loader
 # (src/lib/diagnostics/knowledge/load.ts) finds it at
 # /app/.artifacts/diagnostics/knowledge-bundle.json regardless of tracing. The
-# builder's `npm run diagnostics:bundle` step above always writes this path (a
+# builder's `pnpm run diagnostics:bundle` step above always writes this path (a
 # real bundle, or a placeholder-SHA one the loader fail-closes on), so this COPY
 # never fails.
 COPY --from=builder /app/.artifacts ./.artifacts
