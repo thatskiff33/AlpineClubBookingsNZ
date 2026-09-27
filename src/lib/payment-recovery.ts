@@ -2938,7 +2938,7 @@ async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
     checkOut: oldest.booking?.checkOut ?? null,
     amountCents: oldest.amountCents,
     errorMessage:
-      "Stripe payment recovery queue is stalled. Confirm that /api/cron/payments?task=recovery is running every 5 minutes.",
+      "Stripe payment recovery queue is stalled. Confirm the cron leader's 15-minute payments cycle is running (payment-recovery on admin cron health).",
     paymentIntentId: oldest.paymentIntentId,
   }, format).catch((alertError) =>
     logger.error(

@@ -647,6 +647,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Internet Banking defaults are non-holding and no-cutoff. If bed holding is
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
+- Never once the stay has started (#3663): check-in on or before the club's
+  today is skipped, counted `skippedStarted` and alerted to finance once, for
+  reconciliation by hand. Pinned by `internet-banking-payment-cron.test.ts`.
 
 ## INV-PAY-017
 

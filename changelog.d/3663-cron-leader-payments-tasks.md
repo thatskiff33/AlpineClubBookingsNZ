@@ -7,5 +7,12 @@
   deployment never does. Both now run every 15 minutes alongside payment
   recovery, through the same code the cron address uses, and each shows as its
   own job on the admin cron-health page, so one that stops running is visible.
-  One job failing no longer hides or stops the others. **On the first run after
-  upgrading, every hold that expired while nothing ran is released.**
+  One job failing no longer hides or stops the others, and a hold that could
+  not be released shows as a warning. A booking whose stay has already started
+  is never cancelled this way: it is left alone and the treasurer is emailed
+  once to reconcile it by hand. **On the first run after upgrading, every
+  expired hold that has no money paid against it and whose stay has not
+  started is released:** the booking is cancelled, the member is emailed, any
+  account credit they used is restored and the unpaid invoice is cleared.
+  Before upgrading, reconcile outstanding Internet Banking payments and count
+  the expired holds (see the deploy note in `DEPLOYMENT.md`).
