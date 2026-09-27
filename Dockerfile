@@ -31,6 +31,13 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+# pnpm checks node_modules against the lockfile before every `pnpm run` /
+# `pnpm exec` and, by default, installs when it thinks they differ (#3673).
+# Here that install would run under NODE_ENV=production and drop the
+# devDependencies the build needs, so drift fails the build instead of quietly
+# changing node_modules. node_modules comes straight from the frozen install in
+# the deps stage, so the check passes on every normal build.
+ENV pnpm_config_verify_deps_before_run=error
 ENV DATABASE_URL=postgresql://tac:password@postgres:5432/tacbookings
 
 # Stripe publishable key is delivered at runtime from the encrypted DB store

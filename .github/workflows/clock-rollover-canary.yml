@@ -153,6 +153,13 @@ jobs:
       # calendar fails identically on every attempt, because the clock is shifted
       # for the whole run. Only a slowness flake passes on the retry.
       - name: Run the unit suite with the real clock ${{ matrix.label }}
+        env:
+          # pnpm checks node_modules against the lockfile before `pnpm test`
+          # and installs if it thinks they differ (#3673). libfaketime shifts
+          # file timestamps too, so that check sees a lockfile "newer" than the
+          # install; an install then would run with the clock up to a year
+          # ahead. The install step above is the only install this job wants.
+          pnpm_config_verify_deps_before_run: "false"
         run: faketime -f '${{ matrix.offset }}' pnpm test --testTimeout=30000 --hookTimeout=30000 --retry=2
 
       - name: Explain a red canary
