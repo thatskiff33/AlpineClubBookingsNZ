@@ -55,6 +55,26 @@ would falsely suggest every file runs four times.
 - **set React Testing Library's async window to 4,000ms** under jsdom — the
   section below.
 
+It also names one **global** setup, `vitest.global-setup.ts`, which runs once
+per run in the main process, not in every worker, so it has no place in that
+order. It clears the scratch folders Vitest leaks into the system temp directory
+(#3671). Vitest never removes its root `os.tmpdir()/<nanoid>` folder, so every
+run leaks one, and a project's folder survives any run that is killed or whose
+delete fails. The sweep starts a detached child process that the run does not
+wait for. It removes a folder only when all of these hold:
+
+- the name is exactly a nanoid;
+- it holds nothing but real `ssr/` or `client/` directories of Vitest's files,
+  never a link;
+- the newest modification time of the folder and of those marker directories is
+  more than 24 hours old;
+- it is not this run's own folder.
+
+A live run refreshes its own folders every ten minutes. The full explanation,
+including what the guards do and do not guarantee, is the docstring of
+`scripts/lib/vitest-temp-sweep.ts`. The tests are in
+`scripts/__tests__/vitest-temp-sweep.test.ts`.
+
 The `.mts` extension is deliberate, not incidental (#2864). Vite reads a plain
 `.ts` config as CommonJS, so from 8.2.1 it warns on every run that this file
 uses ESM syntax, and once `configLoader: "native"` becomes vite's default such a
