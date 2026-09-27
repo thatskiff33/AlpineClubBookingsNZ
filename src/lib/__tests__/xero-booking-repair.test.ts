@@ -767,6 +767,34 @@ describe("runBookingXeroRepair", () => {
           (a) => a.type === "QUEUE_MODIFICATION_CREDIT_NOTE",
         ),
       ).toBe(false);
+
+      // Only the RETIRED CLEARING note says that: a cancelled create of any
+      // other credit note on the booking is not evidence cash arrived.
+      const otherNote = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [booking],
+          operations: [
+            makeOperation({
+              id: "operation_other_note",
+              localModel: "Booking",
+              localId: booking.id,
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              queueType: "REFUND_CREDIT_NOTE",
+              status: "CANCELLED",
+              xeroObjectType: null,
+              xeroObjectId: null,
+              completedAt: null,
+            }),
+          ],
+        }),
+        scope: { all: true },
+      });
+      expect(
+        otherNote.passes[0].bookings[0].findings.some((f) =>
+          f.summary.startsWith("Cash arrived"),
+        ),
+      ).toBe(false);
     });
 
     it("still repairs a never-paid cancelled internet-banking booking with nothing on its payment", async () => {
