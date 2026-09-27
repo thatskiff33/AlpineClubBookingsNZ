@@ -11,23 +11,23 @@ mandatory because it follows the module graph to adjacent suites that a
 filename-only selection misses; add focused tests for the contracts you changed.
 
 ```bash
-npm run db:generate
-npm run lint
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run typecheck
-npm run test:related -- $(git diff --name-only main...HEAD)
-npm test -- path/to/focused.test.ts
-npm run knip                 # when files or exports change
-npm run docs:linkcheck       # when docs change
-npm run docs:indexcheck      # when docs change or INV-* ids are cited
-npm run quality:budget
-npm run ci:workflowcheck     # when .github/workflows/ changes
+pnpm run db:generate
+pnpm run lint
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings pnpm run typecheck
+pnpm run test:related $(git diff --name-only main...HEAD)
+pnpm test path/to/focused.test.ts
+pnpm run knip                 # when files or exports change
+pnpm run docs:linkcheck       # when docs change
+pnpm run docs:indexcheck      # when docs change or INV-* ids are cited
+pnpm run quality:budget
+pnpm run ci:workflowcheck     # when .github/workflows/ changes
 git diff --check
 ```
 
-The blocking `verify` job owns the full `npm test` and the production build; the
+The blocking `verify` job owns the full `pnpm test` and the production build; the
 dependency audit is its own blocking job beside it (`Dependency audit`, #2946)
 so an advisory cannot skip the gates behind it. Do not duplicate the full suite
-locally unless diagnosing CI or CI is unavailable. `npm test` includes property-based tests (fast-check) for the pure money math —
+locally unless diagnosing CI or CI is unavailable. `pnpm test` includes property-based tests (fast-check) for the pure money math —
 pricing, promo discounts, refund tiers, change fees, member credit, and the
 Xero booking-edit settlement classifier — in
 `src/lib/policies/__tests__/*.property.test.ts` and
@@ -45,20 +45,21 @@ that Prisma resets):
 
 ```bash
 SHADOW_DATABASE_URL=postgresql://user:pass@localhost:5432/drift_shadow \
-  npm run db:check-drift   # exit 0 = in sync, 2 = drift
+  pnpm run db:check-drift   # exit 0 = in sync, 2 = drift
 ```
 
 CI also runs independent static and container checks:
 
-- `npm run audit:deps` (`scripts/ci/audit-dependencies.mjs`) in its own blocking
+- `pnpm run audit:deps` (`scripts/ci/audit-dependencies.mjs`) in its own blocking
   `Dependency audit` job, on pull requests and on pushes to `main`. It runs
-  `npm audit --audit-level=high --json` and reports which of three things
+  `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below. It runs from a bare
-  checkout with no `npm ci`: measured on npm 11.16.0 / Node 24 the audit builds
-  its tree from `package-lock.json` and returns the same verdict with or without
-  `node_modules`, and skipping the install keeps a required supply-chain gate
+  checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
+  its tree from `package-lock.json` and returned the same verdict with or without
+  `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
+  Skipping the install keeps a required supply-chain gate
   from reddening for anything except an advisory
-- `npm audit --audit-level=high --package-lock-only` again in the advisory,
+- `pnpm audit --audit-level=high` again in the advisory,
   pull-request-only `dependency-review` job. That one carries a job-level `if:`,
   which is exactly why it can never be a required check
 - Semgrep with Next.js, TypeScript, JavaScript and React registry rules, **plus
@@ -91,13 +92,14 @@ CI also runs independent static and container checks:
 
 ## Dependency Policy
 
-- Keep `package-lock.json` committed.
+- Keep `pnpm-lock.yaml` committed. It is the only lockfile; CI refuses a
+  `package-lock.json` (#3673).
 - Prefer small dependency update PRs with explicit validation results.
-- Keep the `overrides` block in `package.json` to the minimum that is still
+- Keep the `overrides` block in `pnpm-workspace.yaml` to the minimum that is still
   load-bearing, and retire an entry as soon as the upstream dependency graph no
-  longer needs it. `package.json` is strict JSON and cannot carry a comment, so
-  the register below — not the manifest — is where an override records why it
-  exists and when it retires. Adding an override means adding a row.
+  longer needs it. The register below — not the workspace file, whose comments
+  point here — is where an override records why it exists and when it retires.
+  Adding an override means adding a row.
 - Exact-pinning a **direct** dependency *below its newest release, because the
   newer one is broken*, is a **hold**: it needs a row in the hold register below
   and a written condition that lifts it. An exact pin at the version that is
@@ -114,7 +116,7 @@ CI also runs independent static and container checks:
 
 **Audience: operator, developer.**
 
-`npm audit` asks npmjs.org for advisories over the network, so it can fail for
+`pnpm audit` asks npmjs.org for advisories over the network, so it can fail for
 two entirely different reasons. Until #3254 those two failures were
 indistinguishable at a glance: the same required check, the same red tick, and a
 `npm warn audit ...` line buried in the job log as the only way to tell them
@@ -130,19 +132,20 @@ output names the case**:
 | `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
 | `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. **Re-running will not help.** |
 | `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
-| `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | npm answered with something that is not a readable audit report - usually a missing or malformed `package-lock.json`, or a report whose severity counts are missing or non-numeric. | Read the npm output above the verdict. The verdict names which severities it could not read when that is the cause. |
+| `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | pnpm answered with something that is not a readable audit report - usually a missing or malformed `pnpm-lock.yaml`, or a report whose severity counts are missing or non-numeric. | Read the pnpm output above the verdict. The verdict names which severities it could not read when that is the cause. |
 
 **The retry budget: four attempts, with 5s, 15s and 45s between them** - at most
 65 seconds added to a job whose own timeout is ten minutes. Generous enough to
 absorb the ordinary bad minute, which is what all three measured failures were;
 deliberately not generous enough to sit out a real outage, because a runner
-spending ten minutes discovering that npm is down helps nobody. Only an
+spending ten minutes discovering that npmjs.org is down helps nobody. Only an
 unreachable service is retried: a vulnerability is an answer, not a failure to
 answer.
 
 **Each attempt is also capped at 90 seconds** and killed if it exceeds that,
 which is what makes the budget a bound rather than an estimate. npm's own
-`fetch-timeout` default is 300 seconds, so an endpoint that swallows packets
+`fetch-timeout` default, which the gate ran under when the cap was chosen, is
+300 seconds, so an endpoint that swallows packets
 without answering could otherwise leave four attempts running past the job's
 ten-minute ceiling - and a cancelled runner prints no verdict line at all, which
 is the unexplained red this whole change exists to abolish. A killed attempt
@@ -157,7 +160,7 @@ rejected - a green tick is what people read, not the summary underneath it.
 ### Why a stale override is not harmless
 
 A transitive dependency normally maintains itself: when a Dependabot group PR
-bumps a parent, npm re-resolves and every child floats up to the newest version
+bumps a parent, pnpm re-resolves and every child floats up to the newest version
 its parent's range allows. An **exact** override switches that off for one
 package permanently, so the package silently stops being maintained by the
 system and becomes ours to carry. Prefer a `^` floor over an exact pin — the
@@ -175,14 +178,25 @@ altogether.
 Every row below was verified by removing that entry and re-resolving (#2863). All
 four are load-bearing; none is inert.
 
+Since #3673 the block lives in `pnpm-workspace.yaml`, translated one entry for
+one entry from npm's `overrides` in `package.json`. Two spellings changed.
+npm's `$sharp` and `$nodemailer` ("this repository's own range") became catalog
+references: `package.json` declares both dependencies as `catalog:`, the range
+is written once under the workspace file's `catalog:`, and the override points
+at `catalog:` too, so a bump is one edit there. npm's nested
+`"next-auth": { "nodemailer" }` covered the whole subtree under `next-auth`;
+pnpm's `>` selector names a direct parent only, so that entry is written twice,
+`next-auth>nodemailer` and `@auth/core>nodemailer`, one for each package that
+declares the optional peer.
+
 | override | why it exists | retires when |
 | --- | --- | --- |
-| `sharp` (`$sharp`) | **Security.** Removing it lets `next` nest `sharp@0.34.5`, which carries two high-severity advisories. Forces every copy onto the `^0.35.3` declared in `dependencies`. Added in `83b25035d`. | `next` requires sharp 0.35.3 or later. |
+| `sharp` (`catalog:`) | **Security.** Removing it lets `next` nest `sharp@0.34.5`, which carries two high-severity advisories. Forces every copy onto this repository's own `sharp` range (the workspace `catalog:`). Added in `83b25035d`. | `next` requires sharp 0.35.3 or later. |
 | `postcss` (`^8.5.26`) | **Security.** `next` requires postcss at **exactly `8.4.31`**, which carries four advisories including a high. An exact upstream pin cannot be lifted by drift, so this override is the only thing keeping the nested copy safe. | `next` moves its own postcss pin to 8.5.26 or later. |
-| `next-auth` → `nodemailer` (`$nodemailer`) | **Resolution.** `next-auth@5.0.0-beta.32` declares `peerOptional nodemailer@"^7.0.7 \|\| ^8.0.5"`, which conflicts with the `^9.0.1` in `dependencies`; without the override `npm install` fails outright with `ERESOLVE`. Added in `8f366a08c` (#1182). | `next-auth` widens its peer range to admit nodemailer 9. |
+| `next-auth>nodemailer` and `@auth/core>nodemailer` (`catalog:`) | **Resolution.** `next-auth@5.0.0-beta.32` declares `peerOptional nodemailer@"^7.0.7 \|\| ^8.0.5"`, which conflicts with the `^9.0.1` in `dependencies`; without the override `npm install` failed outright with `ERESOLVE`. Added in `8f366a08c` (#1182). | `next-auth` widens its peer range to admit nodemailer 9. |
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
-| `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `npm audit` will show by this entry becoming inert. |
-| `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `npm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offers is `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
+| `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `pnpm audit` will show by this entry becoming inert. |
+| `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `pnpm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offered was `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
 
 ### The direct-dependency hold register
 
@@ -218,32 +232,32 @@ Two rules, both learned the expensive way:
 
 ### Checking whether an override still earns its place
 
-`npm audit` answers this directly, and it is worth running whenever the block is
+`pnpm audit` answers this directly, and it is worth running whenever the block is
 touched. Strip the candidate entries in a scratch copy — never in the worktree —
 regenerate, and audit:
 
 ```bash
-mkdir -p /tmp/ovcheck && cp package.json package-lock.json /tmp/ovcheck/
-cd /tmp/ovcheck && cp package-lock.json lock-before.json
+mkdir -p /tmp/ovcheck && cp package.json pnpm-workspace.yaml pnpm-lock.yaml /tmp/ovcheck/
+cd /tmp/ovcheck && cp pnpm-lock.yaml lock-before.yaml
 
-# remove the override(s) under test from package.json, then re-resolve from
-# scratch — deleting the lockfile is what forces npm to answer "where would
+# remove the override(s) under test from pnpm-workspace.yaml, then re-resolve
+# from scratch — deleting the lockfile is what forces pnpm to answer "where would
 # this land on its own?" rather than preserving what is already pinned.
-rm package-lock.json
-npm install --package-lock-only --ignore-scripts --no-audit
-npm audit --package-lock-only --audit-level=high
+rm pnpm-lock.yaml
+pnpm install --lockfile-only --ignore-scripts
+pnpm audit --audit-level=high
 ```
 
 Anything the audit reports is still load-bearing and stays. Anything it does not
 report has been fixed upstream and the override should go.
 
-Compare `lock-before.json` against the regenerated lockfile as well, because the
+Compare `lock-before.yaml` against the regenerated lockfile as well, because the
 audit alone does not distinguish an inert override from a harmful one. An entry
 that resolves to a **lower** version once removed is doing real work; one that
 resolves to the **same** version is inert; one that resolves **higher** was
 actively holding the package back.
 
-Two cautions. `npm audit` reflects today's advisory database, so this measures
+Two cautions. `pnpm audit` reflects today's advisory database, so this measures
 whether upstream has caught up as of now, not for all time. And an override may
 exist for a non-security reason that no audit can see — check `git log -S` for
 the entry before removing it, as a hold or a peer-conflict fix will look inert
@@ -680,7 +694,7 @@ Accepted residual risk:
 - The project does not yet publish signed image attestations or SBOM artifacts;
   image provenance is currently the commit-SHA tag, protected PR checks, and the
   GHCR package publish job.
-- The `npm audit --audit-level=high` gate keeps high/critical npm advisories
+- The `pnpm audit --audit-level=high` gate keeps high/critical npm advisories
   blocking, while lower severity advisories remain review-driven.
 - A sustained npmjs.org advisory outage blocks every merge, by deliberate
   decision (#3254). See "When the advisory service is down" above.
@@ -732,7 +746,7 @@ the existing surface.
 The tree does not meet the budgets today and will not for some time. Measured
 on 21 Aug 2026: 283 of 2,036 production files are over budget, carrying 122,887
 lines of size debt. That is an anchored measurement, not an acceptance constant
-— run `npm run quality:budget -- --report` for the current tree, which is now
+— run `pnpm run quality:budget --report` for the current tree, which is now
 the only place the figure lives. Failing all that debt at once would produce
 either a permanently red gate or a mass exception list, and both are worse than
 no gate, because they look like enforcement while providing none. So the rule CI
@@ -762,15 +776,15 @@ how long that file was on `origin/main` and compares. From that:
   again would be a way to launder any amount of growth in two steps;
 - if the base cannot be read, the check **fails**. An enforcement tool that
   cannot see what it is comparing against must say so rather than report a pass
-  it has not earned, which is the same rule `npm run pr:check` follows for an
+  it has not earned, which is the same rule `pnpm run pr:check` follows for an
   unfetched `origin/main`. The same goes for a run that finds **no production
   files at all**: "scanned and found nothing wrong" and "scanned nothing" are
   the same empty result and must not be the same message.
 
 ```bash
-npm run quality:budget                    # verify (also a step in CI's `verify` job)
-npm run quality:budget -- --base <ref>    # compare against something other than origin/main
-npm run quality:budget -- --report        # the whole tree's debt, on demand
+pnpm run quality:budget                    # verify (also a step in CI's `verify` job)
+pnpm run quality:budget --base <ref>    # compare against something other than origin/main
+pnpm run quality:budget --report        # the whole tree's debt, on demand
 ```
 
 All three read `git` and the working tree only: no network, no database, no
@@ -923,7 +937,7 @@ format and the rules. In short:
   allowance lets an already-over-budget file grow; it is not a way to arrive
   over budget.
 
-**`npm run quality:budget:update` is gone** (#2979) — if you remember typing it,
+**`pnpm run quality:budget:update` is gone** (#2979) — if you remember typing it,
 or find it in an old branch or an old pull request comment, the allowance above
 is what replaced it. It regenerated the deleted baseline file; running it now
 prints an explanation rather than doing nothing quietly.
@@ -944,8 +958,8 @@ than a control.
   laxer ceiling.
 
 If you want the aggregate figure for context — how many files are over budget
-and by how much in total — run `npm run quality:budget -- --report`, or read the
-`File-size budget ratchet` section of `npm run quality:report`. Both compute it
+and by how much in total — run `pnpm run quality:budget --report`, or read the
+`File-size budget ratchet` section of `pnpm run quality:report`. Both compute it
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
@@ -956,7 +970,7 @@ splitting a large surface, and when reviewing a PR that adds substantial
 production code:
 
 ```bash
-npm run quality:report
+pnpm run quality:report
 ```
 
 The script scans tracked files via `git ls-files` and prints a markdown
@@ -977,12 +991,12 @@ means the file exceeds the route-handler, page-shell, or new-domain-module
 budget. The `File-size budget ratchet` section reports the population the
 blocking gate enforces its rule over, and both read it from the same function —
 so the report and the gate cannot disagree about which files are over budget.
-The report itself never fails; `npm run quality:budget` is the half that does.
+The report itself never fails; `pnpm run quality:budget` is the half that does.
 
 ### Refactor history and split guidance
 
 There is no ledger of accepted size debt any more (#2979) — the current figure
-is whatever `npm run quality:budget -- --report` measures. This table is not a
+is whatever `pnpm run quality:budget --report` measures. This table is not a
 ledger and is not an allow-list: it is the standing guidance for a handful of
 surfaces whose split axis was decided once and should not be relitigated. It
 carries no line counts,
@@ -1011,14 +1025,14 @@ were off by two orders of magnitude.
 
 ## Operational Repair Tools
 
-### Run these through `npm run`, never `npx tsx`
+### Run these through `pnpm run`, never `pnpm exec tsx`
 
-Every repair tool below is published as an `npm run` command, and that is the
+Every repair tool below is published as a `pnpm run` command, and that is the
 spelling to copy unless a runbook explicitly gives you another one. (One does:
 `docs/INDUCTION_BASELINE_RUNBOOK.md` runs the baseline inside the Compose
-`migrate` service, where the npm wrapper is not available, so it spells the
+`migrate` service, where the `pnpm run` wrapper is not available, so it spells the
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
-correct and supported — what is never correct is a bare `npx tsx`.) The reason
+correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
 `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
@@ -1028,15 +1042,15 @@ taking the marked roots to nine — every command below already reached a module
 that carried the marker, so none of them needed a new flag. That
 marker throws the moment it is loaded under plain Node, with a message about
 React Server Components that names nothing you did — so a script started with a
-bare `npx tsx scripts/<name>.ts` would abort before it printed anything, which
+bare `pnpm exec tsx scripts/<name>.ts` would abort before it printed anything, which
 during a money-repair incident is the worst possible time to meet a confusing
 import error.
 
-The `npm run` wrappers pass Node's `--conditions=react-server` resolution flag,
+The `pnpm run` wrappers pass Node's `--conditions=react-server` resolution flag,
 under which `server-only` resolves to an empty module and the script runs
-normally. Arguments go after `--`, for example
-`npm run xero:booking-repair -- --dry-run`. Environment variables go in front as
-usual: `DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing`.
+normally. Arguments go straight after the script name, for example
+`pnpm run xero:booking-repair --dry-run`. Environment variables go in front as
+usual: `DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing`.
 `src/lib/__tests__/cli-server-only-reach-census.test.ts` fails the build if a
 command that reaches ANY module carrying that marker is ever published without
 the flag —
@@ -1126,7 +1140,7 @@ the outcome they were promised.
 
 ### Record a trusted legacy induction baseline (#2361)
 
-`npm run induction:baseline` is a one-off, dry-run-first maintenance command
+`pnpm run induction:baseline` is a one-off, dry-run-first maintenance command
 for a committee-authorised legacy New Member induction baseline. It never
 belongs in normal setup or deployment flows. A dry run requires an active,
 login-enabled Full Admin actor member ID, one New Zealand date-only baseline
@@ -1137,7 +1151,7 @@ IFS= read -r ACTOR_MEMBER_ID < /protected/path/actor-member-id
 IFS= read -r BASELINE_DATE < /protected/path/baseline-date
 IFS= read -r PROVENANCE_NOTE < /protected/path/provenance-note
 
-npm run induction:baseline -- \
+pnpm run induction:baseline \
   --actor-member-id "$ACTOR_MEMBER_ID" \
   --baseline-date "$BASELINE_DATE" \
   --provenance-note "$PROVENANCE_NOTE"
@@ -1176,9 +1190,9 @@ reviewing the affected bookings.
 Always start with a dry run:
 
 ```bash
-npm run xero:booking-repair -- --dry-run
-npm run xero:booking-repair -- --booking <bookingId> --dry-run
-npm run xero:booking-repair -- --from <YYYY-MM-DD> --to <YYYY-MM-DD> --dry-run
+pnpm run xero:booking-repair --dry-run
+pnpm run xero:booking-repair --booking <bookingId> --dry-run
+pnpm run xero:booking-repair --from <YYYY-MM-DD> --to <YYYY-MM-DD> --dry-run
 ```
 
 `--from`/`--to` are **inclusive club calendar days**, and a booking is swept if
@@ -1374,13 +1388,13 @@ a second run finds nothing.
 Always start with a dry run (the default) against a non-production copy:
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:backfill-cancel-flattened
+DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened
 ```
 
 Only after reviewing the dry-run report, apply inside a transaction:
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:backfill-cancel-flattened -- --apply
+DATABASE_URL=<non-prod copy> pnpm run payments:backfill-cancel-flattened --apply
 ```
 
 ### Backfill orphaned applied credit (#1547)
@@ -1419,14 +1433,14 @@ regression — diagnose before running this script.
 Always start with a dry run (the default) against a non-production copy:
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits
+DATABASE_URL=<non-prod copy> pnpm run payments:backfill-orphaned-credits
 ```
 
 Only after reviewing the dry-run report, apply (each booking in its own
 transaction):
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:backfill-orphaned-credits -- --apply
+DATABASE_URL=<non-prod copy> pnpm run payments:backfill-orphaned-credits --apply
 ```
 
 ### Re-derive evenly-split night prices from the rate table (#3531)
@@ -1465,14 +1479,14 @@ the cutover, and start with a dry run (the default) against a non-production
 copy:
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run bookings:backfill-night-prices-from-rates
+DATABASE_URL=<non-prod copy> pnpm run bookings:backfill-night-prices-from-rates
 ```
 
 Only after reviewing the dry-run report — the strands it would rewrite and the
 residue it lists — apply:
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run bookings:backfill-night-prices-from-rates -- --apply
+DATABASE_URL=<non-prod copy> pnpm run bookings:backfill-night-prices-from-rates --apply
 ```
 
 `--booking <id>` scopes a run to one booking, `--limit <n>` to the n oldest
@@ -1491,7 +1505,7 @@ afterwards, first reset the rewritten rows from their audit rows (each
 
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 
-`npm run booking-money:census` is a READ-ONLY, repeatable-read census. It
+`pnpm run booking-money:census` is a READ-ONLY, repeatable-read census. It
 writes nothing, repairs nothing and calls no provider. From one ordered
 snapshot it reports:
 
@@ -1514,7 +1528,7 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 (3b) reads off as one line against another — no figure is asserted.
 
 ```bash
-DATABASE_URL=<non-prod copy or, read-only, production> npm run booking-money:census
+DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
 
 ### Census the booking ledger identity (#3340)
@@ -1559,9 +1573,9 @@ answers to "is the club asking for this?" that only a person can weigh. The
 census is a report; this is one of the things the person reading it has to know.
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger
-DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --sql
-DATABASE_URL=<non-prod copy> npm run payments:audit-booking-ledger -- --json
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-booking-ledger
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-booking-ledger --sql
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-booking-ledger --json
 ```
 
 The script itself reads TYPED, through Prisma, and does the arithmetic with the
@@ -1606,8 +1620,8 @@ local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
 hold released, which is exactly what the pre-fix release enqueued.
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
-DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing --json
 ```
 
 **The existing `xero-booking-repair.ts` CLI cannot express this repair.** Its
@@ -1707,7 +1721,7 @@ bash scripts/backup-restore-drill.sh
 ```
 
 Requirements: Docker with the `postgres:16` image available, plus the repo
-dependencies installed (`npm ci`). The container is removed on exit even if the
+dependencies installed (`pnpm install --frozen-lockfile`). The container is removed on exit even if the
 drill fails. The script prints a PASS/FAIL summary suitable for pasting into an
 operations log.
 
@@ -1773,7 +1787,7 @@ A failing drill is a **backup-pipeline incident**, not a routine test flake:
 Before cutting a public reference release:
 
 1. Create a release-prep branch from fresh `origin/main`.
-2. Update `package.json` and `package-lock.json` for the release version, then
+2. Update the version in `package.json` (`pnpm-lock.yaml` does not record it), then
    compile the changelog:
 
    ```bash

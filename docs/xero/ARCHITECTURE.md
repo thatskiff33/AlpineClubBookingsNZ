@@ -951,8 +951,8 @@ document automatically** — that judgement stays with the operator.
    with the change record):
 
    ```bash
-   npm run xero:refund-note-link-repair -- --record-statuses   # all refunded Stripe payments
-   npm run xero:refund-note-link-repair -- --record-statuses --payment <id>
+   pnpm run xero:refund-note-link-repair --record-statuses   # all refunded Stripe payments
+   pnpm run xero:refund-note-link-repair --record-statuses --payment <id>
    ```
 
    `--record-statuses` fetches each linked credit note from Xero (read-only
@@ -1008,7 +1008,7 @@ document automatically** — that judgement stays with the operator.
    must equal the plan; safe to re-run — a second pass finds nothing):
 
    ```bash
-   npm run xero:refund-note-link-repair -- --apply --payment <id> [--payment <id>...]
+   pnpm run xero:refund-note-link-repair --apply --payment <id> [--payment <id>...]
    ```
 
    `--apply` refuses to run unscoped: it takes the reviewed payment ids so it
@@ -1235,7 +1235,7 @@ invoices.
 
   ```bash
   DATABASE_URL='postgresql://user:pass@host:5432/scratch_copy' \
-    npm run xero:audit-invoice-rounding -- --issued-before 2026-07-04
+    pnpm run xero:audit-invoice-rounding --issued-before 2026-07-04
   ```
 
   `--issued-before <YYYY-MM-DD>` should be the date you deployed #1231; it scopes

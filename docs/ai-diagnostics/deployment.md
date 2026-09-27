@@ -41,7 +41,7 @@ content. A deployment populates a **configured location** with a **typed shape**
 - **Location.** By default `config/diagnostics-knowledge.json` — the conventional,
   git-ignored, hard-excluded slot. A fork may point elsewhere by setting
   `DIAGNOSTICS_KNOWLEDGE_CONFIG_PATH` in the build environment. The file is read by
-  `npm run diagnostics:bundle` **in the Docker builder**, exactly like the allowlist
+  `pnpm run diagnostics:bundle` **in the Docker builder**, exactly like the allowlist
   overlay, so the overlay content is baked into that build's bundle. Changing it
   needs a rebuild.
 - **Shape.** The same file that carries the allowlist overlay (`include` /
@@ -176,14 +176,14 @@ Ordinary parameters such as `sslmode` and `connection_limit` are unaffected.
 ### Provisioning
 
 ```bash
-AI_DIAGNOSTICS_DB_PASSWORD='<a long random secret>' npm run diagnostics:provision-role
+AI_DIAGNOSTICS_DB_PASSWORD='<a long random secret>' pnpm run diagnostics:provision-role
 ```
 
 Preview the exact statements without connecting (the password literal is replaced
 with a placeholder, so nothing secret is printed):
 
 ```bash
-npm run diagnostics:provision-role -- --dry-run
+pnpm run diagnostics:provision-role --dry-run
 ```
 
 The script needs a connection that may create roles: the application's own
@@ -445,7 +445,7 @@ The operator CLI prints the declared grants, columns and all, on every run and o
 `--dry-run`.
 
 **Upgrading to the AID-6B release is a two-step operation: deploy, then re-run
-`npm run diagnostics:provision-role`.** This release adds thirteen relations and
+`pnpm run diagnostics:provision-role`.** This release adds thirteen relations and
 widens `Member` from two columns to twenty-four, so until it is re-run the
 *previous* release's grants no longer match the declared allowlist and **every
 SQL-backed tool refuses, by design**.
@@ -496,13 +496,13 @@ still safe.** The module ships **default-off**; every tool reads only through th
 dedicated **SELECT-only** role, verified least-privilege against the server on a
 one-minute clock; and turning the product on is an explicit **owner action** —
 enable the module, store the dedicated key, set a positive budget, and run
-`npm run diagnostics:provision-role`. Until an operator does all four, the ask route
+`pnpm run diagnostics:provision-role`. Until an operator does all four, the ask route
 refuses before a provider is ever contacted (readiness is fail-closed), and every
 tool call refuses independently of readiness because the credential gate is the
 control. Enabling the module alone authorises no spend and no read.
 
 So on an upgrade the **grant is still the production change to reason about**: after
-`npm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
+`pnpm run diagnostics:provision-role`, `ai_diagnostics_ro` holds SELECT on the
 thirteen relations AID-6B added and on a `Member` widened from two columns to
 twenty-four. The difference from the earlier note is only that a provisioned,
 enabled deployment can now *use* that grant through the shipped UI — which is the
@@ -514,7 +514,7 @@ yet reach it.
 A tool pack (AID-6A/B/C) that needs a new relation adds its grant to `SELECT_GRANTS`
 in the same pull request as the tool — by **column** unless every column of the
 relation is appropriate diagnostics evidence. Upgrading to that release is therefore a
-two-step operation: deploy, then **re-run `npm run diagnostics:provision-role`**.
+two-step operation: deploy, then **re-run `pnpm run diagnostics:provision-role`**.
 ADR-007's deliberate friction is exactly this — a new relation becoming readable by
 Diagnostics is a visible, reviewed, operator action, not a side effect.
 
@@ -544,7 +544,7 @@ every restriction at the same time.
 | `not_configured` | `AI_DIAGNOSTICS_DATABASE_URL` is not set. Nothing was contacted. | Provision the role and set the variable. |
 | `misconfigured` | Set, but unusable as configured: not a valid `postgres://` URL, no username, it names the **same role** as `DATABASE_URL`, or it carries one of the refused query parameters above. | Fix the connection string; it must be the dedicated role, with no overriding parameters. |
 | `unverified` | Set, but the server could not be asked — unreachable host, bad password, connection limit, or no answer inside the probe deadline. The role is **not** trusted. | Fix connectivity or credentials, then re-check. |
-| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `npm run diagnostics:provision-role`, then re-check readiness. |
+| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `pnpm run diagnostics:provision-role`, then re-check readiness. |
 | `over_privileged` | Reachable, and the role holds a privilege ADR-007 forbids, can read an undeclared relation or column, or is not the configured role. | Re-run provisioning and investigate privilege drift. If the role name does not match `current_user`, fix the string. |
 | `verified` | The server itself confirmed the named role is a non-superuser that can only `SELECT`, and only from the declared allowlist. | Nothing. |
 
@@ -586,11 +586,11 @@ docker run -d --name aid5-pg -e POSTGRES_USER=postgres \
   -p 127.0.0.1:55442:5432 postgres:16-alpine
 
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
-  npx prisma migrate deploy
+  pnpm exec prisma migrate deploy
 
 RUN_CONCURRENCY_RACE_TESTS=1 \
 CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
-  npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
+  pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
 ```
 
 The suite refuses to run against port 5432, a non-loopback host, or a database

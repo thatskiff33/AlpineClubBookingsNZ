@@ -30,7 +30,7 @@ accounting, membership, and booking risk.
 13. Tear down any Docker infrastructure this lane created — on an abandoned or
     failed lane too, not only a merged one. See "Lane-owned Docker
     infrastructure" below for the naming convention, the teardown commands, and
-    `npm run stale-containers`.
+    `pnpm run stale-containers`.
 
 ## Planning Mode
 
@@ -53,7 +53,7 @@ tracked-only locator documented in
 [`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md):
 
 ```text
-npm run agent:context -- -- --base origin/main --entry <tracked-path> [--depth 1|2]
+pnpm run agent:context --base origin/main --entry <tracked-path> [--depth 1|2]
 ```
 
 Give a subagent only the relevant section or local artifact path, never a full
@@ -123,12 +123,14 @@ Two consequences:
 
 Run this before delegating validation in every new Windows worktree. The
 orchestrator coordinates it; implementors must not start competing installs or
-use an `npx` fallback that downloads an unreviewed package.
+use a `pnpm dlx`/`npx` fallback that downloads an unreviewed package. The
+repository installs with pnpm; the command mapping from npm is in
+[`CONTRIBUTING.md` → "Package manager: pnpm"](../../CONTRIBUTING.md#package-manager-pnpm).
 
 ### 1. Activate and verify the pinned Node runtime
 
 The default shell may expose system Node 22 even when `fnm` has Node 24.
-Initialise `fnm` inside the same PowerShell process that will run npm, use the
+Initialise `fnm` inside the same PowerShell process that will run pnpm, use the
 repository's `.nvmrc`, and fail closed if either engine is wrong:
 
 ```powershell
@@ -136,21 +138,25 @@ fnm env --shell powershell | Out-String | Invoke-Expression
 fnm use --install-if-missing
 
 $nodeMajor = [int](node -p "process.versions.node.split('.')[0]")
-$npmMajor = [int](npm --version).Split('.')[0]
-if ($nodeMajor -ne 24 -or $npmMajor -lt 11) {
-  throw "Expected Node 24 and npm 11+, got Node $nodeMajor and npm $npmMajor"
+$pnpmMajor = [int](pnpm --version).Split('.')[0]
+if ($nodeMajor -ne 24 -or $pnpmMajor -lt 11) {
+  throw "Expected Node 24 and pnpm 11+, got Node $nodeMajor and pnpm $pnpmMajor"
 }
 ```
 
 Repeat the activation prefix in every fresh PowerShell validation shell; shell
-state does not carry between tool calls.
+state does not carry between tool calls. If `pnpm` is missing, install it once
+per machine (`npm install -g pnpm@11`, or `corepack enable pnpm`); it then
+switches itself to the exact version pinned in `package.json` `packageManager`.
 
 ### 2. Require an isolated dependency tree
 
 Every active branch owns a physical `node_modules` inside its own worktree.
 Never junction or symlink it to another checkout. Prisma generation writes the
-branch's client into `node_modules/@prisma/client`; a shared dependency tree lets
-one lane silently change another lane's types. npm's cache is already shared and
+branch's client inside that `node_modules` (under pnpm,
+`node_modules/.pnpm/@prisma+client@…/node_modules/.prisma/client`, as fresh files,
+not links into the store); a shared dependency tree lets one lane silently change
+another lane's types. pnpm's content-addressable store is already shared and
 provides download reuse without sharing mutable generated output.
 
 Before installing, inspect any existing entry and refuse reparse points:
@@ -166,19 +172,19 @@ if (Test-Path -LiteralPath $modules) {
 }
 ```
 
-On Windows, a direct `npm ci` has reproduced a race that starts
-`unrs-resolver` before its locked `napi-postinstall` helper is available. Use the
-verified two-phase install: extract the exact lockfile without scripts, then
-rebuild only the reviewed packages whose install scripts this lockfile needs.
-If `package-lock.json` changes or npm reports a different script-package list,
-stop for review instead of extending it by guesswork.
+Install straight from the lockfile. pnpm hard-links packages from the shared
+store, so a new worktree's install is mostly linking rather than downloading.
+The old two-phase npm workaround (`npm ci --ignore-scripts`, then `npm rebuild`
+of six packages, for an `unrs-resolver` race on Windows) is retired: pnpm runs
+install scripts only for the packages listed under `allowBuilds` in
+`pnpm-workspace.yaml` and fails on any other package that has one. If it fails
+that way, stop for review instead of extending the list by guesswork.
 
 ```powershell
-npm ci --ignore-scripts
-npm rebuild @prisma/engines @sentry/cli core-js esbuild prisma unrs-resolver
+pnpm install --frozen-lockfile
 
 $env:DATABASE_URL = "postgresql://codex:codex@127.0.0.1:5432/codex_local"
-npm run db:generate
+pnpm run db:generate
 
 if (-not (Test-Path -LiteralPath "node_modules/.bin/prisma.cmd") -or
     -not (Test-Path -LiteralPath "node_modules/.bin/vitest.cmd")) {
@@ -259,7 +265,7 @@ linkcheck when documentation changes and knip when files or exports change.
 These fast checks catch branch-specific mistakes before they consume a runner.
 
 Push a draft PR after that evidence is green. GitHub Actions owns the full
-`npm test`, build, migration-drift, E2E, static/secret/dependency, and container
+`pnpm test`, build, migration-drift, E2E, static/secret/dependency, and container
 gates. Do not delay a draft PR just to duplicate those full gates locally; the
 public repository's CI minutes are the standard execution path. Run a full
 suite locally only to diagnose a CI failure or when CI is unavailable, and
@@ -390,7 +396,7 @@ infrastructure is created, not from memory at the end:
 ```text
 docker compose -p <project> down -v --remove-orphans   # a whole Compose project
 docker rm -f <container>                               # a standalone container
-npm run test:e2e:down                                  # the E2E stack this repo ships
+pnpm run test:e2e:down                                  # the E2E stack this repo ships
 ```
 
 Use `down -v` only for a disposable lane project, where the volumes exist solely
@@ -411,19 +417,17 @@ remove a container belonging to somebody else's open lane.
 ### See what is already there
 
 ```text
-npm run stale-containers               # human-readable report
-npm run stale-containers -- -- --json  # same data for an orchestrator or a preflight
-node scripts/stale-containers.mjs --json   # bypasses npm entirely; always exact
+pnpm run stale-containers               # human-readable report
+pnpm run stale-containers --json        # same data for an orchestrator or a preflight
+node scripts/stale-containers.mjs --json   # bypasses pnpm entirely; always exact
 ```
 
-The doubled `--` on the JSON line is the same portable form
-[`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md) uses for `npm run agent:context`, and the
-reporter's parser skips a literal `--` so the one line is right in PowerShell, Git
-Bash and CI alike. **What must not be written is `npm run stale-containers --json`
-with no separator at all**: measured on this repository, npm consumes `--json` as
-its own flag, the script receives nothing, and it prints the human table and exits
-0 — so a preflight or orchestrator parsing that output either fails at `JSON.parse`
-or silently misreads a padded table. When in doubt, run the `node` form.
+Under pnpm no separator is needed in either PowerShell or Git Bash, because pnpm
+hands every option after the script name to the script (the same rule
+[`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md) relies on for `pnpm run agent:context`).
+The `node` line is the exact form: a preflight or orchestrator that parses the
+JSON should use it, because pnpm can print install-check lines of its own on
+stdout before the script runs (seen when `package.json` has just changed).
 
 It lists agent-owned containers with their owning issue, how that owner was
 established, the issue's state, the container's state and age, and whether it is

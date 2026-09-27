@@ -87,7 +87,7 @@ Per ADR-001 sequencing, across several PRs:
   already exists" clash; app checks treat null-lodge rows as clashing at
   every lodge until this contract release enforces NOT NULL and adds the
   null-partition partial indexes.
-- Run `npm run db:check-drift` against a shadow database for every
+- Run `pnpm run db:check-drift` against a shadow database for every
   migration PR; verify each step against
   `BLUE_GREEN_MIGRATION_POLICY.md`.
 

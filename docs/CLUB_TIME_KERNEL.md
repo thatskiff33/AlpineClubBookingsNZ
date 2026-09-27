@@ -508,5 +508,5 @@ rather than reaching for a module kept alive for that purpose.
 - `src/lib/__tests__/stay-date-format-census.test.ts` (#3507) refuses
   `calendarDateOfSerialisedDbDate` beside `formatClubDate` in any production
   file but `format.ts`, and a local `formatStayDate` declaration anywhere. It is
-  **disk-scanning** too — run it by name (`npm run test:named`) when you touch a
+  **disk-scanning** too — run it by name (`pnpm run test:named`) when you touch a
   stay-date surface; it fails closed on an empty scan.

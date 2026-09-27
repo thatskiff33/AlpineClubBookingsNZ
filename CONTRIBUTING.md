@@ -17,25 +17,82 @@ path: [`docs/adopters/README.md`](docs/adopters/README.md).
 
 ## Local Setup
 
-These commands assume PostgreSQL is reachable at `DATABASE_URL`. For a
-Docker-only boot, use the staging Compose path in `README.md`.
+These commands assume Node 24, pnpm 11 (see "Package manager: pnpm" below) and
+PostgreSQL reachable at `DATABASE_URL`. For a Docker-only boot, use the staging
+Compose path in `README.md`.
 
 ```bash
-npm ci
-npx prisma generate
+pnpm install --frozen-lockfile
+pnpm exec prisma generate
 cp .env.example .env
 cp config/club.example.json config/club.json
 # start or point DATABASE_URL at your local PostgreSQL before migration
-npm run db:migrate
+pnpm run db:migrate
 SEED_ADMIN_EMAIL=admin@example.org \
 SEED_ADMIN_PASSWORD=replace-with-a-local-password \
-  npm run db:seed
+  pnpm run db:seed
 ```
 
 Use test or demo credentials for external services. Do not connect local work to
 live Stripe, Xero, SES, Sentry, or production database resources unless you own
 that deployment and have a written change plan. `CONFIGURATION.md` documents
 the full environment and club config contract.
+
+## Package manager: pnpm
+
+Audience: Developer, Agent.
+
+This repository installs its dependencies with pnpm, not npm (owner decision on
+#3673). The reason is disk: every agent lane works in its own git worktree, and
+npm put a full copy of the dependencies (about 1 GB) in each one. pnpm keeps one
+shared content-addressable store per machine and hard-links packages into each
+worktree's `node_modules`, so a new worktree costs little space and installs
+mostly by linking.
+
+**Getting it.** Once per machine, with Node 24 active: `npm install -g pnpm@11`
+(or `corepack enable pnpm`). pnpm then switches itself to the exact version
+pinned in `package.json` `packageManager`.
+
+**The commands.** Older issues, PRs and changelog entries still show the npm
+spelling; translate it like this:
+
+| npm (before #3673) | pnpm (now) |
+| --- | --- |
+| `npm ci` | `pnpm install --frozen-lockfile` |
+| `npm install` | `pnpm install` |
+| `npm install <pkg>` / `npm install -D <pkg>` | `pnpm add <pkg>` / `pnpm add -D <pkg>` |
+| `npm run <script>`, `npm test` | `pnpm run <script>`, `pnpm test` |
+| `npm run <script> -- <args>`, `npm test -- <args>` | `pnpm run <script> <args>`, `pnpm test <args>` |
+| `npm run <script> -- -- <args>` (the old PowerShell-portable form) | `pnpm run <script> <args>` |
+| `npx <local tool>` (`prisma`, `tsx`, `vitest`, `playwright`, `knip`) | `pnpm exec <tool>` |
+| `npx -y <pkg>@<version>` (a one-off download) | `pnpm dlx <pkg>@<version>` |
+| `npm rebuild <pkg>` | `pnpm rebuild <pkg>` |
+| `npm audit --audit-level=high` | `pnpm audit --audit-level=high` (reads `pnpm-lock.yaml`; no install) |
+
+pnpm hands every option after the script name to the script, so no `--`
+separator is needed, in PowerShell or Git Bash.
+
+**npm refuses to install here, on purpose.** `.npmrc` sets `engine-strict=true`
+and `package.json` `engines.npm` is a value no npm version satisfies, so
+`npm install` or `npm ci` typed out of habit stops with `EBADENGINE` before it
+writes a `package-lock.json` or a `node_modules` tree. `package-lock.json` is
+git-ignored and CI fails a branch that carries one; `pnpm-lock.yaml` is the only
+lockfile. `npm run` and `npx` may still happen to work, but they are not the
+supported spelling.
+
+**Where the settings live.** `pnpm-workspace.yaml` holds all of pnpm's
+settings: `overrides` (the reasons for each are in
+[`docs/MAINTENANCE.md` → "The override register"](docs/MAINTENANCE.md#the-override-register)),
+`catalog` (the one written range for a dependency an override pins others to),
+`allowBuilds` (the only packages allowed to run install scripts; pnpm fails the
+install on any other one, so adding a package there is a reviewed change), and
+`nodeLinker`. `.npmrc` exists for npm only.
+
+**The strict layout.** `nodeLinker: isolated` (owner decision on #3673) means
+code sees only the packages it declares. An import must name a package listed in
+`package.json` `dependencies` or `devDependencies`; an undeclared ("phantom")
+import that npm's flat tree let work by accident fails. Fix it by declaring the
+package with `pnpm add`, never by switching the layout to `hoisted`.
 
 ## Development Rules
 
@@ -102,7 +159,7 @@ the full environment and club config contract.
   and its result is asserted on the spot.
 - Do not add plaintext token storage; bearer tokens should be stored hashed or
   encrypted as appropriate for their use.
-- Hand-edit `prisma/schema.prisma`; never run `npx prisma format`. The
+- Hand-edit `prisma/schema.prisma`; never run `pnpm exec prisma format`. The
   formatter realigns column whitespace across models a change does not touch,
   which inflates diffs, creates merge-conflict surface for concurrent schema
   PRs, and makes `git blame` noisier. Existing realignment churn is accepted
@@ -150,12 +207,12 @@ node scripts/release/compile-changelog.mjs 0.14.0             # write it
 Run the relevant focused tests first, then the full gate before opening a PR:
 
 ```bash
-npm run audit:deps            # the same gate CI runs, with the same threshold
-npm run lint
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run knip
-npm test
-npm run build
+pnpm run audit:deps            # the same gate CI runs, with the same threshold
+pnpm run lint
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings pnpm exec prisma validate
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings pnpm run knip
+pnpm test
+pnpm run build
 git diff --check
 ```
 
@@ -165,7 +222,7 @@ live production site.
 
 ### Tests never see the real date
 
-`npm test` runs with "today" frozen at **1 July 2026**
+`pnpm test` runs with "today" frozen at **1 July 2026**
 (`2026-07-01T00:00:00.000Z` — midday in NZ, so a UTC runner and an NZ club agree
 on the calendar day). It is installed once for every test file in
 `vitest.clock-setup.ts`, and only `Date` is faked, so real timers still drive awaited
@@ -198,7 +255,7 @@ at once).
 
 ### Dead-code gate (knip)
 
-`npm run knip` is a blocking CI check (the `verify` job runs `npx knip` after
+`pnpm run knip` is a blocking CI check (the `verify` job runs `pnpm exec knip` after
 the typecheck step). It fails the build if a pull request adds an unused file,
 export, type, or dependency, so remove dead code in the same PR that orphans it.
 Like the test suite, knip needs `DATABASE_URL` set to any value (an unreachable

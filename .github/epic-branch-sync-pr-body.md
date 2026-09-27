@@ -8,7 +8,7 @@
      scheduled job that may well run with nobody awake to read it.
      `scripts/ci/render-epic-sync-pr-body.test.mjs` runs this file
      through the real gates, and through the real field list in
-     `.github/pull_request_template.md`, so a mistyped label fails `npm test`
+     `.github/pull_request_template.md`, so a mistyped label fails `pnpm test`
      instead.
 
      Substituted by the workflow, with no escaping and no other placeholders:

@@ -260,7 +260,7 @@ Every fix PR carries proof from this run, not assertion:
 - **Scale (F17, F24):** k6 at 100+ VUs against the local Docker e2e stack (throwaway DB,
   pre-flight asserts the target is not `:5432`); re-run after the pool fix.
 - **A11y (F30):** `@axe-core/playwright` scan wired into the e2e job.
-- **Per PR:** `npm run lint`, `db:generate`, `typecheck`, targeted `vitest` locally; full suite
+- **Per PR:** `pnpm run lint`, `db:generate`, `typecheck`, targeted `vitest` locally; full suite
   + migration-drift + Playwright arbitrated by CI, links quoted in the PR body.
 
 ---

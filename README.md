@@ -92,7 +92,7 @@ the booking detail, while public bearer actions remain separate.
 
 Apart from the lobby-display design concept above, screenshots are generated
 by a deterministic capture harness against seeded demo data
-(`npm run docs:screenshots`, see [`docs/images/README.md`](docs/images/README.md))
+(`pnpm run docs:screenshots`, see [`docs/images/README.md`](docs/images/README.md))
 and embedded throughout the
 [operator guides](docs/adopters/README.md#operating-a-live-club).
 </details>
@@ -135,8 +135,8 @@ git clone https://github.com/thatskiff33/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ
 cp .env.example .env                              # then edit — see CONFIGURATION.md
 cp config/club.example.json config/club.json
-npm ci && npx prisma generate
-npm run setup:check                               # guided: npm run setup:wizard
+pnpm install --frozen-lockfile && pnpm exec prisma generate
+pnpm run setup:check                               # guided: pnpm run setup:wizard
 ```
 
 Boot a full production-style stack (app + PostgreSQL) with Docker only:
@@ -158,7 +158,7 @@ credentials.
 configuration:
 
 1. Set your club name, beds, age tiers, and integer-cent rates in
-   `config/club.json` (or run `npm run setup:wizard`).
+   `config/club.json` (or run `pnpm run setup:wizard`).
 2. Seed the first admin, then finish the in-app checklist at `/admin/setup`.
 3. Brand it — colours, fonts, and logo at `/admin/site-style`, no redeploy
    needed — and replace the included club branding and copy with your own
