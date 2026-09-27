@@ -45,3 +45,19 @@ export async function claimAlertCooldown({
     throw error;
   }
 }
+
+/**
+ * Give a claimed window back (#3643). For a caller whose window is "once, ever"
+ * and whose send can fail: a claim kept after an undelivered send would make
+ * the one notification disappear for good, so the caller releases it and the
+ * next run tries again.
+ */
+export async function releaseAlertCooldown({
+  key,
+  store = prisma,
+}: {
+  key: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.deleteMany({ where: { key } });
+}

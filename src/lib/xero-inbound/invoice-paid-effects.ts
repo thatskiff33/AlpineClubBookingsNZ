@@ -68,9 +68,11 @@ type XeroInvoiceCashEvidence = "cash" | "none" | "indeterminate";
 //     must NOT override it (stale entries could linger there).
 //  3. The invoice's actual payment records are the fallback, ignoring
 //     DELETED (reversed) payments.
-//  4. A payload carrying none of these fields is "indeterminate" — the fresh
-//     getInvoice fetch behind the only caller always carries the cash
-//     fields, so this arm only guards degraded payload shapes.
+//  4. A payload carrying none of these fields is "indeterminate". Both callers
+//     read a fresh getInvoice (this module's reconcile, and the hold-expiry
+//     payment check and cancel-time recognition, #3643), which always carries
+//     the cash fields, so this arm only guards degraded payload shapes; the
+//     hold-expiry check treats it as unreadable, never as unpaid.
 export function classifyXeroInvoiceCashEvidence(
   invoice: Invoice
 ): XeroInvoiceCashEvidence {
@@ -112,9 +114,11 @@ type XeroInvoiceCashQuantification = {
 // instead — an upper bound (the overpayment may be partly applied
 // elsewhere), so it also marks the result incomplete. Any present-but-
 // unreadable component marks the result incomplete without discarding the
-// components that did quantify: the known floor stays usable. The fresh
-// getInvoice fetch behind the only caller always carries the amount fields,
-// so incomplete results only arise from degraded payload shapes.
+// components that did quantify: the known floor stays usable. Both callers
+// (this module and #3643's hold payment check) quantify a fresh getInvoice,
+// which always carries the amount fields, so incomplete results only arise
+// from degraded payload shapes; #3643 refuses to record an incomplete figure
+// as captured money.
 export function quantifyXeroInvoiceCashCents(
   invoice: Invoice
 ): XeroInvoiceCashQuantification {

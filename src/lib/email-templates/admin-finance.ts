@@ -504,9 +504,10 @@ export function adminManualRefundTaskTemplate(data: {
 
 // ---- #3643: Admin Alert — expired internet banking hold kept ----
 //
-// The hold-expiry job did NOT cancel a booking because money may already be
-// paid against its invoice (`INV-PAY-107`). The reason paragraph is the whole
-// instruction; the table carries what the treasurer needs to find the money.
+// The hold-expiry job could not simply release an expired hold: money may be
+// paid against its invoice, or Xero could not be read (`INV-PAY-107`). The
+// reason paragraph is the whole instruction; the table carries what the
+// treasurer needs to find the money.
 export function adminInternetBankingHoldKeptTemplate(data: {
   reason: InternetBankingHoldKeptReason;
   memberName: string;
@@ -524,7 +525,7 @@ export function adminInternetBankingHoldKeptTemplate(data: {
   format: ClubFormat,
 ): string {
   return layout(`
-    ${heading("Internet Banking Hold Kept — Booking Not Cancelled")}
+    ${heading("Internet Banking Hold Needs Attention")}
     ${alertBox(internetBankingHoldKeptParagraph(data.reason), "warning")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },

@@ -524,8 +524,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
   "admin-manual-refund-task": ["memberName", "reviewUrl"],
-  // #3643: {{holdKeptNote}} is the instruction - part-paid, unreadable, or
-  // still unreadable at check-in need opposite next steps.
+  // #3643: {{holdKeptNote}} is the instruction - part-paid, paid in full,
+  // unreadable and released-while-unreadable need different next steps.
   "admin-internet-banking-hold-kept": ["memberName", "reviewUrl", "holdKeptNote"],
   // #2761: memberName and reviewUrl as its siblings, plus the two tokens that
   // carry WHICH of the two populations this was. An override that drops
@@ -793,9 +793,9 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-internet-banking-hold-kept": {
     triggerSummary:
-      "An internet banking hold reached its deadline, but Xero showed money already paid against the booking's invoice (or the invoice could not be read), so the booking was kept rather than cancelled",
+      "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable at check-in or seven days after the deadline, released",
     frequency:
-      "At most once per hold for each reason - part-paid, unreadable, and still unreadable on the check-in date - guarded by a cross-instance claim",
+      "At most once per hold for each reason - part-paid, paid in full but not yet synced, unreadable, and released while still unreadable - guarded by a cross-instance claim that is given back when the email could not be delivered",
   },
   "admin-manual-refund-task": {
     triggerSummary:

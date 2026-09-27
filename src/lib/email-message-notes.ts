@@ -229,28 +229,32 @@ export function lateCaptureHandBackConflictOutcomeParagraph(
     : "The money has NOT been sent back a second time, and that is deliberate. An operator had already marked the hand-back task for this capture as paid back by hand, which records a refund in the club's ledger, so sending Stripe's automatic refund on top of it would have paid the member twice. The automatic refund was withheld instead. Check that the hand-back really happened and covers the whole amount — if it did not, the capture is still sitting at Stripe and has to be refunded from there.";
 }
 
-/** #3643: why an expired internet-banking hold was kept rather than released. */
+/** #3643: why the hold-expiry job is telling the treasurer about a hold. */
 export type InternetBankingHoldKeptReason =
   | "part-paid"
+  | "paid-in-full"
   | "unreadable"
-  | "unreadable-at-check-in";
+  | "released-unreadable";
 
 /**
- * #3643 (`INV-PAY-107`) — the paragraph that says why the hold-expiry job kept
- * a booking it would otherwise have cancelled, shared by the hand-built HTML
- * and the `{{holdKeptNote}}` token (the #2268 rule: one editable body, three
- * situations that need different instructions).
+ * #3643 (`INV-PAY-107`) — the paragraph that says what the hold-expiry job did
+ * with an expired hold it could not simply release, shared by the hand-built
+ * HTML and the `{{holdKeptNote}}` token (the #2268 rule: one editable body,
+ * four situations that need different instructions).
  */
 export function internetBankingHoldKeptParagraph(
   reason: InternetBankingHoldKeptReason,
 ): string {
   if (reason === "part-paid") {
-    return "This booking's internet banking hold reached its deadline, but Xero shows money already paid against its invoice, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. Either wait for the member to pay the rest — the booking is marked paid once Xero shows the invoice fully paid — or cancel it through the normal cancel path and decide the refund or credit there.";
+    return "This booking's internet banking hold reached its deadline, but Xero shows part of its invoice already paid, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. Either wait for the member to pay the rest — the booking is marked paid once Xero shows the invoice fully paid — or cancel the booking in the app: the cancellation records the part payment as money received, applies the club's cancellation policy to it and returns the refundable share as account credit, and clears only what the invoice still owes.";
+  }
+  if (reason === "paid-in-full") {
+    return "This booking's internet banking hold reached its deadline, and Xero shows its invoice paid in full, but the payment has not reached the app from the Xero sync yet. The booking was NOT cancelled and its beds are still held. The next Xero sync should mark it paid; if it is still unpaid in the app after a day, check the Xero sync.";
   }
   if (reason === "unreadable") {
-    return "This booking's internet banking hold reached its deadline, but its invoice could not be read from Xero, so nobody can tell whether the member has paid anything. The booking was NOT cancelled and its beds are still held. The job tries again on every run and releases the hold itself once Xero shows the invoice unpaid; if Xero is disconnected, reconnect it. You will get one more email if the invoice still cannot be read on the check-in date.";
+    return "This booking's internet banking hold reached its deadline, but its invoice could not be read from Xero (Xero may be disconnected, or the invoice may no longer exist there), so nobody can tell whether the member has paid anything. The booking was NOT cancelled and its beds are still held. The job tries again on every run and releases the hold itself once Xero shows the invoice unpaid. If it still cannot be read by the check-in date or seven days after the hold deadline, whichever comes first, the hold is released and you will get one more email.";
   }
-  return "The check-in date has arrived and this booking's invoice still cannot be read from Xero, so its internet banking hold is still in place and its beds are still held. This is the last email about it. Check the invoice in Xero yourself: if the member has paid, record it; if not, cancel the booking through the normal cancel path.";
+  return "This booking's invoice still could not be read from Xero by the check-in date or seven days after its hold deadline, so its internet banking hold has now been released: the booking is cancelled, its beds are free, and the member has been emailed. The credit note that clears the invoice is only created once Xero can be read and shows the invoice still owes it; if the member had paid anything, the note is refused and appears in the Xero repair tool for review. Check the invoice in Xero.";
 }
 
 /**
