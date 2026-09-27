@@ -131,6 +131,12 @@ export interface XeroWizardContext {
    * dropped inside the hook instead (see the in-flight ref in `load`).
    */
   orgLoading: boolean;
+  /**
+   * The currency cards are charged in, resolved on the server, or null when no
+   * card can be charged (#3633). The connect step compares the organisation's
+   * base currency with this.
+   */
+  clubChargeCurrencyCode: string | null;
   /** Webhook delivery URL to paste into the Xero portal ({origin}/api/webhooks/xero). */
   webhookDeliveryUrl: string;
   /**
@@ -253,6 +259,11 @@ export interface XeroWizardServerConfig {
   webhookDeliveryUrl: string;
   /** Public-HTTPS, non-localhost origin (webhooks can actually validate here). */
   webhooksVerifiable: boolean;
+  /**
+   * The currency cards are charged in (`clubChargeCurrencyCode` over
+   * `clubFormatValues()`), or null when none can be (#3633).
+   */
+  clubChargeCurrencyCode: string | null;
 }
 
 export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
@@ -495,6 +506,7 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
     orgErrorAt,
     orgErrorAttempts,
     orgLoading,
+    clubChargeCurrencyCode: serverConfig.clubChargeCurrencyCode,
     webhookDeliveryUrl: serverConfig.webhookDeliveryUrl,
     webhooksVerifiable: serverConfig.webhooksVerifiable,
     webhookVerified,

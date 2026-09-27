@@ -8,8 +8,6 @@ import type {
   XeroWizardContext,
 } from "../use-xero-wizard-context";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
-import { ClubFormatProvider } from "@/components/club-format-provider";
-import { ClubTimeProvider } from "@/components/club-time-provider";
 
 /*
   #2394 — the connect step must never sit on "Confirming the organisation
@@ -49,6 +47,7 @@ function makeContext(
     needsReentry: false,
     orgName: null,
     orgBaseCurrency: null,
+    clubChargeCurrencyCode: "NZD",
     orgError: null,
     orgErrorAt: null,
     orgErrorAttempts: 0,
@@ -576,8 +575,8 @@ describe("ConnectStep: focus survives a successful retry (#2394)", () => {
 
 // #3633: the connect step warns when the connected organisation's base currency
 // differs from the club's, because Xero books every invoice in its base
-// currency while card payments are charged in the club's. The club's currency
-// comes from the provider (NZD under the shared render helper).
+// currency while card payments are charged in the club's. The club side is
+// the server-resolved charge currency on the wizard context (#3633 review).
 describe("ConnectStep — Xero base currency (#3633)", () => {
   const warning = () => screen.queryByTestId("xero-base-currency-warning");
 
@@ -610,31 +609,47 @@ describe("ConnectStep — Xero base currency (#3633)", () => {
     expect(warning()).toBeNull();
   });
 
-  it("compares with the club's own currency, not a default", () => {
-    const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <ClubFormatProvider currencyCode="CHF" locale="de-CH">
-        <ClubTimeProvider zone="Pacific/Auckland" locale="de-CH">
-          {children}
-        </ClubTimeProvider>
-      </ClubFormatProvider>
-    );
+  it("compares with the club's charge currency from the server, not a default", () => {
     const { unmount } = render(
       <ConnectStep
-        context={makeContext({ orgName: "Alpine Club", orgBaseCurrency: "CHF" })}
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "CHF",
+          clubChargeCurrencyCode: "CHF",
+        })}
         helpers={makeHelpers()}
       />,
-      { wrapper },
     );
+    // The provider says NZD; the server-resolved charge currency says CHF.
     expect(warning()).toBeNull();
     unmount();
 
     render(
       <ConnectStep
-        context={makeContext({ orgName: "Alpine Club", orgBaseCurrency: "NZD" })}
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "NZD",
+          clubChargeCurrencyCode: "CHF",
+        })}
         helpers={makeHelpers()}
       />,
-      { wrapper },
     );
-    expect(warning()?.textContent).toMatch(/^The club's currency is CHF but its Xero organisation's base currency is NZD/);
+    expect(warning()?.textContent).toMatch(
+      /^The club's currency is CHF but its Xero organisation's base currency is NZD/,
+    );
+  });
+
+  it("says nothing when no card can be charged (a stored currency that is not usable)", () => {
+    render(
+      <ConnectStep
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "AUD",
+          clubChargeCurrencyCode: null,
+        })}
+        helpers={makeHelpers()}
+      />,
+    );
+    expect(warning()).toBeNull();
   });
 });

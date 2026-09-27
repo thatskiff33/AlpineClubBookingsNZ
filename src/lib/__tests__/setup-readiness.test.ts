@@ -1807,6 +1807,7 @@ describe("setup-readiness Xero base currency (#3633)", () => {
       database: {
         ...completeDatabase,
         clubFormatCurrencyCode: "AUD",
+        clubChargeCurrencyCode: "AUD",
         ...database,
       },
       now: new Date("2026-05-18T00:00:00.000Z"),
@@ -1846,18 +1847,43 @@ describe("setup-readiness Xero base currency (#3633)", () => {
         },
       },
     ],
-    ["the club currency is not recorded", "NZD", { clubFormatCurrencyCode: null }],
+    // #3633 review: a stored currency no card can be charged in resolves to a
+    // null charge currency, so there is nothing to compare — the Stripe step
+    // already blocks on it. The RAW value is ignored here on purpose.
+    [
+      "the stored currency is not usable",
+      "NZD",
+      { clubFormatCurrencyCode: "JPY", clubChargeCurrencyCode: null },
+    ],
+    ["no charge currency reached the snapshot", "NZD", { clubChargeCurrencyCode: undefined }],
   ] as const)("says nothing when %s", (_label, xero, database) => {
     const step = findStep(readinessWith(xero, database), "xero-operational");
     expect(step?.message).not.toMatch(/base currency/);
     expect(step?.details.join(" ")).not.toMatch(/base currency/);
   });
 
+  it("compares the charge currency, not the raw stored value", () => {
+    // The raw value says NZD, but what cards are charged in (the fallback
+    // resolution) is AUD: the warning must describe what cards really do.
+    const step = findStep(
+      readinessWith("NZD", {
+        clubFormatCurrencyCode: "NZD",
+        clubChargeCurrencyCode: "AUD",
+      }),
+      "xero-operational",
+    );
+    expect(step?.message).toMatch(/^The club's currency is AUD/);
+  });
+
   it("takes the message ahead of the legacy-variable tidy-up, which stays in the details", () => {
     const readiness = buildSetupReadiness({
       env: { ...baseEnv, XERO_CLIENT_ID: "legacy" },
       configDir: makeConfigDir(),
-      database: { ...completeDatabase, clubFormatCurrencyCode: "AUD" },
+      database: {
+        ...completeDatabase,
+        clubFormatCurrencyCode: "AUD",
+        clubChargeCurrencyCode: "AUD",
+      },
       now: new Date("2026-05-18T00:00:00.000Z"),
       xeroBaseCurrency: "NZD",
     });

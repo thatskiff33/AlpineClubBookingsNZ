@@ -11,7 +11,6 @@ import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
-import { useClubFormat } from "@/components/club-format-provider";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 import { parseInstant, requireInstant, type BoundClubTime } from "@/lib/club-time";
@@ -447,15 +446,20 @@ export function ConnectStep({
   // and never rendered either, so a refused authorisation came back to a wizard
   // that simply said "Not Connected" with no hint of what Xero had objected to.
   const clubTime = useClubTime();
-  const { currencyCode: clubCurrencyCode } = useClubFormat();
   const { status, handleDisconnect, error: connectionError } =
     useXeroConnection();
 
   // #3633: Xero books every invoice in the organisation's base currency, and
   // card payments are charged in the club's. A warning only — connecting is
   // not blocked — and only while connected with a base currency we could read.
+  // The club side is the currency cards are CHARGED in, resolved on the server
+  // (null when none can be), so this agrees with the setup list and the Club
+  // Currency & Locale page.
   const currencyMismatch = context.connected
-    ? xeroBaseCurrencyMismatch(context.orgBaseCurrency, clubCurrencyCode)
+    ? xeroBaseCurrencyMismatch(
+        context.orgBaseCurrency,
+        context.clubChargeCurrencyCode,
+      )
     : null;
 
   // NO post-OAuth effect here any more (#2394 review, F1). `?connected=true` is

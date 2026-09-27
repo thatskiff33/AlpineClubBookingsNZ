@@ -35,6 +35,7 @@ const SERVER_CONFIG: XeroWizardServerConfig = {
   legacyEnvVars: [],
   webhookDeliveryUrl: "https://club.example.test/api/webhooks/xero",
   webhooksVerifiable: true,
+  clubChargeCurrencyCode: "NZD",
 };
 
 type RouteReply = { ok: boolean; status?: number; body: unknown } | Error;

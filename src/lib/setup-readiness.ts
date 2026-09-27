@@ -112,6 +112,15 @@ export interface SetupDatabaseSnapshot {
   // was taken — the Stripe check then reports "not checked".
   stripeSecretKeySet?: boolean;
   clubFormatCurrencyCode?: string | null; // stored, raw; an unchargeable one blocks Stripe (#3567)
+  /**
+   * The currency cards are actually charged in (#3633): the stored currency
+   * resolved through the same fallback every reader uses
+   * (`resolveStoredClubFormat`, then `clubChargeCurrencyCode`), or null when no
+   * card can be charged because the stored one is unusable. The Xero
+   * base-currency warning compares against this, never the raw value above, so
+   * it agrees with the Club Currency & Locale page and the Xero wizard.
+   */
+  clubChargeCurrencyCode?: string | null;
   stripePublishableKeySet?: boolean;
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
@@ -1841,7 +1850,7 @@ function buildOperationalXeroCheck(
   // unknown base currency (null) says nothing.
   const currencyMismatch =
     enabled && connected && !needsReentry
-      ? xeroBaseCurrencyMismatch(xeroBaseCurrency, db?.clubFormatCurrencyCode)
+      ? xeroBaseCurrencyMismatch(xeroBaseCurrency, db?.clubChargeCurrencyCode)
       : null;
   const currencyMismatchSentence = currencyMismatch
     ? clubFormatXeroBaseCurrencyMismatch(

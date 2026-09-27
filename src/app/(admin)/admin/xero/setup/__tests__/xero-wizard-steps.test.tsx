@@ -46,6 +46,7 @@ function makeContext(
     needsReentry: false,
     orgName: null,
     orgBaseCurrency: null,
+    clubChargeCurrencyCode: "NZD",
     orgError: null,
     orgErrorAt: null,
     orgErrorAttempts: 0,
