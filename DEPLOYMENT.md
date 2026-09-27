@@ -1577,7 +1577,7 @@ truth. The public POST endpoints are:
 | Endpoint | Task(s) | Typical cadence | Recorded `CronJobRun.jobName` |
 | -------- | ------- | --------------- | ----------------------------- |
 | `POST /api/cron` | General cron cycle: pending booking confirmation, group-settlement reaper, abandoned policy-exception capacity-hold reaper, pre-arrival reminders, booking-request retention purge, quote-expiry reminders, school attendee confirmations, and placeholder guest-name reminders. | Every 3 hours in the cron leader. | `confirm-pending`, `group-settlement-reaper`, `placeholder-guest-name-reminders`, `policy-exception-hold-reaper`, `pre-arrival-reminders`, `purge-booking-requests`, `quote-expiry-reminders`, `school-attendee-confirmations` |
-| `POST /api/cron/payments?task=recovery` | Durable Stripe payment recovery, expired Internet Banking hold release, and stale `WAITING_PAYMENT` Xero outbox reaping. | Every 15 minutes in the cron leader. | `payment-recovery` |
+| `POST /api/cron/payments?task=recovery` | The payments cycle: durable Stripe payment recovery, expired Internet Banking hold release, and stale `WAITING_PAYMENT` Xero outbox reaping. The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper` |
 | `POST /api/cron/xero?task=memberships` | Optional Xero-backed membership status refresh. | Daily when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` and the Xero module is effectively enabled. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | Process queued outbound Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | Replay failed retryable Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-operation-replay` |
@@ -1588,8 +1588,9 @@ truth. The public POST endpoints are:
 | `POST /api/cron/issue-reports` | Redact expired issue-report sensitive data. | Daily. | Not recorded |
 | `POST /api/cron/alpine-server-sync` | Bidirectional Other Clubs sync with the Alpine Central Server: upload local rows changed since the last upload, download centrally-distributed rows changed since the last cursor. No-op when Other Clubs sync is disabled or the server is not configured. | Daily at 03:00 in the cron leader. | `alpine-server-other-lodges-sync` |
 
-Without `/api/cron/payments?task=recovery` running on a regular schedule,
-abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
+Without the payments cycle running on a regular schedule (the cron leader, or
+`/api/cron/payments?task=recovery` on a custom deployment), expired Internet
+Banking holds keep their beds and open invoices, and abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
 indefinitely. The admin `/api/admin/health` detailed report surfaces a stale
 recovery queue when any `PaymentRecoveryOperation` row has been `PENDING` for
 more than 15 minutes (the public `/api/health` report does not include this
