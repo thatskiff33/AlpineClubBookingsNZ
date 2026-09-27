@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,7 +27,9 @@ import {
   CLUB_FORMAT_NOTHING_REWRITTEN,
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
+  clubFormatXeroBaseCurrencyMismatch,
 } from "@/lib/club-format-copy";
+import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 import {
   ClubFormatCurrencyChange,
   type ClubFormatInFlightCardPayments,
@@ -85,6 +88,15 @@ import {
  * (`ClubFormatCurrencyChange`). The consequences list renders that from
  * `@/lib/club-format-copy`, the one home the page blurb and the contextual help
  * share, so the next stage that moves a caveat moves it once.
+ *
+ * THE XERO BASE-CURRENCY WARNING (#3633) is decided here, not by the page,
+ * because it must follow the currency the panel is SHOWING: after a save the
+ * panel's state moves to the new currency without a page reload, and a warning
+ * computed once on the server would go on describing the old one. The page
+ * hands down only the base currency, already `null` for a viewer who may not
+ * read the Xero organisation; the comparison is `xeroBaseCurrencyMismatch` and
+ * the sentence `clubFormatXeroBaseCurrencyMismatch`, the ones the Xero setup
+ * wizard and the setup-readiness list use. A warning only: nothing is blocked.
  */
 
 type ClubFormatFieldSource =
@@ -195,7 +207,16 @@ function matchesFilter(code: string, filter: string): boolean {
   return code.toLowerCase().includes(needle);
 }
 
-export function ClubFormatPanel() {
+export function ClubFormatPanel({
+  xeroBaseCurrency,
+}: {
+  /**
+   * The connected Xero organisation's base currency, resolved on the server,
+   * or `null` when it is unknown or this viewer may not read it (#3633).
+   * Required, so a caller cannot forget the warning by leaving it out.
+   */
+  xeroBaseCurrency: string | null;
+}) {
   const formatChangedAt = useChangedAtFormatter();
   const [state, setState] = useState<ClubFormatState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -297,6 +318,10 @@ export function ClubFormatPanel() {
     );
   }
 
+  const currencyMismatch = xeroBaseCurrencyMismatch(
+    xeroBaseCurrency,
+    state.currencyCode,
+  );
   const chosenCurrency = currencyChoice ?? state.currencyCode;
   const chosenLocale = localeChoice ?? state.locale;
   /*
@@ -445,6 +470,21 @@ export function ClubFormatPanel() {
             </p>
           </div>
         </div>
+
+        {currencyMismatch ? (
+          <div
+            className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
+            data-testid="club-format-xero-base-currency-warning"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <span>
+              {clubFormatXeroBaseCurrencyMismatch(
+                currencyMismatch.xeroBaseCurrency,
+                currencyMismatch.clubCurrencyCode,
+              )}
+            </span>
+          </div>
+        ) : null}
 
         {state.updatedAt ? (
           <p className="text-sm text-muted-foreground">

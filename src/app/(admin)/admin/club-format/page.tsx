@@ -1,5 +1,7 @@
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
+import { auth } from "@/lib/auth";
 import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-format-copy";
+import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
 
 /**
  * Club Currency & Locale — the maintenance surface for the two settings that
@@ -14,10 +16,16 @@ import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-forma
  * only: an admin investigating why an amount or a date is written the way it
  * is can now see the setting that decides it. The layout admits any admitted
  * admin (`ANY_ADMIN_ADMISSION_PATHS`), so there is no longer a refusal to
- * render here, and the page needs no session of its own; the panel resolves
- * Full Admin itself and shows everyone else the values read-only under the
- * canonical view-only banner. The enforcement is server-side on both verbs of
- * `/api/admin/club-format` — `"any-admin"` on the read, Full Admin on the write.
+ * render here; the panel resolves Full Admin itself and shows everyone else the
+ * values read-only under the canonical view-only banner. The enforcement is
+ * server-side on both verbs of `/api/admin/club-format` — `"any-admin"` on the
+ * read, Full Admin on the write.
+ *
+ * THE ONE THING THE PAGE READS THE SESSION FOR is the Xero base-currency
+ * warning (#3633). The base currency comes from the Xero organisation summary,
+ * which only a finance viewer may read (`XERO_ORGANISATION_READ_PERMISSION`), so
+ * `readXeroBaseCurrencyForViewer` hands everyone else `null` and the panel then
+ * shows no warning. It decides nothing about opening the page.
  *
  * THE BLURB SAYS WHAT IS TRUE TODAY. Stage 1 recorded the setting, stage 2
  * (#3564) moved the browser screens onto it, #3565 every amount and #3566 every
@@ -25,7 +33,9 @@ import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-forma
  * thing it does not, is rendered from `@/lib/club-format-copy`, shared with the
  * confirmation panel and the contextual help so the three cannot disagree.
  */
-export default function ClubFormatPage() {
+export default async function ClubFormatPage() {
+  const session = await auth();
+  const xeroBaseCurrency = await readXeroBaseCurrencyForViewer(session?.user);
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -41,7 +51,7 @@ export default function ClubFormatPage() {
           {CLUB_FORMAT_SERVER_SETTINGS}
         </p>
       </div>
-      <ClubFormatPanel />
+      <ClubFormatPanel xeroBaseCurrency={xeroBaseCurrency} />
     </div>
   );
 }

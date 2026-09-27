@@ -11,6 +11,9 @@ import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
+import { useClubFormat } from "@/components/club-format-provider";
+import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
+import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 import { parseInstant, requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { ConnectionStatusPanel } from "../_components/connection-status-panel";
 import { useXeroConnection } from "../_hooks/use-xero-connection";
@@ -444,8 +447,16 @@ export function ConnectStep({
   // and never rendered either, so a refused authorisation came back to a wizard
   // that simply said "Not Connected" with no hint of what Xero had objected to.
   const clubTime = useClubTime();
+  const { currencyCode: clubCurrencyCode } = useClubFormat();
   const { status, handleDisconnect, error: connectionError } =
     useXeroConnection();
+
+  // #3633: Xero books every invoice in the organisation's base currency, and
+  // card payments are charged in the club's. A warning only — connecting is
+  // not blocked — and only while connected with a base currency we could read.
+  const currencyMismatch = context.connected
+    ? xeroBaseCurrencyMismatch(context.orgBaseCurrency, clubCurrencyCode)
+    : null;
 
   // NO post-OAuth effect here any more (#2394 review, F1). `?connected=true` is
   // read AND stripped once by `useXeroWizardContext`, which folds the forced
@@ -626,6 +637,25 @@ export function ConnectStep({
           </span>
         </div>
       ) : null}
+
+      {/* Permanently mounted, like the two regions above, so the warning is
+          announced when the organisation read brings it in. */}
+      <div role="status">
+        {currencyMismatch ? (
+          <div
+            className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
+            data-testid="xero-base-currency-warning"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <span>
+              {clubFormatXeroBaseCurrencyMismatch(
+                currencyMismatch.xeroBaseCurrency,
+                currencyMismatch.clubCurrencyCode,
+              )}
+            </span>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
