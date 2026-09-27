@@ -70,6 +70,7 @@ const payableContext = {
     status: "CONFIRMED",
     amountCents: 12500,
     internetBankingReference: "BOOK-123",
+    cardPaymentAvailable: true,
     expiresAt: "2026-09-10T00:00:00.000Z",
   },
   canRequestFreshLink: false,
@@ -363,6 +364,52 @@ describe("public payment-link confirmation names the booking's lodge", () => {
     expect(
       await screen.findByText(/Your booking with Test Lodge is confirmed/i),
     ).toBeInTheDocument();
+  });
+});
+
+// #3638 delta D4: a booking switched to Internet Banking has an emailed
+// invoice; its link page must not offer a card button the card door would
+// refuse, and must show the bank-transfer details as the way to pay.
+describe("the public payment page on a booking switched to Internet Banking (#3638)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it("offers no card button and shows the internet banking details instead", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/pay/public-token" && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            ...payableContext,
+            payable: { ...payableContext.payable, cardPaymentAvailable: false },
+          }),
+        } as Response;
+      }
+      if (url === "/api/booking-messages") {
+        return { ok: true, json: async () => ({ messages: {} }) } as Response;
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    render(<PayByLinkPage />);
+
+    expect(
+      await screen.findByText(/being paid by internet banking, so it can.t be paid by\s+card here/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
+    expect(screen.getByText("Pay by internet banking")).toBeInTheDocument();
+    expect(screen.getAllByText("BOOK-123").length).toBeGreaterThan(0);
+    // Nothing tried to start a card payment.
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/payment-intent")),
+    ).toBe(false);
   });
 });
 

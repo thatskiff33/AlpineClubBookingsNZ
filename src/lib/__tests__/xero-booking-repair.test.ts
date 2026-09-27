@@ -6,6 +6,7 @@ import {
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -203,6 +204,9 @@ function createDependencies(state: {
   // the webhook's release finds no operation to release because none exists
   // yet.
   onSupplementaryInvoiceEnqueue?: () => void;
+  // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
+  // allocation term). Empty for every pre-existing test.
+  allocatedAppliedCreditByBookingId?: Record<string, number>;
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -369,6 +373,18 @@ function createDependencies(state: {
           );
         }),
       },
+      memberCreditNoteAllocation: {
+        groupBy: vi.fn().mockImplementation(async ({ where }: any) =>
+          (where?.appliedToBookingId?.in ?? [])
+            .filter((bookingId: string) =>
+              bookingId in (state.allocatedAppliedCreditByBookingId ?? {})
+            )
+            .map((bookingId: string) => ({
+              appliedToBookingId: bookingId,
+              _sum: { amountCents: state.allocatedAppliedCreditByBookingId![bookingId] },
+            }))
+        ),
+      },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
         findMany: vi.fn().mockResolvedValue(state.editReviewChargeShares ?? []),
@@ -514,6 +530,343 @@ describe("runBookingXeroRepair", () => {
     );
     expect(bookingReport.actions.map((action) => action.type)).toContain(
       "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+  });
+
+  // #3535 (`INV-PAY-017`): the note that clears a cancelled booking's unpaid
+  // invoice says so; it never carries the card-refund wording.
+  it("re-queues a cancelled unpaid booking's clearing note with the unpaid-invoice wording (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        status: "FAILED",
+      },
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const action = report.passes[0].bookings[0].actions.find(
+      (candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(action?.payload).toMatchObject({ clearsUnpaidInvoice: true });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: booking.id,
+        bookingModificationId: undefined,
+        clearsUnpaidInvoice: true,
+      })
+    );
+    const [params] = (deps.enqueueXeroModificationCreditNoteOperation as ReturnType<typeof vi.fn>)
+      .mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
+  });
+
+  // #3535: a FAILED clearing note is replayed, never skipped; a blocking one
+  // the retry helper cannot replay is at least reported.
+  it("retries a failed booking-anchored clearing note and reports one it cannot retry (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const failedClearing = (requestPayload: Record<string, unknown>) =>
+      makeOperation({
+        id: "operation_clearing",
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        status: "FAILED",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload,
+      });
+
+    const retryable = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [
+          failedClearing({
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            refundAmountCents: 10000,
+            clearsUnpaidInvoice: true,
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const retryableBooking = retryable.passes[0].bookings[0];
+    expect(retryableBooking.findings).toContainEqual(
+      expect.objectContaining({ code: "BLOCKED_BY_XERO_OPERATION", safeToAutoApply: true })
+    );
+    expect(retryableBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(retryableBooking.actions.length).toBeGreaterThan(0);
+
+    const unreadable = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [failedClearing({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_1" })],
+      }),
+      scope: { all: true },
+    });
+    const unreadableBooking = unreadable.passes[0].bookings[0];
+    expect(unreadableBooking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        safeToAutoApply: false,
+        actions: [],
+      })
+    );
+  });
+
+  // #3535: a clearing note that went PARTIAL replays its recorded allocation
+  // plan through the retry; the arm no longer queues a fresh full-size
+  // allocation against the primary invoice alone.
+  it("retries a partial clearing note's recorded allocations instead of queueing a full one (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          {
+            id: "link_clearing_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            xeroObjectNumber: "CN-9",
+            xeroObjectUrl: null,
+            role: "MODIFICATION_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date("2026-05-03T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_partial_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PARTIAL",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({ code: "MISSING_CREDIT_NOTE_ALLOCATION", safeToAutoApply: true })
+    );
+    expect(
+      bookingReport.actions.some((action) =>
+        JSON.stringify(action.payload).includes("operation_partial_clearing")
+      )
+    ).toBe(true);
+  });
+
+  // #3535 delta D1: a PARTIAL clearing row stays PARTIAL after its repair, so
+  // the arm must stop once every planned invoice has an allocation link.
+  it("stands down on a partial clearing note whose planned allocations have all landed (#3535)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, status: "FAILED" },
+    });
+    const link = (overrides: Record<string, unknown>) => ({
+      localModel: "Booking",
+      localId: "booking_1",
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      active: true,
+      metadata: null,
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+      ...overrides,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: [
+          link({ id: "l_note", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_clear", role: "MODIFICATION_CREDIT_NOTE" }),
+          link({
+            id: "l_a1",
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: "alloc_1",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 6000 },
+          }),
+          link({
+            id: "l_a2",
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: "alloc_2",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: { creditNoteId: "cn_clear", invoiceId: "inv_supp", amountCents: 4000 },
+          }),
+        ],
+        operations: [
+          makeOperation({
+            id: "operation_partial_clearing",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PARTIAL",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [
+                { invoiceId: "inv_primary", amountCents: 6000 },
+                { invoiceId: "inv_supp", amountCents: 4000 },
+              ],
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "MISSING_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(
+      bookingReport.actions.some((action) =>
+        JSON.stringify(action.payload).includes("operation_partial_clearing")
+      )
+    ).toBe(false);
+  });
+
+  // #3535 delta D4: a note the late-cash arm retired means the member paid; and
+  // a note refused for a shortfall is a person's to look at, never auto-retried.
+  it("proposes no clearing note after cash retired one, and never auto-retries a shortfall (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const clearingOp = (overrides: Record<string, unknown>) =>
+      makeOperation({
+        localModel: "Booking",
+        localId: "booking_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_1", refundAmountCents: 10000 },
+        ...overrides,
+      });
+
+    const retired = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [clearingOp({ id: "op_retired", status: "CANCELLED" })],
+      }),
+      scope: { all: true },
+    });
+    const retiredBooking = retired.passes[0].bookings[0];
+    expect(retiredBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(retiredBooking.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+    expect(retiredBooking.findings).toContainEqual(
+      expect.objectContaining({ severity: "info", safeToAutoApply: false })
+    );
+
+    const shortfall = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        operations: [
+          clearingOp({
+            id: "op_shortfall",
+            status: "FAILED",
+            lastErrorMessage:
+              "The booking's open Xero invoices owe $0.00, less than this $100.00 invoice-clearing credit note; nothing was created.",
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const shortfallBooking = shortfall.passes[0].bookings[0];
+    expect(shortfallBooking.findings).toContainEqual(
+      expect.objectContaining({ code: "MANUAL_REVIEW_REQUIRED", safeToAutoApply: false })
+    );
+    expect(shortfallBooking.actions.map((action) => action.type)).not.toContain(
+      "REQUEUE_XERO_OPERATION"
+    );
+    expect(shortfallBooking.actions.some((action) => action.safeToAutoApply && action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")).toBe(false);
+  });
+
+  // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
+  // cancel path's own helper — applied credit already allocated to the invoice
+  // is not cleared twice, and a fully allocated invoice needs no note at all.
+  it("sizes a cancelled unpaid booking's clearing note net of applied credit already allocated (#3535)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED", changeFeeCents: 500 },
+      });
+
+    const partly = cancelledUnpaid();
+    const partlyReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [partly],
+        allocatedAppliedCreditByBookingId: { [partly.id]: 4000 },
+      }),
+      scope: { all: true },
+    });
+    expect(
+      partlyReport.passes[0].bookings[0].actions.find(
+        (candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE"
+      )?.payload
+    ).toMatchObject({ refundAmountCents: 10000 + 500 - 4000 });
+
+    const fully = cancelledUnpaid();
+    const fullyReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [fully],
+        allocatedAppliedCreditByBookingId: { [fully.id]: 10500 },
+      }),
+      scope: { all: true },
+    });
+    const fullyBooking = fullyReport.passes[0].bookings[0];
+    expect(fullyBooking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(fullyBooking.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
     );
   });
 
@@ -872,6 +1225,8 @@ describe("runBookingXeroRepair", () => {
         refundAmountCents: 3000,
       },
     });
+    // #3535: an edit's reduction is not an unpaid-invoice clearing.
+    expect(action?.payload).not.toHaveProperty("clearsUnpaidInvoice");
     const finding = bookingReport.findings.find(
       (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE"
     );
@@ -2504,6 +2859,64 @@ describe("runBookingXeroRepair", () => {
 
     const bookingReport = report.passes[0].bookings[0];
     expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+  });
+
+  it("still raises the late-capture finding when the only snapshot is a settlement marker (#3638)", async () => {
+    // A settlement-conflict marker is a CANCELLED event WITH a snapshot, but it
+    // records no refund decision, so it must not pass for one.
+    const booking = {
+      ...makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          transactions: [
+            {
+              id: "txn_primary",
+              paymentId: "payment_1",
+              kind: "PRIMARY",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_primary_captured",
+              amountCents: 10000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: "pm_123",
+              reason: null,
+              createdAt: new Date("2026-05-01T00:00:00Z"),
+              updatedAt: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+        },
+      }),
+      events: [
+        {
+          id: "evt_marker",
+          type: "CANCELLED",
+          snapshot: {
+            kind: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND,
+            invoiceId: "inv_1",
+            invoiceNumber: "INV-1",
+            bookingStatus: "PAID",
+            settledBySource: "STRIPE",
+            settledByPaymentIntentId: "pi_primary_captured",
+          },
+          occurredAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    };
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
       "LATE_CAPTURE_AFTER_CANCELLATION"
     );
   });

@@ -11,6 +11,7 @@ import logger from "@/lib/logger";
 import { markPaymentIntentTransactionFailed } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -272,11 +273,14 @@ async function cancelInFlightPaymentIntentsAfterSoftDelete(
 
   for (const paymentIntentId of intentIds) {
     try {
-      const { canceled } = await cancelPaymentIntentIfCancellableWithResult(
+      const result = await cancelPaymentIntentIfCancellableWithResult(
         paymentIntentId
       );
 
-      if (!canceled) {
+      // #3638: the same "is it dead?" answer booking cancellation reads, so an
+      // intent that was already cancelled at Stripe has its local row closed
+      // here too instead of being left PROCESSING.
+      if (!isPaymentIntentCancelConfirmed(result)) {
         logger.info(
           { bookingId, paymentIntentId },
           "Soft-deleted booking: PaymentIntent was not in a cancellable state, left as-is"

@@ -1154,13 +1154,19 @@ async function main() {
     IB_WINDOW.checkOut,
     NIGHTLY,
   );
+  // No card intent yet: the member has not started the card payment (the pay
+  // step mints an intent only when they choose to pay by card). #3638
+  // (`INV-PAY-102`) made the switch refuse unless Stripe confirms a stored
+  // intent can no longer charge, and the E2E stack runs without Stripe keys, so
+  // an invented intent id here could never be verified and the switch would
+  // (correctly) refuse. The refusal paths are pinned by
+  // `switch-to-internet-banking-route.test.ts`.
   await prisma.payment.create({
     data: {
       bookingId: ibBooking.id,
       amountCents: ibBooking.finalPriceCents,
       source: "STRIPE",
-      status: "PROCESSING",
-      stripePaymentIntentId: "pi_e2e_ib_pending",
+      status: "PENDING",
     },
   });
 
