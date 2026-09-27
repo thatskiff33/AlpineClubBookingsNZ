@@ -179,6 +179,13 @@ of six packages, for an `unrs-resolver` race on Windows) is retired: pnpm runs
 install scripts only for the packages listed under `allowBuilds` in
 `pnpm-workspace.yaml` and fails on any other package that has one. If it fails
 that way, stop for review instead of extending the list by guesswork.
+Entries are pinned to exact versions, so a bumped package with an install script
+fails the same way until its new version is reviewed and written there.
+
+`pnpm run`/`pnpm exec` never install on their own here: `verifyDepsBeforeRun:
+error` in `pnpm-workspace.yaml` stops a run whose `node_modules` no longer
+matches the manifests with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`. That is the
+orchestrator's cue to run the install, not an implementor's.
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -249,6 +256,32 @@ Only then verify the worktree is clean, its head is merged into the intended
 base, and run `git worktree remove` on that exact path. Do not use `-Force` to
 paper over a failed safety check.
 
+**A pnpm worktree: remove `node_modules` first, with the helper.** pnpm's strict
+layout builds `node_modules` from about 2,700 directory junctions per worktree
+here, and `git worktree remove` cannot delete them. Measured on git
+2.53.0.windows.1 (#3673): it deregistered the worktree, deleted part of it, and
+stopped with "Directory not empty", leaving a half-deleted folder git no longer
+knows about. The helper does the removal in the order that works and refuses
+before deleting anything when a check fails:
+
+```powershell
+pnpm run worktree:remove C:\path	o\exact-worktree                     # merged into origin/main
+pnpm run worktree:remove C:\path	o\exact-worktree --base origin/epic/1  # an epic child
+pnpm run worktree:remove C:\path	o\exact-worktree --allow-unmerged      # an abandoned lane
+```
+
+It refuses the main checkout, a path that is not a registered worktree, a
+top-level `node_modules` that is itself a link (the legacy shape above — use the
+manual unlink), uncommitted or untracked work, and an unmerged HEAD without
+`--allow-unmerged`. Then it deletes `node_modules` with Node's `fs.rmSync`,
+which unlinks a junction instead of descending through it, and runs
+`git worktree remove` without `--force`. The junctions point into the
+worktree's own `node_modules/.pnpm` (the global virtual store stays off,
+`enableGlobalVirtualStore: false` in `pnpm-workspace.yaml`), and package files
+are hard links into the shared store, so nothing outside the worktree is
+touched. If a removal already failed half-way, `cmd /c rmdir /s /q <path>`
+followed by `git worktree prune` finishes it without following junctions.
+
 ### 4. Preserve progress while lanes run
 
 Long-running implementors keep a checkpoint outside the worktree and update it
@@ -259,8 +292,9 @@ reviews, but never overlaps colliding work simply to maximise slot count.
 
 ### 5. Split fast local evidence from full CI gates
 
-Before push, run the branch-correct Prisma generation, lint, typecheck, focused
-touched/adjacent tests, and mutation checks for every new guard. Add docs
+Before push, run the branch-correct Prisma generation, lint, typecheck (with
+`NODE_OPTIONS=--max-old-space-size=8192`, as CI sets it — the default heap runs
+out of memory since #2679), focused touched/adjacent tests, and mutation checks for every new guard. Add docs
 linkcheck when documentation changes and knip when files or exports change.
 These fast checks catch branch-specific mistakes before they consume a runner.
 

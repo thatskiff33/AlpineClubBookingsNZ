@@ -87,9 +87,23 @@ supported spelling.
 settings: `overrides` (the reasons for each are in
 [`docs/MAINTENANCE.md` → "The override register"](docs/MAINTENANCE.md#the-override-register)),
 `catalog` (the one written range for a dependency an override pins others to),
-`allowBuilds` (the only packages allowed to run install scripts; pnpm fails the
-install on any other one, so adding a package there is a reviewed change), and
-`nodeLinker`. `.npmrc` exists for npm only.
+`allowBuilds` (the only packages allowed to run install scripts, each pinned to
+the exact version reviewed; pnpm fails the install with `ERR_PNPM_IGNORED_BUILDS`
+on any other package or version, so a new one — or a Dependabot bump of one —
+is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
+`enableGlobalVirtualStore`. `.npmrc` exists for npm only.
+
+**A run never installs by itself.** `verifyDepsBeforeRun: error` makes
+`pnpm run`/`pnpm exec` stop with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` when
+`node_modules` no longer matches `package.json`, the lockfile or
+`pnpm-workspace.yaml`, instead of pnpm 11's default of quietly running a
+non-frozen install that can rewrite `pnpm-lock.yaml`. When you see it, run
+`pnpm install` yourself (after a `main` merge, `pnpm install --frozen-lockfile`).
+Agents install only when authorised (`AGENTS.md` → "Orchestration Model").
+
+**Removing a worktree.** Use `pnpm run worktree:remove <path>`, not a bare
+`git worktree remove`: see
+[`docs/agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) §3.
 
 **The strict layout.** `nodeLinker: isolated` (owner decision on #3673) means
 code sees only the packages it declares. An import must name a package listed in

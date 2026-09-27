@@ -130,6 +130,9 @@ in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart
 
+Needs Node 24 and pnpm 11 (`npm install -g pnpm@11` once per machine; see
+["Package manager: pnpm"](CONTRIBUTING.md#package-manager-pnpm)).
+
 ```bash
 git clone https://github.com/thatskiff33/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ

@@ -678,7 +678,9 @@ handed an epic-with-children or asked to run several related issues at once.
 - Before removing a merged worktree, inspect its `node_modules` entry. A legacy
   junction must be verified and unlinked non-recursively before `git worktree
   remove`; otherwise Windows cleanup can traverse the junction and erase its
-  shared target. Follow the fail-closed cleanup in `CODEX_WORKFLOW.md`.
+  shared target. A pnpm worktree is removed with `pnpm run worktree:remove
+  <path>`, because `git worktree remove` alone fails half-way on pnpm's
+  junctions (#3673). Follow the fail-closed cleanup in `CODEX_WORKFLOW.md`.
 
 ### 3. Orchestrator + subagents
 

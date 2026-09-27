@@ -37,6 +37,7 @@
     "agent:context": "tsx scripts/agent-context.ts",
     "issue": "node scripts/issue-thread.mjs",
     "stale-containers": "node scripts/stale-containers.mjs",
+    "worktree:remove": "node scripts/remove-worktree.mjs",
     "pr:check": "node scripts/ci/check-pr-body.mjs",
     "ci:workflowcheck": "node scripts/ci/check-workflow-suite-checkout-depth.mjs",
     "audit:deps": "node scripts/ci/audit-dependencies.mjs",
