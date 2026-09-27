@@ -160,8 +160,8 @@ importers:
         specifier: ^3.7.0
         version: 3.7.0
       xero-node:
-        specifier: ^19.2.0
-        version: 19.2.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
+        specifier: ^20.0.0
+        version: 20.0.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -5496,8 +5496,8 @@ packages:
     resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
     engines: {node: '>=8'}
 
-  xero-node@19.2.0:
-    resolution: {integrity: sha512-8mqanCO8wuJko6lknVcXn2lh7WLBn6upZONV6yooJ8ee9Z9TO8ZRg2M1y0LIUy43fv8NVPr3HY+GzY19tEqQ3A==}
+  xero-node@20.0.0:
+    resolution: {integrity: sha512-pDC0/3WX9gN8g61lQ8EjLbdH8AnQyYE9qnkB4MhYxDYnczdL1nAtp90Gp7hgeasbatSz9HG8Dvi6aqOnie4JgQ==}
 
   xml-name-validator@5.0.0:
     resolution: {integrity: sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==}
@@ -10801,7 +10801,7 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
 
-  xero-node@19.2.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
+  xero-node@20.0.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       axios: 1.19.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       openid-client: 5.7.1
