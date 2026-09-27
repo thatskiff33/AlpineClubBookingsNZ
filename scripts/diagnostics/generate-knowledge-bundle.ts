@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Generate the deployed-code knowledge bundle (AID-3, #2372).
  *

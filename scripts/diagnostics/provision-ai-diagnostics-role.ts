@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Provision the dedicated SELECT-only AI Diagnostics database role (AID-5,
  * #2374; contract in ADR-007).

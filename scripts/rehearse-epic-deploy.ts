@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Epic deploy rehearsal (#3002, mitigation 9).
  *

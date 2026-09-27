@@ -9,6 +9,7 @@ import {
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
   clubFormatCurrencyChangeAcknowledgement,
+  clubFormatXeroBaseCurrencyMismatch,
 } from "@/lib/club-format-copy";
 import { stripComments } from "./support/strip-comments";
 
@@ -98,5 +99,40 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     expect(section, "the guide must not put a number on the list either").not.toMatch(
       /\b(?:Two|Three|Four|Five|Six) things\b/,
     );
+  });
+});
+
+/**
+ * The Xero base-currency warning (#3633) is one sentence and one comparison,
+ * rendered on three surfaces. Each surface must route through both rather than
+ * carry its own copy or its own `===`. Disk-scanning: run by name.
+ */
+describe("the Xero base-currency warning has one home (#3633)", () => {
+  const WARNING_SURFACES = [
+    "src/app/(admin)/admin/xero/setup/xero-wizard-steps.tsx",
+    "src/components/admin/club-format-panel.tsx",
+    "src/lib/setup-readiness.ts",
+  ];
+
+  it("says which currency each side is in, and that Xero books invoices in its base currency", () => {
+    const sentence = clubFormatXeroBaseCurrencyMismatch("NZD", "AUD");
+    expect(sentence).toBe(
+      "The club's currency is AUD but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in AUD while their Xero invoices are in NZD.",
+    );
+    // One sentence.
+    expect(sentence.match(/[.!?](\s|$)/g)).toHaveLength(1);
+  });
+
+  it("is rendered on every surface through the shared comparison and sentence", () => {
+    for (const relative of WARNING_SURFACES) {
+      const code = stripComments(
+        readFileSync(path.join(process.cwd(), relative), "utf8"),
+      );
+      expect(code, relative).toContain("xeroBaseCurrencyMismatch(");
+      expect(code, relative).toContain("clubFormatXeroBaseCurrencyMismatch(");
+      expect(code, `${relative} carries its own copy`).not.toMatch(
+        /books every invoice/,
+      );
+    }
   });
 });

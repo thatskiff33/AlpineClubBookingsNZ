@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * File-size budget ratchet (#2687, rebuilt on the base ref by #2979).
  *
