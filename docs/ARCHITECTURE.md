@@ -621,6 +621,17 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+**A person-entered money amount uses `MoneyInput`.**
+`src/components/ui/money-input.tsx` is the controlled text field for dollars
+and cents: it preserves invalid text for the caller's visible validation, refuses
+a third fractional digit, and supplies accessible controls that adjust one whole
+dollar. It delegates exact cents conversion to the canonical parsers in
+`src/lib/money-input.ts`; callers pass their draft through `value` and
+`onValueChange`, use `allowNegative` only for genuine signed adjustments, and
+retain existing `FieldHint` ids through `aria-describedby`. This keeps
+`INV-MONEY-001` and `INV-MONEY-003` at one input boundary rather than recreating
+editing rules in each admin form.
+
 **Placeholder ink is its own token.** `--placeholder-foreground` is declared in
 every scope that restates `--muted-foreground` — a `var()`-bearing custom
 property is substituted on the element that DECLARES it and then inherits as
