@@ -112,7 +112,6 @@ import {
   rm,
   unlink,
   utimes,
-  writeFile,
 } from "node:fs/promises";
 import { constants as osConstants, setPriority, tmpdir } from "node:os";
 import path from "node:path";
@@ -208,9 +207,15 @@ export type SweepFs = {
   lstat(target: string): Promise<SweepStats>;
   rename(from: string, to: string): Promise<void>;
   rm(target: string): Promise<void>;
-  /** Creates an empty file, failing with `EEXIST` if anything is there. */
-  createExclusive(target: string): Promise<void>;
-  writeText(target: string, content: string): Promise<void>;
+  /**
+   * Creates `target` exclusively (rejecting with `EEXIST` if anything is
+   * there) and writes `content` through the SAME handle, so it can never
+   * overwrite a file another process created at that path. Rejects only when
+   * the create itself fails. Resolves `unwritten` when the file was created
+   * but the write failed (ENOSPC/EDQUOT), so the caller knows the empty file
+   * is its own.
+   */
+  createExclusive(target: string, content: string): Promise<"written" | "unwritten">;
   readText(target: string): Promise<string>;
   unlink(target: string): Promise<void>;
 };
@@ -220,10 +225,17 @@ export const nodeSweepFs: SweepFs = {
   lstat: (target) => lstat(target),
   rename: (from, to) => rename(from, to),
   rm: (target) => rm(target, { recursive: true, force: true }),
-  createExclusive: async (target) => {
-    await (await open(target, "wx")).close();
+  createExclusive: async (target, content) => {
+    const handle = await open(target, "wx");
+    try {
+      await handle.writeFile(content, "utf8");
+      return "written";
+    } catch {
+      return "unwritten";
+    } finally {
+      await handle.close().catch(() => {});
+    }
   },
-  writeText: (target, content) => writeFile(target, content, "utf8"),
   readText: (target) => readFile(target, "utf8"),
   unlink: (target) => unlink(target),
 };
@@ -409,18 +421,19 @@ async function acquireLock(
 
   /** `exists`, `locked`, or `unusable` (any other failure). */
   const tryCreate = async (): Promise<"exists" | "locked" | "unusable"> => {
+    let written: "written" | "unwritten";
     try {
-      await fs.createExclusive(lockPath);
+      written = await fs.createExclusive(
+        lockPath,
+        JSON.stringify({ pid: process.pid, token }),
+      );
     } catch (error) {
       return errorCode(error) === "EEXIST" ? "exists" : "unusable";
     }
     created = true;
-    try {
-      await fs.writeText(lockPath, JSON.stringify({ pid: process.pid, token }));
-    } catch {
-      return "unusable"; // ENOSPC/EDQUOT after the create: `release` removes it.
-    }
-    return "locked";
+    // ENOSPC/EDQUOT after the create: the empty file is ours, and `release`
+    // removes it.
+    return written === "written" ? "locked" : "unusable";
   };
 
   const first = await tryCreate();
@@ -439,7 +452,9 @@ async function acquireLock(
       pid = undefined; // Being written right now, or corrupt: judge by age.
     }
     abandoned =
-      now - stats.mtimeMs > LOCK_STALE_MS ||
+      // Either direction: a lock dated in the future (the clock was wound
+      // back) would otherwise never age out.
+      Math.abs(now - stats.mtimeMs) > LOCK_STALE_MS ||
       (typeof pid === "number" && !isAlive(pid));
   } catch {
     return unlocked; // Released between our create and our read.

@@ -670,7 +670,15 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
 
   it("lets only one of several concurrent sweeps run, and releases the lock", async () => {
     const stale = Array.from({ length: 5 }, () => vitestDir(root, nanoidName()));
-    const reports = await Promise.all([sweep(), sweep(), sweep()]);
+    // The lock files these sweeps create carry the real wall-clock mtime, and a
+    // lock more than an hour away from `now` in either direction is stale, so
+    // this case reads the real clock (Date is frozen here).
+    const wallClock = () => performance.timeOrigin + performance.now();
+    const reports = await Promise.all([
+      sweep({ now: wallClock }),
+      sweep({ now: wallClock }),
+      sweep({ now: wallClock }),
+    ]);
 
     expect(reports.filter((report) => !report.skipped)).toHaveLength(1);
     expect(reports.flatMap((report) => report.removed).sort()).toEqual(stale.sort());
@@ -681,6 +689,7 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
   it("skips while a live, recent sweeper holds the lock, and leaves its lock alone", async () => {
     const stale = vitestDir(root, nanoidName());
     writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    setMtime(lockPath(), NOW - 1000);
     const report = await sweep({ isAlive: () => true });
     expect(report).toEqual({ removed: [], failed: [], skipped: true, locked: false });
     expect(existsSync(stale)).toBe(true);
@@ -723,10 +732,12 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
 
   it("still sweeps, and leaves no lock behind, when the lock cannot be written (disk full)", async () => {
     const stale = vitestDir(root, nanoidName());
+    // The create succeeds and the write does not, as on a full disk.
     const diskFull: SweepFs = {
       ...nodeSweepFs,
-      writeText: async () => {
-        throw enospc();
+      createExclusive: async (target) => {
+        await nodeSweepFs.createExclusive(target, "");
+        return "unwritten";
       },
     };
     const report = await sweep({ fs: diskFull });
@@ -752,6 +763,7 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
   it("only EEXIST means held: another create error sweeps even beside a live lock", async () => {
     const stale = vitestDir(root, nanoidName());
     writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    setMtime(lockPath(), NOW - 1000);
     const readOnly: SweepFs = {
       ...nodeSweepFs,
       createExclusive: async () => {
@@ -769,13 +781,13 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
     let creates = 0;
     const racedFs: SweepFs = {
       ...nodeSweepFs,
-      createExclusive: async (target) => {
+      createExclusive: async (target, content) => {
         creates += 1;
         if (creates === 2) {
           // The other sweeper re-creates the lock between our unlink and create.
           writeFileSync(target, JSON.stringify({ pid: 4343, token: "winner" }));
         }
-        return nodeSweepFs.createExclusive(target);
+        return nodeSweepFs.createExclusive(target, content);
       },
     };
     const report = await sweep({ fs: racedFs, isAlive: (pid) => pid !== 4242 });
@@ -818,6 +830,40 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
     const report = await sweep({ uid: owner, isAlive: () => true });
     expect(report).toMatchObject({ removed: [stale], skipped: false, locked: true });
     expect(existsSync(path.join(root, lockFileName(owner)))).toBe(false);
+  });
+
+  it("never removes another sweeper's empty lock when its own create failed", async () => {
+    const stale = vitestDir(root, nanoidName());
+    // Another sweeper has just created its lock and not yet written it.
+    writeFileSync(lockPath(), "");
+    const cannotCreate: SweepFs = {
+      ...nodeSweepFs,
+      createExclusive: async () => {
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      },
+    };
+    const report = await sweep({ fs: cannotCreate });
+    expect(report).toMatchObject({ removed: [stale], locked: false });
+    expect(existsSync(lockPath())).toBe(true);
+  });
+
+  it("creates and writes the lock through one handle, and never touches an existing file", async () => {
+    const target = path.join(root, "probe.lock");
+    await expect(nodeSweepFs.createExclusive(target, "mine")).resolves.toBe("written");
+    expect(readFileSync(target, "utf8")).toBe("mine");
+    // A second create finds it there, rejects with EEXIST, and leaves it alone.
+    await expect(nodeSweepFs.createExclusive(target, "theirs")).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(readFileSync(target, "utf8")).toBe("mine");
+  });
+
+  it("treats a lock dated more than an hour in the future as abandoned (clock wound back)", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "future" }));
+    setMtime(lockPath(), NOW + 2 * 60 * 60 * 1000);
+    const report = await sweep({ isAlive: () => true });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: true });
   });
 
   it("treats a recent, still-empty lock as held: it is being written right now", async () => {
