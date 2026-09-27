@@ -109,7 +109,7 @@ describe("the unpaid-invoice clearing wording (INV-PAY-017)", () => {
   it("says 'unpaid balance cleared' for a partly paid booking, read by the same one rule", () => {
     expect(UNPAID_BALANCE_CLEARING_WORDING).toBe("Unpaid balance cleared - booking cancelled");
     expect(UNPAID_BALANCE_CLEARING_WORDING).not.toMatch(/not paid|refund/i);
-    const stored = { clearsUnpaidInvoice: true, clearsUnpaidBalance: true };
+    const stored = { clearsUnpaidInvoice: true, clearsUnpaidBalance: true } as const;
     expect(readModificationNoteWording(stored)).toEqual(stored);
     expect(settledModificationNoteWording(stored)).toEqual(stored);
     expect(modificationNoteWording(stored)).toBe("unpaid-balance-clearing");

@@ -664,14 +664,12 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   invoices, cash by `classifyXeroInvoiceCashEvidence`. A clean read wins; the
   inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
   with the #3535 audit) count only when Xero cannot answer, and, for links newer
-  than the read, in the release's re-check — which narrows the race, not closes
-  it (the link write takes no booking lock); the builder's shortfall refusal and
-  the repair tool's manual review are the backstop.
+  than the read, in the release's re-check, which narrows the race without
+  closing it; the builder's shortfall refusal and repair manual review back it.
 - **An unreadable invoice is kept only to a bound** (orchestrator decision on
   #3643): the club's check-in date or seven days past the deadline, whichever
-  comes first, then released. A 404 counts as unreadable. The release voids
-  nothing unread: its clearing note is created only after the builder reads
-  what the invoices owe.
+  comes first, then released (a 404 counts). Its clearing note is created only
+  once the builder reads what the invoices owe.
 - **One admin alert per hold per reason** (part-paid, paid in full but not yet
   synced, unreadable, released unreadable). The claim is given back when
   recipients existed but none was reached; the audit entry is written once it
