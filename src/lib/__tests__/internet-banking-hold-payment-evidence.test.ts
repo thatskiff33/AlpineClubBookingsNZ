@@ -40,6 +40,7 @@ import {
   hasRecordedInvoicePayment,
   readHoldPaymentEvidence,
 } from "@/lib/internet-banking-hold-payment-evidence";
+import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 
 const HOLD = {
   id: "pay_1",
@@ -84,8 +85,19 @@ describe("readHoldPaymentEvidence (#3643)", () => {
       fromRecordedLinkOnly: false,
       paidCents: 15000,
       amountDueCents: 15000,
+      cashComplete: true,
+      paidInFull: false,
     });
+    expect(evidence.readStartedAt).toBeInstanceOf(Date);
     expect(mocks.getInvoice).toHaveBeenCalledWith("tenant_1", "inv_1");
+  });
+
+  it("says paid in full when Xero shows nothing left owing (the inbound sync is behind)", async () => {
+    mocks.getInvoice.mockResolvedValue(invoiceResponse({ amountPaid: 300, amountDue: 0 }));
+
+    const evidence = await readHoldPaymentEvidence(HOLD);
+
+    expect(evidence).toMatchObject({ kind: "paid", paidInFull: true, amountDueCents: 0 });
   });
 
   it("calls an invoice with no cash and no recorded payment unpaid", async () => {
@@ -125,9 +137,40 @@ describe("readHoldPaymentEvidence (#3643)", () => {
 
     const evidence = await readHoldPaymentEvidence(HOLD);
 
-    expect(evidence).toEqual({
+    expect(evidence).toMatchObject({
       kind: "unreadable",
       reason: "Xero is not connected. Please connect via admin panel.",
+      notFound: false,
+    });
+  });
+
+  it("marks a Xero 404 for the booking's invoice as not found, still unreadable", async () => {
+    mocks.getInvoice.mockRejectedValue(
+      Object.assign(new Error("Not Found"), { response: { statusCode: 404 } }),
+    );
+
+    const evidence = await readHoldPaymentEvidence(HOLD);
+
+    expect(evidence).toMatchObject({ kind: "unreadable", notFound: true });
+  });
+
+  it("keeps the primary's cash when a supplementary invoice cannot be read", async () => {
+    mocks.findBookingSupplementaryInvoiceIds.mockResolvedValue(["inv_supp"]);
+    mocks.getInvoice.mockImplementation(async (_tenant: string, invoiceId: string) => {
+      if (invoiceId === "inv_supp") throw new Error("503");
+      return invoiceResponse({ amountPaid: 150, amountDue: 150 });
+    });
+
+    const evidence = await readHoldPaymentEvidence(HOLD);
+
+    expect(evidence).toMatchObject({
+      kind: "paid",
+      fromRecordedLinkOnly: false,
+      paidCents: 15000,
+      // Not every invoice was read, so nothing can be sized or recorded.
+      amountDueCents: null,
+      cashComplete: false,
+      paidInFull: false,
     });
   });
 
@@ -148,18 +191,20 @@ describe("readHoldPaymentEvidence (#3643)", () => {
     expect(evidence).toMatchObject({ kind: "paid", fromRecordedLinkOnly: true });
   });
 
-  it("keeps a recorded payment even when the live read shows none (never release on a disagreement)", async () => {
+  it("lets a clean Xero read of no cash overrule a stale recorded payment link", async () => {
+    // The treasurer matched a deposit to this invoice and then removed it:
+    // Xero shows amountPaid 0, the local link still says AUTHORISED.
     mocks.linkFindMany.mockResolvedValue([paymentLink()]);
 
     const evidence = await readHoldPaymentEvidence(HOLD);
 
-    expect(evidence).toMatchObject({ kind: "paid", fromRecordedLinkOnly: true });
+    expect(evidence).toMatchObject({ kind: "unpaid" });
   });
 
   it("releases (no-invoice) a hold with no issued invoice and no payment link", async () => {
     const evidence = await readHoldPaymentEvidence({ ...HOLD, xeroInvoiceId: null });
 
-    expect(evidence).toEqual({ kind: "no-invoice" });
+    expect(evidence).toMatchObject({ kind: "no-invoice" });
     expect(mocks.getInvoice).not.toHaveBeenCalled();
   });
 });
@@ -186,6 +231,18 @@ describe("hasRecordedInvoicePayment (#3643)", () => {
     );
   });
 
+  it("counts only links created since the read started when asked (the re-check)", async () => {
+    const since = new Date("2026-07-01T00:00:00Z");
+
+    await hasRecordedInvoicePayment({ paymentId: "pay_1", bookingId: "booking_1", since });
+
+    expect(mocks.linkFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ createdAt: { gte: since } }),
+      }),
+    );
+  });
+
   it("ignores a payment Xero reported as DELETED", async () => {
     mocks.linkFindMany.mockResolvedValue([
       paymentLink({ metadata: { amount: 150, status: "DELETED" } }),
@@ -206,5 +263,21 @@ describe("hasRecordedInvoicePayment (#3643)", () => {
       hasRecordedInvoicePayment({ paymentId: "pay_1", bookingId: "booking_1" }, tx as never),
     ).resolves.toBe(true);
     expect(mocks.linkFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("isRecordedBookingInvoicePayment (#3643, the one rule)", () => {
+  it.each([
+    ["a payment on the primary invoice", { role: "INVOICE_PAYMENT" }, true],
+    ["a payment on a supplementary invoice", { role: "SUPPLEMENTARY_INVOICE_PAYMENT" }, true],
+    ["a payment with no status recorded", { role: "INVOICE_PAYMENT", metadata: null }, true],
+    ["a refund's payment on the same Payment row", { role: "REFUND_PAYMENT" }, false],
+    ["a subscription payment", { role: "SUBSCRIPTION_PAYMENT" }, false],
+    ["no role", { role: null }, false],
+    ["an invoice link, not a payment", { xeroObjectType: "INVOICE" }, false],
+    ["a reversed (DELETED) payment", { metadata: { status: "DELETED" } }, false],
+    ["a VOIDED payment", { metadata: { status: "voided" } }, false],
+  ])("%s -> %s", (_label, overrides, expected) => {
+    expect(isRecordedBookingInvoicePayment(paymentLink(overrides))).toBe(expected);
   });
 });

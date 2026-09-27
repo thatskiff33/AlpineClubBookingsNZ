@@ -79,6 +79,11 @@ import {
 } from "@/lib/booking-cancel-eligibility";
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
+import {
+  PART_PAYMENT_UNSIZABLE_REFUSAL,
+  readPartPaymentAtCancel,
+  recordPartPaymentInClaim,
+} from "@/lib/internet-banking-part-payment-at-cancel";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -971,9 +976,17 @@ async function performBookingCancellation(
   // (paidAmountCents already nets out refundedAmountCents). Eligibility is
   // ledger-only (see the helper), so the folded-mirror never-captured IB
   // population and mirror-only legacy rows stay out of the refund path.
-  const paidRefundPathEligible = await paymentEligibleForPaidCancelPath(
-    booking.payment
-  );
+  // #3643 (`INV-PAY-107`): Xero may show part of an internet banking invoice
+  // paid while the payment is still PENDING here (the inbound sync settles only
+  // a fully paid invoice). Read live, before any transaction; recognised cash
+  // routes the cancel into the paid path, where the claim records it.
+  const partPayment = await readPartPaymentAtCancel(booking);
+  if (partPayment === "unsizable") {
+    return { status: 409, error: PART_PAYMENT_UNSIZABLE_REFUSAL };
+  }
+  const paidRefundPathEligible =
+    partPayment !== null ||
+    (await paymentEligibleForPaidCancelPath(booking.payment));
 
   // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without a payment the
   // paid refund path can claim: never-captured payments (including the
@@ -1414,6 +1427,20 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
+    // #3643: record the part payment Xero showed as captured money, exactly
+    // once, before eligibility is re-derived. A payment that changed since the
+    // read refuses the claim (409); a retry reads again.
+    if (partPayment) {
+      const recognised = await recordPartPaymentInClaim(
+        tx,
+        fresh.payment.id,
+        partPayment,
+      );
+      if (!recognised) {
+        return { claimed: false as const };
+      }
+      fresh.payment = recognised;
+    }
     // #1491: the same paid-path eligibility as the outer gate, re-derived
     // under the lock (the outer read is stale by definition here). A
     // genuinely captured PARTIALLY_REFUNDED payment claims; the folded-mirror
@@ -1782,6 +1809,36 @@ async function performBookingCancellation(
       { bookingId, creditRestoredCents },
       "Restored previously applied credit on cancellation"
     );
+  }
+
+  // #3643 (`INV-PAY-107`): the recognised part payment settled only part of the
+  // invoices; clear what they still owe with #3535's booking-anchored clearing
+  // note. Sized from Xero's own amount due at the read; the builder re-reads the
+  // invoices and creates nothing if they owe less by then.
+  if (partPayment && partPayment.amountDueCents > 0) {
+    try {
+      const queued = await enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId,
+          refundAmountCents: partPayment.amountDueCents,
+          clearsUnpaidInvoice: true,
+        },
+        { createdByMemberId: sessionUserId }
+      );
+      if (queued.queueOperationId && (await isXeroConnected())) {
+        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
+          logger.error(
+            { err: xeroErr, bookingId, paymentId },
+            "Failed to kick Xero invoice-clearing credit note outbox worker"
+          );
+        });
+      }
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, bookingId, paymentId, amountDueCents: partPayment.amountDueCents },
+        "Failed to queue Xero invoice-clearing credit note for the unpaid rest of a part-paid booking"
+      );
+    }
   }
 
   // ── Phase 2 — external work, AFTER tx1 committed ──────────────────
