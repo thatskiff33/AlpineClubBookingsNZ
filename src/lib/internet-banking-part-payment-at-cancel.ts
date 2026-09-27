@@ -26,6 +26,7 @@ import {
   PaymentTransactionKind,
   type Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
 import { readHoldPaymentEvidence } from "@/lib/internet-banking-hold-payment-evidence";
 import logger from "@/lib/logger";
 import { isXeroConnected } from "@/lib/xero";
@@ -73,7 +74,7 @@ export async function readPartPaymentAtCancel(booking: {
     // An organisation has no member account to credit (#3369); its paid path
     // refuses a credit refund, so recognition would turn a working cancel
     // into a failing one. It keeps the pre-#3643 behaviour.
-    !booking.memberId
+    !bookingOwner(booking).memberId
   ) {
     return null;
   }

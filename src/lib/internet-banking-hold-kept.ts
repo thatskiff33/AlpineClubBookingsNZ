@@ -48,7 +48,6 @@ export interface ExpiredHoldView {
     checkOut: Date;
     memberId: string | null;
     member: { firstName: string; lastName: string } | null;
-    organisationId?: string | null;
     organisation: { name: string; email: string | null } | null;
   };
 }
