@@ -646,7 +646,7 @@ describe("deployment image contracts", () => {
     // #2946. The audit used to be a STEP near the front of `verify`. Actions
     // skips every later step in a job once one fails, so when a high-severity
     // advisory landed in a transitive dependency on 17 August (#2945) it took
-    // lint, the file-size ratchet, `prisma generate`, typecheck, knip, `npm test`
+    // lint, the file-size ratchet, `prisma generate`, typecheck, knip, `pnpm test`
     // and the build down with it — on every branch, silently, while the other
     // required checks stayed green. The check list read "one dependency thing is
     // red"; the suite had not run. #2947 restored it and the first real run
@@ -693,16 +693,17 @@ describe("deployment image contracts", () => {
       );
       expect(verify.length).toBeGreaterThan(0);
       expect(verify).not.toContain("npm audit");
+      expect(verify).not.toContain("pnpm audit");
       // The gates that were skipped must all still be in `verify`, and none of
       // them may have acquired a condition of its own on the way out.
       for (const step of [
-        "run: npm run lint",
-        "run: npm run quality:budget",
-        "run: npm run db:generate",
-        "run: npm run typecheck",
-        "run: npx knip",
-        "run: npm test",
-        "run: npm run build",
+        "run: pnpm run lint",
+        "run: pnpm run quality:budget",
+        "run: pnpm run db:generate",
+        "run: pnpm run typecheck",
+        "run: pnpm exec knip",
+        "run: pnpm test",
+        "run: pnpm run build",
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
       }
@@ -803,5 +804,101 @@ describe("deployment image contracts", () => {
     expect(dockerfile).not.toMatch(
       /^COPY --from=builder \/app\/\.next\/static \.\/\.next\/static$/m,
     );
+  });
+});
+
+/**
+ * #3673: this repository installs with pnpm, in the strict layout, and npm run
+ * out of habit must fail loudly instead of quietly writing a second lockfile.
+ * Every guard below is one a tidy-up could remove without anything else going
+ * red, which is why each is pinned here rather than trusted.
+ */
+describe("package manager contract (#3673)", () => {
+  const WORKFLOWS = filesUnder(".github/workflows", [".yml", ".yaml"]);
+
+  it("pins pnpm in exactly one place, and makes npm's install refuse", () => {
+    const pkg = JSON.parse(readRepoFile("package.json")) as {
+      packageManager?: string;
+      engines?: Record<string, string>;
+      overrides?: unknown;
+      allowScripts?: unknown;
+    };
+    expect(pkg.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
+    expect(pkg.engines?.pnpm).toBe(`>=${pkg.packageManager?.slice("pnpm@".length)}`);
+    // Not a semver range, so npm can never satisfy it; with `engine-strict`
+    // below, `npm install`/`pnpm install --frozen-lockfile` stop with EBADENGINE before writing a
+    // package-lock.json or a node_modules tree.
+    expect(pkg.engines?.npm).toBe("please-use-pnpm");
+    expect(readRepoFile(".npmrc")).toMatch(/^engine-strict=true$/m);
+    // npm-only fields pnpm ignores: their settings live in pnpm-workspace.yaml.
+    expect(pkg.overrides).toBeUndefined();
+    expect(pkg.allowScripts).toBeUndefined();
+  });
+
+  it("keeps the strict layout, the overrides and the build allowlist in pnpm-workspace.yaml", () => {
+    const workspace = readRepoFile("pnpm-workspace.yaml");
+    expect(workspace).toMatch(/^nodeLinker: isolated$/m);
+    expect(workspace).toMatch(/^overrides:$/m);
+    expect(workspace).toMatch(/^ {2}next-auth>nodemailer: "catalog:"$/m);
+    expect(workspace).toMatch(/^ {2}"@auth\/core>nodemailer": "catalog:"$/m);
+    expect(workspace).toMatch(/^allowBuilds:$/m);
+  });
+
+  it("has one lockfile, and refuses an npm one in CI and in git", () => {
+    const root = readdirSync(process.cwd());
+    expect(root).toContain("pnpm-lock.yaml");
+    expect(root).not.toContain("package-lock.json");
+    expect(root).not.toContain("npm-shrinkwrap.json");
+    expect(readRepoFile(".gitignore")).toMatch(/^\/package-lock\.json$/m);
+
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const verify = directivesOnly(
+      workflow.slice(workflow.indexOf("  verify:"), workflow.indexOf("  migration-drift:")),
+    );
+    const refuse = verify.indexOf("- name: Refuse an npm lockfile");
+    const install = verify.indexOf("- name: Install dependencies");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(refuse);
+    const refuseStep = verify.slice(refuse, verify.indexOf("- name:", refuse + 1));
+    expect(refuseStep).toContain("package-lock.json");
+    expect(refuseStep).toContain("npm-shrinkwrap.json");
+    expect(refuseStep).toMatch(/exit "\$found"/);
+  });
+
+  it("installs with pnpm from the lockfile in every workflow, never with npm", () => {
+    for (const file of WORKFLOWS) {
+      const directives = directivesOnly(readRepoFile(file));
+      expect(directives, `${file} still caches npm`).not.toMatch(/^\s*cache: npm\s*$/m);
+      expect(directives, `${file} still runs npm ci`).not.toMatch(/\bnpm (ci|install)\b/);
+      expect(directives, `${file} still runs npx`).not.toMatch(/(?<![\w-])npx /);
+      expect(directives, `${file} still runs npm audit`).not.toMatch(/(?<!p)npm audit/);
+
+      // `cache: pnpm` needs pnpm on PATH, so every job that caches the store
+      // must set pnpm up BEFORE setup-node — the other order fails the job.
+      const jobs = directives.split(/^ {2}(?=[\w-]+:\s*$)/m);
+      for (const job of jobs) {
+        const cache = job.search(/^\s*cache: pnpm\s*$/m);
+        if (cache === -1) continue;
+        const pnpmSetup = job.indexOf("uses: pnpm/action-setup@");
+        const nodeSetup = job.indexOf("uses: actions/setup-node@");
+        expect(pnpmSetup, `${file}: a job caches pnpm without setting pnpm up`).toBeGreaterThan(-1);
+        expect(pnpmSetup, `${file}: pnpm must be set up before setup-node`).toBeLessThan(nodeSetup);
+      }
+      for (const install of directives.match(/^\s*run: pnpm install\b[^\n]*/gm) ?? []) {
+        expect(install, `${file}: CI installs must be frozen`).toContain("--frozen-lockfile");
+      }
+    }
+  });
+
+  it("builds the image with the pinned pnpm and the frozen lockfile", () => {
+    const dockerfile = directivesOnly(readRepoFile("Dockerfile"));
+    // The version is read from package.json, never written here a second time.
+    expect(dockerfile).toContain(
+      `npm install -g "$(node -p "require('/tmp/package-manager/package.json').packageManager")"`,
+    );
+    expect(dockerfile).not.toMatch(/pnpm@\d/);
+    expect(dockerfile).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
   });
 });

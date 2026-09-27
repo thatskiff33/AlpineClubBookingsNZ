@@ -49,7 +49,7 @@ import { captureHostTimeZone, withTimeZone } from "./helpers/timezone";
  *
  * ## Why the lever is `withTimeZone` and not the shell
  *
- * `docs/TESTING.md` used to send a reader to `TZ=… npx vitest`. **That is a
+ * `docs/TESTING.md` used to send a reader to `TZ=… pnpm exec vitest`. **That is a
  * silent no-op on this repository's documented shell**, measured independently
  * by three lanes on this epic and re-measured here: Git Bash on Windows drops
  * any `TZ` value containing a `/`, so `TZ=America/Denver` arrives as `undefined`

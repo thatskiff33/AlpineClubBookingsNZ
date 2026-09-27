@@ -36,9 +36,9 @@ describe("repository agent workflow contract", () => {
     expect(agents).toContain("takes both applicable tiers");
     expect(agents).toContain("physical, isolated `node_modules`");
     expect(agents).toContain("checkpoint outside the worktree");
-    expect(agents).toContain("PR CI owns the full `npm test`");
+    expect(agents).toContain("PR CI owns the full `pnpm test`");
     expect(agents).toMatch(/Do not\s+delay a draft PR/);
-    expect(agents).not.toContain("Run the **full** `npm test` before opening the PR");
+    expect(agents).not.toContain("Run the **full** `pnpm test` before opening the PR");
     expect(agents).toContain("Keep a private 25% weekly reserve");
     expect(agents).toContain("Gate the blueprint by risk");
     expect(agents).toContain("Validate coherent batches");
@@ -194,14 +194,16 @@ describe("repository agent workflow contract", () => {
     }
     expect(agents).toContain("changelog.d/<pr-number>-<slug>.md");
     expect(agentsNormalized).toContain("a body edit does not re-run Actions");
-    expect(agents).toContain("npm run pr:check");
-    expect(agents).toContain("npm run test:related");
+    expect(agents).toContain("pnpm run pr:check");
+    expect(agents).toContain("pnpm run test:related");
 
     expect(codex).toContain("Root `AGENTS.md` is authoritative");
     expect(codex).toContain("last 10 merged PRs affecting the subsystem");
     expect(codex).toContain("Delegate bulk implementation to implementor subagents");
     expect(codex).toContain("## Windows worktree runtime and dependency preflight");
-    expect(codex).toContain("npm ci --ignore-scripts");
+    // #3673: pnpm runs only the `allowBuilds` packages, so the two-phase npm
+    // install is retired and the preflight is one frozen install.
+    expect(codex).toContain("pnpm install --frozen-lockfile");
     expect(codex).toContain("[IO.Directory]::Delete($modules)");
     expect(codex).toContain("Refusing unexpected junction target");
     expect(codex).toContain("expected target sentinel is missing");
@@ -222,7 +224,7 @@ describe("repository agent workflow contract", () => {
     */
     expect(codex).toContain("## Lane-owned Docker infrastructure");
     expect(codexNormalized).toContain("A lane that starts Docker infrastructure owns removing it");
-    expect(codex).toContain("npm run stale-containers");
+    expect(codex).toContain("pnpm run stale-containers");
     expect(codex).toContain("agent-lane.issue");
     expect(codex).toContain("agent-lane.shared=true");
     expect(codexNormalized).toContain("It never removes anything");
@@ -246,7 +248,7 @@ describe("repository agent workflow contract", () => {
     expect(agentsNormalized).toContain(
       "tear down any Docker infrastructure the lane started",
     );
-    expect(agentsNormalized).toContain("`npm run stale-containers` names what");
+    expect(agentsNormalized).toContain("`pnpm run stale-containers` names what");
     expect(agentsNormalized).toContain(
       "or Docker infrastructure a lane starts and must later tear down",
     );
@@ -273,7 +275,7 @@ describe("repository agent workflow contract", () => {
 
     expect(scopedContextNormalized).toContain("Inventory and content come only from `git ls-files`");
     expect(scopedContextNormalized).toContain("limited to one or two hops");
-    expect(scopedContext).toContain("npm run agent:context -- -- --base");
+    expect(scopedContext).toContain("pnpm run agent:context --base");
     expect(scopedContextNormalized).toContain("computed dynamic imports");
     expect(scopedContextNormalized).toContain("temporary sibling directory and renames it into place");
     expect(packageJson).toContain('"agent:context": "tsx scripts/agent-context.ts"');

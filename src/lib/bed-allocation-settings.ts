@@ -86,7 +86,7 @@ export interface EffectiveBedAllocationSettings {
  * The route's zod schema is `.strict()` and is checked against this type at
  * compile time (`satisfies Record<keyof BedAllocationSettingsWriteBody, …>` in
  * the route), so the accepted field set and the field set the editor builds
- * cannot drift apart without failing `npm run typecheck`. It lives in this
+ * cannot drift apart without failing `pnpm run typecheck`. It lives in this
  * client-safe module rather than beside the schema because the editor is a
  * client component and cannot import a route file.
  *

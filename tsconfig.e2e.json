@@ -7,7 +7,7 @@
   //
   // Specs import application modules (`@/lib/...`, `../../src/...`) and the
   // paths alias is inherited for that, so a schema or helper change the suite
-  // depends on still fails `npm run typecheck` — the property
+  // depends on still fails `pnpm run typecheck` — the property
   // `docs/AUTHORITATIVE_FEES.md` relies on for `e2e/setup/seed-second-lodge.ts`.
   "extends": "./tsconfig.json",
   "compilerOptions": {

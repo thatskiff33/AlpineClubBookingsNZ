@@ -33,7 +33,7 @@ import { stripComments } from "./support/strip-comments";
  * so the compiler will happily accept a writer. This is the thing that will not.
  *
  * IT SCANS `src/` FROM DISK, so it has no import edge to the files it reads and
- * `npm run test:related` structurally cannot select it (`docs/TESTING.md`). Run
+ * `pnpm run test:related` structurally cannot select it (`docs/TESTING.md`). Run
  * it by name.
  */
 

@@ -73,7 +73,7 @@ import { config, getFeatureFlagBlockResponse } from "../../proxy";
  *
  * `e2e/asset-url-404.spec.ts` then measures the same shapes on the wire against
  * the running container; this suite is what fails without a stack, in the
- * ordinary `npm test` run, the moment the matcher and the rewrites stop agreeing.
+ * ordinary `pnpm test` run, the moment the matcher and the rewrites stop agreeing.
  */
 
 /**

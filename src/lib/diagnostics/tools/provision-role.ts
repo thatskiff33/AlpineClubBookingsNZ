@@ -6,7 +6,7 @@
  * else: no database handle, no environment read, no `server-only` import (the
  * operator CLI `scripts/diagnostics/provision-ai-diagnostics-role.ts` runs it
  * under `tsx`). That keeps three consumers on ONE definition of the role —
- * the operator's `npm run diagnostics:provision-role`, CI's privilege-proof
+ * the operator's `pnpm run diagnostics:provision-role`, CI's privilege-proof
  * step, and `ai-diagnostics-select-only-role.realdb.test.ts`, which proves the
  * shipped statements really do produce a role that cannot write. A test fixture
  * that re-declared its own grants would prove nothing about what operators run.

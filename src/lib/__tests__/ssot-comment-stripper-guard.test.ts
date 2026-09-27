@@ -18,7 +18,7 @@ import { PRODUCTION_GUARD_ROSTER } from "./support/eslint-guard-coverage";
  * is one comment stripper, `./support/strip-comments`, and a second copy makes
  * the census that owns it go quietly green.
  *
- * WHY THIS SUITE EXISTS AT ALL, given the rule runs in `npm run lint`. Lint
+ * WHY THIS SUITE EXISTS AT ALL, given the rule runs in `pnpm run lint`. Lint
  * proves the tree is clean TODAY. It cannot prove the rule would object to a
  * copy that nobody has written yet, and that is the entire property being
  * bought — #3132 swept seventeen copies by NAME and left seven alive under a
@@ -420,7 +420,7 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
 
   /*
     THE SAME QUESTION ASKED OF THIS FILE, which is the one the rule's own suite
-    got wrong. Until #3164's fix round this file was silent under `npm run lint`
+    got wrong. Until #3164's fix round this file was silent under `pnpm run lint`
     because the rule read nothing at module scope, and every fixture here is a
     module-level constant — so the suite passed, and the file's silence proved
     nothing about the allowlist. Now the module body IS read and the entry in
@@ -436,7 +436,7 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
 
     expect(
       (await reportsFor(ownSource, FIXTURE_FILE)).length,
-      "This suite's fixtures are module-level constants naming both block delimiters. The rule must see them, so that the allowlist entry for this file is what makes `npm run lint` quiet here — not a hole in the rule.",
+      "This suite's fixtures are module-level constants naming both block delimiters. The rule must see them, so that the allowlist entry for this file is what makes `pnpm run lint` quiet here — not a hole in the rule.",
     ).toBeGreaterThan(0);
   });
 });

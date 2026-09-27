@@ -956,7 +956,7 @@ export function diagnosticsAuditArgsHash(
  * SQL fragments a registry entry may never contain. This is a CONTRACT TEST
  * helper, not a runtime sanitiser — the runtime guarantee is that the SQL is
  * server-owned and the role cannot write. It exists so a future entry that
- * pastes in a `DELETE`, a `pg_read_file` or a locking clause fails `npm test` at
+ * pastes in a `DELETE`, a `pg_read_file` or a locking clause fails `pnpm test` at
  * the point of review rather than at a deployment.
  */
 export const FORBIDDEN_TOOL_SQL_PATTERNS: readonly RegExp[] = [

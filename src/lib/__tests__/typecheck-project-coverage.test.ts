@@ -10,7 +10,7 @@ import {
 } from "../../../scripts/lib/file-size-budget";
 
 /**
- * `npm run typecheck` runs three projects: `tsconfig.json` (the app),
+ * `pnpm run typecheck` runs three projects: `tsconfig.json` (the app),
  * `tsconfig.test.json` (Vitest tests) and `tsconfig.e2e.json` (the Playwright
  * suite, #2693). Between them they must read every tracked TypeScript file.
  * That was false before #2875: tests under `scripts/__tests__/` sat in neither
@@ -248,7 +248,7 @@ describe("typecheck project coverage", () => {
     );
     expect(
       uncovered,
-      "these tracked TypeScript files are in no tsconfig project, so `npm run typecheck` never reads them",
+      "these tracked TypeScript files are in no tsconfig project, so `pnpm run typecheck` never reads them",
     ).toEqual([]);
 
     const shared = trackedTypeScript.filter(
@@ -297,7 +297,7 @@ describe("typecheck project coverage", () => {
     // The unit-test project is off deliberately, not by omission, and #3363
     // owns the measurement and the decision. Pinned so that turning it ON is
     // also a decision somebody makes on purpose: it would put thousands of
-    // pre-existing diagnostics into `npm run typecheck` at once.
+    // pre-existing diagnostics into `pnpm run typecheck` at once.
     expect(
       test.options.noUncheckedIndexedAccess,
       "tsconfig.test.json opts out of noUncheckedIndexedAccess on purpose (#2802, measured in #3363); change it there and here together",

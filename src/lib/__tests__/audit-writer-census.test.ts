@@ -152,7 +152,7 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
       shared regex is how a HISTORICAL statement starts matching.
     */
     {
-      // The fenced `npm run audit:census` paste on the category-review page. Its
+      // The fenced `pnpm run audit:census` paste on the category-review page. Its
       // DISTRIBUTION is compared against the manifest by its own test below.
       pattern: /\brow-producing\s+sites:\s+(\d+)\s+uncategorised:\s+(zero|\d+)\b/giu,
     },
@@ -306,7 +306,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ]);
     expect(
       claims,
-      "A runtime or document current-fact copy is stale. Re-run `npm run " +
+      "A runtime or document current-fact copy is stale. Re-run `pnpm run " +
         "audit:census`, then update every discovered claim in the same commit.",
     ).toEqual(
       claims.map(({ file, uncategorised }) => ({
@@ -327,7 +327,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
   it("pins the pasted census DISTRIBUTION, not only its total", () => {
     /*
-      The fenced `npm run audit:census` output on the category-review page states
+      The fenced `pnpm run audit:census` output on the category-review page states
       the eleven per-category counts as well as the total, and nothing read either.
       A pass that moves a writer between two categories leaves the total untouched —
       #2755 did exactly that — so a total-only pin would leave that block asserting
@@ -358,7 +358,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     expect(
       pasted,
       "The pasted census distribution on docs/ai-diagnostics/audit-admin-category-review.md " +
-        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `npm run audit:census` " +
+        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `pnpm run audit:census` " +
         "and paste the new block.",
     ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
   });
@@ -1302,13 +1302,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 340 -> 341 (#3220 merged with main): #3214's strand night-price reconcile
     // and this issue's refused-stranded-intent record both land here. Categorised
     // at the site and named in none of the four per-site maps, so both land
-    // unpinned. 468 sites MEASURED on the merged tree with `npm run audit:census`
+    // unpinned. 468 sites MEASURED on the merged tree with `pnpm run audit:census`
     // minus 127 pinned; `pinned` is unchanged, so no existing classification moved.
     // 341 -> 343 (#3340): the supersede-refund record and its failed-notice
     // escalation, both in `superseded-additional-refund.ts`. Categorised
     // `payment` at the site and named in none of the four per-site maps, so both
     // land unpinned. 470 sites MEASURED on this branch with
-    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
+    // `pnpm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
     // existing classification moved.
     //
     // 343 -> 345 (#2698): TWO new writers, for FOUR new actions.
@@ -1320,7 +1320,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // set (INV-CAP-038), under `booking` to match the exclusive-hold writer it
     // answers. Both are categorised at the site and named in none of the four
     // per-site maps, so both land unpinned. 470 sites MEASURED with
-    // `npm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
+    // `pnpm run audit:census` minus 127 pinned; `pinned` is unchanged, so no
     // existing classification moved. Both figures were RE-MEASURED, never
     // incremented — the round before this one moved the assertion and left the
     // arithmetic above it stale, which is the drift these bump lines exist to
@@ -1337,7 +1337,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // contact people were REPLACED by the approved booking's teachers rather
     // than added to. Categorised `xero` at the site, for the same subsystem
     // reason as the row above, and named in none of the four per-site maps.
-    // 474 sites MEASURED with `npm run audit:census` minus 127 pinned;
+    // 474 sites MEASURED with `pnpm run audit:census` minus 127 pinned;
     // `pinned` is unchanged, so no existing classification moved.
     // 343 -> 344 (#3354): the AI spend currency-rate writer in
     // `/api/admin/ai-spend-currency`. Categorised `admin` at the site and named
@@ -1352,13 +1352,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
-    // 472 sites MEASURED on this branch with `npm run audit:census` minus 127
+    // 472 sites MEASURED on this branch with `pnpm run audit:census` minus 127
     // pinned; `pinned` is unchanged, so no existing classification moved.
     // 345/347 -> 349 (sync of `main` into `epic/2725-mad`): the two lanes'
     // four new writers are disjoint and every one of them is categorised at the
     // site and named in none of the four per-site maps, so all four land
     // unpinned and `pinned` does not move. RE-MEASURED on the MERGED tree with
-    // `npm run audit:census`, never by adding the two branches' deltas together.
+    // `pnpm run audit:census`, never by adding the two branches' deltas together.
     // 349 -> 350 (#2936): `booking_request.corrected`, categorised `booking` at
     // the site and named in none of the four per-site maps, so it lands unpinned
     // and `pinned` does not move.
@@ -1367,7 +1367,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // per-site maps, so it lands unpinned and `pinned` still does not move. The
     // two branches' rows are disjoint writers, so the merged figure is 351 —
     // 482 sites RE-MEASURED on this tree with
-    // `npm run audit:census` minus 127 pinned, never by adding the two deltas.
+    // `pnpm run audit:census` minus 127 pinned, never by adding the two deltas.
     // 351 -> 352 (#2703, arriving on the seventh main-to-epic sync):
     // `issue_report.screenshot_withheld`, categorised `privacy` at the site.
     // 352 -> 355 (#2940): the three MiroTalk configuration writers. None of the
@@ -1382,7 +1382,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // uniformly `admin`, so it had to be entered in
     // `LODGE_GATED_ADMIN_CATEGORIES_2765` to keep that premise measured rather
     // than merely asserted. the site total MEASURED on the MERGED
-    // tree with `npm run audit:census` minus the pinned union — the epic's
+    // tree with `pnpm run audit:census` minus the pinned union — the epic's
     // unpinned additions and this pinned one are disjoint, so neither branch's
     // pair survives the merge and only a run over the composed tree gives it.
     // 355 -> 356 (#3498): the manual-refund-task reopen record, which is a new
@@ -1390,14 +1390,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 356 -> 357 (#3528): the additional-payment withdrawal record, likewise.
     // 357 -> 358 (#3563): the club currency and locale record, likewise - a new
     // unpinned writer under `/api/admin/club-format/`, which no per-site map
-    // covers. RE-MEASURED with `npm run audit:census`, not incremented.
+    // covers. RE-MEASURED with `pnpm run audit:census`, not incremented.
     // 358 -> 359 (#3531 3b): the rate-derived night-price backfill record,
     // `payment` at the site, unpinned like every other new feature's writer.
     // 359 -> 360 (#3029): the booking dietary edit record, `booking` at the
-    // site, unpinned likewise. RE-MEASURED with `npm run audit:census`.
+    // site, unpinned likewise. RE-MEASURED with `pnpm run audit:census`.
     // 360 -> 361 (#3566): the AI spend rate clear (`ai-spend-currency-clear.ts`,
     // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
-    // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
+    // RE-MEASURED with `pnpm run audit:census` on the tree merged with #3029.
     ).toEqual({ pinned: 128, unpinned: 361 });
   });
 

@@ -11,7 +11,7 @@
     // migration this programme just finished, so widening the flag to tests is
     // a separate programme rather than the tail of this stage; turning it back
     // off here keeps that decision explicit instead of silent, and keeps
-    // `npm run typecheck` green in the meantime.
+    // `pnpm run typecheck` green in the meantime.
     //
     // #3363 IS THE ONE HOME for how many, and for the plan. The counts are
     // measurements rather than facts about the design, so a second copy of them
@@ -25,7 +25,7 @@
   // `__tests__` directory to keep test code out of the app project. This file
   // used to re-include only the `src/` half of what that exclusion removed. The
   // other half — the tests under `scripts/__tests__/` — was therefore in
-  // neither project, so `npm run typecheck` walked straight past it. That
+  // neither project, so `pnpm run typecheck` walked straight past it. That
   // included the tests for the
   // file-size gate this PR adds: a gate whose own tests were outside the
   // typechecker (#2875).
