@@ -39,6 +39,12 @@ export function AdditionalPaymentCard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paymentComplete, setPaymentComplete] = useState(false);
+  // #3641: the route answers 409 when Stripe already holds this payment. That
+  // is not a failure to load, so it gets neither the "still owing" fallback
+  // nor the red error: one plain statement that it has been paid.
+  const [alreadyPaidMessage, setAlreadyPaidMessage] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -54,10 +60,18 @@ export function AdditionalPaymentCard({
           // cannot refresh its secret must not go on offering the old one.
           setClientSecret(null);
           setAskAmountCents(null);
+          if (res.status === 409) {
+            setError(null);
+            setAlreadyPaidMessage(
+              data.error || "This payment has already been made.",
+            );
+            return;
+          }
           setError(data.error || "Failed to load payment details");
           return;
         }
         setError(null);
+        setAlreadyPaidMessage(null);
         // Both from the SAME response, always set together (#3340).
         setClientSecret(data.clientSecret);
         setAskAmountCents(
@@ -123,6 +137,10 @@ export function AdditionalPaymentCard({
           <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
             <p className="font-medium">Payment successful!</p>
             <p className="mt-1">Your additional payment has been processed.</p>
+          </div>
+        ) : alreadyPaidMessage ? (
+          <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
+            <p>{alreadyPaidMessage}</p>
           </div>
         ) : (
           <>
