@@ -94,7 +94,7 @@
     "payments:audit-booking-ledger": "tsx --conditions=react-server scripts/audit-booking-ledger-residual.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.126.0",
+    "@anthropic-ai/sdk": "^0.127.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/utilities": "^3.2.2",
     "@prisma/adapter-pg": "7.10.0",
@@ -170,11 +170,11 @@
     "@types/sanitize-html": "^2.16.1",
     "@vitest/coverage-v8": "^5.0.1",
     "dotenv": "^18.0.1",
-    "eslint": "^10.10.0",
+    "eslint": "^10.11.0",
     "eslint-config-next": "16.3.5",
-    "fast-check": "^4.10.1",
+    "fast-check": "^4.10.2",
     "jsdom": "^30.1.1",
-    "knip": "^6.36.0",
+    "knip": "^6.37.0",
     "pg": "^8.23.0",
     "sharp": "^0.35.4",
     "tailwindcss": "^4",
