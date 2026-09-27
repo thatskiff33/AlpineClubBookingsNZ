@@ -20,7 +20,14 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  calendarMonthOf,
+  clubCalendarDateOf,
+  requireInstant,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { bookingMonth, gateMonth } from "@/lib/ai-metering-month";
 import { AI_ASSISTANT_DEFAULT_MONTHLY_BUDGET_CENTS } from "@/config/ai-spend";
 import { convertNzdCentsToClubCents } from "@/lib/ai-spend-currency";
 import { loadAiSpendCurrency } from "@/lib/ai-spend-currency-settings";
@@ -71,25 +78,20 @@ export const AI_PRICE_TABLE_NZ_CENTS_PER_MTOK: Record<
 export const WORST_CASE_CALL_CENTS = 16;
 
 // ---------------------------------------------------------------------------
-// Month key (Pacific/Auckland)
+// Month key (the club's stored time zone)
 // ---------------------------------------------------------------------------
 
-const monthKeyFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: APP_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-});
-
 /**
- * The billing month, "YYYY-MM", in the app time zone (Pacific/Auckland). An
- * instant near a UTC month boundary can fall in a different NZ month, so the key
- * is computed in APP_TIME_ZONE, never from getUTCMonth/getMonth.
+ * The billing month, "YYYY-MM", in the CLUB's stored time zone
+ * (INV-CONFIG-002). An instant near a UTC month boundary can fall in a
+ * different club month, so the key is the club calendar day's month, never
+ * getUTCMonth/getMonth. The zone is an ARGUMENT, resolved once by the caller
+ * before any transaction or lock (INV-LOCK-004): until #3567 it was the
+ * environment's `APP_TIME_ZONE`, which on the New Zealand default gives the
+ * same key byte for byte.
  */
-export function aiUsageMonthKey(date: Date = new Date()): string {
-  const parts = monthKeyFormatter.formatToParts(date);
-  const year = parts.find((p) => p.type === "year")?.value ?? "0000";
-  const month = parts.find((p) => p.type === "month")?.value ?? "00";
-  return `${year}-${month}`;
+export function aiUsageMonthKey(date: Date, zone: ClubTimeZone): string {
+  return calendarMonthOf(clubCalendarDateOf(requireInstant(date), zone));
 }
 
 // ---------------------------------------------------------------------------
@@ -186,9 +188,14 @@ export async function checkAiBudget(
     return { allowed: false, spentCents: 0, budgetCents: DEFAULT_MONTHLY_BUDGET_CENTS };
   }
   try {
+    // #3567 review: an unreadable club zone fails the gate closed.
+    const month = await gateMonth(now, aiUsageMonthKey);
+    if (month === null) {
+      return { allowed: false, spentCents: 0, budgetCents: DEFAULT_MONTHLY_BUDGET_CENTS };
+    }
     const [monthly, settings, currency] = await Promise.all([
       prisma.aiAssistantUsageMonthly.findUnique({
-        where: { month: aiUsageMonthKey(now) },
+        where: { month },
       }),
       prisma.aiAssistantSettings.findUnique({ where: { id: "default" } }),
       loadAiSpendCurrency(),
@@ -297,7 +304,9 @@ function redactTruncateErrorMessage(message?: string | null): string | null {
  */
 export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
   const now = input.now ?? new Date();
-  const month = aiUsageMonthKey(now);
+  // Resolved before the transaction below, never inside it (INV-LOCK-004); a
+  // failed zone read books into the fallback month and says so.
+  const month = await bookingMonth(now, aiUsageMonthKey, "ai-assistant");
   const usage = input.usage ?? EMPTY_USAGE;
   const nzdCostCents = input.usage ? estimateAiCostCents(input.model, input.usage) : 0;
   const failureContext = {
@@ -417,7 +426,7 @@ function buildSurfaceBuckets(
  * A DB error propagates to the caller (the admin route wraps it in a 500).
  */
 export async function getAiUsageSummary(now: Date = new Date()) {
-  const month = aiUsageMonthKey(now);
+  const month = aiUsageMonthKey(now, await clubTimeZone());
   const [monthly, settings, events] = await Promise.all([
     prisma.aiAssistantUsageMonthly.findUnique({ where: { month } }),
     prisma.aiAssistantSettings.findUnique({ where: { id: "default" } }),

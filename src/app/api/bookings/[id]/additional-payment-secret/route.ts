@@ -7,6 +7,18 @@ import { getPaymentIntent } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { isAdditionalPayableBookingStatus } from "@/lib/additional-payment-chase";
+import {
+  intentCurrencyDiffers,
+  reissueAdditionalIntentInClubCurrency,
+  staleIntentAction,
+} from "@/lib/additional-intent-currency";
+import { restateAdditionalAsk } from "@/lib/additional-payment-ask";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import {
+  chargeCurrencyRefusal,
+  UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+} from "@/lib/stripe-charge-currency";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -37,6 +49,14 @@ export async function GET(
   }
 
   const { id: bookingId } = await params;
+  // The club's format, resolved once before any Stripe call (#3565, #3567).
+  const format = await clubFormatValues();
+  if (chargeCurrencyRefusal(format)) {
+    return NextResponse.json(
+      { error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE },
+      { status: 409 },
+    );
+  }
 
   try {
     const payment = await prisma.payment.findUnique({
@@ -67,7 +87,42 @@ export async function GET(
       );
     }
 
-    const pi = await getPaymentIntent(payment.additionalPaymentIntentId);
+    let pi = await getPaymentIntent(payment.additionalPaymentIntentId);
+    const action = intentCurrencyDiffers(pi, format) ? staleIntentAction(pi) : null;
+    // #3567 re-review: a paid or paying old-currency intent is never superseded
+    // (its cancel would find it captured and refund it); a cancelled one is gone.
+    if (action === "in_flight") {
+      return NextResponse.json(
+        { error: "This payment is being processed. Refresh the page in a minute to see it confirmed." },
+        { status: 409 },
+      );
+    }
+    if (action === "gone") {
+      return NextResponse.json({ error: "No pending additional payment" }, { status: 404 });
+    }
+    if (action === "reissue") {
+      /*
+        #3567: this ask was minted before the club changed its currency. Its
+        secret would charge the OLD currency while the page shows the new one,
+        so it is re-issued unchanged on an intent in the club's currency and the
+        old one is superseded (queued for cancellation). A retry converges on
+        the same new intent: its key is discriminated by the old intent, the new
+        currency and the amount.
+      */
+      const row = await findPaymentTransactionByIntentId({ paymentIntentId: pi.id });
+      pi = await reissueAdditionalIntentInClubCurrency({
+        format,
+        bookingId,
+        paymentId: payment.id,
+        staleIntentId: pi.id,
+        ask: restateAdditionalAsk({
+          amountCents: pi.amount,
+          carriedAskCents: row?.carriedAskCents ?? 0,
+        }),
+        reason: row?.reason ?? null,
+        customerId: payment.stripeCustomerId,
+      });
+    }
     if (!pi.client_secret) {
       return NextResponse.json(
         { error: "PaymentIntent has no client secret" },

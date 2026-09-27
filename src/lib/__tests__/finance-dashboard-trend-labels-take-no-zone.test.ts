@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
  * month key. A calendar date has no timezone — 16 April 2026 is a Thursday
  * everywhere on earth — so neither may be projected through one.
  *
- * Both kept a local `Intl.DateTimeFormat` pinned to `APP_TIME_ZONE`, the
+ * Both kept a local `Intl.DateTimeFormat` pinned to the environment zone, the
  * CONTAINER's zone rather than even the club's persisted one
  * (`INV-CONFIG-002`), over the key's UTC-midnight encoding. For a club BEHIND
  * Greenwich that projection moves the reading back a day: every point on the
@@ -26,37 +26,25 @@ import { describe, expect, it, vi } from "vitest";
  *
  * ## What this file proves: zone-INDEPENDENCE, not zone-authority
  *
- * The difference decides what the mock has to be. A calendar date takes no zone,
- * so after the change neither module reads one on this path — mocking a persisted
- * `ClubTimeSettings` row would prove nothing, because nothing reads one and the
- * old projection would sail straight past such a test. `APP_TIME_ZONE` is the
- * only zone the replaced formatters ever read, so it is pinned BEHIND Greenwich
- * here and the first case measures what that pin does to a stored day, so the
+ * A calendar date takes no zone, so after the change neither module reads one on
+ * this path — mocking a persisted `ClubTimeSettings` row would prove nothing,
+ * because nothing reads one and the old projection would sail straight past such
+ * a test. The environment zone was the only zone the replaced formatters ever
+ * read, and this file used to pin it BEHIND Greenwich with a
+ * `@/config/operational` mock. #3567 deleted that module and nothing reads the
+ * environment's zone any more, so the pin is gone; the first case still
+ * measures what a projection behind Greenwich does to a stored day, so the
  * premise cannot go quiet.
- *
- * This has to be a `vi.mock` rather than the machine's own `TZ`. `APP_TIME_ZONE`
- * is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` and CI sets no
- * `TZ`, so on CI the zone resolves to New Zealand — which is AHEAD of Greenwich,
- * where a UTC-midnight instant never changes date. A suite that let the
- * environment choose could not tell the corrected implementation from the broken
- * one on the very runner that gates the merge.
  *
  * ## Measured
  *
- * Restoring each module's own `APP_TIME_ZONE`-pinned formatter, one at a time:
+ * Restoring each module's own environment-zone-pinned formatter, one at a time:
  * the month-label mutant fails 3 of the 3 month cases; the day-label mutant fails
  * the trend-label case. The premise case is deliberately NOT discriminating — it
  * asserts the legacy projection's answer on purpose — and says so below.
  */
 
 // Inlined: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
 const mocks = vi.hoisted(() => ({
   getFinanceBookingMetrics: vi.fn(),
   getFinanceSyncDiagnosticsStatus: vi.fn(),
@@ -121,17 +109,14 @@ vi.mock("@/lib/xero-link-short-code", () => ({
   getXeroOrgShortCode: (...a: unknown[]) => mocks.getXeroOrgShortCode(...a),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
 import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
- * The zone the `@/config/operational` factory above pins, named rather than left
- * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
- * asserts the two are still the same zone, so this constant cannot drift out of
- * step with the factory and leave the cases below measuring nothing.
+ * A zone behind Greenwich, named rather than left to a helper default (#3123
+ * deleted those). It models the projection the replaced formatters performed.
  */
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
@@ -251,17 +236,13 @@ function financeManager() {
 }
 
 describe("the finance dashboard's trend labels take no timezone (CT-4, #2870)", () => {
-  it("PREMISE: the mocked zone really does move a stored day back", () => {
+  it("PREMISE: a zone behind Greenwich really does move a stored day back", () => {
     // Measured, not assumed. If `America/Denver` ever stopped shifting a
     // UTC-midnight day, every assertion below would hold for the wrong reason and
     // this file would silently stop guarding anything. `formatDateOnlyForTimeZone`
     // is exactly the projection the two replaced formatters performed.
     //
     // DELIBERATELY NOT DISCRIMINATING: it asserts the legacy behaviour on purpose.
-    //
-    // The zone the replaced formatters read is `APP_TIME_ZONE`, so the constant
-    // below has to keep naming it for this premise to be about the right zone.
-    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
     expect(
       formatDateOnlyForTimeZone(
         new Date("2026-05-01T00:00:00.000Z"),
