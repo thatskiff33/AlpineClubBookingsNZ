@@ -42,10 +42,25 @@ export const CLUB_FORMAT_CARD_PAYMENTS =
 /**
  * Xero's base currency must match (#3567, owner decision D8). Invoices sent to
  * Xero carry no currency of their own, so Xero books them in the organisation's
- * base currency; the check that compares the two is #3633.
+ * base currency. When a connected organisation's base currency differs, the
+ * three setup surfaces show {@link clubFormatXeroBaseCurrencyMismatch} (#3633).
  */
 export const CLUB_FORMAT_PROVIDER_CURRENCIES =
-  "The club's Stripe account and its Xero organisation's base currency must both be this currency. Xero books every invoice this site sends in its base currency, and Stripe converts a charge in any other currency before paying it out, at a fee. Change them to match before saving here, not after.";
+  "The club's Stripe account and its Xero organisation's base currency must both be this currency. Xero books every invoice this site sends in its base currency, which is fixed when the Xero organisation is created, and Stripe converts a charge in any other currency before paying it out, at a fee. Check both before saving here, not after.";
+
+/**
+ * The warning shown when the connected Xero organisation's base currency
+ * differs from the club's currency (#3633). The Xero setup wizard, the Club
+ * Currency & Locale page and the setup-readiness list all render this one
+ * sentence; `xeroBaseCurrencyMismatch` in `@/lib/xero-base-currency` decides
+ * when. It is a warning only: nothing is blocked and no invoice is changed.
+ */
+export function clubFormatXeroBaseCurrencyMismatch(
+  xeroBaseCurrency: string,
+  clubCurrencyCode: string,
+): string {
+  return `The club's currency is ${clubCurrencyCode} but its Xero organisation's base currency is ${xeroBaseCurrency}, and Xero books every invoice this site sends in its base currency, so card payments are charged in ${clubCurrencyCode} while their Xero invoices are in ${xeroBaseCurrency}.`;
+}
 
 /**
  * The acknowledgement a CURRENCY change needs on top of the ordinary one

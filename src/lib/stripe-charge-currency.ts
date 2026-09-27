@@ -60,6 +60,23 @@ export function stripeChargeCurrency(format: ClubFormat): string {
 }
 
 /**
+ * The currency a card is charged in, as an upper-case ISO code, or `null` when
+ * no card can be charged at all (a stored currency that is not usable, or one
+ * without two decimal places). The same rule as {@link stripeChargeCurrency},
+ * without the throw, for a surface that only has to SAY which currency cards
+ * are charged in — the Xero base-currency warning (#3633), which compares the
+ * organisation's base currency with this and says nothing when it is `null`.
+ */
+export function clubChargeCurrencyCode(format: ClubFormat): string | null {
+  try {
+    return stripeChargeCurrency(format).toUpperCase();
+  } catch (error) {
+    if (error instanceof UnsupportedChargeCurrencyError) return null;
+    throw error;
+  }
+}
+
+/**
  * Stripe's minimum charge for the two-decimal currencies this product charges
  * in, as 50 of the currency's hundredths (owner decision D7). Stripe's real
  * minimum varies a little by currency (GBP's is 30p) and Stripe refuses a charge

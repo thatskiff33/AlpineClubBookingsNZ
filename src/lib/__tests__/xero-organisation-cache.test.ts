@@ -36,10 +36,19 @@ import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-
 describe("xero-organisation cache invalidation (#2080 F1)", () => {
   const originalOrigin = process.env.XERO_MOCK_API_ORIGIN;
 
-  function mockOrg(name: string, shortCode?: string | null) {
+  function mockOrg(
+    name: string,
+    shortCode?: string | null,
+    baseCurrency?: unknown,
+  ) {
     global.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ name, financialYearEndMonth: 3, shortCode }),
+      json: async () => ({
+        name,
+        financialYearEndMonth: 3,
+        shortCode,
+        baseCurrency,
+      }),
     })) as unknown as typeof fetch;
   }
 
@@ -144,6 +153,25 @@ describe("xero-organisation cache invalidation (#2080 F1)", () => {
       expect(summary.shortCode).toBeNull();
       expect(summary.name).toBeNull();
       expect(summary.financialYearEndMonth).toBeNull();
+      expect(summary.baseCurrency).toBeNull();
+    });
+  });
+
+  // #3633: the mock path maps the base currency exactly as the live path does,
+  // so the E2E stack exercises the same normalisation.
+  describe("organisation base currency on the mock path (#3633)", () => {
+    it("returns the base currency, upper-cased", async () => {
+      mockOrg("Org A", "!aBc12", "aud");
+      expect((await getXeroConnectedOrganisation()).baseCurrency).toBe("AUD");
+    });
+
+    it("is null when the mock reports none, or something that is not a code", async () => {
+      mockOrg("Org A", "!aBc12", undefined);
+      expect((await getXeroConnectedOrganisation()).baseCurrency).toBeNull();
+
+      resetXeroOrganisationCachesForTests();
+      mockOrg("Org A", "!aBc12", 554);
+      expect((await getXeroConnectedOrganisation()).baseCurrency).toBeNull();
     });
   });
 
@@ -226,9 +254,62 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       name: "Live Org",
       financialYearEndMonth: 3,
       shortCode: "!live1",
+      baseCurrency: null,
       readFailure: null,
     });
     expect(live.getOrganisations).toHaveBeenCalledTimes(1);
+  });
+
+  // #3633. The base currency rides on the SAME getOrganisations response the
+  // name and short code come from, so reading it must cost no Xero call of its
+  // own: one call serves every field, and later reads are served from cache.
+  it("reads the base currency off the same single getOrganisations call (#3633)", async () => {
+    stubLiveOrg({
+      name: "Live Org",
+      financialYearEndMonth: 3,
+      shortCode: "!live1",
+      baseCurrency: "AUD",
+    });
+
+    const first = await getXeroConnectedOrganisation();
+    const second = await getXeroConnectedOrganisation();
+
+    expect(first).toEqual({
+      name: "Live Org",
+      financialYearEndMonth: 3,
+      shortCode: "!live1",
+      baseCurrency: "AUD",
+      readFailure: null,
+    });
+    expect(second.baseCurrency).toBe("AUD");
+    expect(live.getOrganisations).toHaveBeenCalledTimes(1);
+    expect(live.callXeroApi).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["blank", "  "],
+    ["not a currency code", "dollars"],
+    ["not a string", 36],
+  ])("degrades a base currency that is %s to null (#3633)", async (_label, baseCurrency) => {
+    stubLiveOrg({ name: "Live Org", baseCurrency });
+
+    const summary = await getXeroConnectedOrganisation();
+    expect(summary.name).toBe("Live Org");
+    expect(summary.baseCurrency).toBeNull();
+    expect(summary.readFailure).toBeNull();
+  });
+
+  it("keeps the last known base currency beside a later failure (#3633)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-26T00:00:00.000Z"));
+    stubLiveOrg({ name: "Live Org", baseCurrency: "NZD" });
+    expect((await getXeroConnectedOrganisation()).baseCurrency).toBe("NZD");
+
+    live.getAuthenticatedXeroClient.mockRejectedValue(new Error("invalid_grant"));
+    const failed = await getXeroConnectedOrganisation(true);
+    expect(failed.readFailure).not.toBeNull();
+    expect(failed.baseCurrency).toBe("NZD");
   });
 
   it("returns a null short code when the live organisation has none", async () => {
@@ -248,6 +329,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       name: null,
       financialYearEndMonth: null,
       shortCode: null,
+      baseCurrency: null,
       // The read SUCCEEDED — Xero simply reported no organisation. That is a
       // different thing from a failed read, and #2394 turns on the difference.
       readFailure: null,
@@ -352,6 +434,7 @@ describe("connected-organisation summary: live read (#2261 review F1/F2)", () =>
       name: null,
       financialYearEndMonth: null,
       shortCode: null,
+      baseCurrency: null,
       // A bare `invalid_grant` Error carries no status and no known error
       // name, so it classifies as the generic "try again" case (#2394).
       readFailure: {
