@@ -16,10 +16,17 @@ const h = vi.hoisted(() => ({
   periodUpdate: vi.fn(),
   periodDelete: vi.fn(),
   revalidatePublicPageContent: vi.fn(),
+  hasAdminAreaAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: (...args: unknown[]) => h.requireAdmin(...args),
+}));
+
+// #3639 review F2: the late-capture refund choice needs finance:edit as well.
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
+  hasAdminAreaAccess: (...args: unknown[]) => h.hasAdminAreaAccess(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -101,6 +108,7 @@ describe("non-member hold policy admin API", () => {
       ok: true,
       session: { user: { id: "admin-1" } },
     });
+    h.hasAdminAreaAccess.mockReturnValue(true);
     h.transaction.mockImplementation((fn: (store: typeof tx) => Promise<unknown>) =>
       fn(tx)
     );
@@ -181,6 +189,64 @@ describe("non-member hold policy admin API", () => {
         expect.objectContaining({
           details: expect.stringContaining("lateCaptureNeedsApproval=true"),
         }),
+      );
+    });
+
+    it("writes its own payment-category audit entry for the switch, with before and after", async () => {
+      await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+      expect(h.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking-defaults.late_capture_refund_approval.changed",
+          category: "payment",
+          severity: "important",
+          details: JSON.stringify({ before: "refund_automatically", after: "treasurer_approves" }),
+        }),
+      );
+      expect(h.hasAdminAreaAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        { area: "finance", level: "edit" },
+      );
+    });
+
+    it("refuses a bookings-only officer who tries to CHANGE it, and writes nothing (review F2)", async () => {
+      h.hasAdminAreaAccess.mockReturnValue(false);
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(403);
+      expect(h.transaction).not.toHaveBeenCalled();
+      expect(h.logAudit).not.toHaveBeenCalled();
+    });
+
+    it("lets a bookings-only officer save the page when the stored answer is re-sent unchanged", async () => {
+      h.hasAdminAreaAccess.mockReturnValue(false);
+      h.defaultsFindUnique.mockResolvedValue({
+        id: "default",
+        nonMemberHoldEnabled: false,
+        nonMemberHoldDays: 14,
+        lateCaptureRefundNeedsApproval: true,
+      });
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(h.logAudit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "booking-defaults.late_capture_refund_approval.changed" }),
       );
     });
 

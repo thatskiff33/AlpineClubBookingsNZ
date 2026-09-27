@@ -35,7 +35,10 @@ import {
   type PaymentStatus,
 } from "@prisma/client";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  captureRefundState,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
 
 /**
  * The `PaymentTransaction.reason` the webhook's late-capture handler stamps on a
@@ -44,6 +47,11 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * and read from this one constant — a spelling that drifted would make a
  * crashed genuine late capture look like money the cancellation kept, and it
  * would never be refunded.
+ *
+ * Independent of the Stripe refund metadata reason of the same spelling
+ * (`LATE_CAPTURE_REFUND_METADATA_REASON`): this one is a frozen database marker,
+ * that one is refund metadata replayed byte for byte, and neither may be
+ * derived from the other.
  */
 export const CANCELLED_BOOKING_LATE_CAPTURE_REASON =
   "cancelled_booking_late_capture";
@@ -74,6 +82,16 @@ export type CancellationRefundDecisionEvidence = {
 };
 
 /**
+ * The description a paid-path credit cancel writes on its cancellation credit
+ * (#3639, `INV-SSOT-002`): ONE builder for the writer (`createCancellationCredit`),
+ * the Xero credit-note writers and the reader below, because the reader matches
+ * on it exactly and a reworded writer would silently hide a decision.
+ */
+export function cancellationCreditDescription(bookingId: string): string {
+  return `Cancellation refund for booking ${bookingId.slice(0, 8)}`;
+}
+
+/**
  * The cancellation credit a paid-path credit cancel wrote for THIS booking.
  *
  * Matched on the type AND the exact description `createCancellationCredit`
@@ -86,7 +104,7 @@ export function getCancellationCreditCents(
   bookingId: string,
   credits: ReadonlyArray<CancellationCreditRow>
 ): number {
-  const description = `Cancellation refund for booking ${bookingId.slice(0, 8)}`;
+  const description = cancellationCreditDescription(bookingId);
   return credits
     .filter(
       (credit) =>
@@ -103,12 +121,15 @@ export function getCancellationCreditCents(
  *
  * The decision artefacts, any of:
  *
- * - a `CANCELLED` event carrying the policy snapshot — written by every
- *   paid-path cancel, including a 0%-tier retention; unpaid-branch cancels
- *   carry no snapshot. The #2262 admin settlement markers are `CANCELLED`
- *   events WITH a snapshot that cancel nothing and decide no refund
- *   (`isManualSettlementMarkerEvent`), so they never count: read by the
- *   webhook, one would withhold a genuine late capture's refund;
+ * - a `CANCELLED` event carrying the paid-path POLICY snapshot
+ *   (`isPaidCancellationDecisionSnapshot`) — written by every paid-path cancel,
+ *   including a 0%-tier retention, and by the capacity-failed auto-cancel.
+ *   Recognised by its shape, not by "has a snapshot": unpaid cancels write
+ *   snapshots too (`{ autoCancelledPastCheckIn }` from the pending-request cron,
+ *   the internet-banking hold expiry's `{ paymentId, holdUntil, ... }`), and the
+ *   #2262 settlement markers carry one while cancelling nothing
+ *   (`isManualSettlementMarkerEvent`). Counting any of them would withhold a
+ *   genuine late capture's refund;
  * - a cancellation credit (the credit path);
  * - a LIVE booking-cancel refund recovery operation (the card path, frozen
  *   inside the claim transaction). A terminally `FAILED` one is a decision whose
@@ -132,7 +153,8 @@ export function isCancellationRefundDecisionRecorded(
   return (
     evidence.cancelledEvents.some(
       (event) =>
-        event.snapshot !== null && !isManualSettlementMarkerEvent(event)
+        isPaidCancellationDecisionSnapshot(event.snapshot) &&
+        !isManualSettlementMarkerEvent(event)
     ) ||
     getCancellationCreditCents(
       evidence.bookingId,
@@ -141,6 +163,22 @@ export function isCancellationRefundDecisionRecorded(
     evidence.cancellationRefundRecoveryOperations.some(
       (operation) => operation.status !== "FAILED"
     )
+  );
+}
+
+/**
+ * The paid-path cancellation's policy snapshot: what was refunded, how, and at
+ * what percentage. Every writer of a decision has written these three since the
+ * snapshot existed (`paid-cancellation-event.ts`, the capacity-failed cancel in
+ * `payment-reconciliation.ts`, and before #3639 the post-commit writer).
+ */
+export function isPaidCancellationDecisionSnapshot(snapshot: unknown): boolean {
+  if (snapshot === null || typeof snapshot !== "object") return false;
+  const s = snapshot as Record<string, unknown>;
+  return (
+    typeof s.refundMethod === "string" &&
+    typeof s.refundPercentage === "number" &&
+    typeof s.settledAmountCents === "number"
   );
 }
 
@@ -164,13 +202,17 @@ export type CancelledBookingCaptureVerdict =
 /** The facts about ONE capture row the verdict reads. */
 export type CapturedRowOnCancelledBooking = {
   status: PaymentStatus;
+  /** REQUIRED with `refundedAmountCents`: "already refunded" is `captureRefundState`'s. */
+  amountCents: number;
+  refundedAmountCents: number;
   /**
    * Durable evidence that this capture landed AFTER the cancellation: the row
    * carries `CANCELLED_BOOKING_LATE_CAPTURE_REASON` (the primary handler's own
-   * earlier write), or the cancel's claim recorded the intent as outstanding by
-   * enqueuing its `CANCEL_PAYMENT_INTENT` recovery operation (an additional
-   * payment's intent; that handler's own write stamps no reason, and the row's
-   * reason names the booking change, so it is not overwritten). REQUIRED, so a
+   * earlier write), or a `CANCEL_PAYMENT_INTENT` recovery exists for the intent
+   * — the cancel's claim, or any superseded-intent writer, recorded that this
+   * intent must not capture (an additional payment's intent; that handler's own
+   * write stamps no reason, and the row's reason names the booking change, so
+   * it is not overwritten). REQUIRED, so a
    * caller that forgot to load it cannot be told "captured before" by default.
    */
   capturedAfterCancellation: boolean;
@@ -197,9 +239,11 @@ export function isLateCaptureHandlerWrite(reason: string | null): boolean {
  *    and no late marker. Its cancel took the unpaid branch, so no decision
  *    exists, and it is still refunded.
  *
- * Anything else already past SUCCEEDED is `already_refunded`: refunding the
+ * Anything else that has had any refund is `already_refunded`
+ * (`captureRefundState`, which reads the refunded total because a browser
+ * confirm can rewrite a refunded row's status to SUCCEEDED): refunding the
  * notice's full amount again could only fail at Stripe (it will not refund past
- * the charge) and loop the webhook, after rewriting the row to SUCCEEDED.
+ * the charge) and loop the webhook.
  */
 export function classifyCaptureOnCancelledBooking(
   capture: CapturedRowOnCancelledBooking,
@@ -212,5 +256,5 @@ export function classifyCaptureOnCancelledBooking(
   ) {
     return "settled_by_cancellation";
   }
-  return capture.status === "SUCCEEDED" ? "late_capture" : "already_refunded";
+  return captureRefundState(capture).anyRefunded ? "already_refunded" : "late_capture";
 }

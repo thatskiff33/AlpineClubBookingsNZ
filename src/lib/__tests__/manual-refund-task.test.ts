@@ -85,7 +85,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
-  queueLateCaptureRefundCreditNote: (...a: unknown[]) =>
+  finishApprovedLateCaptureRefund: (...a: unknown[]) =>
     mocks.queueLateCaptureRefundCreditNote(...a),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
@@ -3105,17 +3105,17 @@ describe("#3639 - approving a held late-capture refund", () => {
     // exactly what the automatic refund of the same money writes.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
-    expect(mocks.logAudit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "booking.payment.refunded_after_cancellation",
-        details: expect.stringContaining('"approvedByMemberId":"treasurer-1"'),
-      }),
-    );
+    // The record and the Xero correction, in the one finisher the recovery
+    // cron's replay uses too (review F4).
     expect(mocks.queueLateCaptureRefundCreditNote).toHaveBeenCalledWith({
+      bookingId: "booking-1",
       paymentId: "payment-1",
-      paymentXeroInvoiceId: "inv-1",
       paymentIntentId: "pi_late",
       amountCents: 2500,
+      refundId: "re_late",
+      captureKind: "modification",
+      approvedByMemberId: "treasurer-1",
+      manualRefundTaskId: "task-late",
     });
     expect(result.stripeRefundId).toBe("re_late");
     expect(result.settlementRoute).toMatchObject({ kind: "late-capture-refund" });
@@ -3141,9 +3141,7 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(result.stripeRefundId).toBeNull();
     expect(mocks.enqueueLateCaptureApprovalRefundRecovery).toHaveBeenCalled();
     expect(mocks.markLateCaptureApprovalRefundRecoverySucceeded).not.toHaveBeenCalled();
-    expect(mocks.logAudit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ action: "booking.payment.refunded_after_cancellation" }),
-    );
+    expect(mocks.queueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
   });
 
   it("keeping the payment moves nothing", async () => {

@@ -106,6 +106,9 @@ export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
 // same refund of the same capture: whichever runs first, a repeat under this
 // prefix is answered by Stripe with the original refund (INV-PAY-106).
 const LATE_CAPTURE_REFUND_KEY_PREFIX = "late_cancel_refund_";
+// Independent of `CANCELLED_BOOKING_LATE_CAPTURE_REASON` (the frozen
+// PaymentTransaction.reason marker) despite the same spelling: this is Stripe
+// refund metadata, replayed byte for byte, and neither may be derived from the other.
 export const LATE_CAPTURE_REFUND_METADATA_REASON = "cancelled_booking_late_capture";
 export function buildLateCaptureRefundStripeKeyPrefix(
   bookingId: string,

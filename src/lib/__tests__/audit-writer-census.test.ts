@@ -1402,7 +1402,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment` writer. RE-MEASURED with `npm run audit:census`.
     // 362 -> 364 (#3639): the two late-capture approval writers, both unpinned
     // `payment` rows. RE-MEASURED with `npm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 364 });
+    // 364 -> 365 (#3639 review): the setting-change record, unpinned
+    // `payment`. RE-MEASURED with `npm run audit:census`.
+    ).toEqual({ pinned: 128, unpinned: 365 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

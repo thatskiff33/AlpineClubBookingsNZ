@@ -1,11 +1,12 @@
 import {
+  PaymentStatus,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
-  PaymentStatus,
   Prisma,
 } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { captureRefundState } from "@/lib/payment-transaction-status";
 
 /**
  * What happens when a booking modification payment lands on a booking the club
@@ -401,8 +402,11 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
     });
     if (
       settled &&
-      (settled.refundedAmountCents >= (settled.amountCents || amountCents) ||
-        settled.status === PaymentStatus.REFUNDED ||
+      // #3639: the one "already refunded" test, which reads the refunded total.
+      (captureRefundState({
+        ...settled,
+        amountCents: settled.amountCents || amountCents,
+      }).heldCents === 0 ||
         settled.status === PaymentStatus.PARTIALLY_REFUNDED)
     ) {
       logger.info(

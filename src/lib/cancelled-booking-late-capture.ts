@@ -23,7 +23,10 @@ import {
 } from "@/lib/cancellation-settled-money";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  captureRefundState,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
 
 /**
  * The shared epilogue of BOTH late-capture handlers on a cancelled booking
@@ -63,7 +66,7 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * already decided, or a capture already handed back, neither of which the
  * member is still owed by this path. The only gate on a genuine late capture is
  * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-106`), which
- * lives in `late-capture-refund-approval.ts`. The
+ * lives in `late-capture-refund-hold.ts`. The
  * `booking.payment.refunded_after_cancellation` audit entry also stays in each
  * handler: it carries handler-specific detail, and moving it would renumber census
  * ordinals for no gain.
@@ -93,8 +96,9 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
  * for this booking — its `CANCELLED` events, the credits it is the source of,
  * and its booking-cancel refund recovery operation by exact key, the same three
  * the repair tool loads in bulk (`xero-booking-repair-load.ts`) — plus whether
- * the cancel's claim enqueued a `CANCEL_PAYMENT_INTENT` recovery for THIS
- * intent, which is how it records an intent it found still outstanding.
+ * a `CANCEL_PAYMENT_INTENT` recovery exists for THIS intent — the cancel's
+ * claim, or any superseded-intent writer (they share its key), recording that
+ * the intent must not capture.
  *
  * NOTHING IS CAUGHT, like the #2774 fence read: a read that cannot answer
  * answers neither way. Guessing "late" would refund money a cancellation kept,
@@ -107,6 +111,8 @@ async function classifyNoticeOnCancelledBooking(params: {
 }): Promise<{
   verdict: CancelledBookingCaptureVerdict;
   transactionStatus: PaymentStatus | null;
+  /** What Stripe still holds of the capture, when it has been part refunded. */
+  heldCents: number | null;
 }> {
   const captureRow = await findPaymentTransactionByIntentId({
     paymentIntentId: params.paymentIntentId,
@@ -115,6 +121,7 @@ async function classifyNoticeOnCancelledBooking(params: {
     return {
       verdict: "late_capture",
       transactionStatus: captureRow?.status ?? null,
+      heldCents: null,
     };
   }
   const handlerWrite = isLateCaptureHandlerWrite(captureRow.reason);
@@ -134,11 +141,14 @@ async function classifyNoticeOnCancelledBooking(params: {
     verdict: classifyCaptureOnCancelledBooking(
       {
         status: captureRow.status,
+        amountCents: captureRow.amountCents,
+        refundedAmountCents: captureRow.refundedAmountCents,
         capturedAfterCancellation: handlerWrite || cancelIntentOperation !== null,
       },
       evidence
     ),
     transactionStatus: captureRow.status,
+    heldCents: captureRefundState(captureRow).heldCents,
   };
 }
 
@@ -168,10 +178,10 @@ function reportAcknowledgedLateNotice(params: {
   captureKind: CancelledBookingLateCaptureKind;
   verdict: Exclude<CancelledBookingCaptureVerdict, "late_capture">;
   transactionStatus: PaymentStatus | null;
+  heldCents: number | null;
 }): void {
   const partRemains =
-    params.verdict === "already_refunded" &&
-    params.transactionStatus === PaymentStatus.PARTIALLY_REFUNDED;
+    params.verdict === "already_refunded" && (params.heldCents ?? 0) > 0;
   logAudit({
     action: "booking.payment.late_notice_acknowledged",
     category: "payment",
@@ -229,6 +239,7 @@ export async function acknowledgeSettledLateNotice(params: {
     captureKind: params.captureKind,
     verdict: notice.verdict,
     transactionStatus: notice.transactionStatus,
+    heldCents: notice.heldCents,
   });
   return true;
 }

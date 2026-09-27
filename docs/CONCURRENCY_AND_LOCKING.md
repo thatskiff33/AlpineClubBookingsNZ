@@ -2816,13 +2816,16 @@ on that path is made by its caller outside the transaction — so it composes wi
 nothing and reverses no order.
 
 **#3639 adds its sibling on the webhook side.** `holdLateCaptureForTreasurerIfRequired`
-(`src/lib/late-capture-refund-approval.ts`) raises the treasurer-approval
+(`src/lib/late-capture-refund-hold.ts`) raises the treasurer-approval
 `ManualRefundTask` for a late capture when the club has chosen approval over an
-automatic refund (owner decision 26 Sep 2026). Same shape, same reason: a
-find-then-create keyed on the payment intent, which must also see the #2700 raise's
-OPEN task for that intent. It takes `lock(1)` and nothing else, makes no provider
-call inside, and the #2700 raise now also matches this task's `occurrenceKey`, so
-whichever writer is second finds the first's row.
+automatic refund (owner decision 26 Sep 2026) — from either late-capture handler
+or the superseded-intent hand-off (webhook hook or recovery cron). Same shape, same
+reason: a find-then-create keyed on the payment intent, which must also see the
+#2700 raise's OPEN task for that intent (and marks it rather than raising a second).
+It takes `lock(1)` and nothing else, makes no provider call inside, and the #2700
+raise also matches this task's `lateCaptureApprovalIntentId`, so whichever writer is
+second finds the first's row. From the cron it runs after the operation's claim and
+outside any other transaction, so it composes with nothing.
 
 The middle read is a **refund fence**, and it is why the read must be inside
 this lock rather than beside it. The transaction row for this intent is re-read

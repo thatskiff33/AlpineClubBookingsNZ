@@ -554,7 +554,7 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
       return `Close this uncollected amount for ${task.memberName}?`;
     }
     if (isLateCaptureApproval(task)) {
-      return `Keep this payment from ${task.memberName} instead of refunding it?`;
+      return `Close this payment from ${task.memberName} without refunding it here?`;
     }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
@@ -589,7 +589,7 @@ function resolutionDescription({
       return "This closes the item as dealt with. It moves no money and raises no invoice — closing it never has. Say what the booking's Xero invoices actually showed and what you billed by hand, if anything, because that note is the only record of how this amount was settled.";
     }
     if (isLateCaptureApproval(task)) {
-      return "The club keeps the payment and nothing is refunded. Say why - for example, the cancellation was a mistake and the booking is being put back - so the record makes sense later.";
+      return "Nothing is refunded from here. Use this to keep the payment - for example, when the cancellation was a mistake and the booking is being put back - or when it was already refunded in the Stripe dashboard. Say which, so the record makes sense later.";
     }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
@@ -601,7 +601,7 @@ function resolutionDescription({
   }
 
   if (isLateCaptureApproval(task)) {
-    return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, dismiss this instead, saying so.";
+    return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, close it without refunding instead, saying so.";
   }
 
   return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
@@ -621,7 +621,7 @@ function confirmButtonLabel(
   direction: SettlementDirection | null,
 ): string {
   if (resolution === "dismissed") {
-    if (isLateCaptureApproval(task)) return "Keep the payment";
+    if (isLateCaptureApproval(task)) return "Close without refunding";
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
 
@@ -1454,7 +1454,7 @@ export function ManualRefundTaskQueue() {
         <Card data-testid="manual-refund-task-queue">
           <CardHeader>
             <CardTitle className="text-base">
-              Money to settle by hand
+              Money to settle
               {tasks ? ` (${tasks.length})` : ""}
             </CardTitle>
           </CardHeader>
@@ -1512,11 +1512,11 @@ export function ManualRefundTaskQueue() {
                 data-testid="manual-refund-task-late-capture-intro"
               >
                 Some of these are card payments that went through after their
-                booking had been cancelled. Your club has chosen to have a
-                treasurer approve these refunds rather than refund them
-                automatically, so the money is still with the club. Refund one
-                to send it back to the card, or keep it with a note — for
-                example, when the cancellation was a mistake.
+                booking had been cancelled and were held for a treasurer to
+                approve, so the money is still with the club. Refund one to send
+                it back to the card through Stripe, or close it without refunding
+                — to keep it, for example when the cancellation was a mistake, or
+                because it was already refunded in the Stripe dashboard.
               </p>
             ) : null}
             {tasks === null ? (
@@ -1736,7 +1736,7 @@ export function ManualRefundTaskQueue() {
                           : isWithheldShare(task)
                             ? "Close this item"
                             : isLateCaptureApproval(task)
-                              ? "Keep the payment"
+                              ? "Close without refunding"
                               : "Dismiss"}
                       </ViewOnlyActionButton>
                     </div>

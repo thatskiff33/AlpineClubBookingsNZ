@@ -15,7 +15,7 @@ afterEach(() => cleanup());
 
 describe("LateCaptureRefundSetting", () => {
   it("shows the club's current answer and offers exactly the two choices", () => {
-    render(<LateCaptureRefundSetting needsApproval={false} editing onChange={vi.fn()} />);
+    render(<LateCaptureRefundSetting needsApproval={false} editing canChange onChange={vi.fn()} />);
     const select = screen.getByLabelText(
       "Payments that arrive after a booking was cancelled",
     ) as HTMLSelectElement;
@@ -29,7 +29,7 @@ describe("LateCaptureRefundSetting", () => {
 
   it("reports treasurer approval as true and automatic as false", () => {
     const onChange = vi.fn();
-    render(<LateCaptureRefundSetting needsApproval={false} editing onChange={onChange} />);
+    render(<LateCaptureRefundSetting needsApproval={false} editing canChange onChange={onChange} />);
     const select = screen.getByLabelText(
       "Payments that arrive after a booking was cancelled",
     );
@@ -41,12 +41,22 @@ describe("LateCaptureRefundSetting", () => {
   });
 
   it("cannot be changed outside edit mode", () => {
-    render(<LateCaptureRefundSetting needsApproval editing={false} onChange={vi.fn()} />);
+    render(<LateCaptureRefundSetting needsApproval editing={false} canChange onChange={vi.fn()} />);
     const select = screen.getByLabelText(
       "Payments that arrive after a booking was cancelled",
     ) as HTMLSelectElement;
 
     expect(select.value).toBe("approve");
     expect(select).toBeDisabled();
+  });
+
+  it("is read-only, and says why, for an officer without finance edit (#3639 review F2)", () => {
+    render(
+      <LateCaptureRefundSetting needsApproval={false} editing canChange={false} onChange={vi.fn()} />,
+    );
+    expect(
+      screen.getByLabelText("Payments that arrive after a booking was cancelled"),
+    ).toBeDisabled();
+    expect(screen.getByText(/Only someone with finance edit access/)).toBeInTheDocument();
   });
 });

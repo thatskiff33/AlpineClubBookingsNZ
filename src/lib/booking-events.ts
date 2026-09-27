@@ -79,6 +79,11 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * failure must never sit inside the transition's own `$transaction`. The `db`
  * parameter exists for tests. Failures are logged and swallowed so a booking
  * transition is never undone purely because its narrative event failed.
+ *
+ * The documented exceptions write a DECISION record, not narrative, inside the
+ * transition's transaction with a direct `tx.bookingEvent.create` that throws,
+ * so the transition cannot commit without it — e.g. the paid-path CANCELLED
+ * snapshot (`writePaidCancellationEvent`, #3639, `INV-PAY-106`).
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

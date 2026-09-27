@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  492
+row-producing sites:  493
 uncategorised:        0
-category values: admin 109, booking 105, xero 37, family 35, payment 51,
+category values: admin 109, booking 105, xero 37, family 35, payment 52,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -752,7 +752,10 @@ The club setting for genuine late captures (owner decision 26 Sep 2026) then
 added two (`payment` 49 -> 51, 490 -> 492, RE-MEASURED):
 `booking.payment.late_capture_refund_held`, a late capture held for a
 treasurer, and the `booking.payment.refunded_after_cancellation` a treasurer's
-approval writes when its refund goes out.
+approval writes when its refund goes out. The review round added one more
+(`payment` 51 -> 52, 492 -> 493, RE-MEASURED):
+`booking-defaults.late_capture_refund_approval.changed`, who switched the
+club between automatic refunds and treasurer approval.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

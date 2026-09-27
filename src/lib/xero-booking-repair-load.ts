@@ -274,6 +274,7 @@ export async function loadAuditData(
     cancellationRefundRecoveryOperations,
     editReviewChargeShares,
     editReviewChargeIntentRecoveries,
+    lateCaptureApprovalTasks,
   ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
@@ -355,6 +356,18 @@ export async function loadAuditData(
           select: { bookingId: true, idempotencyKey: true },
         })
       : Promise.resolve([] as EditReviewChargeIntentRecoveryRecord[]),
+    // #3639 review F3: approval tasks own their captures, any status.
+    bookingIds.length > 0
+      ? deps.prisma.manualRefundTask.findMany({
+          where: {
+            bookingId: { in: bookingIds },
+            lateCaptureApprovalIntentId: { not: null },
+          },
+          select: { bookingId: true, lateCaptureApprovalIntentId: true },
+        })
+      : Promise.resolve(
+          [] as { bookingId: string; lateCaptureApprovalIntentId: string | null }[],
+        ),
   ]);
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
@@ -424,6 +437,14 @@ export async function loadAuditData(
     editReviewChargeIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
   }
 
+  const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
+  for (const task of lateCaptureApprovalTasks) {
+    if (!task.lateCaptureApprovalIntentId) continue;
+    const ids = approvalIntentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
+    ids.add(task.lateCaptureApprovalIntentId);
+    approvalIntentIdsByBookingId.set(task.bookingId, ids);
+  }
+
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
   for (const operation of operations) {
     if (!operation.localModel || !operation.localId) {
@@ -459,6 +480,8 @@ export async function loadAuditData(
     ),
     cancellationRefundRecoveryOperations:
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
+    lateCaptureApprovalIntentIds:
+      approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),

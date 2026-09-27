@@ -44,7 +44,8 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
-import { queueLateCaptureRefundCreditNoteAfterReplay } from "@/lib/late-capture-refund-credit-note";
+import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
+import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -1777,6 +1778,19 @@ async function handoffSucceededSupersededIntentToRefund({
     paymentMethodId,
   });
 
+  // #3639: on a CANCELLED booking this capture is a late capture, so it follows
+  // the club's setting like every other - held for a treasurer, no refund.
+  if (
+    await holdSupersededLateCaptureIfRequired({
+      ...operation,
+      paymentTransactionId: operation.paymentTransactionId,
+      amountCents,
+    })
+  ) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   await enqueueSupersededPaymentRefundRecovery({
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
@@ -2202,10 +2216,10 @@ async function processBookingModificationRefundOperation(
     return;
   }
 
-  // #3639: a replayed treasurer-approved late-capture refund queues the Xero
-  // correction its inline attempt would have (delta-capped; never throws).
+  // #3639: a replayed treasurer-approved late-capture refund writes the record
+  // and queues the Xero correction its inline attempt would have.
   if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
-    await queueLateCaptureRefundCreditNoteAfterReplay({
+    await finishApprovedLateCaptureRefundAfterReplay({
       ...operation,
       amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
     });

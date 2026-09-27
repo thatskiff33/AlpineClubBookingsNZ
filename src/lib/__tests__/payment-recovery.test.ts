@@ -184,8 +184,20 @@ const mockQueueLateCaptureRefundCreditNote = vi.hoisted(() =>
   vi.fn().mockResolvedValue(undefined),
 );
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
-  queueLateCaptureRefundCreditNoteAfterReplay: (...args: unknown[]) =>
+  finishApprovedLateCaptureRefundAfterReplay: (...args: unknown[]) =>
     mockQueueLateCaptureRefundCreditNote(...args),
+}));
+
+// #3639 review F1: the superseded hand-off asks the late-capture hold. Its own
+// behaviour (the setting, the booking's status, the task) is pinned against
+// its real code in `late-capture-refund-hold.test.ts`; here, what the hand-off
+// does with each answer.
+const mockHoldSupersededLateCapture = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(false),
+);
+vi.mock("@/lib/late-capture-refund-hold", () => ({
+  holdSupersededLateCaptureIfRequired: (...args: unknown[]) =>
+    mockHoldSupersededLateCapture(...args),
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -2883,6 +2895,85 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     // REFUND_SUPERSEDED_PAYMENT the reversal's disarm never covered.
     expect(mockPaymentTransactionUpdate).not.toHaveBeenCalled();
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("#3639 — a hand-off the club holds for a treasurer moves no money: no superseded refund, the cancel op completes", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(true);
+
+    await expect(
+      queueSupersededPaymentIntentRefundRecovery({
+        paymentIntentId: op.paymentIntentId,
+        amountCents: 6000,
+        paymentMethodId: "pm_1",
+      }),
+    ).resolves.toBe(true);
+
+    expect(mockHoldSupersededLateCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: op.bookingId,
+        paymentIntentId: op.paymentIntentId,
+        paymentTransactionId: op.paymentTransactionId,
+        amountCents: 6000,
+      }),
+    );
+    // Stripe holds the money, so the row says captured; nothing is refunded.
+    expect(mockPaymentTransactionUpdate).toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: op.id }),
+        data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }),
+      }),
+    );
+  });
+
+  it("#3639 — a hand-off the club does NOT hold still queues the superseded refund, as before", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(false);
+
+    await queueSupersededPaymentIntentRefundRecovery({
+      paymentIntentId: op.paymentIntentId,
+      amountCents: 6000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      }),
+    );
+  });
+
+  it("#3639 — the recovery cron's hand-off asks the same question when Stripe reports the intent succeeded", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [op]),
+    );
+    mockPaymentRecoveryFindUnique.mockResolvedValue(op);
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: false,
+      paymentIntent: { id: op.paymentIntentId, status: "succeeded", amount: 6000, payment_method: "pm_1" },
+    });
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(true);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockHoldSupersededLateCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: op.paymentIntentId, amountCents: 6000 }),
+    );
+    expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      }),
+    );
   });
 
   it("H2 — the fenced completion cannot resurrect a deleted operation (count 0 is handled, never a P2025 throw)", async () => {

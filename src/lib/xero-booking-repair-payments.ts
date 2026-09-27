@@ -205,8 +205,10 @@ export function getCapturedRepairTransactions(
  * booking paid by bank transfer look never-paid, so the cancelled-open-invoice
  * arm queued a full clearing note against an invoice the member had paid.
  *
- * The same two-part test the modification arm uses (the aggregate status OR the
- * ledger), with the ledger half unfiltered by source: the aggregate covers a
+ * The same SHAPE as the modification arm's test (the aggregate status OR the
+ * ledger) but NOT the same test: that arm keeps its ledger half Stripe-only
+ * because it routes a card refund, and a bank-transfer row must not reach one.
+ * Here the ledger half is unfiltered by source: the aggregate covers a
  * pre-ledger payment with no rows, and the ledger covers a capture row sitting
  * under a still-PENDING aggregate.
  */

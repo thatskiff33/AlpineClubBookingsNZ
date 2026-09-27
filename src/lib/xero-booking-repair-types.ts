@@ -383,6 +383,12 @@ export interface BookingClassificationContext {
   modificationOperationsById: Map<string, XeroOperationRecord[]>;
   cancellationRefundRecoveryOperations: BookingCancellationRefundRecoveryRecord[];
   /**
+   * #3639 review F3: the payment intents on this booking a treasurer-approval
+   * task owns, whatever its status. A held or kept late capture is DECIDED, so
+   * the late-capture finding must not offer to refund it.
+   */
+  lateCaptureApprovalIntentIds: Set<string>;
+  /**
    * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
    * money owed to the club, totalled per `BookingModification` anchor.
    *

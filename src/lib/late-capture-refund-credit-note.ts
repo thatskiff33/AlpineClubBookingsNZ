@@ -7,6 +7,7 @@ import {
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { lateCaptureRefundPaymentIntentId } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
@@ -54,27 +55,82 @@ export async function queueLateCaptureRefundCreditNote(params: {
 }
 
 /**
+ * #3639: the record and the Xero correction of a treasurer-approved late-capture
+ * refund, written wherever that refund actually went out - inline after the
+ * approval, or by the recovery cron replaying it (review F4). The audit entry is
+ * the one the automatic refund writes, naming who approved it.
+ */
+export async function finishApprovedLateCaptureRefund(refund: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  refundId: string | null;
+  captureKind: "primary" | "modification" | null;
+  approvedByMemberId: string | null;
+  manualRefundTaskId: string | null;
+}): Promise<void> {
+  logAudit({
+    action: "booking.payment.refunded_after_cancellation",
+    category: "payment",
+    memberId: refund.approvedByMemberId ?? undefined,
+    entityType: "Booking",
+    entityId: refund.bookingId,
+    targetId: refund.bookingId,
+    details: JSON.stringify({
+      paymentIntentId: refund.paymentIntentId,
+      refundId: refund.refundId,
+      amountCents: refund.amountCents,
+      kind:
+        refund.captureKind === null
+          ? null
+          : refund.captureKind === "primary"
+            ? "primary"
+            : "modification_additional",
+      approvedByMemberId: refund.approvedByMemberId,
+      manualRefundTaskId: refund.manualRefundTaskId,
+    }),
+  });
+  const payment = await prisma.payment.findUnique({
+    where: { id: refund.paymentId },
+    select: { xeroInvoiceId: true },
+  });
+  await queueLateCaptureRefundCreditNote({
+    paymentId: refund.paymentId,
+    paymentXeroInvoiceId: payment?.xeroInvoiceId ?? null,
+    paymentIntentId: refund.paymentIntentId,
+    amountCents: refund.amountCents,
+  });
+}
+
+/**
  * The recovery cron's replay of a treasurer-approved refund the inline attempt
  * did not finish. The operation's own `paymentIntentId` is the payment's
- * representative intent, so the late capture's is read back off its prefix.
+ * representative intent, so the late capture's is read back off its prefix, and
+ * the approving officer off the task that owns it.
  */
-export async function queueLateCaptureRefundCreditNoteAfterReplay(operation: {
+export async function finishApprovedLateCaptureRefundAfterReplay(operation: {
   bookingId: string;
   paymentId: string;
   stripeKeyPrefix: string | null;
   amountCents: number;
 }): Promise<void> {
-  const payment = await prisma.payment.findUnique({
-    where: { id: operation.paymentId },
-    select: { xeroInvoiceId: true },
+  const paymentIntentId = lateCaptureRefundPaymentIntentId(
+    operation.stripeKeyPrefix ?? "",
+    operation.bookingId,
+  );
+  const task = await prisma.manualRefundTask.findUnique({
+    where: { lateCaptureApprovalIntentId: paymentIntentId },
+    select: { id: true, completedByMemberId: true },
   });
-  await queueLateCaptureRefundCreditNote({
+  await finishApprovedLateCaptureRefund({
+    bookingId: operation.bookingId,
     paymentId: operation.paymentId,
-    paymentXeroInvoiceId: payment?.xeroInvoiceId ?? null,
-    paymentIntentId: lateCaptureRefundPaymentIntentId(
-      operation.stripeKeyPrefix ?? "",
-      operation.bookingId,
-    ),
+    paymentIntentId,
     amountCents: operation.amountCents,
+    refundId: null,
+    captureKind: null,
+    approvedByMemberId: task?.completedByMemberId ?? null,
+    manualRefundTaskId: task?.id ?? null,
   });
 }

@@ -1369,12 +1369,12 @@ Four obligations:
 - **Still exactly one notification, and no badge or digest changed.** This replaced
   the previous mail on both paths; it did not join it. `AdminPendingCounts` and the
   count fixtures are untouched by design, and the digest keeps its explicit template
-  allowlist — so these events no longer land in its "Payment Failures" count,
-  which is a correction rather than a loss: nothing failed. The webhook still sends
-  it fire-and-forget with a `.catch` that only logs, because webhooks stay
-  non-blocking and the durable record is the row plus the audit entry. **The
-  `INV-ADDPAY-039` alert REPLACES this one when it fires** — the epilogue sends
-  exactly one of the two — so "one notification" holds across all three outcomes.
+  allowlist — so these events no longer land in its "Payment Failures" count
+  (nothing failed). The webhook still sends it fire-and-forget with a `.catch`
+  that only logs, because webhooks stay non-blocking and the durable record is the
+  row plus the audit entry. **The `INV-ADDPAY-039` alert REPLACES this one when it
+  fires.** A capture HELD for a treasurer (`INV-PAY-106`) sends none: the OPEN task
+  and the waiting-items badge are its notice (orchestrator decision, 27 Sep 2026).
 
 ### INV-ADDPAY-039
 

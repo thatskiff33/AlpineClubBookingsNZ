@@ -87,17 +87,17 @@ describe("#3639 - a late capture held for a treasurer", () => {
 
     expect(
       screen.getByTestId("manual-refund-task-late-capture-intro"),
-    ).toHaveTextContent(/treasurer approve these refunds/i);
+    ).toHaveTextContent(/held for a treasurer to\s+approve/i);
     expect(
       screen.queryByTestId("manual-refund-task-hand-back-intro"),
     ).not.toBeInTheDocument();
   });
 
-  it("offers 'Refund to card' and 'Keep the payment', never 'Mark paid back'", async () => {
+  it("offers 'Refund to card' and 'Close without refunding', never 'Mark paid back'", async () => {
     const queue = await renderQueue();
 
     expect(within(queue).getByRole("button", { name: "Refund to card" })).toBeInTheDocument();
-    expect(within(queue).getByRole("button", { name: "Keep the payment" })).toBeInTheDocument();
+    expect(within(queue).getByRole("button", { name: "Close without refunding" })).toBeInTheDocument();
     expect(within(queue).queryByRole("button", { name: "Mark paid back" })).not.toBeInTheDocument();
   });
 

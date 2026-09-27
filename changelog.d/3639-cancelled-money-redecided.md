@@ -10,7 +10,9 @@
   Cancellation policy page, **Payments that arrive after a booking was
   cancelled**, can be switched from "Refund them automatically" (the default)
   to "A treasurer approves each refund", which puts each one in the Payments
-  refund tasks to refund to the card or keep. The booking-versus-Xero repair tool no longer raises a clearing
+  refund tasks to refund to the card or keep. It covers the booking's own
+  payment and a payment for a change to it, and changing it needs finance edit
+  access. The booking-versus-Xero repair tool no longer raises a clearing
   credit note against the invoice of a cancelled booking paid by bank
   transfer, or of one whose payment already carries a refund or
   account-credit note (such as an internet-banking hold released before

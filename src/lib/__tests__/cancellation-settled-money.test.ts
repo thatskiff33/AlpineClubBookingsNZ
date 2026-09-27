@@ -4,6 +4,7 @@ import {
   classifyCaptureOnCancelledBooking,
   getCancellationCreditCents,
   isCancellationRefundDecisionRecorded,
+  isPaidCancellationDecisionSnapshot,
   isLateCaptureHandlerWrite,
   type CancellationRefundDecisionEvidence,
 } from "@/lib/cancellation-settled-money";
@@ -16,6 +17,18 @@ import { MANUAL_SETTLEMENT_REVERSAL_EVENT_KIND } from "@/lib/manual-settlement-r
 // pins the rule itself.
 
 const BOOKING_ID = "booking-abcdef123";
+
+
+/** What every paid-path cancel writes (`writePaidCancellationEvent`). */
+const PAID_SNAPSHOT = {
+  policySummary: "Cancelled 2 day(s) before check-in: no refund was due.",
+  refundMethod: "card",
+  refundPercentage: 0,
+  paidAmountCents: 2500,
+  settledAmountCents: 0,
+  retainedAmountCents: 2500,
+  changeFeeCents: 0,
+};
 
 function noDecision(): CancellationRefundDecisionEvidence {
   return {
@@ -35,7 +48,7 @@ describe("isCancellationRefundDecisionRecorded (#1491, lifted by #3639)", () => 
     expect(
       isCancellationRefundDecisionRecorded({
         ...noDecision(),
-        cancelledEvents: [{ type: "CANCELLED", snapshot: { refundPercentage: 0 } }],
+        cancelledEvents: [{ type: "CANCELLED", snapshot: PAID_SNAPSHOT }],
       })
     ).toBe(true);
   });
@@ -138,18 +151,49 @@ describe("getCancellationCreditCents", () => {
   });
 });
 
+describe("isPaidCancellationDecisionSnapshot (#3639 review F2)", () => {
+  it("recognises the paid-path policy snapshot by its shape", () => {
+    expect(isPaidCancellationDecisionSnapshot(PAID_SNAPSHOT)).toBe(true);
+  });
+
+  it("does not take an unpaid cancel's snapshot for a decision", () => {
+    // The pending-request cron's unpaid auto-cancel, and the internet-banking
+    // hold expiry: both write a snapshot, neither decided any captured money.
+    for (const snapshot of [
+      { autoCancelledPastCheckIn: true },
+      { paymentId: "payment-1", holdUntil: "2026-09-01T00:00:00.000Z", creditRestoredCents: 0 },
+      null,
+      "not an object",
+    ]) {
+      expect(isPaidCancellationDecisionSnapshot(snapshot)).toBe(false);
+      expect(
+        isCancellationRefundDecisionRecorded({
+          ...noDecision(),
+          cancelledEvents: [{ type: "CANCELLED", snapshot }],
+        })
+      ).toBe(false);
+    }
+  });
+});
+
 describe("classifyCaptureOnCancelledBooking (#3639)", () => {
   const decided: CancellationRefundDecisionEvidence = {
     ...noDecision(),
-    cancelledEvents: [{ type: "CANCELLED", snapshot: { refundPercentage: 0 } }],
+    cancelledEvents: [{ type: "CANCELLED", snapshot: PAID_SNAPSHOT }],
   };
+  // The refunded total follows the status, as the ledger writes it.
+  const money = (status: string) => ({
+    amountCents: 2500,
+    refundedAmountCents:
+      status === "REFUNDED" ? 2500 : status === "PARTIALLY_REFUNDED" ? 1000 : 0,
+  });
   const before = { capturedAfterCancellation: false };
   const after = { capturedAfterCancellation: true };
 
   it("settles a capture recorded before a cancel that decided it, in every captured status", () => {
     for (const status of ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] as const) {
       expect(
-        classifyCaptureOnCancelledBooking({ status, ...before }, decided)
+        classifyCaptureOnCancelledBooking({ status, ...money(status), ...before }, decided)
       ).toBe("settled_by_cancellation");
     }
   });
@@ -157,32 +201,41 @@ describe("classifyCaptureOnCancelledBooking (#3639)", () => {
   it("calls a row that never captured a late capture", () => {
     for (const status of ["PENDING", "PROCESSING", "FAILED"] as const) {
       expect(
-        classifyCaptureOnCancelledBooking({ status, ...before }, decided)
+        classifyCaptureOnCancelledBooking({ status, ...money(status), ...before }, decided)
       ).toBe("late_capture");
     }
   });
 
   it("refunds the handler's own earlier write on a crash-and-retry, even beside a decision", () => {
     expect(
-      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...after }, decided)
+      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...money("SUCCEEDED"), ...after }, decided)
     ).toBe("late_capture");
   });
 
   it("refunds a captured row when the cancellation decided nothing — a saved-card charge answered after an unpaid cancel", () => {
     expect(
-      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...before }, noDecision())
+      classifyCaptureOnCancelledBooking({ status: "SUCCEEDED", ...money("SUCCEEDED"), ...before }, noDecision())
     ).toBe("late_capture");
   });
 
   it("acknowledges a late capture already handed back, fully or in part, rather than refunding it again", () => {
     for (const status of ["PARTIALLY_REFUNDED", "REFUNDED"] as const) {
       expect(
-        classifyCaptureOnCancelledBooking({ status, ...after }, decided)
+        classifyCaptureOnCancelledBooking({ status, ...money(status), ...after }, decided)
       ).toBe("already_refunded");
       expect(
-        classifyCaptureOnCancelledBooking({ status, ...before }, noDecision())
+        classifyCaptureOnCancelledBooking({ status, ...money(status), ...before }, noDecision())
       ).toBe("already_refunded");
     }
+  });
+
+  it("reads the refunded total, not the status: a refunded row a browser confirm rewrote to SUCCEEDED is still already refunded (review F3)", () => {
+    expect(
+      classifyCaptureOnCancelledBooking(
+        { status: "SUCCEEDED", amountCents: 2500, refundedAmountCents: 2500, ...after },
+        noDecision(),
+      )
+    ).toBe("already_refunded");
   });
 
   it("recognises only the primary handler's own reason as its write", () => {

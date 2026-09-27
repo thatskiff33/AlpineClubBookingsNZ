@@ -576,7 +576,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // a treasurer's approval writes, both `logAudit` in
   // `src/lib/late-capture-refund-approval.ts`, categorised `payment` at the site.
   // RE-MEASURED with `npm run audit:census`, not incremented.
-  writeSites: 492,
+  // 492 -> 493 (#3639 review): `booking-defaults.late_capture_refund_approval
+  // .changed`, the payment-category record of who switched the setting
+  // (`src/lib/late-capture-refund-setting-change.ts`). The approved refund's
+  // `refunded_after_cancellation` moved into one shared finisher, so it is still
+  // one site. RE-MEASURED with `npm run audit:census`, not incremented.
+  writeSites: 493,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -659,7 +664,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // turn a successful, correctly-gated read into a 500.
     // 267 -> 268 (#3639): the late-notice acknowledgement, above.
     // 268 -> 270 (#3639): the two late-capture approval writers, above.
-    logAudit: { total: 270, uncategorised: 0 },
+    // 270 -> 271 (#3639 review): the setting-change record, above.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -916,7 +922,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // late-capture handler declined, beside the rows that record the ones it
     // made and withheld, read by the same people.
     // 49 -> 51 (#3639): the held late capture and its approved refund.
-    payment: 51,
+    // 51 -> 52 (#3639 review): the setting-change record.
+    payment: 52,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

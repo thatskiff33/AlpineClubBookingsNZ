@@ -183,6 +183,8 @@ export function DefaultCancellationPolicySection() {
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
+  // #3639 review F2: the late-capture refund choice needs finance edit too.
+  const canEditFinance = useAdminAreaEditAccess("finance")
 
   // Mirrors `scopeLodgeId` for the async callbacks below, which need to know
   // the CURRENT scope at the moment they resolve rather than the one they
@@ -604,6 +606,7 @@ export function DefaultCancellationPolicySection() {
                   <LateCaptureRefundSetting
                     needsApproval={draft.lateCaptureNeedsApproval}
                     editing={editing}
+                    canChange={canEditFinance}
                     onChange={(v) => section.setDraft({ lateCaptureNeedsApproval: v })}
                   />
                 </div>

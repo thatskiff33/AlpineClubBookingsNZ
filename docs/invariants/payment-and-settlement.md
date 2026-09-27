@@ -649,35 +649,31 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-106
 
 - **Nothing later re-decides what a cancellation settled** (#3639). One rule,
-  `classifyCaptureOnCancelledBooking` in `src/lib/cancellation-settled-money.ts`,
-  built on #1491's decision test above (`isCancellationRefundDecisionRecorded`,
-  which ignores the #2262 settlement markers).
-- **Both late-capture webhook handlers** (the booking's own payment and a change
-  payment) acknowledge a success notice on a `CANCELLED` booking — no refund,
-  Xero note or status write — when the capture is not known to have landed after
-  the cancel and the cancel recorded a decision, or when it was already refunded.
-  "Landed after" is the primary handler's own `cancelled_booking_late_capture`
-  write, or the claim's `CANCEL_PAYMENT_INTENT` recovery for that intent, so a
-  crash-and-retry still refunds; the decision half keeps a saved-card charge
-  answered after an unpaid cancel refundable. Each acknowledgement writes
-  `booking.payment.late_notice_acknowledged` (`important` if part is still held).
-  The paid-path `CANCELLED` event commits inside the cancel's claim, so no notice
-  finds the cancel without its decision. Not the gating `INV-ADDPAY-037` rules
-  out: nothing the member is owed is held back.
+  `classifyCaptureOnCancelledBooking` (`src/lib/cancellation-settled-money.ts`).
+  A decision is a paid-path policy snapshot (recognised by shape, so unpaid
+  auto-cancel and hold-expiry snapshots and the #2262 markers are not), a
+  cancellation credit or a live cancel-refund recovery.
+- **Both late-capture handlers** acknowledge a success notice on a `CANCELLED`
+  booking — no refund, Xero note or status write — when the capture is not
+  known to have landed after the cancel and the cancel recorded a decision, or
+  when any of it was already refunded (`captureRefundState`, which reads the
+  refunded total). "Landed after" is the primary handler's own
+  `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
+  for the intent. Each writes `booking.payment.late_notice_acknowledged`. A
+  replay after a refund skips the epilogue, so a hard kill mid-epilogue is left
+  to the repair tool. The paid-path `CANCELLED` event commits inside the claim.
 - **A genuine late capture follows the club's setting** (owner decision 26 Sep
-  2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)):
-  refunded automatically (the default) or held as one `OPEN` #2700-kind task per
-  intent, marked by `lateCaptureApprovalIntentId` so the previous version still
-  reads it. Approving it is the automatic refund, under the same Stripe keys; a
-  task, whatever its status, owns its capture. A #2700 hand-back is refused once
-  its capture was refunded.
+  2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)),
+  including a change payment the superseded-intent hand-off catches: refunded
+  automatically (default) or held as one #2700-kind task per intent, marked by
+  `lateCaptureApprovalIntentId`. Approval is the automatic refund, same Stripe
+  keys; a task of any status owns its capture, and the repair tool offers no
+  refund behind it. A #2700 hand-back is refused once its capture was refunded.
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
-  of every source (the Stripe-only list stays for Stripe actions, #668), and
-  skips a payment already carrying a refund or account-credit note, or such an
-  operation queued or failed (an internet-banking cancel; a hold released
-  before #3535).
-- Pinned by `cancellation-settled-money.test.ts`, `booking-cancel.test.ts`,
-  `stripe-webhook-alerts.test.ts`, `manual-refund-task.test.ts` and
+  of every source and skips a payment already carrying a refund or
+  account-credit note, or such an operation queued or failed.
+- Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
+  `payment-recovery.test.ts`, `manual-refund-task.test.ts` and
   `xero-booking-repair.test.ts`.
 
 ## INV-PAY-019

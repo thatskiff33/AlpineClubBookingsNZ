@@ -40,8 +40,14 @@ export function paidCancellationBranch(params: {
  * SO IT THROWS rather than swallowing, unlike `recordBookingEvent`. A failed
  * INSERT aborts the Postgres transaction anyway (the reason `recordBookingEvent`
  * says never to call it inside one), so a swallowed failure could not keep the
- * claim; throwing rolls the cancel back cleanly and the member retries, where
- * the old order committed a cancellation with no record of what it decided.
+ * claim; throwing rolls the cancel back and the member retries, where the old
+ * order committed a cancellation with no record of what it decided. NOT QUITE
+ * CLEANLY on the credit branch: `createCancellationCredit` has already written
+ * its CREDITED event on the base client (deliberately outside the caller's
+ * transaction), so that event survives the rollback and a retry writes a second
+ * one. That exposure predates #3639 for every in-claim failure after it; this is
+ * one more point where it applies. One of the documented exceptions to
+ * `recordBookingEvent`'s best-effort rule (`booking-events.ts`).
  *
  * The content is exactly what the four post-commit writes produced, one
  * sentence per branch. `occurredAt` is left to the database default, which

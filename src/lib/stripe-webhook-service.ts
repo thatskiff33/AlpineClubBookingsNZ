@@ -29,7 +29,7 @@ import {
   type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
 import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
-import { holdLateCaptureForTreasurerIfRequired } from "@/lib/late-capture-refund-approval";
+import { holdLateCaptureForTreasurerIfRequired } from "@/lib/late-capture-refund-hold";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
 import {
   buildLateCaptureRefundMetadata,

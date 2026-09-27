@@ -1,91 +1,18 @@
-import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults"
 import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
-import { z } from "zod"
-import type { BookingDefaults } from "@prisma/client"
 import { logAudit } from "@/lib/audit"
+import {
+  auditLateCaptureSettingChange,
+  checkLateCaptureSettingChange,
+  LATE_CAPTURE_SETTING_NEEDS_FINANCE_MESSAGE,
+} from "@/lib/late-capture-refund-setting-change"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import {
+  clubWideDefaults,
+  policySchema,
+} from "@/lib/booking-policy-cancellation-schema"
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation"
-
-const CLUB_WIDE_ONLY_FIELDS = [
-  ["nonMemberHoldDays", "Hold days are club-wide and cannot be set per lodge"],
-  ["nonMemberHoldEnabled", "Hold enablement is club-wide and cannot be set per lodge"],
-  ["waitlistCrossLodgeOrder", "Waitlist queue order is club-wide and cannot be set per lodge"],
-  [
-    "linkedMoveChargesBothChangeFees",
-    "The linked-move change-fee setting is club-wide and cannot be set per lodge",
-  ],
-  [
-    "lateCaptureRefundNeedsApproval",
-    "The late-payment refund setting is club-wide and cannot be set per lodge",
-  ],
-] as const
-
-const policySchema = z
-  .object({
-    rules: z.array(
-      z.object({
-        daysBeforeStay: z.number().int().min(0),
-        refundPercentage: z.number().int().min(0).max(100),
-        creditRefundPercentage: z.number().int().min(0).max(100).optional(),
-        fixedFeeCents: z.number().int().min(0).optional(),
-        creditFixedFeeCents: z.number().int().min(0).optional(),
-      })
-    ),
-    nonMemberHoldEnabled: z.boolean().optional(),
-    nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
-    // Cross-lodge waitlist queue order (ADR-004 owner decision 1).
-    // Club-wide, like hold days: queue fairness is a club policy.
-    waitlistCrossLodgeOrder: z.enum(["OWN_LODGE_FIRST", "MERGED"]).optional(),
-    // #3232 D2: whether the LINKED MOVE charges the change fee on both bookings.
-    // Club-wide like the two above, and for the same kind of reason: the change-fee
-    // TIERS price a lodge's own cancellation risk and are per lodge, but whether a
-    // second fee is fair when the club's own supervision rule compelled the move is
-    // a question about how the club treats its members, which does not differ
-    // between its lodges.
-    linkedMoveChargesBothChangeFees: z.boolean().optional(),
-    // #3639 (owner decision 26 Sep 2026): hold a late capture for a treasurer.
-    lateCaptureRefundNeedsApproval: z.boolean().optional(),
-    // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
-    // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
-    // club-wide set at runtime; an empty rules array for a lodge removes the
-    // override so the lodge reverts to club-wide.
-    lodgeId: z.string().min(1).optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (!data.lodgeId && data.rules.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["rules"],
-        message: "At least one rule is required",
-      })
-    }
-    // The club-wide fields a lodge override may not carry (#3639: one table).
-    if (data.lodgeId) {
-      for (const [field, message] of CLUB_WIDE_ONLY_FIELDS) {
-        if (data[field] !== undefined) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message })
-        }
-      }
-    }
-  })
-
-// The club-wide defaults for the GET and the PUT's echo; an absent row means each
-// effective default, read from the one home rather than restated (`INV-SSOT-001`).
-function clubWideDefaults(defaults: Partial<BookingDefaults> | null) {
-  return {
-    nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
-    nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
-    waitlistCrossLodgeOrder: defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST",
-    linkedMoveChargesBothChangeFees:
-      defaults?.linkedMoveChargesBothChangeFees ??
-      DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
-    lateCaptureRefundNeedsApproval:
-      defaults?.lateCaptureRefundNeedsApproval ??
-      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
-  }
-}
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin({
@@ -136,6 +63,12 @@ export async function PUT(req: NextRequest) {
     lateCaptureRefundNeedsApproval,
     lodgeId,
   } = parsed.data
+
+  // #3639 review F2: changing the late-capture refund choice needs finance:edit.
+  const lateCapture = await checkLateCaptureSettingChange(session.user, lateCaptureRefundNeedsApproval)
+  if (lateCapture.refused) {
+    return NextResponse.json({ error: LATE_CAPTURE_SETTING_NEEDS_FINANCE_MESSAGE }, { status: 403 })
+  }
 
   if (lodgeId) {
     const lodge = await prisma.lodge.findUnique({
@@ -244,6 +177,9 @@ export async function PUT(req: NextRequest) {
     details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lateCaptureNeedsApproval=${lateCaptureRefundNeedsApproval ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
   })
 
+  if (lateCapture.changing) {
+    auditLateCaptureSettingChange({ actorMemberId: session.user.id, before: lateCapture.before, after: !lateCapture.before })
+  }
   revalidatePublicPageContent()
   return NextResponse.json(result)
 }

@@ -773,6 +773,8 @@ export function classifyBookingContext(
       // Captured money via the payment status OR the transaction ledger —
       // ledger-first states (a SUCCEEDED capture row under a still-PENDING
       // aggregate status) must count as captured for the policy split below.
+      // Deliberately Stripe-only in its ledger half, unlike
+      // `hasCapturedRepairPayment` (#3639): this split routes card refunds.
       const paymentHasCapturedMoney =
         hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
       const modificationCreditNote = resolveObjectFromCandidates({
@@ -1277,6 +1279,35 @@ export function classifyBookingContext(
     }
   }
 
+  // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
+  // was released retires the clearing note (a CANCELLED create op) and settles
+  // the payment, so the arm below skips the booking - but the operator is still
+  // told why no note exists. #3535's own copy of this finding sits behind the
+  // gate and can no longer fire; this one is the owner of the sentence.
+  if (
+    booking.status === "CANCELLED" &&
+    payment &&
+    primaryInvoice &&
+    (hasCapturedRepairPayment(payment) ||
+      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations)) &&
+    bookingOperations.some(
+      (operation) =>
+        operation.entityType === "CREDIT_NOTE" &&
+        operation.operationType === "CREATE" &&
+        operation.status === "CANCELLED"
+    )
+  ) {
+    addFinding(findings, {
+      code: "MANUAL_REVIEW_REQUIRED",
+      severity: "info",
+      summary:
+        "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
+      safeToAutoApply: false,
+      details: { paymentId: payment.id, invoiceId: primaryInvoice.objectId },
+      actionKeys: [],
+    });
+  }
+
   // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
   // and `paymentNoteAnswersInvoice` are the two things it asks first.
   if (
@@ -1482,11 +1513,25 @@ export function classifyBookingContext(
       creditsFromCancellation: booking.creditsFromCancellation,
       cancellationRefundRecoveryOperations: context.cancellationRefundRecoveryOperations,
     });
-    if (!cancellationRefundDecisionRecorded) {
-      const lateCaptureTransactions = capturedPaymentTransactions.filter(
-        (transaction) => transaction.amountCents > transaction.refundedAmountCents
+    // #3639 review F3: a capture a treasurer-approval task owns (held or kept)
+    // is decided, so it is left out; nothing is offered for refund behind it.
+    const heldOutstanding = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.stripePaymentIntentId !== null &&
+        context.lateCaptureApprovalIntentIds.has(transaction.stripePaymentIntentId)
+    );
+    const refundAmountCents =
+      outstandingCapturedRefundAmountCents -
+      heldOutstanding.reduce(
+        (sum, t) => sum + Math.max(t.amountCents - t.refundedAmountCents, 0),
+        0
       );
-      const refundAmountCents = outstandingCapturedRefundAmountCents;
+    if (!cancellationRefundDecisionRecorded && refundAmountCents > 0) {
+      const lateCaptureTransactions = capturedPaymentTransactions.filter(
+        (transaction) =>
+          transaction.amountCents > transaction.refundedAmountCents &&
+          !heldOutstanding.includes(transaction)
+      );
       const action = addAction(actionMap, {
         key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
         bookingId: booking.id,
