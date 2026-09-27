@@ -43,15 +43,15 @@ vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
   readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
 }));
 vi.mock("@/lib/access-roles", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/access-roles")>()),
+  ...((await importOriginal()) as typeof import("@/lib/access-roles")),
   hasAdminAccess: mocks.hasAdminAccess,
 }));
 vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/admin-permissions")>()),
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
   hasAdminAreaAccess: () => false,
 }));
 vi.mock("@/lib/rate-limit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/rate-limit")),
   checkRateLimit: mocks.checkRateLimit,
 }));
 vi.mock("@/lib/logger", () => ({

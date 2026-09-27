@@ -3053,6 +3053,11 @@ describe("cancelBooking credit refunds", () => {
 
       expect(result).toMatchObject({ status: 409 });
       expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+      // A throw, so the real transaction rolls the recorded receipt back; a
+      // normal return would have committed it.
+      await expect(mocks.prismaTransaction.mock.results[0]!.value).rejects.toThrow(
+        "payment changed",
+      );
     });
 
     it("DECISION 2: an officer cancels an unsizable payment as unpaid, with no clearing note, and alerts the treasurer", async () => {
