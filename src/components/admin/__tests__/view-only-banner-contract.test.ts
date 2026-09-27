@@ -335,8 +335,12 @@ const FIGURES = {
    *
    * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
+   *
+   * 365 -> 367 (#3416): the School Teacher Hut-Leader Assignments card adds
+   * Edit and Save. Cancel remains a plain Button because it only discards the
+   * staged choice. MEASURED by re-running this census.
    */
-  callSites: 365,
+  callSites: 367,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -361,8 +365,10 @@ const FIGURES = {
    * 308 -> 310 (#3596): so do the club currency and locale page's two.
    *
    * 310 -> 311 (#2941): so does Member Fields' new Edit.
+   * 311 -> 313 (#3416): the new school-teacher policy card heads itself under
+   * the existing section banner, so its Edit and Save opt out.
    */
-  optOuts: 311,
+  optOuts: 313,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -416,8 +422,10 @@ const FIGURES = {
    *
    * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
    * own banner, beside the Save that was already static.
+   * 277 -> 279 (#3416): the school-teacher card's Edit and Save sit in the
+   * same file as its section banner.
    */
-  staticOptOuts: 277,
+  staticOptOuts: 279,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

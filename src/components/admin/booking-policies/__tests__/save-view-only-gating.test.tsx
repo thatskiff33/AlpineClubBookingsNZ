@@ -1070,6 +1070,24 @@ describe("PublicBookingRequestsSection indicative pricing stages behind Save (#2
     ) as HTMLInputElement;
   }
 
+  function schoolTeacherPolicyCheckbox() {
+    return screen.getByLabelText(
+      "Assign school teachers as hut leaders",
+    ) as HTMLInputElement;
+  }
+
+  function schoolTeacherPolicyEditButton() {
+    return screen.getByRole("button", {
+      name: "Edit school teacher hut-leader assignments",
+    }) as HTMLButtonElement;
+  }
+
+  function schoolTeacherPolicySaveButton() {
+    return screen.getByRole("button", {
+      name: "Save school teacher policy",
+    }) as HTMLButtonElement;
+  }
+
   // #2166: all three cards carry an Edit and can carry a Cancel at the same
   // time, so the shared visible word is no longer the whole accessible name.
   // Each button carries an `aria-label` naming its card, which REPLACES the
@@ -1142,26 +1160,60 @@ describe("PublicBookingRequestsSection indicative pricing stages behind Save (#2
     render(<PublicBookingRequestsSection />);
     await loadSection();
 
-    const checkbox = screen.getByLabelText(
-      "Assign school teachers as hut leaders",
-    ) as HTMLInputElement;
+    const checkbox = schoolTeacherPolicyCheckbox();
     expect(checkbox.checked).toBe(false);
     expect(checkbox.disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Edit school teacher hut-leader assignments",
-    }));
+    fireEvent.click(schoolTeacherPolicyEditButton());
     fireEvent.click(checkbox);
     expect(checkbox.checked).toBe(true);
     expect(writeCalls(fetchMock)).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Save school teacher policy",
-    }));
+    fireEvent.click(schoolTeacherPolicySaveButton());
     await waitFor(() => expect(writeCalls(fetchMock)).toHaveLength(1));
     expect(JSON.parse(String(writeCalls(fetchMock)[0][1]?.body))).toMatchObject({
       assignSchoolTeachersAsHutLeaders: true,
     });
+  });
+
+  it("merges the fresh row before saving the school teacher policy", async () => {
+    const fetchMock = stubSettings(STORED, {
+      changedByAnotherAdmin: { showPricingToNonMembers: true },
+    });
+    render(<PublicBookingRequestsSection />);
+    await loadSection();
+
+    fireEvent.click(schoolTeacherPolicyEditButton());
+    fireEvent.click(schoolTeacherPolicyCheckbox());
+    fireEvent.click(schoolTeacherPolicySaveButton());
+
+    await waitFor(() => expect(writeCalls(fetchMock)).toHaveLength(1));
+    const { body, readsBeforeWrite } = writeContext(fetchMock);
+    // Two reads makes this fail if the save-step GET is removed.
+    expect(readsBeforeWrite).toBe(2);
+    expect(body).toEqual({
+      ...STORED,
+      showPricingToNonMembers: true,
+      assignSchoolTeachersAsHutLeaders: true,
+    });
+  });
+
+  it("keeps the school teacher policy Save disabled while pristine and cancels without a write", async () => {
+    const fetchMock = stubSettings();
+    render(<PublicBookingRequestsSection />);
+    await loadSection();
+
+    fireEvent.click(schoolTeacherPolicyEditButton());
+    expect(schoolTeacherPolicySaveButton().disabled).toBe(true);
+    fireEvent.click(schoolTeacherPolicyCheckbox());
+    expect(schoolTeacherPolicySaveButton().disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", {
+      name: "Cancel school teacher hut-leader assignments",
+    }));
+
+    expect(schoolTeacherPolicyCheckbox().checked).toBe(false);
+    expect(schoolTeacherPolicyCheckbox().disabled).toBe(true);
+    expect(writeCalls(fetchMock)).toHaveLength(0);
   });
 
   // #2143: the write logs `booking_request.settings_updated` unconditionally, so
@@ -1346,8 +1398,21 @@ describe("PublicBookingRequestsSection indicative pricing stages behind Save (#2
     await loadSection();
 
     expectViewOnly(editButton());
+    expectViewOnly(schoolTeacherPolicyEditButton());
     expect(pricingCheckbox().disabled).toBe(true);
     expect(screen.getAllByTestId("admin-view-only-banner")).toHaveLength(1);
+  });
+
+  it("disables the school teacher policy Save when access narrows mid-edit", async () => {
+    stubSettings();
+    render(<PublicBookingRequestsSection />);
+    await loadSection();
+
+    fireEvent.click(schoolTeacherPolicyEditButton());
+    hookMock.canEdit = false;
+    fireEvent.click(schoolTeacherPolicyCheckbox());
+
+    expectViewOnly(schoolTeacherPolicySaveButton());
   });
 
   it("disables Edit neutrally while access is still resolving", async () => {

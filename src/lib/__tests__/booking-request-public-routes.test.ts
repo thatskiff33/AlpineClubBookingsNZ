@@ -670,7 +670,7 @@ describe("GET /api/booking-requests/settings", () => {
   // static `club.lodgeCapacity` prop (#2818 decision 7); here it comes from the
   // mocked `getDefaultLodgeCapacity` via the cached read.
   it("returns the public pricing visibility flag and the default lodge capacity", async () => {
-    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3, attendeeConfirmationLeadDays: 14, attendeeConfirmationReminderDays: 3 });
+    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3, assignSchoolTeachersAsHutLeaders: true, attendeeConfirmationLeadDays: 14, attendeeConfirmationReminderDays: 3 });
     mockedGetPublicLodges.mockResolvedValueOnce([]);
     mockedGetPublicOtherLodges.mockResolvedValueOnce([]);
 
@@ -682,15 +682,12 @@ describe("GET /api/booking-requests/settings", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({
       showPricingToNonMembers: true,
-      quoteResponseTtlDays: 14,
-      quoteReminderLeadDays: 3,
-      attendeeConfirmationLeadDays: 14,
-      attendeeConfirmationReminderDays: 3,
       lodges: [],
       otherLodges: [],
       schoolGroupSoftCap: 25,
       defaultLodgeCapacity: 20,
     });
+    expect(body).not.toHaveProperty("assignSchoolTeachersAsHutLeaders");
   });
 
   it("lists other/partner lodges (id and name) for the drop-down (#2749)", async () => {

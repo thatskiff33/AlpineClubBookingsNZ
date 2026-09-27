@@ -1,1 +1,1 @@
-Added the Booking Policies setting that controls whether school teachers receive automatic hut-leader assignments and PINs; it defaults off.
+- Added the Booking Policies setting that controls whether school teachers receive automatic hut-leader assignments and PINs; it defaults off.
