@@ -150,6 +150,8 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
   ])("moves nobody and emails nobody when, under the lock, %s", async (_label, row) => {
     mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(row);
+    // A left-behind joiner is there to move, so only the re-read can stop it.
+    mocks.bookingFindMany.mockResolvedValue([{ id: "late-1" }]);
 
     await expect(releaseJoinersLeftBehindPaidSettlements()).resolves.toBe(0);
 
