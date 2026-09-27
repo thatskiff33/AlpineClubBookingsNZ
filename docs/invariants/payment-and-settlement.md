@@ -98,6 +98,37 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   cash-settled (or Xero-inbound-settled) booking is auto-refunded instead of
   silently kept.
 
+## INV-PAY-102
+
+- **Card first, then bank: a booking is never collected by two instruments
+  silently** (#3638).
+- **The Internet Banking switch refuses unless the card intent is retired**
+  (`isCardIntentRetired`): Stripe confirmed the cancel, the intent was already
+  `canceled`, or it succeeded and the local ledger shows it refunded (#1765). A
+  live capture, or a cancel that throws, is a 409 with no payment write and no
+  invoice. Under lock(1) it refuses a payment now pointing at a different
+  intent.
+- **Every card door attaches through `attachMintedCardIntent`** —
+  `create-payment-intent` and `/pay/<token>` — under lock(1), re-reading the
+  payment's source and the booking's status and refusing an Internet Banking or
+  no-longer-payable one. Neither order leaves a live card intent beside an
+  invoice, and no card row flips a switched payment back to STRIPE.
+- **Inbound, a second instrument is raised, never skipped.** Under the settle
+  loop's lock(1), a PRIMARY capture of another source is a conflict on a PAID or
+  COMPLETED booking while it holds net cash, and on a CANCELLED one while the
+  bank cash is new. The bank receipt is recorded and nothing else moves. One
+  admin-only marker per invoice is written IN that transaction, so it commits
+  with the receipt; the unmuteable alert follows the commit, and the marker
+  records it sent, so a crash in between re-sends it once on the retry. Not
+  second instruments: an ADDITIONAL card row, a capture the #1992 refund owns
+  (`INV-PAY-043`), and — on a settled booking — #1765 refund history, a card
+  row refunded before the booking moved to Internet Banking.
+- **A replay on a settled booking changes nothing.** COMPLETED takes the
+  already-paid arm like PAID.
+- Pinned by `switch-to-internet-banking-route.test.ts`,
+  `payment-intent-routes.test.ts`, `payment-link.test.ts` and
+  `issue-3638-second-instrument-conflict.test.ts`.
+
 ## INV-PAY-044
 
 - CANCELLATION yields a durable `ManualRefundTask`, created atomically with the

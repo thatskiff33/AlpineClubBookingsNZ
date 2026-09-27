@@ -14,8 +14,10 @@ import {
   isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   isRefundedCardTransactionRepaymentRequired,
+  isSwitchedToInternetBanking,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 
 const CAPACITY_CANCELLATION_RECOVERY = {
@@ -181,6 +183,15 @@ export default function BookingPaymentWrapper({
           if (response.status === 409 && isPaymentProcessing(data)) {
             setRecoveryHeading("Payment being processed");
             setInitRecoveryError(data.error);
+            return;
+          }
+          // #3638: the booking is being paid by Internet Banking (switched
+          // before or during this request). Not a fault to report, and not
+          // "pay later" either — a card retry would be refused again. The
+          // fixed message from the shared contract, never data.error.
+          if (response.status === 409 && isSwitchedToInternetBanking(data)) {
+            setRecoveryHeading("Paying by Internet Banking");
+            setInitRecoveryError(SWITCHED_TO_INTERNET_BANKING_MESSAGE);
             return;
           }
           // The raw provider detail (data.error) may leak partial key material;

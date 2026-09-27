@@ -5,7 +5,7 @@
  * booking is paid; token resolution stays in `payment-link.ts`, and the
  * wording comes from `booking-narrative.ts`, which this module only feeds.
  */
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import {
@@ -36,6 +36,12 @@ interface PaymentLinkPayable {
    * page never offers a payment method the club hasn't enabled.
    */
   internetBankingReference?: string;
+  /**
+   * #3638 (`INV-PAY-102`): false when the booking has switched to Internet
+   * Banking. The page then shows the bank-transfer details in place of the card
+   * button, because the card door would refuse the payment anyway.
+   */
+  cardPaymentAvailable: boolean;
   /**
    * The link's hard expiry, ISO. The END OF THE CHECK-IN DAY in the club's
    * PERSISTED timezone (`payment-link-expiry.ts`, `INV-CONFIG-002`) — not the
@@ -228,6 +234,10 @@ export async function getPaymentLinkContext(
   const internetBankingEnabled = Boolean(
     ibModules?.xeroIntegration && ibModules?.internetBankingPayments
   );
+  // A switched booking already has its invoice: its bank-transfer details are
+  // shown even if the module has since been turned off.
+  const payingByInternetBanking =
+    booking.payment?.source === PaymentSource.INTERNET_BANKING;
 
   const payable: PaymentLinkPayable | null =
     paymentState === "payable"
@@ -237,7 +247,8 @@ export async function getPaymentLinkContext(
           guestCount: booking.guests.length,
           status: booking.status,
           amountCents: booking.finalPriceCents,
-          ...(internetBankingEnabled
+          cardPaymentAvailable: !payingByInternetBanking,
+          ...(internetBankingEnabled || payingByInternetBanking
             ? {
                 internetBankingReference: buildInternetBankingPaymentReference(
                   booking.id

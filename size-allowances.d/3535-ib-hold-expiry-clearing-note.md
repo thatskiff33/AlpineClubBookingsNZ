@@ -13,14 +13,16 @@ reason: the transaction-client option and the wording choice belong on the
   the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
-lines: 2527
+lines: 2543
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
   claim's follow-up would separate it from the sizing it sits beside.
+  #3638 (same epic) adds its share: the card-intent cancel marks the row FAILED
+  only when Stripe confirms the intent dead, through the shared predicate.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1787
+lines: 1794
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -28,6 +30,8 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   by design (its header says why). The delta review added the arm's stand-down
   for a note retired by late cash and its manual-review answer to a shortfall;
   the predicates themselves live in `xero-clearing-allocations.ts`.
+  #3638 (same epic) adds one predicate call so the late-capture arm does not
+  read an admin-only settlement marker as a recorded refund decision.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1610
@@ -38,12 +42,15 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1726
+lines: 1730
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
   same; the reading and the retirement themselves live in
   `invoice-clearing-note-evidence.ts`.
+  #3638 (same epic) writes its second-instrument marker inside this settle
+  transaction, beside the receipt it describes; the detection, the writer and
+  the alert live in `settlement-conflicts.ts`.
 
 file: src/lib/redact-sensitive-json.ts
 lines: 914

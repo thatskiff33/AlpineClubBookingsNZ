@@ -480,15 +480,15 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/refund-request/route.ts:43",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
-  "src/app/api/payments/create-payment-intent/route.ts:144",
+  "src/app/api/payments/create-payment-intent/route.ts:156",
   "src/app/api/payments/create-setup-intent/route.ts:59",
-  "src/app/api/payments/switch-to-internet-banking/route.ts:117",
+  "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:495",
+  "src/lib/booking-cancel.ts:496",
   "src/lib/booking-date-modification-service.ts:392",
-  "src/lib/booking-delete.ts:123",
-  "src/lib/booking-delete.ts:72",
+  "src/lib/booking-delete.ts:124",
+  "src/lib/booking-delete.ts:73",
   "src/lib/booking-email-authority.ts:115",
   "src/lib/booking-guest-removal-service.ts:456",
   "src/lib/booking-guest-removal-service.ts:792",
@@ -519,8 +519,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1226",
-  "src/lib/payment-recovery.ts:2516",
-  "src/lib/payment-recovery.ts:2568",
+  "src/lib/payment-recovery.ts:2517",
+  "src/lib/payment-recovery.ts:2569",
   "src/lib/xero-admin-health.ts:324",
 ];
 
@@ -789,9 +789,9 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // compile-checked and a relation this model did not declare would fail to
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:111",
-  "src/lib/payment-link.ts:77",
+  "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:89",
-  "src/lib/stuck-state-dashboard.ts:619",
+  "src/lib/stuck-state-dashboard.ts:616",
   "src/lib/xero-booking-repair-types.ts:172",
-  "src/lib/xero-inbound/invoice-paid-effects.ts:271",
+  "src/lib/xero-inbound/settlement-conflicts.ts:152",
 ];

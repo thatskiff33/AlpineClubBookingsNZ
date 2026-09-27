@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({
@@ -12,6 +12,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       upsert: vi.fn(),
+      // #3638: the attach re-reads the payment's source under lock(1).
+      findUnique: vi.fn(),
     },
     booking: {
       findUnique: vi.fn(),
@@ -36,6 +38,11 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
+  // #3638: a refused attach cancels the intent it minted.
+  cancelPaymentIntentIfCancellableWithResult: vi.fn().mockResolvedValue({
+    paymentIntent: { id: "pi_orphan", status: "canceled" },
+    canceled: true,
+  }),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -96,7 +103,12 @@ vi.mock("@/lib/club-format-server", async (importOriginal) => ({
 }));
 
 import { prisma } from "@/lib/prisma";
-import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
+import {
+  cancelPaymentIntentIfCancellableWithResult,
+  createPaymentIntent,
+  findOrCreateCustomer,
+  getPaymentIntent,
+} from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import {
   findPaymentTransactionByIntentId,
@@ -131,6 +143,7 @@ import {
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
 const mockedUpdate = vi.mocked(prisma.paymentLink.update);
@@ -315,6 +328,41 @@ describe("getPaymentLinkContext", () => {
     expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
     expect(context.narrative.message).toContain("$120.00");
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  // #3638 delta D4: a switched booking's link page offers no card and keeps
+  // its bank-transfer details, even if the module has since been turned off.
+  it("offers card payment on an ordinary payable booking", async () => {
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(true);
+  });
+
+  it("offers no card payment on a booking switched to Internet Banking, and still shows its reference", async () => {
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: true,
+      internetBankingPayments: false,
+    });
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          status: BookingStatus.PAYMENT_PENDING,
+          payment: {
+            id: "pay-1",
+            source: "INTERNET_BANKING",
+            status: PaymentStatus.PENDING,
+            stripePaymentIntentId: null,
+          },
+        }),
+      }) as never
+    );
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.cardPaymentAvailable).toBe(false);
+    expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
   });
 
   // #2919: the public pay page's confirmation copy used to name the club's
@@ -1431,6 +1479,140 @@ describe("createPaymentIntentForPaymentLink", () => {
         metadata: expect.objectContaining({ bookingId: "booking-1", paymentLinkId: "link-1" }),
       })
     );
+  });
+
+  // #3638 (`INV-PAY-102`): the link is the third card door. A booking switched
+  // to Internet Banking has an emailed invoice, and a card intent recorded
+  // beside it also flips the payment's source back to STRIPE, hiding a later
+  // bank payment from the inbound loop — so the link refuses before minting,
+  // and again under lock(1) where it attaches.
+  describe("a booking being paid by Internet Banking (#3638)", () => {
+    // clearAllMocks keeps implementations; do not leak a "switched" payment
+    // into the rest of the suite.
+    afterEach(() => {
+      vi.mocked(prisma.payment.findUnique).mockReset();
+    });
+
+    it("refuses before any Stripe call when the booking has already switched", async () => {
+      mockedFindUnique.mockResolvedValue(
+        baseLink({
+          booking: baseBooking({
+            status: BookingStatus.PAYMENT_PENDING,
+            payment: {
+              id: "pay-1",
+              source: "INTERNET_BANKING",
+              status: PaymentStatus.PENDING,
+              stripePaymentIntentId: null,
+            },
+          }),
+        }) as never
+      );
+
+      // The shared body's message AND code (delta D4: one definition).
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 409,
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
+      });
+      expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
+      expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+      expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockedTransaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses, attaches nothing and cancels the new intent when the switch committed during the mint", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+        baseBooking({ guests: [{ id: "guest-1" }] }) as never
+      );
+      // Under the attach lock the payment now reads as switched.
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue({
+        source: "INTERNET_BANKING",
+      } as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 409,
+        message: SWITCHED_TO_INTERNET_BANKING_BODY.error,
+        code: SWITCHED_TO_INTERNET_BANKING_BODY.code,
+      });
+      expect(prisma.payment.upsert).not.toHaveBeenCalled();
+      expect(mockedUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).toHaveBeenCalledWith("pi_new");
+    });
+
+    it("refuses with 410 and cancels the new intent when the booking stopped being payable during the mint", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      const payable = baseBooking({ guests: [{ id: "guest-1" }] });
+      vi.mocked(prisma.booking.findUnique)
+        // The revalidation transaction's lock-key read and post-lock re-read.
+        .mockResolvedValueOnce(payable as never)
+        .mockResolvedValueOnce(payable as never)
+        // The attach's re-read: cancelled while Stripe was minting.
+        .mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never);
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue(null as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+
+      await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+        status: 410,
+      });
+      expect(mockedUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).toHaveBeenCalledWith("pi_new");
+    });
+
+    it("attaches a card intent under lock(1), on the locked transaction's handle", async () => {
+      mockedFindUnique.mockResolvedValue(baseLink() as never);
+      vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+        baseBooking({ guests: [{ id: "guest-1" }] }) as never
+      );
+      vi.mocked(prisma.payment.findUnique).mockResolvedValue({ source: "STRIPE" } as never);
+      mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+      mockedCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12000,
+      } as never);
+      vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+      const txHandles: unknown[] = [];
+      mockedTransaction.mockImplementation(
+        async (fn: (tx: typeof prisma) => Promise<unknown>) => {
+          txHandles.push(prisma);
+          return fn(prisma);
+        }
+      );
+
+      await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+      // The attach is its own transaction, after the lodge-lock revalidation.
+      expect(txHandles).toHaveLength(2);
+      const lockCall = vi
+        .mocked(prisma.$executeRaw)
+        .mock.calls.findIndex(([sql]) =>
+          (sql as unknown as string[]).join("?").includes("pg_advisory_xact_lock(1)")
+        );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect(
+        vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[lockCall]
+      ).toBeLessThan(vi.mocked(prisma.payment.findUnique).mock.invocationCallOrder[0]);
+      expect(mockedUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paymentId: "pay-1",
+          paymentIntentId: "pi_new",
+          store: prisma,
+        })
+      );
+      expect(vi.mocked(cancelPaymentIntentIfCancellableWithResult)).not.toHaveBeenCalled();
+    });
   });
 
   it("throws when the booking has no client secret available", async () => {
