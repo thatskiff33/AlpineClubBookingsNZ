@@ -71,7 +71,7 @@ jobs:
   # `prisma` (#2945) — nobody here changed anything. The step failed, and because
   # Actions skips every LATER step in a job once one fails, `verify` stopped
   # running lint, the file-size ratchet, `prisma generate`, typecheck, knip,
-  # `pnpm test` and the build, on every branch, while the other required checks
+  # `npm test` and the build, on every branch, while the other required checks
   # stayed green. A pull request in that window read as "one unrelated dependency
   # thing is red, everything else passed"; in fact the suite had not run at all.
   # When #2947 restored the gate, the very first real run of the suite failed

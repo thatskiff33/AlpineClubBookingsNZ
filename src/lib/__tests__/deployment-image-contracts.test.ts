@@ -810,15 +810,16 @@ describe("deployment image contracts", () => {
 });
 
 /**
- * #3673: this repository installs with pnpm, in the strict layout, and npm run
- * out of habit must fail loudly instead of quietly writing a second lockfile.
+ * #3673: this repository installs with pnpm, in the strict layout, and
+ * `npm install`/`npm ci` out of habit must fail loudly instead of quietly writing
+ * a second lockfile.
  * Every guard below is one a tidy-up could remove without anything else going
  * red, which is why each is pinned here rather than trusted.
  */
 describe("package manager contract (#3673)", () => {
   const WORKFLOWS = filesUnder(".github/workflows", [".yml", ".yaml"]);
 
-  it("pins pnpm in exactly one place, and makes npm's install refuse", () => {
+  it("pins pnpm once, in `packageManager`, and makes npm's install refuse", () => {
     const pkg = JSON.parse(readRepoFile("package.json")) as {
       packageManager?: string;
       engines?: Record<string, string>;
@@ -826,10 +827,16 @@ describe("package manager contract (#3673)", () => {
       allowScripts?: unknown;
     };
     expect(pkg.packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
-    expect(pkg.engines?.pnpm).toBe(`>=${pkg.packageManager?.slice("pnpm@".length)}`);
+    // `engines.pnpm` is a floor (the major this configuration needs), not a
+    // second copy of the pin: bumping `packageManager` inside the major is a
+    // one-field edit.
+    expect(pkg.engines?.pnpm).toMatch(/^>=\d+$/);
+    const floor = Number(pkg.engines?.pnpm?.slice(2));
+    expect(Number(pkg.packageManager?.slice("pnpm@".length).split(".")[0])).toBeGreaterThanOrEqual(floor);
     // Not a semver range, so npm can never satisfy it; with `engine-strict`
-    // below, `npm install`/`pnpm install --frozen-lockfile` stop with EBADENGINE before writing a
-    // package-lock.json or a node_modules tree.
+    // below it is the backstop that stops `npm install`/`npm ci` before they
+    // write a package-lock.json or a node_modules tree (today npm usually fails
+    // even earlier, on the `catalog:` specifiers or the missing npm lockfile).
     expect(pkg.engines?.npm).toBe("please-use-pnpm");
     expect(readRepoFile(".npmrc")).toMatch(/^engine-strict=true$/m);
     // npm-only fields pnpm ignores: their settings live in pnpm-workspace.yaml.

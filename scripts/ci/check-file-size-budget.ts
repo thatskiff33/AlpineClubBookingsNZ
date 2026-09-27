@@ -192,7 +192,7 @@ function explainRemovedUpdateMode(): number {
       "  An accepted increase is now explained in the pull request body instead, which",
       "  is where a reviewer was meant to be looking. There is nothing to regenerate.",
       "",
-      `  ${CHECK_COMMAND} -- --report   the whole tree's debt, if that is what you wanted`,
+      `  ${CHECK_COMMAND} --report   the whole tree's debt, if that is what you wanted`,
       "",
     ].join("\n"),
   );
@@ -310,7 +310,7 @@ export function run(root: string, argv: readonly string[]): number {
       "rules; splitting the file is still the better answer where it is available.",
       "",
       `  ${CHECK_COMMAND}                     re-run this check`,
-      `  ${CHECK_COMMAND} -- --report         the whole tree's debt, for context`,
+      `  ${CHECK_COMMAND} --report         the whole tree's debt, for context`,
       "",
     ].join("\n"),
   );

@@ -7,7 +7,8 @@
   where you used `npm ci`, `pnpm run <script>` for `npm run <script>`, and
   `pnpm exec <tool>` for `npx <tool>`; `npm install` now refuses to run here on
   purpose. The lockfile is `pnpm-lock.yaml`, and the dependency overrides and
-  install-script allowlist moved to `pnpm-workspace.yaml`; every resolved
-  version is unchanged. The Docker image, CI and the dependency audit use pnpm
+  install-script allowlist moved to `pnpm-workspace.yaml`. The resolved versions
+  are carried over from npm's lockfile; pnpm only merged two nested `lru-cache`
+  patch copies onto the one already in the tree. The Docker image, CI and the dependency audit use pnpm
   too; a club deploying with `docker compose build` needs no change. See
   "Package manager: pnpm" in [CONTRIBUTING.md](../CONTRIBUTING.md).

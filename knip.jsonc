@@ -49,7 +49,7 @@
     // justification was hollow too: knip already follows the dynamic
     // `import("./instrumentation.node")` in `src/instrumentation.ts`, which the
     // Next plugin supplies as an entry, so the carve-out changed nothing.
-    // Verified by removing it and re-running `pnpm exec knip` (exit 0).
+    // Verified by removing it and re-running `npx knip` (exit 0).
   ],
   // The k6 load harness (#1884) is operator-invoked tooling that runs under the
   // k6 binary, not Node/Next — its scripts import k6-runtime modules (k6/http,

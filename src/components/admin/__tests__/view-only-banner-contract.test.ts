@@ -1500,7 +1500,7 @@ describe("view-only section banner coverage (#2160)", () => {
                control is an opt-out under a banner. This one is not: it sits in
                popover content, so it lands in the EXCEPTIONS bucket and the two
                opt-out figures do not move. Measured on the merged tree with
-               `pnpm exec vitest run view-only-banner-contract`, the tree reports
+               `npx vitest run view-only-banner-contract`, the tree reports
                314 / 264 / 237 — one more call site than 313, and the same
                opt-out figures #2637 left behind. READ NOTHING FROM THIS
                COLUMN; run the suite.
@@ -1545,7 +1545,7 @@ describe("view-only section banner coverage (#2160)", () => {
                side only (#2595's control is popover content, mine is a leaf), so
                they merged correctly to 37/22 — and 10 dialog + 37 leaf + 4
                member-credit-card reconciles to 51, not 50. Re-measured with
-               `pnpm exec vitest run view-only-banner-contract`, which reports
+               `npx vitest run view-only-banner-contract`, which reports
                315 / 264 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
 
           319  +4  #2749 adds the Other Lodges panel on /admin/lodges
@@ -1558,7 +1558,7 @@ describe("view-only section banner coverage (#2160)", () => {
                half of the split 22 -> 26. staticOptOuts, exceptions and the leaf
                bucket do not move, and bannerComponents stays 84 — the panel owns
                no banner of its own (the page's covers it). Re-measured with
-               `pnpm exec vitest run view-only-banner-contract`, which reports
+               `npx vitest run view-only-banner-contract`, which reports
                319 / 268 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
           324  +5  the Alpine Central Server setup page
                (`alpine-server/setup/alpine-server-setup.tsx`), added in review of
@@ -1581,7 +1581,7 @@ describe("view-only section banner coverage (#2160)", () => {
                of its own, one per Card, so bannerComponents 84 -> 85 (a file is
                counted once however many banners it holds). Vouched opt-outs are
                untouched: nothing here is a child taking a parent's vouch.
-               Re-measured with `pnpm exec vitest run view-only-banner-contract`,
+               Re-measured with `npx vitest run view-only-banner-contract`,
                which reports 324 / 271 / 240.
 
           330 +11  #2780's Lodge Maintenance admin surface adds four sibling
@@ -1600,7 +1600,7 @@ describe("view-only section banner coverage (#2160)", () => {
                and the leaf bucket do NOT move: nothing here keeps its own reason,
                nothing is vouched through a parent, and nothing is gated on an
                area narrower than the `lodge` area every one of the four banners
-               states. Re-measured with `pnpm exec vitest run view-only-banner-contract`,
+               states. Re-measured with `npx vitest run view-only-banner-contract`,
                which reports 330 / 279 / 248. READ NOTHING FROM THIS COLUMN; run
                the suite.
 

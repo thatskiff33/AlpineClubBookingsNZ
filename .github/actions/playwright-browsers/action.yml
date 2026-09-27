@@ -6,7 +6,7 @@ description: >
 
 # WHY THIS EXISTS, measured rather than assumed (run 32304150140, 19 Aug 2026).
 #
-# The old step was `pnpm exec playwright install --with-deps chromium` behind a
+# The old step was `npx playwright install --with-deps chromium` behind a
 # three-attempt retry, run in both E2E jobs. It normally took ~25s. On that run
 # it took 9m15s, and the breakdown is the whole point:
 #

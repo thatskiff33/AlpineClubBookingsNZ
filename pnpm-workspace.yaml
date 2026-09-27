@@ -16,7 +16,9 @@ catalog:
   sharp: ^0.35.4
 
 # The former npm `overrides` block, translated one entry for one entry. The
-# reasons behind each pin are recorded in docs/MAINTENANCE.md.
+# reasons behind each pin are recorded in docs/MAINTENANCE.md, except
+# `deepmerge-ts`, whose reason and removal condition live with its contract
+# test, src/lib/__tests__/deepmerge-override-contract.test.ts.
 #
 # - `catalog:` pins a transitive copy to this repository's own direct
 #   dependency range, which is what npm's `$sharp` / `$nodemailer` did. (pnpm

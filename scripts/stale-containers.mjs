@@ -7,8 +7,10 @@
  *   node scripts/stale-containers.mjs --json   # bypasses the package manager
  *
  * pnpm hands every option after the script name to the script and prints its
- * own `$ node …` echo line to stderr, so stdout of the second line is pure JSON
- * in every shell (measured on pnpm 11.27.1, #3673). `parseArguments` still skips
+ * own `$ node …` echo line to stderr, so stdout of the second line is JSON in
+ * every shell (measured on pnpm 11.27.1, #3673) — unless pnpm first has to
+ * install because package.json just changed, when its install output comes
+ * first. A consumer that parses the JSON uses the third line. `parseArguments` still skips
  * a literal `--`, which a POSIX shell forwards if somebody writes one. Under
  * npm, which this repository used until #3673, the no-separator form was the
  * trap: npm consumed `--json` as its own flag and the script printed the human

@@ -420,7 +420,7 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
 
   /*
     THE SAME QUESTION ASKED OF THIS FILE, which is the one the rule's own suite
-    got wrong. Until #3164's fix round this file was silent under `pnpm run lint`
+    got wrong. Until #3164's fix round this file was silent under `npm run lint`
     because the rule read nothing at module scope, and every fixture here is a
     module-level constant — so the suite passed, and the file's silence proved
     nothing about the allowlist. Now the module body IS read and the entry in
