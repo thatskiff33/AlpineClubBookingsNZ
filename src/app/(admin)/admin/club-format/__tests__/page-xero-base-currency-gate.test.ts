@@ -52,8 +52,27 @@ vi.mock("@/lib/xero-organisation", () => ({
 import ClubFormatPage from "@/app/(admin)/admin/club-format/page";
 import { accessRoleDefinitionGrid } from "@/lib/__tests__/helpers/access-role-definition-grid";
 import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
+import type { ReactElement, ReactNode } from "react";
 
-function financeViewer(overrides: Record<string, unknown> = {}) {
+/** The `xeroBaseCurrency` prop the page hands the panel, found in its tree. */
+function panelXeroBaseCurrency(node: ReactNode): unknown {
+  if (!node || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = panelXeroBaseCurrency(child);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const props = (node as ReactElement<Record<string, unknown>>).props ?? {};
+  if ("xeroBaseCurrency" in props) return props.xeroBaseCurrency;
+  return panelXeroBaseCurrency(props.children as ReactNode);
+}
+
+function financeViewer(
+  overrides: Record<string, unknown> = {},
+  levels: Parameters<typeof accessRoleDefinitionGrid>[0] = { financeLevel: "VIEW" },
+) {
   return {
     id: "member-1",
     role: "USER",
@@ -65,7 +84,7 @@ function financeViewer(overrides: Record<string, unknown> = {}) {
       {
         role: null,
         roleDefinitionId: "ardef_finance_view",
-        roleDefinition: accessRoleDefinitionGrid({ financeLevel: "VIEW" }),
+        roleDefinition: accessRoleDefinitionGrid(levels),
       },
     ],
     ...overrides,
@@ -105,9 +124,36 @@ describe("Club Currency & Locale page: who makes Xero answer (#3633)", () => {
     signIn();
     mocks.memberFindUnique.mockResolvedValue(financeViewer());
 
-    await ClubFormatPage();
+    const page = await ClubFormatPage();
 
     expect(mocks.getXeroConnectedOrganisation).toHaveBeenCalledTimes(1);
+    expect(panelXeroBaseCurrency(page)).toBe("AUD");
+  });
+
+  it("admits a signed-in admin without finance view, hands the panel null, and asks Xero nothing", async () => {
+    signIn({
+      adminPermissionMatrix: { ...emptyAdminPermissionMatrix(), support: "view" },
+    });
+    mocks.memberFindUnique.mockResolvedValue(
+      financeViewer({}, { supportLevel: "VIEW" }),
+    );
+
+    const page = await ClubFormatPage();
+
+    expect(panelXeroBaseCurrency(page)).toBeNull();
+    expect(mocks.getXeroConnectionStatus).not.toHaveBeenCalled();
+    expect(mocks.getXeroConnectedOrganisation).not.toHaveBeenCalled();
+  });
+
+  it("redirects a finance viewer with a forced password change pending, before asking Xero", async () => {
+    signIn();
+    mocks.memberFindUnique.mockResolvedValue(
+      financeViewer({ forcePasswordChange: true }),
+    );
+
+    await expect(ClubFormatPage()).rejects.toThrow("REDIRECT:/change-password");
+    expect(mocks.getXeroConnectionStatus).not.toHaveBeenCalled();
+    expect(mocks.getXeroConnectedOrganisation).not.toHaveBeenCalled();
   });
 
   it("redirects a finance viewer who has not finished two-factor sign-in, before asking Xero", async () => {
