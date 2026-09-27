@@ -75,7 +75,7 @@ offered to them at all:
 | Alert | Area | Sent when |
 | --- | --- | --- |
 | New bookings | Bookings | A new booking is created or confirmed |
-| Payment failures | Finance | A booking payment fails |
+| Payment failures | Finance | A booking payment fails, or an expired internet banking hold is kept because money may be paid against its invoice (#3643) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
 | Xero sync errors | Finance | Xero contact or invoice sync fails |

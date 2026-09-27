@@ -52,12 +52,27 @@ fails the pending payment, queues an invoice-clearing credit note, and emails th
 member — see the operational-Xero behaviour in
 [`ARCHITECTURE.md`](../ARCHITECTURE.md#operational-xero).
 
+**A hold that has started being paid is kept, not cancelled** (#3643). Before it
+releases a hold, the cron reads the booking's invoices from Xero. If Xero shows
+any payment against them — say $150 of a $300 invoice — the booking stays
+confirmed, its beds stay held, and admins get one **Internet banking hold kept**
+email with the booking reference, the invoice link, and what has been paid and
+what is still owing. Nothing is refunded or credited. Either wait for the member
+to pay the rest (the booking is marked paid once Xero shows the invoice fully
+paid), or cancel the booking through the normal cancel path and decide the
+refund or credit there. If the invoice **cannot be read** (Xero disconnected or
+down), the hold is kept too: admins get one email, the cron keeps trying every
+run and releases the hold itself once Xero shows the invoice unpaid, and one
+last email goes out if it still cannot be read on the check-in date. The email
+goes to admins with the **payment failure** notification switched on.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Everything is read-only ("… can view Internet Banking settings but cannot change them") | Your finance role is view-only | Ask a finance-edit admin |
 | The page shows **Xero off** / **Module Not Ready** | The Xero integration or Internet Banking module is off | Enable Xero and the Internet Banking module — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
+| An expired hold was not cancelled and an **Internet banking hold kept** email arrived | Xero shows part of the invoice paid, or the invoice could not be read | Follow the email: wait for the rest, or cancel through the normal cancel path and settle the part payment; reconnect Xero if it could not be read |
 | Members aren't offered Internet Banking at checkout | The module is off, or the booking is inside the minimum lead time | Turn the module on and check the **Minimum lead time** value |
 
 ## Related links

@@ -35,6 +35,11 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   sendUnmuteableAdminAlert: mocks.sendUnmuteableAdminAlert,
 }));
 
+// #3643: the hold-kept alert stamps the Xero organisation at send time.
+vi.mock("@/lib/xero-link-short-code", () => ({
+  getXeroOrgShortCode: async () => null,
+}));
+
 import { EMAIL_AUDIT_DEFAULTS } from "@/lib/email-message-audit-defaults";
 import {
   renderTemplateString,
@@ -46,6 +51,7 @@ import {
 } from "@/lib/email/admin-alerts-booking";
 import {
   sendAdminDuplicateCaptureRefundAlert,
+  sendAdminInternetBankingHoldKeptAlert,
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
@@ -338,6 +344,52 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     );
     expect(sentRendered).toContain("may have gone back TWICE");
     expect(sentRendered).not.toContain("has NOT been sent back a second time");
+  });
+
+  it("admin-internet-banking-hold-kept: {{holdKeptNote}} gives the instruction each reason needs (#3643)", async () => {
+    /*
+      Part-paid says wait for the rest or cancel through the normal path;
+      unreadable says the job keeps trying; at check-in says it is the last
+      email. One editable body carries all three only through the token.
+    */
+    const send = (reason: "part-paid" | "unreadable" | "unreadable-at-check-in") =>
+      sendAdminInternetBankingHoldKeptAlert({
+        reason,
+        memberName: "Alice Example",
+        bookingId: "booking-9",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        holdUntil: new Date("2026-07-20T00:00:00Z"),
+        paidCents: reason === "part-paid" ? 5000 : null,
+        amountOwingCents: reason === "part-paid" ? 10000 : null,
+        xeroInvoiceNumber: "INV-001",
+        xeroInvoiceUrl: null,
+      }, CLUB_FORMAT_TEST);
+
+    await send("part-paid");
+    const partPaid = renderDefaultBody(
+      "admin-internet-banking-hold-kept",
+      capturedAdminTemplateData(),
+    );
+    expect(partPaid).toContain("Xero shows money already paid against its invoice");
+    expect(partPaid).toContain("Paid so far: $50.00");
+    expect(partPaid).toContain("Still owing: $100.00");
+
+    mocks.sendToAdmins.mockClear();
+    await send("unreadable");
+    const unreadable = renderDefaultBody(
+      "admin-internet-banking-hold-kept",
+      capturedAdminTemplateData(),
+    );
+    expect(unreadable).toContain("could not be read from Xero");
+    expect(unreadable).toContain("Paid so far: unknown");
+    expect(unreadable).not.toContain("money already paid");
+
+    mocks.sendToAdmins.mockClear();
+    await send("unreadable-at-check-in");
+    expect(
+      renderDefaultBody("admin-internet-banking-hold-kept", capturedAdminTemplateData()),
+    ).toContain("This is the last email about it");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

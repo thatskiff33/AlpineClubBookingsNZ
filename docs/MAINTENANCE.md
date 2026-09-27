@@ -1617,7 +1617,7 @@ A hold whose invoice received the member's cash after the release is **not** an
 under-clear and is listed apart as "paid in cash after release, note retired".
 The late payment retired the pending note and credited the member, so a credit
 note now would credit an invoice the member paid: take no action on those rows
-(a part payment is #3643's to decide).
+(a part payment is kept, not released — see below).
 
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
@@ -1639,6 +1639,25 @@ its allocations again from what the invoices owe now; only a PARTIAL note
 replays its recorded allocation plan. A note that failed because the invoices
 owe less than it (part of the booking was paid) is never retried
 automatically: resolve it by hand.
+
+**A part-paid hold is kept, not released (#3643, `INV-PAY-107`).** Before
+releasing a hold the job reads the booking's primary and supplementary invoices
+from Xero, outside the release transaction, and also looks for a payment the
+inbound sync already recorded (a part payment leaves only a `PAYMENT` link,
+roles `INVOICE_PAYMENT` / `SUPPLEMENTARY_INVOICE_PAYMENT`). Any payment keeps the
+hold: no cancel, no clearing note, no member email, and one **Internet banking
+hold kept** admin email per hold (booking reference, invoice link, amount paid
+and owing) with a `booking.internet_banking_hold_kept` audit entry. The release
+transaction re-checks the links under its locks, so a payment recorded between
+the read and the lock also keeps the hold. An invoice the job cannot read (Xero
+disconnected, down, or a payload without payment fields) keeps the hold too:
+one email when it is first unreadable, the read retried every run, and one last
+email once the club's check-in date arrives. The job's result counts these as
+`kept`. To resolve one: wait for the member to pay the rest (the inbound sync
+then settles the booking), or cancel it through the normal cancel path and
+decide the refund or credit for the part payment there. The repair CLI will not
+queue or retry a full clearing note over a recorded part payment either; it
+reports `MANUAL_REVIEW_REQUIRED` instead.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either

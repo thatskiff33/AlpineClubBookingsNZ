@@ -610,10 +610,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   amount (#1597). Only credit allocated to the invoice as a Xero credit note is
   subtracted; the 100% local restore does not double-count. Gated on an ISSUED
   invoice.
+- **Only an unpaid hold is released**: one with any payment against its
+  invoices is kept ([INV-PAY-107]).
 - One note per booking: the enqueue stands down on the booking's active
   clearing-note link or a live operation with its key; the repair arm while a
   clearing operation is live or failed, proposes none once late cash retired
-  one, and never auto-retries a shortfall. The cron never re-selects a released
+  one, and never auto-retries a shortfall or a note over a recorded part
+  payment ([INV-PAY-107]). The cron never re-selects a released
   hold, including one released before #3535 with a refund note; the repair tool
   still can (#3639).
   `scripts/audit-ib-hold-clearing.ts` counts only allocated clearing
@@ -621,6 +624,26 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Pinned by `internet-banking-payment-cron.test.ts`,
   `invoice-clearing-amount.test.ts`, `xero-refund-method-documents.test.ts`
   and `xero-operation-retry.test.ts`.
+
+## INV-PAY-107
+
+- **An expired internet-banking hold with any payment against its invoices is
+  kept, not released** (#3643; owner decision, 26 September 2026, option A).
+  Evidence is Xero read live — primary and supplementary invoices, cash by
+  `classifyXeroInvoiceCashEvidence` — plus the inbound sync's recorded
+  `PAYMENT` links (`isRecordedBookingInvoicePayment`), the only local trace of
+  a part payment. The read runs before the release transaction; the transaction
+  re-checks the links under its locks. An invoice that cannot be read keeps the
+  hold too; never "unpaid" by default.
+- **One admin alert per hold per reason** (part-paid, unreadable, still
+  unreadable on the club's check-in date), claim-guarded, with a
+  `booking.internet_banking_hold_kept` audit entry. The beds stay held until
+  the rest is paid or an officer cancels through the normal cancel path.
+- The repair tool raises manual review, never a queued or retried full
+  clearing note, over a recorded part payment.
+- Pinned by `internet-banking-payment-cron.test.ts`,
+  `internet-banking-hold-payment-evidence.test.ts` and
+  `xero-booking-repair.test.ts`.
 
 ## INV-PAY-018
 
