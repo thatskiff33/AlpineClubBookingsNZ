@@ -359,6 +359,9 @@ print_summary() {
 # Main
 # --------------------------------------------------------------------------- #
 command -v docker >/dev/null 2>&1 || fatal "docker is required but not on PATH"
+# The drill migrates and seeds its databases through `pnpm exec` (#3673), so
+# check for pnpm now rather than after a container has been started for nothing.
+command -v pnpm >/dev/null 2>&1 || fatal "pnpm is required but not on PATH (see CONTRIBUTING.md, \"Package manager: pnpm\")"
 
 start_container
 create_databases

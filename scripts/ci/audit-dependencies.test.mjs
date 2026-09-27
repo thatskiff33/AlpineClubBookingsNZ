@@ -441,9 +441,31 @@ describe("classifyAuditRun", () => {
 
     it("still accepts a complete counts object with every severity a real number", () => {
       const stdout = JSON.stringify({
-        metadata: { vulnerabilities: Object.fromEntries(SEVERITY_ORDER.map((s) => [s, 0])) },
+        metadata: {
+          vulnerabilities: Object.fromEntries(SEVERITY_ORDER.map((s) => [s, 0])),
+          totalDependencies: 3,
+        },
       });
       expect(classifyAuditRun({ exitCode: 0, stdout }).outcome).toBe("clean");
+    });
+  });
+
+  /*
+    #3673 review: a clean count over NOTHING is not clean. A lockfile pnpm read
+    as empty, or a report shape that stopped saying how much it audited, would
+    otherwise print CLEAN over a tree the advisory service never saw.
+  */
+  describe("a scan of nothing is never clean", () => {
+    const zero = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, 0]));
+    it.each([
+      ["totalDependencies is 0", { vulnerabilities: zero, totalDependencies: 0 }],
+      ["totalDependencies is absent", { vulnerabilities: zero }],
+      ["totalDependencies is not a number", { vulnerabilities: zero, totalDependencies: "1099" }],
+    ])("refuses to exit 0 when %s", (_label, meta) => {
+      const result = classifyAuditRun({ exitCode: 0, stdout: JSON.stringify({ advisories: {}, metadata: meta }) });
+      expect(result.outcome).toBe("inconclusive");
+      expect(result.reason).toContain("no packages audited");
+      expect(formatReport(result).exitCode).toBe(1);
     });
   });
 

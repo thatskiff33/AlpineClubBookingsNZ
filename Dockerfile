@@ -4,10 +4,19 @@ FROM node:24.17-alpine AS base
 # cannot drift from CI and the lockfile; only that one field is copied in, so
 # this layer is rebuilt only when package.json changes. The runner stage below
 # never has pnpm: it does not install anything.
+#
+# npm is used once, to install pnpm, and then removed with npx and corepack:
+# the deps, builder and migrate images need only pnpm, a leftover npm is the
+# habit this repository now refuses (#3673), and the base image's bundled npm
+# is one nobody would be patching (it used to be upgraded to a pinned version
+# here). The runner removes the same three for the same reason.
 COPY package.json /tmp/package-manager/package.json
 RUN npm install -g "$(node -p "require('/tmp/package-manager/package.json').packageManager")" \
   && npm cache clean --force \
-  && rm -rf /tmp/package-manager
+  && rm -rf /tmp/package-manager /root/.npm \
+    /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+  && pnpm --version
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -31,13 +40,10 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
-# pnpm checks node_modules against the lockfile before every `pnpm run` /
-# `pnpm exec` and, by default, installs when it thinks they differ (#3673).
-# Here that install would run under NODE_ENV=production and drop the
-# devDependencies the build needs, so drift fails the build instead of quietly
-# changing node_modules. node_modules comes straight from the frozen install in
-# the deps stage, so the check passes on every normal build.
-ENV pnpm_config_verify_deps_before_run=error
+# pnpm's pre-run dependency check is `error` for the whole repository
+# (`verifyDepsBeforeRun` in pnpm-workspace.yaml, #3673), so a `pnpm run` below
+# fails on drift instead of reinstalling under NODE_ENV=production and dropping
+# the devDependencies the build needs.
 ENV DATABASE_URL=postgresql://tac:password@postgres:5432/tacbookings
 
 # Stripe publishable key is delivered at runtime from the encrypted DB store

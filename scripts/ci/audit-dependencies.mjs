@@ -526,7 +526,23 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
     };
   }
 
-  return { outcome: "clean", severityCounts, exitCode };
+  // A scan of nothing is not a clean scan (#3673 review). pnpm reports how many
+  // packages it sent to the advisory service; a lockfile it read as empty, or a
+  // report that no longer says, must not print CLEAN over a tree it never saw.
+  const scanned = parsed.metadata?.totalDependencies;
+  if (!(typeof scanned === "number" && Number.isFinite(scanned) && scanned > 0)) {
+    return {
+      outcome: "inconclusive",
+      severityCounts,
+      exitCode,
+      reason:
+        "pnpm audit reported no packages audited (`metadata.totalDependencies` is " +
+        `${scanned === undefined ? "absent" : JSON.stringify(scanned)}), so a clean count ` +
+        "covers nothing. Nothing has been cleared.",
+    };
+  }
+
+  return { outcome: "clean", severityCounts, exitCode, scanned };
 }
 
 /**

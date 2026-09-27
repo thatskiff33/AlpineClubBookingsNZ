@@ -853,6 +853,59 @@ describe("package manager contract (#3673)", () => {
     expect(workspace).toMatch(/^allowBuilds:$/m);
   });
 
+  /*
+    #3673 review: these settings decide which third-party code runs at install
+    time and what the audit may overlook, so they are pinned EXACTLY. A key added
+    under `allowBuilds:` would run a new install script; `strictDepBuilds: false`
+    would let an unlisted one run with only a warning; `dangerouslyAllowAllBuilds`
+    would run all of them; `auditConfig` (its `ignoreGhsas` list) was shown to
+    turn `pnpm audit` green over a real advisory; `registry` would move where
+    packages AND advisories come from; `minimumReleaseAge: 0` would drop pnpm's
+    one-day hold on fresh releases.
+  */
+  it("pins which install scripts run, and forbids the settings that would widen that or blind the audit", () => {
+    const workspace = readRepoFile("pnpm-workspace.yaml");
+    const lines = workspace.split(/\r?\n/);
+    const start = lines.indexOf("allowBuilds:");
+    expect(start).toBeGreaterThan(-1);
+    const entries: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (!/^\s/.test(line)) break;
+      entries.push(line.trim());
+    }
+    expect(entries).toEqual([
+      '"@prisma/engines@7.10.0": true',
+      '"@sentry/cli@2.58.6": true',
+      "core-js: false",
+      "esbuild@0.28.1: true",
+      "prisma@7.10.0: true",
+      "unrs-resolver@1.12.2: true",
+    ]);
+
+    const topLevelKeys = lines
+      .map((line) => /^([A-Za-z][\w-]*):/.exec(line)?.[1])
+      .filter((key): key is string => key !== undefined);
+    for (const forbidden of [
+      "dangerouslyAllowAllBuilds",
+      "strictDepBuilds",
+      "auditConfig",
+      "registry",
+      "registries",
+      "minimumReleaseAge",
+      "onlyBuiltDependencies",
+      "neverBuiltDependencies",
+    ]) {
+      expect(topLevelKeys, `pnpm-workspace.yaml must not set \`${forbidden}\``).not.toContain(forbidden);
+    }
+    // Nested spellings too, e.g. an ignore list under some other key.
+    expect(workspace).not.toMatch(/ignoreGhsas|ignoreCves/);
+
+    // A run never installs by itself (AGENTS.md: an install needs authorisation),
+    // and the virtual store stays inside each worktree.
+    expect(workspace).toMatch(/^verifyDepsBeforeRun: error$/m);
+    expect(workspace).toMatch(/^enableGlobalVirtualStore: false$/m);
+  });
+
   it("has one lockfile, and refuses an npm one in CI and in git", () => {
     const root = readdirSync(process.cwd());
     expect(root).toContain("pnpm-lock.yaml");
@@ -909,5 +962,10 @@ describe("package manager contract (#3673)", () => {
     expect(dockerfile).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
+    // npm is used once, to install pnpm, and then removed in the SAME layer, so
+    // the builder and migrate images carry pnpm and no npm/npx.
+    const base = dockerfile.slice(0, dockerfile.indexOf("FROM base AS deps"));
+    expect(base).toContain("/usr/local/lib/node_modules/npm");
+    expect(base).toContain("/usr/local/bin/npx");
   });
 });
