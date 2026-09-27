@@ -112,7 +112,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
-| `INV-MONEY-016` | Membership type alone decides subscription liability; access role grants no exemption |
+| `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |

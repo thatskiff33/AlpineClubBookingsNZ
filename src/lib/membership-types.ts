@@ -473,6 +473,17 @@ export function defaultMembershipTypeKeyForRole(
 }
 
 /**
+ * Existing members keep their stored role-default type when it is archived.
+ * Archiving prevents new assignments; it does not erase booking policy or an
+ * annual-billing obligation. Callers may select different columns, but both
+ * must use this unfiltered stored-row lookup (INV-SSOT-001, INV-MONEY-016).
+ * Billing deliberately has no synthetic fallback if the row is absent.
+ */
+export function storedRoleDefaultMembershipTypeWhere(keys: string[]) {
+  return { key: { in: keys } } satisfies Prisma.MembershipTypeWhereInput;
+}
+
+/**
  * The DISPLAY NAME of the built-in type a role falls back to when a member has
  * no season assignment (#2978), e.g. `NON_MEMBER` -> "Non-Member".
  *

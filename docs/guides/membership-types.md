@@ -82,6 +82,10 @@ change.
    **Reactivate** brings it back. Full and Non-Member cannot be archived because
    bookings still use them. If one was archived before this guard existed,
    **Reactivate** remains available.
+   Existing members without a season assignment can still use an archived
+   built-in role-default type for booking and annual billing. Its saved
+   subscription rule and effective annual fee continue to apply; officers
+   review any resulting charge in the billing preview.
 2. **Delete** is only offered for **Custom** (non-built-in) types. If the type has
    no assignments you confirm and it is gone. If it still has assignments, a
    **Delete … / Move assignments to** dialog opens: pick an active target type,
