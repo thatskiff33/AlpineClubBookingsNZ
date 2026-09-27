@@ -36,18 +36,29 @@ vi.mock("next-auth/react", () => ({
 }));
 
 /*
-  The page's two server reads (#3633): the session, and the Xero base currency
-  the reader hands to a viewer who may read the Xero organisation. The reader's
-  own gate is pinned in `xero-base-currency-server.test.ts`; here it is only the
-  value the page passes down.
+  The page's two server reads (#3633): the admin guard, and the Xero base
+  currency the reader hands to a viewer who may read the Xero organisation. The
+  guard's refusals are pinned against the REAL guard in
+  `app/(admin)/admin/club-format/__tests__/page-xero-base-currency-gate.test.ts`,
+  and the reader's own gate in `xero-base-currency-server.test.ts`; here it is
+  only the value the page passes down.
 */
 const server = vi.hoisted(() => ({
-  auth: vi.fn(),
+  member: { id: "member-1" },
   readXeroBaseCurrencyForViewer: vi.fn(),
+  refresh: vi.fn(),
 }));
-vi.mock("@/lib/auth", () => ({ auth: server.auth }));
+vi.mock("@/lib/admin-layout-guard", () => ({
+  guardAdminLayout: async () => ({ outcome: "admitted", member: server.member }),
+}));
 vi.mock("@/lib/xero-base-currency-server", () => ({
   readXeroBaseCurrencyForViewer: server.readXeroBaseCurrencyForViewer,
+}));
+vi.mock("next/navigation", () => ({
+  redirect: (destination: string) => {
+    throw new Error(`REDIRECT:${destination}`);
+  },
+  useRouter: () => ({ refresh: server.refresh }),
 }));
 
 import ClubFormatPage from "@/app/(admin)/admin/club-format/page";
@@ -94,8 +105,8 @@ beforeEach(() => {
   }));
   vi.stubGlobal("fetch", fetchMock);
   signInAs(["ADMIN"]);
-  server.auth.mockResolvedValue({ user: { id: "member-1" } });
   server.readXeroBaseCurrencyForViewer.mockResolvedValue(null);
+  server.refresh.mockReset();
 });
 
 describe("an admin who is not a Full Admin (#3596)", () => {
@@ -304,9 +315,14 @@ describe("the Xero base-currency warning (#3633)", () => {
     render(await ClubFormatPage());
     await screen.findByTestId("current-club-currency");
 
-    expect(server.readXeroBaseCurrencyForViewer).toHaveBeenCalledWith({
-      id: "member-1",
-    });
+    // The guard's database-fresh member, never the bare JWT session.
+    expect(server.readXeroBaseCurrencyForViewer).toHaveBeenCalledWith(
+      server.member,
+    );
+    // Inside the permanently mounted live region (#3633 review).
+    expect(warning()?.closest('[role="status"]')).toBe(
+      screen.getByTestId("club-format-xero-base-currency-region"),
+    );
     expect(warning()).toHaveTextContent(
       "The club's currency is CHF but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in CHF while their Xero invoices are in NZD.",
     );
@@ -321,6 +337,29 @@ describe("the Xero base-currency warning (#3633)", () => {
     ["the base currency is unknown or not this viewer's to read", null],
   ])("is not shown when %s", async (_label, xeroBaseCurrency) => {
     render(<ClubFormatPanel xeroBaseCurrency={xeroBaseCurrency} />);
+    await screen.findByTestId("current-club-currency");
+    expect(warning()).not.toBeInTheDocument();
+    // The region stays mounted, empty, so a later warning is announced.
+    expect(
+      screen.getByTestId("club-format-xero-base-currency-region"),
+    ).toHaveAttribute("role", "status");
+  });
+
+  it("is not shown for a stored currency no card can be charged in", async () => {
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        state: {
+          ...STORED_STATE,
+          // Display falls back to NZD; the stored JPY charges no card.
+          currencyCode: "NZD",
+          currencySource: "persisted-unusable",
+          unusableStoredCurrency: "JPY",
+        },
+      }),
+    }));
+    render(<ClubFormatPanel xeroBaseCurrency="AUD" />);
     await screen.findByTestId("current-club-currency");
     expect(warning()).not.toBeInTheDocument();
   });
@@ -354,5 +393,49 @@ describe("the Xero base-currency warning (#3633)", () => {
       ),
     );
     expect(warning()).not.toBeInTheDocument();
+  });
+});
+
+// #3633 review: the club's currency also reaches the browser through the
+// (admin) layout's ClubFormatProvider, so a successful save must refresh the
+// server tree or the Xero wizard keeps comparing against the old currency.
+describe("refreshing the server tree after a save (#3633)", () => {
+  async function saveLocaleChange() {
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
+    await screen.findByTestId("current-club-currency");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change currency and format" }),
+    );
+    fireEvent.change(screen.getByLabelText("Number and date format"), {
+      target: { value: "fr-CH" },
+    });
+    fireEvent.click(screen.getByRole("checkbox"));
+  }
+
+  it("refreshes once a save succeeds", async () => {
+    await saveLocaleChange();
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: { ...STORED_STATE, locale: "fr-CH" } }),
+    }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save currency and format" }),
+    );
+    await waitFor(() => expect(server.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not refresh when the save fails", async () => {
+    await saveLocaleChange();
+    fetchMock.mockImplementation(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "Refused" }),
+    }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save currency and format" }),
+    );
+    await screen.findByText("Refused");
+    expect(server.refresh).not.toHaveBeenCalled();
   });
 });

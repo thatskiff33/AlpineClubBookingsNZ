@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -218,6 +219,7 @@ export function ClubFormatPanel({
   xeroBaseCurrency: string | null;
 }) {
   const formatChangedAt = useChangedAtFormatter();
+  const router = useRouter();
   const [state, setState] = useState<ClubFormatState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -318,9 +320,15 @@ export function ClubFormatPanel({
     );
   }
 
+  /*
+    The club side is the currency cards are CHARGED in, the same answer the
+    setup list and the Xero wizard compare against (#3633 review). A stored
+    currency that is not usable charges no card at all (the Stripe step already
+    says so), so it gives no base-currency warning: `null` is "unknown".
+  */
   const currencyMismatch = xeroBaseCurrencyMismatch(
     xeroBaseCurrency,
-    state.currencyCode,
+    state.currencySource === "persisted-unusable" ? null : state.currencyCode,
   );
   const chosenCurrency = currencyChoice ?? state.currencyCode;
   const chosenLocale = localeChoice ?? state.locale;
@@ -418,6 +426,15 @@ export function ClubFormatPanel({
       }
       setState(payload.state);
       cancelEditing();
+      /*
+        #3633 review: the club's currency also reaches the browser through
+        `ClubFormatProvider`, mounted by the (admin) layout from a server read.
+        Without a refresh that context keeps the OLD currency for the rest of
+        this in-app session, so the Xero setup wizard's base-currency warning,
+        and every amount on other admin screens, would go on using it until a
+        full reload. Refreshing re-renders the server tree with the new value.
+      */
+      router.refresh();
     } catch {
       setError("Could not save the club's currency and locale.");
     } finally {
@@ -449,6 +466,26 @@ export function ClubFormatPanel({
                 "currency",
               )}`}
             </p>
+            {/* Permanently mounted once the values have loaded, and only its
+                content swaps (the live-region rule in docs/ARCHITECTURE.md, and the
+                wizard's own base-currency box): a save that brings the warning in,
+                or clears it, is then announced. */}
+            <div role="status" data-testid="club-format-xero-base-currency-region">
+              {currencyMismatch ? (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
+                  data-testid="club-format-xero-base-currency-warning"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  <span>
+                    {clubFormatXeroBaseCurrencyMismatch(
+                      currencyMismatch.xeroBaseCurrency,
+                      currencyMismatch.clubCurrencyCode,
+                    )}
+                  </span>
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">
@@ -470,21 +507,6 @@ export function ClubFormatPanel({
             </p>
           </div>
         </div>
-
-        {currencyMismatch ? (
-          <div
-            className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
-            data-testid="club-format-xero-base-currency-warning"
-          >
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            <span>
-              {clubFormatXeroBaseCurrencyMismatch(
-                currencyMismatch.xeroBaseCurrency,
-                currencyMismatch.clubCurrencyCode,
-              )}
-            </span>
-          </div>
-        ) : null}
 
         {state.updatedAt ? (
           <p className="text-sm text-muted-foreground">

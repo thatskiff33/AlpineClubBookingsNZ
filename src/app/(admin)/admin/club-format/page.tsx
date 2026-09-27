@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
+
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
-import { auth } from "@/lib/auth";
+import { guardAdminLayout } from "@/lib/admin-layout-guard";
 import { CLUB_FORMAT_REACH, CLUB_FORMAT_SERVER_SETTINGS } from "@/lib/club-format-copy";
 import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
 
@@ -21,11 +23,16 @@ import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
  * server-side on both verbs of `/api/admin/club-format` — `"any-admin"` on the
  * read, Full Admin on the write.
  *
- * THE ONE THING THE PAGE READS THE SESSION FOR is the Xero base-currency
- * warning (#3633). The base currency comes from the Xero organisation summary,
- * which only a finance viewer may read (`XERO_ORGANISATION_READ_PERMISSION`), so
- * `readXeroBaseCurrencyForViewer` hands everyone else `null` and the panel then
- * shows no warning. It decides nothing about opening the page.
+ * THE PAGE RE-RUNS THE ADMIN GUARD for the Xero base-currency warning (#3633).
+ * The base currency comes from the Xero organisation summary, which only a
+ * finance viewer may read (`XERO_ORGANISATION_READ_PERMISSION`), and reading it
+ * can cost a live Xero call. A layout's gate does not stop its page rendering,
+ * so the page runs `guardAdminLayout()` itself (as `ai-diagnostics/page.tsx`
+ * does) and hands the reader the guard's DATABASE-fresh member, never the bare
+ * JWT session: a deactivated account, a pending forced password change or an
+ * unfinished two-factor sign-in is redirected before Xero is asked anything.
+ * `readXeroBaseCurrencyForViewer` then hands everyone outside the finance
+ * audience `null`, and the panel shows no warning.
  *
  * THE BLURB SAYS WHAT IS TRUE TODAY. Stage 1 recorded the setting, stage 2
  * (#3564) moved the browser screens onto it, #3565 every amount and #3566 every
@@ -34,8 +41,9 @@ import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
  * confirmation panel and the contextual help so the three cannot disagree.
  */
 export default async function ClubFormatPage() {
-  const session = await auth();
-  const xeroBaseCurrency = await readXeroBaseCurrencyForViewer(session?.user);
+  const guard = await guardAdminLayout();
+  if (guard.outcome === "redirect") redirect(guard.destination);
+  const xeroBaseCurrency = await readXeroBaseCurrencyForViewer(guard.member);
   return (
     <div className="space-y-6">
       <div className="space-y-2">
