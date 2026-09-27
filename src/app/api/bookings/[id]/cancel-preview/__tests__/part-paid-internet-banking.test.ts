@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   loadCancellationPolicy: vi.fn(),
   paymentEligibleForPaidCancelPath: vi.fn(),
   readHoldPaymentEvidence: vi.fn(),
+  hasAdminAccess: vi.fn(),
+  checkRateLimit: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -40,11 +42,24 @@ vi.mock("@/lib/booking-cancel", () => ({
 vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
   readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
 }));
+vi.mock("@/lib/access-roles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/access-roles")>()),
+  hasAdminAccess: mocks.hasAdminAccess,
+}));
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/admin-permissions")>()),
+  hasAdminAreaAccess: () => false,
+}));
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+  checkRateLimit: mocks.checkRateLimit,
+}));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
 import { GET } from "@/app/api/bookings/[id]/cancel-preview/route";
+import { clearPartPaymentPreviewCacheForTests } from "@/lib/internet-banking-part-payment-at-cancel";
 
 // Half back when cancelled at least 14 days out; the frozen clock is 1 July
 // and check-in is 1 August, so the half tier applies.
@@ -98,6 +113,9 @@ async function preview() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearPartPaymentPreviewCacheForTests();
+  mocks.hasAdminAccess.mockReturnValue(false);
+  mocks.checkRateLimit.mockResolvedValue({ success: true, limit: 60, remaining: 59, resetAt: Date.now() + 60_000 });
   mocks.auth.mockResolvedValue({ user: { id: "member-1" } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.bookingFindUnique.mockResolvedValue(partPaidBooking());
@@ -132,7 +150,7 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     );
   });
 
-  it("refuses with the cancel's own sentence when Xero shows cash it cannot size", async () => {
+  it("sends a member to the club, with the cancel's own sentence, when Xero shows cash it cannot size", async () => {
     mocks.readHoldPaymentEvidence.mockResolvedValue({
       ...PART_PAID,
       fromRecordedLinkOnly: true,
@@ -143,7 +161,42 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     const { status, body } = await preview();
 
     expect(status).toBe(409);
-    expect(String(body.error)).toContain("could not be read exactly");
+    expect(String(body.error)).toContain("contact the club");
+  });
+
+  it("DECISION 2: tells an officer the booking cancels as unpaid and the payment is settled by hand", async () => {
+    mocks.hasAdminAccess.mockReturnValue(true);
+    mocks.readHoldPaymentEvidence.mockResolvedValue({
+      ...PART_PAID,
+      fromRecordedLinkOnly: true,
+      cashComplete: false,
+      amountDueCents: null,
+    });
+
+    const { status, body } = await preview();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ hasPayment: false, paymentSettledByHand: true, creditRefundAmountCents: 0 });
+  });
+
+  it("reads Xero at most once a minute per booking for the dialog (D8)", async () => {
+    await preview();
+    await preview();
+
+    expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it("is rate-limited per user before any Xero read (D8)", async () => {
+    mocks.checkRateLimit.mockResolvedValue({ success: false, limit: 60, remaining: 0, resetAt: Date.now() + 60_000 });
+
+    const { status } = await preview();
+
+    expect(status).toBe(429);
+    expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-query" }),
+      "cancel-preview:member-1",
+    );
   });
 
   it("still shows nothing paid when Xero shows nothing paid", async () => {

@@ -941,6 +941,44 @@ describe("runBookingXeroRepair", () => {
       })
     );
 
+    // #3643 D2: the cancel path recorded the part payment as the receipt and
+    // its unpaid-rest note is missing - no link has been recorded yet. Still
+    // manual review, never a full-size re-queue.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [
+            makeBooking({
+              status: "CANCELLED",
+              payment: {
+                ...makeBooking().payment,
+                status: "PARTIALLY_REFUNDED",
+                stripePaymentIntentId: null,
+                transactions: [
+                  {
+                    id: "ptx_receipt",
+                    paymentId: "payment_1",
+                    kind: "PRIMARY",
+                    source: "INTERNET_BANKING",
+                    stripePaymentIntentId: null,
+                    amountCents: 5000,
+                    refundedAmountCents: 2500,
+                    status: "PARTIALLY_REFUNDED",
+                    paymentMethodId: null,
+                    reason: "xero_part_payment_recognised_at_cancel",
+                    withdrawnAt: null,
+                    createdAt: new Date("2026-05-03T00:00:00Z"),
+                    updatedAt: new Date("2026-05-03T00:00:00Z"),
+                  },
+                ],
+              },
+            }),
+          ],
+        }),
+        scope: { all: true },
+      })
+    );
+
     // A reversed (DELETED) payment is not money held: the queue arm is back.
     const reversed = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({

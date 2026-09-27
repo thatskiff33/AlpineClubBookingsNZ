@@ -702,3 +702,17 @@ describe("CancelBookingButton — internet banking refunds as credit only", () =
     expect(screen.queryByTestId("forced-credit-refund")).toBeNull();
   });
 });
+
+// #3643 DECISION 2: a payment the app cannot credit is settled by hand.
+describe("CancelBookingButton — a recorded payment settled by hand", () => {
+  it("says the cancel treats the booking as unpaid and the treasurer settles the payment", async () => {
+    stubPreviewFetch({ ...previewBody, hasPayment: false, paymentSettledByHand: true });
+    render(<CancelBookingButton bookingId="bk_org" onBehalfOfMember />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel on behalf of member" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("payment-settled-by-hand")).toBeTruthy();
+    });
+    expect(screen.queryByText(/No payment has been taken/)).toBeNull();
+  });
+});

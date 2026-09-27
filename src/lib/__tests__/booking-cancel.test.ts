@@ -81,6 +81,8 @@ const mocks = vi.hoisted(() => {
   // #3643: the live Xero read before a part-paid internet banking cancel, and
   // the ledger writers the claim records the part payment through.
   readHoldPaymentEvidence: vi.fn(),
+  hasRecordedInvoicePayment: vi.fn(),
+  alertExpiredHold: vi.fn(),
   txPaymentFindUnique: vi.fn(),
   reconcilePaymentAggregates: vi.fn(),
   recordInternetBankingPaymentTransaction: vi.fn(),
@@ -194,6 +196,11 @@ vi.mock("@/lib/payment-transactions", () => ({
 
 vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
   readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
+  hasRecordedInvoicePayment: mocks.hasRecordedInvoicePayment,
+}));
+
+vi.mock("@/lib/internet-banking-hold-kept", () => ({
+  alertExpiredHold: mocks.alertExpiredHold,
 }));
 
 vi.mock("@/lib/payment-recovery", async () => {
@@ -2873,138 +2880,133 @@ describe("cancelBooking credit refunds", () => {
         manuallyMarkedPaidAt: null,
         additionalPaymentStatus: null,
         reference: "IB-REF",
+        internetBankingHoldUntil: null,
       },
     });
+    const READ_AT = new Date("2026-06-30T23:00:00Z");
+    // $300 invoice, $100 paid: $200 still owed.
     const PART_PAID = {
       kind: "paid",
-      readStartedAt: new Date(),
+      readStartedAt: READ_AT,
       invoices: [],
       fromRecordedLinkOnly: false,
-      paidCents: 15000,
+      paidCents: 10000,
       cashComplete: true,
-      amountDueCents: 15000,
+      amountDueCents: 20000,
       paidInFull: false,
     };
+    const pendingPrimary = {
+      id: "ptx_ib_primary",
+      kind: "PRIMARY",
+      source: "INTERNET_BANKING",
+      status: "PENDING",
+      amountCents: 30000,
+      refundedAmountCents: 0,
+    };
+    const orgBooking = () => ({
+      ...partPaidBooking(),
+      memberId: null,
+      member: null,
+      organisationId: "org_1",
+      organisation: { name: "School", email: "school@example.com" },
+    });
 
     beforeEach(() => {
       const booking = partPaidBooking();
       mocks.bookingFindUnique.mockResolvedValue(booking);
       mocks.txBookingFindUnique.mockResolvedValue(partPaidBooking());
       mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+      mocks.hasRecordedInvoicePayment.mockResolvedValue(false);
       mocks.txPaymentFindUnique.mockResolvedValue({
         ...booking.payment,
-        transactions: [
-          {
-            id: "ptx_ib_primary",
-            kind: "PRIMARY",
-            source: "INTERNET_BANKING",
-            status: "PENDING",
-            amountCents: 30000,
-            refundedAmountCents: 0,
-          },
-        ],
+        transactions: [pendingPrimary],
       });
       mocks.reconcilePaymentAggregates.mockResolvedValue({
         ...booking.payment,
-        amountCents: 15000,
+        amountCents: 10000,
+        status: "SUCCEEDED",
+      });
+      mocks.recordInternetBankingPaymentTransaction.mockResolvedValue({
+        ...booking.payment,
+        amountCents: 10000,
         status: "SUCCEEDED",
       });
       mocks.calculateRefundAmount.mockReturnValue({
-        refundAmountCents: 7500,
+        refundAmountCents: 5000,
         refundPercentage: 50,
       });
+      mocks.alertExpiredHold.mockResolvedValue(undefined);
     });
 
-    it("records the part payment as captured, refunds the policy share as credit, and clears only what is owed", async () => {
-      const result = await cancelBooking(
+    const cancelAs = (role: string, hasBookingsEditAccess = false) =>
+      cancelBooking(
         "booking_ib",
         "member_1",
-        "ADMIN",
+        role,
         "127.0.0.1",
         CLUB_FORMAT_TEST,
         "card",
+        { hasBookingsEditAccess },
       );
+
+    it("records the part payment as captured, refunds the policy share as credit, and queues the unpaid rest in the claim", async () => {
+      const result = await cancelAs("ADMIN");
 
       expect(result).toMatchObject({
         status: 200,
-        data: { refundMethod: "credit", refundAmountCents: 7500 },
+        data: { refundMethod: "credit", refundAmountCents: 5000 },
       });
-      // The pending receipt row becomes the receipt, for exactly the cash Xero shows.
       expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
         where: { id: "ptx_ib_primary" },
         data: expect.objectContaining({
-          amountCents: 15000,
+          amountCents: 10000,
           status: "SUCCEEDED",
           reason: "xero_part_payment_recognised_at_cancel",
         }),
       });
-      expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({
-        paymentId: "payment_ib",
-        store: mocks.lastTx,
-      });
-      // The policy is tiered off what was PAID, not the invoice total.
-      expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(15000, 30, expect.anything(), "credit");
-      expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
-        "member_1",
-        7500,
-        "booking_ib",
-        undefined,
-        expect.anything(),
-      );
-      // Never the never-captured flattening, never the full-size clearing note.
+      expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(10000, 30, expect.anything(), "credit");
       expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(
         expect.objectContaining({ data: { status: "FAILED" } }),
       );
+      // D2: the clearing note for the unpaid rest commits with the claim.
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
         {
           bookingId: "booking_ib",
-          refundAmountCents: 15000,
+          refundAmountCents: 20000,
           clearsUnpaidInvoice: true,
           clearsUnpaidBalance: true,
         },
-        { createdByMemberId: "member_1" },
+        { createdByMemberId: "member_1", store: mocks.lastTx },
       );
-      // The live read happened before the claim transaction opened.
+      // D1: the re-check asked only about payments recorded since the read.
+      expect(mocks.hasRecordedInvoicePayment).toHaveBeenCalledWith(
+        { paymentId: "payment_ib", bookingId: "booking_ib", since: READ_AT },
+        mocks.lastTx,
+      );
       expect(mocks.readHoldPaymentEvidence.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.prismaTransaction.mock.invocationCallOrder[0],
       );
     });
 
-    it("refuses the cancel when Xero shows a payment it cannot size exactly", async () => {
-      mocks.readHoldPaymentEvidence.mockResolvedValue({
-        ...PART_PAID,
-        fromRecordedLinkOnly: true,
-        cashComplete: false,
-        amountDueCents: null,
-      });
+    it("refuses when a further payment lands after the read ($100 read, then $200 arrives)", async () => {
+      mocks.hasRecordedInvoicePayment.mockResolvedValue(true);
 
-      const result = await cancelBooking(
-        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
-      );
+      const result = await cancelAs("ADMIN");
 
       expect(result).toMatchObject({ status: 409 });
-      expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     });
 
     it("refuses the claim when the payment changed since the read (already captured)", async () => {
       mocks.txPaymentFindUnique.mockResolvedValue({
         ...partPaidBooking().payment,
-        transactions: [
-          { id: "ptx_ib_primary", kind: "PRIMARY", source: "INTERNET_BANKING", status: "SUCCEEDED" },
-        ],
-      });
-      // Were the guard missing, the writer would happily add a second receipt.
-      mocks.recordInternetBankingPaymentTransaction.mockResolvedValue({
-        ...partPaidBooking().payment,
-        amountCents: 15000,
-        status: "SUCCEEDED",
+        transactions: [{ ...pendingPrimary, status: "SUCCEEDED" }],
       });
 
-      const result = await cancelBooking(
-        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
-      );
+      const result = await cancelAs("ADMIN");
 
       expect(result).toMatchObject({ status: 409 });
       expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
@@ -3012,39 +3014,121 @@ describe("cancelBooking credit refunds", () => {
       expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
     });
 
-    it("still cancels an unpaid internet banking booking the never-captured way", async () => {
-      mocks.readHoldPaymentEvidence.mockResolvedValue({
-        kind: "unpaid",
-        readStartedAt: new Date(),
-        invoices: [],
+    it("turns a lone FAILED internet banking row into the receipt instead of adding a second (D6)", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({
+        ...partPaidBooking().payment,
+        transactions: [{ ...pendingPrimary, status: "FAILED" }],
       });
-      // No captured ledger row, so the never-captured claim flattens it.
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 200 });
+      expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "ptx_ib_primary" } }),
+      );
+      expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses two internet banking rows rather than guessing which is the receipt (D6)", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({
+        ...partPaidBooking().payment,
+        transactions: [pendingPrimary, { ...pendingPrimary, id: "ptx_ib_old", status: "FAILED" }],
+      });
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 409 });
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    });
+
+    it("throws rather than commit a receipt when the claim is refused after recording it (D7)", async () => {
+      // The recorded payment re-derives as still PENDING: not paid-path eligible.
+      mocks.reconcilePaymentAggregates.mockResolvedValue({
+        ...partPaidBooking().payment,
+        status: "PENDING",
+      });
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 409 });
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+    });
+
+    it("DECISION 2: an officer cancels an unsizable payment as unpaid, with no clearing note, and alerts the treasurer", async () => {
+      const linkOnly = {
+        ...PART_PAID,
+        fromRecordedLinkOnly: true,
+        cashComplete: false,
+        amountDueCents: null,
+      };
+      mocks.readHoldPaymentEvidence.mockResolvedValue(linkOnly);
       mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
 
-      const result = await cancelBooking(
-        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
-      );
+      const result = await cancelAs("MEMBER", true);
 
       expect(result).toMatchObject({ status: 200, data: { refundAmountCents: 0 } });
       expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      // A full note would over-clear: the repair tool lists it instead.
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.alertExpiredHold).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "payment_ib", bookingId: "booking_ib" }),
+        linkOnly,
+        "cancelled-payment-recorded",
+        expect.anything(),
+      );
+    });
+
+    it("DECISION 2: a member's own cancel of such a booking is sent to the club", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        ...PART_PAID,
+        fromRecordedLinkOnly: true,
+        cashComplete: false,
+        amountDueCents: null,
+      });
+
+      const result = await cancelAs("MEMBER");
+
+      expect(result).toMatchObject({ status: 409, error: expect.stringContaining("contact the club") });
+      expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+    });
+
+    it("DECISION 2: an organisation's part-paid booking is cancelled as unpaid by an officer and alerted, never credited", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(orgBooking());
+      mocks.txBookingFindUnique.mockResolvedValue(orgBooking());
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 200 });
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.alertExpiredHold).toHaveBeenCalledWith(
+        expect.anything(),
+        PART_PAID,
+        "cancelled-payment-recorded",
+        expect.anything(),
+      );
+    });
+
+    it("still cancels an unpaid internet banking booking the never-captured way", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        kind: "unpaid",
+        readStartedAt: READ_AT,
+        invoices: [],
+      });
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 200, data: { refundAmountCents: 0 } });
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.alertExpiredHold).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
         { bookingId: "booking_ib", refundAmountCents: 30000, clearsUnpaidInvoice: true },
         { createdByMemberId: "member_1" },
       );
-    });
-
-    it("does not read Xero for an organisation-owned booking (no member account to credit)", async () => {
-      mocks.bookingFindUnique.mockResolvedValue({
-        ...partPaidBooking(),
-        memberId: null,
-        member: null,
-        organisationId: "org_1",
-        organisation: { name: "School", email: "school@example.com" },
-      });
-
-      await cancelBooking("booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
-
-      expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
     });
   });
 });

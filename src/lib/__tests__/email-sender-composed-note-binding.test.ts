@@ -355,7 +355,13 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       One editable body carries all four only through the token.
     */
     const send = (
-      reason: "part-paid" | "paid-in-full" | "unreadable" | "released-unreadable",
+      reason:
+        | "part-paid"
+        | "part-paid-manual"
+        | "paid-in-full"
+        | "unreadable"
+        | "released-unreadable"
+        | "cancelled-payment-recorded",
     ) =>
       sendAdminInternetBankingHoldKeptAlert({
         reason,
@@ -363,7 +369,8 @@ describe("#2320 review — senders supply the composed notes their defaults rend
         bookingId: "booking-9",
         checkIn: new Date("2026-08-01"),
         checkOut: new Date("2026-08-03"),
-        holdUntil: new Date("2026-07-20T00:00:00Z"),
+        holdUntil:
+          reason === "cancelled-payment-recorded" ? null : new Date("2026-07-20T00:00:00Z"),
         paidCents: reason === "part-paid" ? 5000 : null,
         amountOwingCents: reason === "part-paid" ? 10000 : null,
         xeroInvoiceNumber: "INV-001",
@@ -393,6 +400,16 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     const released = await rendered("released-unreadable");
     expect(released).toContain("has now been released");
     expect(released).not.toContain("NOT cancelled");
+
+    // #3643 D5: an organisation's, or an unsizable, payment is settled by hand.
+    const manual = await rendered("part-paid-manual");
+    expect(manual).toContain("cannot hand this payment back as account credit");
+    expect(manual).not.toContain("returns the refundable share");
+
+    // DECISION 2: the cancel alert, for a booking that may never have held.
+    const cancelled = await rendered("cancelled-payment-recorded");
+    expect(cancelled).toContain("cancelled as unpaid");
+    expect(cancelled).toContain("Hold deadline: none");
   });
 
   it("admin-second-instrument-settlement-conflict: {{secondInstrumentConflictNote}} says what the card money already did (#3638)", async () => {
