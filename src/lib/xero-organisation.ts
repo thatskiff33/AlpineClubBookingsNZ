@@ -21,6 +21,7 @@ import {
   getXeroMockInternalOrigin,
 } from "@/lib/xero-mock-endpoint";
 import { registerXeroOrganisationCacheInvalidator } from "@/lib/xero-organisation-cache-bus";
+import { normaliseClubCurrencyCode } from "@/lib/club-format";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 
 /**
@@ -414,6 +415,11 @@ export async function getXeroFinancialYearEndMonth(
 // and the subscription-lockout settings panel, which all read
 // `/api/admin/xero/organisation`.
 //
+// #3633 adds the org BASE CURRENCY the same way: another field off the same
+// `getOrganisations` response, so it costs no extra Xero call either. It feeds
+// the warning shown when the club's currency differs from it (Xero books every
+// invoice in its base currency, `xero-base-currency.ts`).
+//
 // #2261 review (F1/F2) hardened the "one read per TTL" claim for the case that
 // actually matters — a connection that is PRESENT but FAILING (revoked refresh
 // token awaiting re-entry, an org read 500, a per-minute 429 during a bulk
@@ -466,6 +472,14 @@ export interface XeroConnectedOrganisation {
    */
   shortCode: string | null;
   /**
+   * The organisation's base currency as an upper-case ISO 4217 code (e.g.
+   * `NZD`), or null when unavailable (#3633). Every invoice this site sends is
+   * booked in it, because the invoices carry no currency of their own.
+   * Callers treat null as "unknown": the base-currency warning then says
+   * nothing rather than guess.
+   */
+  baseCurrency: string | null;
+  /**
    * Why the last read failed, or null when it succeeded (#2394).
    *
    * Every other field on this summary degrades silently on failure — that is
@@ -490,6 +504,7 @@ const EMPTY_ORG_SUMMARY: XeroConnectedOrganisation = {
   name: null,
   financialYearEndMonth: null,
   shortCode: null,
+  baseCurrency: null,
   readFailure: null,
 };
 
@@ -595,6 +610,19 @@ function normaliseShortCode(value: unknown): string | null {
 }
 
 /**
+ * Normalise Xero's `Organisation.baseCurrency` to an upper-case ISO 4217 code
+ * or null (#3633), by the same shape rule the club's own currency is judged by.
+ *
+ * Takes `unknown` on purpose: xero-node declares `CurrencyCode` as an ambient
+ * enum, which TypeScript types as numeric, although the SDK deserialises it as
+ * the string Xero sent (`"NZD"`). Anything that is not a currency-code string
+ * degrades to null, which the base-currency warning reads as "unknown".
+ */
+function normaliseBaseCurrency(value: unknown): string | null {
+  return typeof value === "string" ? normaliseClubCurrencyCode(value) : null;
+}
+
+/**
  * How long a FAILED organisation read is remembered (#2261 review, F1).
  *
  * Short enough that an admin who fixes the connection (re-entering credentials,
@@ -666,6 +694,7 @@ async function readXeroConnectedOrganisation(): Promise<XeroConnectedOrganisatio
           name: mock.name,
           financialYearEndMonth: mock.financialYearEndMonth,
           shortCode: normaliseShortCode(mock.shortCode),
+          baseCurrency: normaliseBaseCurrency(mock.baseCurrency),
           readFailure: null,
         },
         false,
@@ -721,6 +750,7 @@ async function readXeroConnectedOrganisation(): Promise<XeroConnectedOrganisatio
             ? rawMonth
             : null,
         shortCode: normaliseShortCode(org?.shortCode),
+        baseCurrency: normaliseBaseCurrency(org?.baseCurrency),
         readFailure: null,
       },
       false,
@@ -743,8 +773,9 @@ async function readXeroConnectedOrganisation(): Promise<XeroConnectedOrganisatio
 }
 
 /**
- * Returns the connected Xero organisation's name, financial year-end month and
- * deep-link short code, or nulls when Xero is not connected / unavailable.
+ * Returns the connected Xero organisation's name, financial year-end month,
+ * deep-link short code and base currency, or nulls when Xero is not connected /
+ * unavailable.
  * Never throws — a failed read falls back to the last cached summary (or
  * nulls). Cached in-process: 12 hours for a successful read, one minute for a
  * failed one, with concurrent cold-cache callers sharing a single read.
