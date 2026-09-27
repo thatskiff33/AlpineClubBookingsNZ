@@ -513,6 +513,27 @@ describe("Admin membership types API", () => {
     );
   });
 
+  it.each([
+    ["FULL", "MEMBER_RATE"],
+    ["NON_MEMBER", "NON_MEMBER_RATE"],
+  ] as const)("accepts an unchanged %s full-draft save", async (key, bookingBehavior) => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ key, bookingBehavior }),
+    );
+    const response = await updateMembershipType(
+      request("http://localhost/api/admin/membership-types/type-1", {
+        description: "Updated description",
+        isActive: true,
+        bookingBehavior,
+      }, "PATCH"),
+      params("type-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { description: "Updated description" } }),
+    );
+  });
+
   it("keeps custom types' booking behavior editable", async () => {
     mocks.membershipTypeFindUnique.mockResolvedValue(
       membershipType({ key: "SOCIAL_MEMBER", isBuiltIn: false }),

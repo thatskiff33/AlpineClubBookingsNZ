@@ -185,7 +185,24 @@ describe("AdminMembershipTypesPage", () => {
     );
   });
 
-  it("hides both Full archive controls while leaving ordinary built-ins archivable", async () => {
+  it("hides both Full and Non-Member archive controls while leaving ordinary built-ins archivable", async () => {
+    const nonMember = {
+      ...membershipTypes[0],
+      id: "type-non-member",
+      key: "NON_MEMBER",
+      name: "Non-Member",
+      bookingBehavior: "NON_MEMBER_RATE",
+    };
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/membership-types") {
+        return jsonResponse({ membershipTypes: [...membershipTypes, nonMember] });
+      }
+      if (url.startsWith("/api/admin/xero/contact-groups")) {
+        return jsonResponse({ groups: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
     await renderPage();
     expect(screen.getAllByRole("button", { name: "Archive" })).toHaveLength(1);
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
@@ -194,6 +211,13 @@ describe("AdminMembershipTypesPage", () => {
     expect(within(dialog).getByLabelText("Active and assignable")).toHaveProperty("disabled", true);
     expect(within(dialog).queryByRole("button", { name: "Restore expected booking behavior" })).toBeNull();
     expect(within(dialog).getByText(/expected: Member rate/)).not.toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    const nonMemberCard = screen.getByText("Non-Member").closest("article");
+    expect(nonMemberCard).not.toBeNull();
+    fireEvent.click(within(nonMemberCard!).getByRole("button", { name: "Edit" }));
+    const nonMemberDialog = screen.getByRole("dialog", { name: "Edit Non-Member" });
+    expect(within(nonMemberDialog).queryByRole("button", { name: "Archive" })).toBeNull();
+    expect(within(nonMemberDialog).getByText(/expected: Non-member rate/)).not.toBeNull();
   });
 
   it("offers an archived, changed Full type a repair and reactivation path", async () => {

@@ -759,7 +759,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
 | `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
-| `INV-LIFE-093` | Key-resolved Full and Non-Member stay active with built-in booking behavior; existing drift is repairable |
+| `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
 | `INV-LIFE-021` | A `FamilyGroup` with no `FamilyGroupMember` rows is inert everywhere |
 | `INV-LIFE-022` | Family-group facts: the guest-eligibility correction, billing recipients, and memberless groups |

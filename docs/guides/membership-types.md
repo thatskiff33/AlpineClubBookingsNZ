@@ -38,7 +38,7 @@ change.
    its assignment count, the booking-behaviour and subscription-behaviour labels,
    and its allowed age-tier chips.
 
-   ![Membership types page: the type list with Full, Associate, Life, School, Non-Member, and Family cards, each with Edit, Archive, and reorder controls, and the Roll forward seasonal assignments section](../images/admin/admin-membership-types.png)
+   ![Membership types page showing Full and Non-Member with Edit and reorder controls, other types with Archive, and the Roll forward seasonal assignments section](../images/admin/admin-membership-types.png)
 
 2. Use the up/down arrows on a card to reorder types (the order is saved
    immediately). Click **Refresh** to reload.
