@@ -407,7 +407,10 @@ describe("typecheck project coverage", () => {
         `${declaration} must declare exactly the exports of ${module}`,
       ).toEqual(runtime);
     }
-  });
+    // Its own budget: two cold imports of JavaScript tools, measured at 4,800ms
+    // alone on a loaded 20-core Windows host (1.46s idle) during #3675, against
+    // the 5,000ms default. Same budget as the graph walk above.
+  }, 30_000);
 
   it("refuses a Vitest-collected extension that TypeScript cannot load", () => {
     const unsupported = vitestTests.filter(

@@ -30,18 +30,23 @@ the full local gate.
   section below.
 
 It also names one **global** setup, `vitest.global-setup.ts`, which runs once
-per run in the main process rather than in every worker, so it has no place in
-that order. It clears the scratch folders earlier runs leaked into the system
-temp directory (#3671). Vitest writes each run's transformed modules to
-`os.tmpdir()/<21-character nanoid>/ssr/` and deletes that folder only when the
-run closes cleanly, swallowing the error when Windows refuses; every killed or
-interrupted run used to leave 100–160 MB behind, about 14 GB a day under agent
-load. The sweep removes a folder only when its name is exactly a nanoid, it and
-its `ssr/` are real directories (never a symlink or junction), nothing in it has
-changed for two hours, and it is not this run's own. It runs in the background,
-removes at most ten folders per run, and never fails a run. A live run refreshes
-its own folders every ten minutes, so a long watch session is never mistaken for
-a leak. The guards and their tests are `scripts/lib/vitest-temp-sweep.ts` and
+per run in the main process, not in every worker, so it has no place in that
+order. It clears the scratch folders Vitest leaks into the system temp directory
+(#3671). Vitest never removes its root `os.tmpdir()/<nanoid>` folder, so every
+run leaks one, and a project's folder survives any run that is killed or whose
+delete fails. The sweep starts a detached child process that the run does not
+wait for. It removes a folder only when all of these hold:
+
+- the name is exactly a nanoid;
+- it holds nothing but real `ssr/` or `client/` directories of Vitest's files,
+  never a link;
+- the newest modification time of the folder and of those marker directories is
+  more than 24 hours old;
+- it is not this run's own folder.
+
+A live run refreshes its own folders every ten minutes. The full explanation,
+including what the guards do and do not guarantee, is the docstring of
+`scripts/lib/vitest-temp-sweep.ts`. The tests are in
 `scripts/__tests__/vitest-temp-sweep.test.ts`.
 
 The `.mts` extension is deliberate, not incidental (#2864). Vite reads a plain

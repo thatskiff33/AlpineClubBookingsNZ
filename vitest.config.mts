@@ -31,12 +31,9 @@ export default defineConfig({
       "./vitest.setup.ts",
     ],
     // Runs ONCE per run in the main process, not per test file, so it has no
-    // place in the setupFiles order above and cannot disturb it. It clears the
-    // `<tmpdir>/<nanoid>/ssr/` scratch folders earlier runs leaked (#3671):
-    // Vitest removes its own only in a clean `close()` and swallows the failure
-    // when that delete is refused, so every killed or interrupted run left
-    // 100–160 MB in the system temp directory. The guards that keep it off
-    // anything else are in `scripts/lib/vitest-temp-sweep.ts`.
+    // place in the setupFiles order above and cannot disturb it. It sweeps the
+    // scratch folders Vitest leaks into the system temp directory (#3671); the
+    // leak and the guards are explained in `scripts/lib/vitest-temp-sweep.ts`.
     globalSetup: ["./vitest.global-setup.ts"],
     // Never descend into agent git worktrees (.claude/worktrees/*): they hold
     // stale snapshots of the repo whose test files would otherwise be collected
