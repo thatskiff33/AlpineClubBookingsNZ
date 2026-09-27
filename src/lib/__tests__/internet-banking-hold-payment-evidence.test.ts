@@ -148,6 +148,14 @@ describe("readHoldPaymentEvidence (#3643)", () => {
     expect(evidence).toMatchObject({ kind: "paid", fromRecordedLinkOnly: true });
   });
 
+  it("keeps a recorded payment even when the live read shows none (never release on a disagreement)", async () => {
+    mocks.linkFindMany.mockResolvedValue([paymentLink()]);
+
+    const evidence = await readHoldPaymentEvidence(HOLD);
+
+    expect(evidence).toMatchObject({ kind: "paid", fromRecordedLinkOnly: true });
+  });
+
   it("releases (no-invoice) a hold with no issued invoice and no payment link", async () => {
     const evidence = await readHoldPaymentEvidence({ ...HOLD, xeroInvoiceId: null });
 
