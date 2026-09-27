@@ -169,7 +169,14 @@ export async function queueClearingNoteForUnpaidRest(
   if (partPayment.amountDueCents <= 0) return;
   try {
     const queued = await enqueueXeroModificationCreditNoteOperation(
-      { bookingId, refundAmountCents: partPayment.amountDueCents, clearsUnpaidInvoice: true },
+      {
+        bookingId,
+        refundAmountCents: partPayment.amountDueCents,
+        clearsUnpaidInvoice: true,
+        // The booking WAS partly paid: the note says it clears the unpaid
+        // balance, never "booking not paid" (#3643).
+        clearsUnpaidBalance: true,
+      },
       { createdByMemberId },
     );
     if (queued.queueOperationId && (await isXeroConnected())) {

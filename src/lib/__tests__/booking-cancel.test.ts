@@ -2957,7 +2957,12 @@ describe("cancelBooking credit refunds", () => {
       );
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-        { bookingId: "booking_ib", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        {
+          bookingId: "booking_ib",
+          refundAmountCents: 15000,
+          clearsUnpaidInvoice: true,
+          clearsUnpaidBalance: true,
+        },
         { createdByMemberId: "member_1" },
       );
       // The live read happened before the claim transaction opened.
