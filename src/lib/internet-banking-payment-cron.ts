@@ -56,7 +56,7 @@ export interface InternetBankingHoldReleaseResult {
  * "Once" for the started-stay alert: the claim window outlives any hold, so one
  * `AlertCooldown` row per payment means the treasurer is told a single time.
  */
-const STARTED_STAY_ALERT_WINDOW_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+const STARTED_STAY_ALERT_WINDOW_MS = 36_500 * 86_400_000;
 
 function releaseOneHold(
   paymentId: string,
