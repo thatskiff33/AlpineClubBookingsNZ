@@ -1970,7 +1970,7 @@ function waitingSupplementaryInvoiceOperationsWhere(
 }
 
 /** The operation's payload as an object, or `null` if it is not one. */
-export function supplementaryInvoicePayload(
+function supplementaryInvoicePayload(
   requestPayload: Prisma.JsonValue | null,
 ): Record<string, unknown> | null {
   return requestPayload &&

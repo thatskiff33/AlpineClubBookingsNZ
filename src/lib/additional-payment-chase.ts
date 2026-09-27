@@ -218,7 +218,7 @@ export type AdditionalPaymentDoorAnswer<Intent> =
   /** The member may pay this intent now: hand out its client secret; keep its invoice waiting. */
   | { state: "payable"; intent: Intent }
   /** Stripe has taken (or is taking) the money and our rows have not caught up: refuse a second form; keep the invoice for the capture to release. */
-  | { state: "captured-at-provider" }
+  | { state: "captured-at-provider"; intent: Intent }
   /** Nothing here can be paid: local door shut, Stripe says `canceled`, or Stripe has no such intent. */
   | { state: "closed" };
 
@@ -257,7 +257,7 @@ export async function resolveAdditionalPaymentDoor<
   }
   if (intent.status === "canceled") return { state: "closed" };
   if (PROVIDER_CAPTURED_INTENT_STATUSES.includes(intent.status)) {
-    return { state: "captured-at-provider" };
+    return { state: "captured-at-provider", intent };
   }
   return { state: "payable", intent };
 }

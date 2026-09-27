@@ -197,7 +197,6 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn(),
   lockSupplementaryInvoiceAnchor: vi.fn(),
   releaseWaitingSupplementaryInvoiceOperations: vi.fn(),
-  supplementaryInvoicePayload: vi.fn(),
 }));
 
 /**

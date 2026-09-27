@@ -240,9 +240,10 @@ describe("resolveAdditionalPaymentDoor", () => {
 
   it("reports money Stripe has taken, or is taking, that our rows have not caught up with", async () => {
     for (const status of ["succeeded", "requires_capture", "processing"]) {
+      const intent = { status };
       await expect(
-        resolveAdditionalPaymentDoor(openInput, async () => ({ status })),
-      ).resolves.toEqual({ state: "captured-at-provider" });
+        resolveAdditionalPaymentDoor(openInput, async () => intent),
+      ).resolves.toEqual({ state: "captured-at-provider", intent });
     }
   });
 

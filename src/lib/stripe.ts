@@ -271,13 +271,13 @@ export async function getPaymentIntent(
    * stripe-node's ~80s default and its retries apply) rather than let a Stripe
    * brown-out stall the cron behind it. Omitted, the request is unchanged.
    */
-  options?: { timeoutMs: number }
+  options?: { timeoutMs: number; expand?: string[] }
 ): Promise<Stripe.PaymentIntent> {
   const stripe = await getStripe();
   if (!options) return stripe.paymentIntents.retrieve(paymentIntentId);
   return stripe.paymentIntents.retrieve(
     paymentIntentId,
-    {},
+    options.expand ? { expand: options.expand } : {},
     { timeout: options.timeoutMs, maxNetworkRetries: 0 }
   );
 }
