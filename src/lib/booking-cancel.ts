@@ -78,6 +78,7 @@ import {
   memberCancelRefusal,
 } from "@/lib/booking-cancel-eligibility";
 import type { ClubFormat } from "@/lib/club-format";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -1238,12 +1239,11 @@ async function performBookingCancellation(
     // (floored at 0) so the clearing note never over-allocates the invoice.
     const xeroClearingAmountCents =
       fresh.payment?.xeroInvoiceId && !freshPaymentCaptured
-        ? Math.max(
-            0,
-            fresh.finalPriceCents +
-              fresh.payment.changeFeeCents -
-              xeroAllocatedAppliedCreditCents
-          )
+        ? unpaidInvoiceClearingAmountCents({
+            finalPriceCents: fresh.finalPriceCents,
+            changeFeeCents: fresh.payment.changeFeeCents,
+            xeroAllocatedAppliedCreditCents,
+          })
         : 0;
 
     if (fresh.payment?.id && xeroClearingAmountCents > 0) {
@@ -1252,6 +1252,9 @@ async function performBookingCancellation(
           {
             bookingId,
             refundAmountCents: xeroClearingAmountCents,
+            // #3535 (`INV-PAY-017`): nobody paid this invoice, so the note
+            // says it was cleared, never that a card refund was made.
+            clearsUnpaidInvoice: true,
           },
           {
             createdByMemberId: sessionUserId,

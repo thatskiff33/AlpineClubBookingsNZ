@@ -2155,6 +2155,7 @@ describe("processStoredXeroInboundEvents", () => {
       xero: { accountingApi },
       tenantId: "tenant_1",
     });
+    return { txOperationUpdateMany };
   }
 
   it("routes a booking cancelled inside the lodge-lock window into the credit-mint arm instead of resurrecting it to PAID (#1587)", async () => {
@@ -2222,7 +2223,7 @@ describe("processStoredXeroInboundEvents", () => {
     // visible, actionable line": no task, nothing on the stuck-state dashboard,
     // and a caller that treats the outcome as ordinary. The money became a log
     // line.
-    mockPostLockReconcileEvent({
+    const { txOperationUpdateMany } = mockPostLockReconcileEvent({
       lockedBookingStatus: "CANCELLED",
       capacityAvailable: true,
       owner: "organisation",
@@ -2238,6 +2239,17 @@ describe("processStoredXeroInboundEvents", () => {
 
     // No credit, because there is no account to mint into.
     expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    // #3535: cash arrived, so a pending clearing note is retired here too, as
+    // in the member arm.
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localModel: "Booking",
+        localId: "booking_ib_pl",
+        status: "PENDING",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+      }),
+      data: { status: "CANCELLED" },
+    });
 
     // The money is carried by a durable record on the payments board instead,
     // sized at the invoice's quantified cash rather than the payment's face
@@ -2653,6 +2665,38 @@ describe("processStoredXeroInboundEvents", () => {
       "lodge_ib_ac"
     );
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  // #3535: a hold released since then carries the booking-anchored clearing
+  // note, never `payment.xeroRefundCreditNoteId`. The alert must still say a
+  // clearing note was already issued, and a still-pending one is retired.
+  it("keeps the clearing-note warning for a hold released on the booking-anchored path, and retires a pending note (#3535)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+    });
+    mocks.txLinkFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.localModel === "Booking" && where.role === "MODIFICATION_CREDIT_NOTE"
+        ? { id: "link_clearing_note" }
+        : null
+    );
+
+    await processStoredXeroInboundEvents();
+
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localModel: "Booking",
+        localId: "booking_ib_cancelled",
+        status: "PENDING",
+        queueType: "MODIFICATION_CREDIT_NOTE",
+      }),
+      data: { status: "CANCELLED" },
+    });
+    const alerts = (sendAdminPaymentFailureAlert as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => (call[0] as { errorMessage: string }).errorMessage
+    );
+    expect(alerts.some((message) => message.includes("invoice-clearing credit note was ALREADY issued"))).toBe(true);
+    expect(alerts.some((message) => message.includes("remove the clearing note's allocation or void the clearing note"))).toBe(true);
   });
 
   it("stays silent on a webhook replay for an already-credited cancelled booking (#1357)", async () => {

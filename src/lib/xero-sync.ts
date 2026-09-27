@@ -37,6 +37,13 @@ export interface XeroSyncOperationInput {
    * through `readXeroInvoiceEmailInstruction`.
    */
   invoiceEmailDelivery?: XeroInvoiceEmailInstruction | null;
+  /**
+   * The row's queue type when the payload does not name one — a handler that
+   * opens its own operation with the execution-shape payload (#3535: the
+   * clearing-note builder on a retry), so readers that select by the column
+   * still see the row. The payload's own `queueType` wins when present.
+   */
+  queueType?: string | null;
   createdByMemberId?: string | null;
 }
 
@@ -454,7 +461,8 @@ export async function startXeroSyncOperation(
   // null.
   const requestPayload = sanitizeForJson(input.requestPayload);
   const payloadRecord = asRecord(requestPayload);
-  const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
+  const queueType =
+    (payloadRecord ? readString(payloadRecord.queueType) : null) ?? input.queueType ?? null;
 
   try {
     return await db.xeroSyncOperation.create({

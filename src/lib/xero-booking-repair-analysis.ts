@@ -14,6 +14,7 @@ import {
   readJsonString,
 } from "./xero-booking-repair-utils";
 import { bookingOwner } from "@/lib/booking-owner";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
 export function buildMemberName(booking: BookingRepairRecord) {
   return `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim();
@@ -178,15 +179,26 @@ export function getKnownModificationRefundTotalCents(booking: BookingRepairRecor
   }, 0);
 }
 
-export function getUnpaidCancellationClearingAmountCents(booking: BookingRepairRecord) {
+/**
+ * The clearing note a cancelled unpaid booking's invoice needs, sized by the
+ * one INV-PAY-017 helper the release and the cancel path use (#3535). The
+ * allocation sum is the booking's `MemberCreditNoteAllocation` total, which the
+ * loader reads; without it this arm queued a full note against an invoice whose
+ * applied credit was already allocated.
+ */
+export function getUnpaidCancellationClearingAmountCents(
+  booking: BookingRepairRecord,
+  xeroAllocatedAppliedCreditCents: number
+) {
   if (!booking.payment?.xeroInvoiceId) {
     return 0;
   }
 
-  return Math.max(
-    booking.payment.amountCents - booking.payment.refundedAmountCents,
-    booking.finalPriceCents + booking.payment.changeFeeCents
-  );
+  return unpaidInvoiceClearingAmountCents({
+    finalPriceCents: booking.finalPriceCents,
+    changeFeeCents: booking.payment.changeFeeCents,
+    xeroAllocatedAppliedCreditCents,
+  });
 }
 
 export function getCashCancellationRefundCandidateCents(booking: BookingRepairRecord) {
