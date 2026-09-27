@@ -10,7 +10,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
-import { BookingStatus, AgeTier } from "@prisma/client";
+import {
+  BookingStatus,
+  AgeTier,
+  GroupBookingPaymentMode,
+  PaymentStatus,
+} from "@prisma/client";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import { BookingMemberNightConflictError } from "@/lib/booking-member-night-conflicts";
 
@@ -31,6 +36,7 @@ const h = vi.hoisted(() => ({
   groupJoinFindUnique: vi.fn(),
   groupJoinCreate: vi.fn(),
   groupJoinUpdate: vi.fn(),
+  groupBookingFindUnique: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   bookingFindFirst: vi.fn(),
   bookingGuestFindMany: vi.fn(),
@@ -210,6 +216,10 @@ const tx = {
     findUnique: (...a: unknown[]) => h.groupJoinFindUnique(...a),
     create: (...a: unknown[]) => h.groupJoinCreate(...a),
     update: (...a: unknown[]) => h.groupJoinUpdate(...a),
+  },
+  // #3672: an organiser-pays join re-reads its group's settlement in the lock.
+  groupBooking: {
+    findUnique: (...a: unknown[]) => h.groupBookingFindUnique(...a),
   },
 };
 
@@ -571,6 +581,62 @@ describe("group join roster writes (#1039 items 2 and 3)", () => {
     const bookingCreateOrder = h.bookingCreate.mock.invocationCallOrder[0];
     expect(lockOrder).toBeLessThan(bookingCreateOrder);
     expect(lockOrder).toBeLessThan(rosterCheckOrder);
+  });
+
+  // #3672 (`INV-PAY-XXX`): the join decides the payer before the lock; a
+  // settlement paid in between must make this an ordinary member-pays booking,
+  // decided here, under lock(1), where the paid apply also runs.
+  describe("organiser-pays payer re-decided under the lock (#3672)", () => {
+    function groupWithSettlement(status: PaymentStatus | null) {
+      return {
+        paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+        settlement: status ? { status } : null,
+      };
+    }
+
+    it("keeps an organiser-settled joiner while the settlement is unpaid, read after lock(1)", async () => {
+      h.groupBookingFindUnique.mockResolvedValue(
+        groupWithSettlement(PaymentStatus.PENDING)
+      );
+
+      await createConfirmedBooking(
+        baseInput([guest(true, "Alice")], { groupJoin, organiserSettled: true })
+      );
+
+      expect(createPayloads()[0].organiserSettled).toBe(true);
+      expect(h.groupBookingFindUnique).toHaveBeenCalledWith({
+        where: { id: "group-1" },
+        select: { paymentMode: true, settlement: { select: { status: true } } },
+      });
+      expect(h.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        h.groupBookingFindUnique.mock.invocationCallOrder[0]
+      );
+      expect(h.groupBookingFindUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        h.bookingCreate.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("writes a member-pays booking when the settlement was paid after the join read it", async () => {
+      h.groupBookingFindUnique.mockResolvedValue(
+        groupWithSettlement(PaymentStatus.SUCCEEDED)
+      );
+
+      const outcome = await createConfirmedBooking(
+        baseInput([guest(true, "Alice")], { groupJoin, organiserSettled: true })
+      );
+
+      expect(outcome.type).toBe("created");
+      expect(createPayloads()[0]).not.toHaveProperty("organiserSettled");
+    });
+
+    it("never reads the group for a member-pays join", async () => {
+      await createConfirmedBooking(
+        baseInput([guest(true, "Alice")], { groupJoin })
+      );
+
+      expect(h.groupBookingFindUnique).not.toHaveBeenCalled();
+      expect(createPayloads()[0]).not.toHaveProperty("organiserSettled");
+    });
   });
 });
 

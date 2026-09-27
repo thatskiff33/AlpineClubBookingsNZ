@@ -1175,6 +1175,26 @@ one, check the other.
   `organiser-group-booking-card.test.tsx` and
   `group-settlement-invoice-binding-races.realdb.test.ts`.
 
+## INV-PAY-XXX
+
+**Related: `INV-PAY-105`** (the bound invoice) and **`INV-PAY-031`** (children
+total at apply).
+
+- **Once an organiser-pays group's settlement is paid, the organiser is never
+  billed for anyone else, and nobody is left unsettleable** (#3672, owner
+  option B). A member who joins afterwards gets an ordinary member-pays
+  booking and pays through the normal member flow. The payer is decided by
+  `organiserPaysForNewJoiner` (`src/lib/group-late-joiner.ts`) and re-decided
+  under `lock(1)` when the booking is written. A joiner who joined while the
+  bill was open but was not on the one paid (still `PAYMENT_PENDING`, or held
+  for review) is moved to member-pays in the transaction that marks the
+  settlement paid, and is emailed to pay. The organiser's card lists them as
+  paying for themselves.
+- Pinned by `group-late-joiner.test.ts`, `booking-split.test.ts`,
+  `group-settlement.test.ts`, `group-booking.test.ts`,
+  `organiser-group-booking-card.test.tsx` and
+  `member-group-join-panel.test.tsx`.
+
 ## INV-PAY-051
 
 - **An unpriceable booking edit holds the money as an explicit typed review, and

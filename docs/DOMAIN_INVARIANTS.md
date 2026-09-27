@@ -315,6 +315,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
 | `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
+| `INV-PAY-XXX` | Once an organiser-pays group is paid, a later or left-out joiner pays for themselves |
 
 ## Member-Guest Consent
 

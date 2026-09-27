@@ -36,6 +36,7 @@ function group(overrides: Partial<OrganiserGroupState> = {}): OrganiserGroupStat
           reconciliation: { state: "RECONCILED", reasons: [] },
         },
         isMember: true,
+        paysOwn: false,
       },
     ],
     settlement: null,
@@ -346,6 +347,50 @@ describe("OrganiserGroupBookingCard settlement", () => {
     expect(screen.queryByText(/Everyone in your group is confirmed/)).toBeNull();
   });
 
+  // #3672 (`INV-PAY-XXX`, owner option B): a joiner who arrived after the
+  // organiser paid pays for themselves. The card says so, and never tells the
+  // organiser to contact the club or pay for them.
+  it("says a joiner after the payment pays for themselves, not that the organiser must sort them out", async () => {
+    stubFetch({ internetBankingEnabled: true });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{
+          ...base,
+          joiners: [
+            ...base.joiners.map((j) => ({ ...j, status: "PAID" })),
+            {
+              ...base.joiners[0],
+              id: "j2",
+              name: "Cam Late",
+              status: "PAYMENT_PENDING",
+              priceCents: 2000,
+              paysOwn: true,
+            },
+          ],
+          settlement: {
+            status: "SUCCEEDED",
+            amountCents: 4500,
+            paidAt: "2026-07-01T00:00:00.000Z",
+            internetBankingReference: null,
+            invoiceDisplay: null,
+          },
+        }}
+      />
+    );
+
+    expect(
+      await screen.findByText(/Paying for themselves: Cam Late\. They joined after your payment, so they pay for their own places/)
+    ).toBeDefined();
+    expect(screen.getByText(/Everyone you paid for is confirmed/)).toBeDefined();
+    expect(screen.queryByText(/Not paid for yet/)).toBeNull();
+    expect(screen.queryByText(/Contact the club/)).toBeNull();
+    expect(screen.queryByText(/Everyone in your group is confirmed/)).toBeNull();
+  });
+
   it("announces a settle error to assistive technology", async () => {
     stubFetch({ internetBankingEnabled: false, settleOk: false, settleBody: { error: "Nope" } });
 
@@ -500,6 +545,7 @@ describe("OrganiserGroupBookingCard joiner money verdicts (#3278)", () => {
               priceCents: 4500,
               moneyReconciliation: { visibility: "WITHHELD" },
               isMember: true,
+              paysOwn: false,
             },
           ],
         })}
@@ -531,6 +577,7 @@ describe("OrganiserGroupBookingCard joiner money verdicts (#3278)", () => {
                 },
               },
               isMember: true,
+              paysOwn: false,
             },
           ],
         })}

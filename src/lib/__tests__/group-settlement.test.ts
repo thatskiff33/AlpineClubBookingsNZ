@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   loadModuleFlags: vi.fn(),
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
+  sendJoinPaySelf: vi.fn(),
   lodgeFindFirst: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   // #2576 §9: committing a group child CONFIRMED records the bounded same-owner
@@ -152,6 +153,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
 vi.mock("@/lib/email", () => ({
   sendGroupSettlementReceiptEmail: mocks.sendSettlementReceipt,
   sendGroupJoinSettledEmail: mocks.sendJoinSettled,
+  sendGroupJoinPaySelfEmail: mocks.sendJoinPaySelf,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -1480,6 +1482,8 @@ describe("applyGroupSettlementSucceeded", () => {
         { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
         { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
       ])
+      // #3672: inside the lock, no joiner was left off the paid bill.
+      .mockResolvedValueOnce([])
       // After commit: the settled bookings re-loaded for the joiner emails.
       .mockResolvedValueOnce([
         {
@@ -1528,6 +1532,146 @@ describe("applyGroupSettlementSucceeded", () => {
     // Notifications: one organiser receipt + one confirmation per joiner.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
+  });
+
+  // #3672 (`INV-PAY-XXX`, owner option B): a joiner who joined while the bill
+  // was open but is not on the one the organiser paid is never billed to the
+  // organiser and never left unsettleable: the same transaction moves them to
+  // member-pays, and they are told to pay.
+  it("moves a joiner the paid bill did not cover to member-pays, never bills the organiser, and tells them to pay", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 4500,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            id: ORGANISER,
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", lodgeId: "lodge-1" }])
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      // Inside the lock, after SUCCEEDED: the joiner the paid bill missed.
+      .mockResolvedValueOnce([{ id: "late-1" }])
+      // After commit: the settled booking, for its confirmation.
+      .mockResolvedValueOnce([
+        {
+          id: "child-1",
+          memberId: "m1",
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j1@example.com", firstName: "Jo" },
+          organisation: null,
+          _count: { guests: 1 },
+        },
+      ])
+      // After commit: the released booking, for its pay-for-yourself email.
+      .mockResolvedValueOnce([
+        {
+          id: "late-1",
+          memberId: "m-late",
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "late@example.com", firstName: "Lee" },
+          organisation: null,
+        },
+      ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 4500 }, CLUB_FORMAT_TEST);
+
+    expect(result.outcome).toBe("settled");
+    expect(result.settledBookingIds).toEqual(["child-1"]);
+    // The organiser paid for child-1 only: no Payment and no PAID flip for the
+    // late joiner.
+    expect(mocks.paymentUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookingId: "late-1" } })
+    );
+    const releaseCall = mocks.bookingUpdateMany.mock.calls.find(
+      ([args]) => args.data?.organiserSettled === false
+    );
+    expect(releaseCall?.[0]).toEqual({
+      where: expect.objectContaining({
+        id: { in: ["late-1"] },
+        parentBookingId: ORG_BOOKING,
+        organiserSettled: true,
+        deletedAt: null,
+        status: {
+          notIn: [
+            BookingStatus.PAID,
+            BookingStatus.CANCELLED,
+            BookingStatus.BUMPED,
+            BookingStatus.COMPLETED,
+          ],
+        },
+      }),
+      data: { organiserSettled: false },
+    });
+    // Released after the settlement is marked paid, in the same transaction.
+    const releaseOrder =
+      mocks.bookingUpdateMany.mock.invocationCallOrder[
+        mocks.bookingUpdateMany.mock.calls.indexOf(releaseCall!)
+      ];
+    expect(releaseOrder).toBeGreaterThan(
+      mocks.settlementUpdateMany.mock.invocationCallOrder[0]
+    );
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.sendJoinPaySelf).toHaveBeenCalledTimes(1);
+    expect(mocks.sendJoinPaySelf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingContext: { bookingId: "late-1", recipientMemberId: "m-late" },
+        email: "late@example.com",
+        organiserName: "Olive Organiser",
+      })
+    );
+    // The receipt counts only the joiner the organiser paid for.
+    expect(mocks.sendSettlementReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ joinerCount: 1, totalCents: 4500 }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("releases nobody and sends no pay-for-yourself email when the paid bill covered everyone", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 4500,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: { id: ORGANISER, email: "o@example.com", firstName: "O", lastName: "P" },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", lodgeId: "lodge-1" }])
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await applyGroupSettlementSucceeded({ id: "pi_1", amount: 4500 }, CLUB_FORMAT_TEST);
+
+    expect(
+      mocks.bookingUpdateMany.mock.calls.some(([args]) => args.data?.organiserSettled === false)
+    ).toBe(false);
+    expect(mocks.sendJoinPaySelf).not.toHaveBeenCalled();
   });
 });
 
@@ -1642,6 +1786,8 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
         { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
         { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
       ])
+      // #3672: inside the lock, no joiner was left off the paid bill.
+      .mockResolvedValueOnce([])
       // After commit: the settled bookings re-loaded for the joiner emails.
       .mockResolvedValueOnce([
         {

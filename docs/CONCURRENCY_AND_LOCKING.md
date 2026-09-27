@@ -3753,6 +3753,13 @@ check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
 any transaction. No lock key, order or site is added; the realdb proof is
 `group-settlement-invoice-binding-races.realdb.test.ts`.
 
+A joiner's payer is decided under the same `lock(1)` (`INV-PAY-XXX`, #3672):
+the booking create re-reads the group's settlement before writing an
+organiser-settled child, and the paid apply moves every organiser-settled
+joiner the paid bill missed to member-pays in the transaction that marks it
+SUCCEEDED. Whichever commits first, the other sees it. No lock key, order or
+site is added.
+
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database
 `concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker

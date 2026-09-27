@@ -13,10 +13,13 @@ import { MemberGroupJoinPanel } from "@/app/(website-dynamic)/join/[code]/member
 const CODE = "ABCD2345";
 
 function summary(overrides: Record<string, unknown> = {}) {
+  const paymentMode = overrides.paymentMode ?? "ORGANISER_PAYS";
   return {
     code: CODE,
     status: "OPEN",
-    paymentMode: "ORGANISER_PAYS",
+    paymentMode,
+    // #3672: how a member joining now pays; the group's mode unless paid.
+    joinerPaymentMode: paymentMode,
     organiserFirstName: "Olive",
     lodgeName: "West Ridge Hut",
     checkIn: "2026-07-01",
@@ -127,6 +130,34 @@ describe("MemberGroupJoinPanel", () => {
     expect(await screen.findByText(/You're in/)).toBeDefined();
     // ORGANISER_PAYS: no redirect to a pay page.
     expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining("/bookings/b1"));
+  });
+
+  // #3672 (`INV-PAY-XXX`): the organiser has already paid, so a member
+  // joining now pays for their own beds, like any each-pays joiner.
+  it("tells a joiner after the organiser has paid that they pay for themselves, and sends them to pay", async () => {
+    const fetchMock = stubFetch({
+      summary: summary({ paymentMode: "ORGANISER_PAYS", joinerPaymentMode: "EACH_PAYS_OWN" }),
+      internetBankingEnabled: true,
+      joinBody: { bookingId: "b1", organiserSettled: false, requiresPayment: true },
+    });
+
+    render(<MemberGroupJoinPanel code={CODE} />);
+
+    expect(
+      await screen.findByText(/Olive has already paid for the group, so you'll pay for your own beds/)
+    ).toBeDefined();
+    expect(screen.queryByText(/you won't be charged/)).toBeNull();
+    // The member-pays payment choice is offered, as for any each-pays joiner.
+    expect(screen.getByRole("button", { name: /Internet Banking/ })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: /Join and pay/ }));
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/bookings/b1");
+    });
+    const joinCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/join") && init?.method === "POST"
+    );
+    expect(JSON.parse((joinCall![1] as { body: string }).body).paymentMethod).toBe("stripe");
   });
 
   it("redirects to pay for an EACH_PAYS_OWN join", async () => {
