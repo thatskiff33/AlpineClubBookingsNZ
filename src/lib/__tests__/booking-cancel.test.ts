@@ -2881,6 +2881,12 @@ describe("cancelBooking credit refunds", () => {
           { id: "ptx_ib_primary", kind: "PRIMARY", source: "INTERNET_BANKING", status: "SUCCEEDED" },
         ],
       });
+      // Were the guard missing, the writer would happily add a second receipt.
+      mocks.recordInternetBankingPaymentTransaction.mockResolvedValue({
+        ...partPaidBooking().payment,
+        amountCents: 15000,
+        status: "SUCCEEDED",
+      });
 
       const result = await cancelBooking(
         "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
@@ -2888,6 +2894,7 @@ describe("cancelBooking credit refunds", () => {
 
       expect(result).toMatchObject({ status: 409 });
       expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
       expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
     });
 
