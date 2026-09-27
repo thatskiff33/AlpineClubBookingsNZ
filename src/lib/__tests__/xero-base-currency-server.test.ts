@@ -29,6 +29,7 @@ import {
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
 import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
+import { stripComments } from "./support/strip-comments";
 
 function viewerWithFinance(level: AdminPermissionLevel) {
   return {
@@ -124,13 +125,22 @@ describe("readXeroBaseCurrencyForViewer (#3633)", () => {
 */
 describe("the organisation route and the reader share one audience (#3633)", () => {
   it("gates the organisation route on XERO_ORGANISATION_READ_PERMISSION", () => {
-    const route = readFileSync(
-      path.join(process.cwd(), "src/app/api/admin/xero/organisation/route.ts"),
-      "utf8",
+    // Comments stripped (`INV-SSOT-004`: the one stripper), and anchored to the
+    // GET handler's own `requireAdmin({ ... })` call, so the gate text sitting
+    // in a comment or anywhere else in the file cannot satisfy it.
+    const route = stripComments(
+      readFileSync(
+        path.join(process.cwd(), "src/app/api/admin/xero/organisation/route.ts"),
+        "utf8",
+      ),
     );
+    const handler = /export async function GET\([^)]*\)\s*\{\s*const guard = await requireAdmin\(\{([\s\S]*?)\}\);/.exec(
+      route,
+    );
+    expect(handler, "GET must open with its requireAdmin call").not.toBeNull();
     const { area, level } = XERO_ORGANISATION_READ_PERMISSION;
-    expect(route).toContain(
-      `permission: { area: "${area}", level: "${level}" }`,
+    expect(handler![1].replace(/\s+/g, " ").trim()).toBe(
+      `permission: { area: "${area}", level: "${level}" },`,
     );
   });
 });
