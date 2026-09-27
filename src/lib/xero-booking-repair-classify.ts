@@ -6,6 +6,11 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import {
+  isClearingAllocationShortfall,
+  partialClearingNoteIsIncomplete,
+} from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import type {
@@ -1281,7 +1286,10 @@ export function classifyBookingContext(
     capturedPaymentTransactions.length === 0 &&
     primaryInvoice
   ) {
-    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
+    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
+      booking,
+      context.xeroAllocatedAppliedCreditCents
+    );
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
@@ -1298,7 +1306,52 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        // #3535: a clearing row CANCELLED by the late-cash arm means the
+        // member's cash arrived after the release - no clearing note is owed.
+        // (#3639 makes the arm's own "was it paid" test source-agnostic; this
+        // reads only the retired note.)
+        const clearingNoteRetiredByCash = bookingOperations.some(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "CANCELLED"
+        );
+        if (
+          blockingOperation &&
+          isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
+        ) {
+          // #3535: the invoices owe less than the note - retrying changes
+          // nothing until a person looks, so it is never a safe auto-retry.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "The invoice-clearing credit note was refused because the booking's invoices owe less than it (part of the booking may have been paid) - review it by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "An invoice-clearing credit note was refused because the booking's invoices owe less than it - review by hand; it is not retried automatically.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!blockingOperation && clearingNoteRetiredByCash) {
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "info",
+            summary:
+              "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
+            safeToAutoApply: false,
+            details: { paymentId: payment?.id ?? null, invoiceId: primaryInvoice.objectId },
+            actionKeys: [],
+          });
+        } else if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
             actionMap,
             buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
@@ -1326,6 +1379,8 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               refundAmountCents: clearingAmountCents,
+              // #3535 (`INV-PAY-017`): the note clears an unpaid invoice.
+              clearsUnpaidInvoice: true,
             },
           });
           addFinding(findings, {
@@ -1341,8 +1396,56 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else {
+          // #3535: a live or failed clearing operation the retry helper cannot
+          // replay must still be SEEN - silence here left an unpaid invoice open
+          // with nothing in the report (the #1356 third-arm rule).
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+              ? "A Xero invoice-clearing credit note operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero invoice-clearing credit note operation looks stuck."
+                : "A Xero invoice-clearing credit note operation is already pending or running.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              retryUnsupportedReason: blockingOperation.retryMeta.reason,
+            },
+            actionKeys: [],
+          });
         }
       } else {
+        // #3535: a note whose own operation went PARTIAL did not finish its
+        // allocations. Its row records the plan (one invoice, or the primary
+        // and supplementary invoices a clearing note is spread across), so the
+        // retry replays exactly that - a fresh allocation sized here would be
+        // the note's whole amount against the primary invoice alone.
+        const partialNoteOperation = bookingOperations.find(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "PARTIAL" &&
+            operation.xeroObjectId === cancellationCreditNote.objectId
+        );
+        // Only while a planned invoice still has no allocation link from this
+        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
+        // would report a whole note as broken forever.
+        const partialNoteRetryMeta =
+          partialNoteOperation &&
+          partialClearingNoteIsIncomplete(
+            partialNoteOperation.requestPayload,
+            cancellationCreditNote.objectId,
+            bookingLinks.filter(
+              (link) =>
+                link.xeroObjectType === "ALLOCATION" &&
+                link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+            )
+          )
+            ? getXeroOperationRetryMeta(partialNoteOperation)
+            : null;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,
@@ -1351,7 +1454,25 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (!allocation) {
+        if (partialNoteOperation && partialNoteRetryMeta?.supported) {
+          const action = addAction(
+            actionMap,
+            buildRetryAction(booking.id, partialNoteOperation, partialNoteRetryMeta)
+          );
+          addFinding(findings, {
+            code: "MISSING_CREDIT_NOTE_ALLOCATION",
+            severity: "critical",
+            summary:
+              "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
+            safeToAutoApply: true,
+            details: {
+              bookingId: booking.id,
+              creditNoteId: cancellationCreditNote.objectId,
+              operationId: partialNoteOperation.id,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!allocation) {
           const blockingOperation = getBlockingOperation(
             bookingOperations,
             "ALLOCATION",
