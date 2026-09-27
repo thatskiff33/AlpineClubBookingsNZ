@@ -55,16 +55,26 @@ member — see the operational-Xero behaviour in
 **A hold that has started being paid is kept, not cancelled** (#3643). Before it
 releases a hold, the cron reads the booking's invoices from Xero. If Xero shows
 any payment against them — say $150 of a $300 invoice — the booking stays
-confirmed, its beds stay held, and admins get one **Internet banking hold kept**
-email with the booking reference, the invoice link, and what has been paid and
-what is still owing. Nothing is refunded or credited. Either wait for the member
-to pay the rest (the booking is marked paid once Xero shows the invoice fully
-paid), or cancel the booking through the normal cancel path and decide the
-refund or credit there. If the invoice **cannot be read** (Xero disconnected or
-down), the hold is kept too: admins get one email, the cron keeps trying every
-run and releases the hold itself once Xero shows the invoice unpaid, and one
-last email goes out if it still cannot be read on the check-in date. The email
-goes to admins with the **payment failure** notification switched on.
+confirmed, its beds stay held, and admins get one **Internet banking hold needs
+attention** email with the booking reference, the invoice link, and what has
+been paid and what is still owing. Nothing is refunded or credited. Either wait
+for the member to pay the rest (the booking is marked paid once Xero shows the
+invoice fully paid), or cancel the booking in the app. The cancellation records
+the part payment as money received, applies the club's cancellation policy to
+it and returns the refundable share as account credit, and clears only what the
+invoice still owes. If Xero shows a payment whose amount it cannot give exactly,
+the cancel is refused until Xero can be read.
+
+If Xero shows the invoice **paid in full** but the app has not caught up, the
+email says so; the next Xero sync marks the booking paid. If the invoice
+**cannot be read** (Xero disconnected, down, or the invoice missing there), the
+hold is kept too and admins get one email. The cron keeps trying and releases the
+hold itself once Xero shows the invoice unpaid. If it still cannot be read by
+the check-in date or seven days after the hold deadline, whichever comes first,
+the hold is released and a second email goes out; the invoice-clearing credit
+note is only created once Xero can be read and shows the invoice still owes it.
+The email goes to admins with the **payment failure** notification switched on,
+and a send that reaches nobody is retried on the next run.
 
 ## Troubleshooting
 
@@ -72,7 +82,8 @@ goes to admins with the **payment failure** notification switched on.
 | --- | --- | --- |
 | Everything is read-only ("… can view Internet Banking settings but cannot change them") | Your finance role is view-only | Ask a finance-edit admin |
 | The page shows **Xero off** / **Module Not Ready** | The Xero integration or Internet Banking module is off | Enable Xero and the Internet Banking module — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
-| An expired hold was not cancelled and an **Internet banking hold kept** email arrived | Xero shows part of the invoice paid, or the invoice could not be read | Follow the email: wait for the rest, or cancel through the normal cancel path and settle the part payment; reconnect Xero if it could not be read |
+| An expired hold was not cancelled and an **Internet banking hold needs attention** email arrived | Xero shows part (or all) of the invoice paid, or the invoice could not be read | Follow the email: wait for the rest, or cancel the booking in the app (the part payment is credited under the policy); reconnect Xero if it could not be read |
+| Cancelling says "Xero shows a payment against this booking's invoice, but its amount could not be read exactly" | Xero is unreachable, or one of the booking's invoices could not be read, while a payment is recorded | Reconnect Xero or wait, then cancel again |
 | Members aren't offered Internet Banking at checkout | The module is off, or the booking is inside the minimum lead time | Turn the module on and check the **Minimum lead time** value |
 
 ## Related links

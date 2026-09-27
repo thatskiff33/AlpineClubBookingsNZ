@@ -2998,8 +2998,11 @@ alerted, and waitlists are processed. Held Internet Banking bookings are
 released by the payment cron when their hold expiry passes unpaid; the release
 cancels the booking, fails the pending payment, queues invoice-clearing
 credit-note work, emails the member, records history/audit, and processes
-waitlists. A hold whose invoice Xero shows any payment against, or cannot be
-read, is kept instead and admins are alerted once (#3643, `INV-PAY-107`).
+waitlists. A hold whose invoice Xero shows any payment against is kept instead
+and admins are alerted once; one Xero cannot read is kept only until check-in or
+seven days past the deadline. Cancelling a part-paid booking records the Xero
+cash as captured, so the cancellation policy applies to it (#3643,
+`INV-PAY-107`).
 
 ### Finance reporting
 

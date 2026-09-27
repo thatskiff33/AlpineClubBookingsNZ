@@ -629,21 +629,32 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **An expired internet-banking hold with any payment against its invoices is
   kept, not released** (#3643; owner decision, 26 September 2026, option A).
-  Evidence is Xero read live — primary and supplementary invoices, cash by
-  `classifyXeroInvoiceCashEvidence` — plus the inbound sync's recorded
-  `PAYMENT` links (`isRecordedBookingInvoicePayment`), the only local trace of
-  a part payment. The read runs before the release transaction; the transaction
-  re-checks the links under its locks. An invoice that cannot be read keeps the
-  hold too; never "unpaid" by default.
-- **One admin alert per hold per reason** (part-paid, unreadable, still
-  unreadable on the club's check-in date), claim-guarded, with a
-  `booking.internet_banking_hold_kept` audit entry. The beds stay held until
-  the rest is paid or an officer cancels through the normal cancel path.
+  Evidence is Xero read live before any transaction — primary and supplementary
+  invoices, cash by `classifyXeroInvoiceCashEvidence`. A clean read wins; the
+  inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
+  with the #3535 audit) count only when Xero cannot answer, and, for links newer
+  than the read, in the release's re-check — which narrows the race, not closes
+  it (the link write takes no booking lock); the builder's shortfall refusal and
+  the repair tool's manual review are the backstop.
+- **An unreadable invoice is kept only to a bound** (orchestrator decision on
+  #3643): the club's check-in date or seven days past the deadline, whichever
+  comes first, then released. A 404 counts as unreadable. The release voids
+  nothing unread: its clearing note is created only after the builder reads
+  what the invoices owe.
+- **One admin alert per hold per reason** (part-paid, paid in full but not yet
+  synced, unreadable, released unreadable). The claim is given back when
+  recipients existed but none was reached; the audit entry is written once it
+  settles. Reads per run are capped and rotate.
+- **The normal cancel path recognises the part payment** (same decision): the
+  claim records Xero's exact cash as captured internet banking money, so the
+  paid path tiers the policy on it (as credit) and the clearing note is sized to
+  what the invoices still owe. Cash Xero shows but cannot size refuses the
+  cancel. Organisation-owned bookings are not recognised (#3369).
 - The repair tool raises manual review, never a queued or retried full
   clearing note, over a recorded part payment.
 - Pinned by `internet-banking-payment-cron.test.ts`,
-  `internet-banking-hold-payment-evidence.test.ts` and
-  `xero-booking-repair.test.ts`.
+  `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
+  and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-018
 
