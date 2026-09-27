@@ -45,6 +45,7 @@ function makeContext(
     connected: false,
     needsReentry: false,
     orgName: null,
+    orgBaseCurrency: null,
     orgError: null,
     orgErrorAt: null,
     orgErrorAttempts: 0,

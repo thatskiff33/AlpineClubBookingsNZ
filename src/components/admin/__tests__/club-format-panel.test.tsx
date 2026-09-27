@@ -35,6 +35,21 @@ vi.mock("next-auth/react", () => ({
   useSession: () => session.value,
 }));
 
+/*
+  The page's two server reads (#3633): the session, and the Xero base currency
+  the reader hands to a viewer who may read the Xero organisation. The reader's
+  own gate is pinned in `xero-base-currency-server.test.ts`; here it is only the
+  value the page passes down.
+*/
+const server = vi.hoisted(() => ({
+  auth: vi.fn(),
+  readXeroBaseCurrencyForViewer: vi.fn(),
+}));
+vi.mock("@/lib/auth", () => ({ auth: server.auth }));
+vi.mock("@/lib/xero-base-currency-server", () => ({
+  readXeroBaseCurrencyForViewer: server.readXeroBaseCurrencyForViewer,
+}));
+
 import ClubFormatPage from "@/app/(admin)/admin/club-format/page";
 import { ClubFormatPanel } from "@/components/admin/club-format-panel";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
@@ -79,6 +94,8 @@ beforeEach(() => {
   }));
   vi.stubGlobal("fetch", fetchMock);
   signInAs(["ADMIN"]);
+  server.auth.mockResolvedValue({ user: { id: "member-1" } });
+  server.readXeroBaseCurrencyForViewer.mockResolvedValue(null);
 });
 
 describe("an admin who is not a Full Admin (#3596)", () => {
@@ -88,7 +105,7 @@ describe("an admin who is not a Full Admin (#3596)", () => {
   });
 
   it("opens the page and sees the stored values, not a refusal", async () => {
-    render(<ClubFormatPage />);
+    render(await ClubFormatPage());
     expect(
       await screen.findByTestId("current-club-currency"),
     ).toHaveTextContent("CHF");
@@ -101,7 +118,7 @@ describe("an admin who is not a Full Admin (#3596)", () => {
   });
 
   it("is told once, in the banner, that changing them needs Full Admin", async () => {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     const banner = screen.getByTestId("admin-view-only-banner");
     expect(banner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
@@ -111,7 +128,7 @@ describe("an admin who is not a Full Admin (#3596)", () => {
   });
 
   it("is offered no enabled way to change or save them", async () => {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     const change = screen.getByRole("button", {
       name: "Change currency and format",
@@ -130,7 +147,7 @@ describe("an admin who is not a Full Admin (#3596)", () => {
     // Before the fetch settles the section is still loading; the region has
     // to exist already so its content is announced when it arrives.
     fetchMock.mockImplementation(() => new Promise(() => {}));
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     expect(
       screen.getByText(/Loading the club.s currency and locale/),
     ).toBeInTheDocument();
@@ -140,7 +157,7 @@ describe("an admin who is not a Full Admin (#3596)", () => {
 
 describe("a Full Admin", () => {
   it("sees no banner and can open the editor", async () => {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     expect(screen.getByTestId("admin-view-only-banner")).toBeEmptyDOMElement();
     const change = screen.getByRole("button", {
@@ -155,7 +172,7 @@ describe("a Full Admin", () => {
   });
 
   it("is told which permission it lost when a stale tab's save is refused", async () => {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     fireEvent.click(
       screen.getByRole("button", { name: "Change currency and format" }),
@@ -196,7 +213,7 @@ describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
   };
 
   async function openAndChooseCurrency(code: string) {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     fireEvent.click(screen.getByRole("button", { name: "Change currency and format" }));
     fireEvent.change(screen.getByLabelText("Currency"), { target: { value: code } });
@@ -248,7 +265,7 @@ describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
   });
 
   it("is not shown for a locale-only change", async () => {
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     fireEvent.click(screen.getByRole("button", { name: "Change currency and format" }));
     fireEvent.change(screen.getByLabelText("Number and date format"), { target: { value: "fr-CH" } });
@@ -260,7 +277,7 @@ describe("a currency change (#3567, owner decisions D1, D2, D8)", () => {
 describe("while the session is still resolving", () => {
   it("offers nothing and explains nothing yet", async () => {
     session.value = { status: "loading", data: null };
-    render(<ClubFormatPanel />);
+    render(<ClubFormatPanel xeroBaseCurrency={null} />);
     await screen.findByTestId("current-club-currency");
     // Neutral: disabled, but no view-only reason flashed at a Full Admin.
     expect(
@@ -272,5 +289,70 @@ describe("while the session is still resolving", () => {
         { exact: false },
       ),
     ).not.toBeInTheDocument();
+  });
+});
+
+// #3633: the page warns when the connected Xero organisation's base currency
+// differs from the club's currency. The stored currency here is CHF, so a
+// warning naming CHF can only have come from the panel's own state.
+describe("the Xero base-currency warning (#3633)", () => {
+  const warning = () =>
+    screen.queryByTestId("club-format-xero-base-currency-warning");
+
+  it("is shown on the page when the two differ, and blocks nothing", async () => {
+    server.readXeroBaseCurrencyForViewer.mockResolvedValue("NZD");
+    render(await ClubFormatPage());
+    await screen.findByTestId("current-club-currency");
+
+    expect(server.readXeroBaseCurrencyForViewer).toHaveBeenCalledWith({
+      id: "member-1",
+    });
+    expect(warning()).toHaveTextContent(
+      "The club's currency is CHF but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in CHF while their Xero invoices are in NZD.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Change currency and format" }),
+    ).toBeEnabled();
+  });
+
+  it.each([
+    ["the two match", "CHF"],
+    ["they match in another case", "chf"],
+    ["the base currency is unknown or not this viewer's to read", null],
+  ])("is not shown when %s", async (_label, xeroBaseCurrency) => {
+    render(<ClubFormatPanel xeroBaseCurrency={xeroBaseCurrency} />);
+    await screen.findByTestId("current-club-currency");
+    expect(warning()).not.toBeInTheDocument();
+  });
+
+  it("follows the saved currency without a reload", async () => {
+    render(<ClubFormatPanel xeroBaseCurrency="NZD" />);
+    await screen.findByTestId("current-club-currency");
+    expect(warning()).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change currency and format" }),
+    );
+    fireEvent.change(screen.getByLabelText("Currency"), {
+      target: { value: "NZD" },
+    });
+    const [ordinary, currencyTick] = screen.getAllByRole("checkbox");
+    fireEvent.click(ordinary);
+    fireEvent.click(currencyTick);
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: { ...STORED_STATE, currencyCode: "NZD" } }),
+    }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save currency and format" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("current-club-currency")).toHaveTextContent(
+        "NZD",
+      ),
+    );
+    expect(warning()).not.toBeInTheDocument();
   });
 });

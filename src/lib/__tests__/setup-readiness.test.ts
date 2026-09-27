@@ -1785,3 +1785,86 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
     expect(pick(early)).toEqual(pick(late));
   });
 });
+
+// #3633: the Operational Xero step warns when the connected organisation's base
+// currency differs from the club's, because Xero books every invoice in its
+// base currency while card payments are charged in the club's. A warning only:
+// it never blocks, and it says nothing when either currency is unknown.
+describe("setup-readiness Xero base currency (#3633)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function readinessWith(
+    xeroBaseCurrency: string | null | undefined,
+    database: Partial<SetupDatabaseSnapshot> = {},
+  ) {
+    return buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        clubFormatCurrencyCode: "AUD",
+        ...database,
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+      ...(xeroBaseCurrency === undefined ? {} : { xeroBaseCurrency }),
+    });
+  }
+
+  it("warns, naming both currencies, when they differ — and blocks nothing", () => {
+    const readiness = readinessWith("NZD");
+    const step = findStep(readiness, "xero-operational");
+
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toBe(
+      "The club's currency is AUD but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in AUD while their Xero invoices are in NZD.",
+    );
+    expect(readiness.summary.blocked).toBe(0);
+    expect(readiness.status).toBe("warning");
+  });
+
+  it("compares case-insensitively", () => {
+    const step = findStep(readinessWith("aud"), "xero-operational");
+    expect(step?.status).toBe("complete");
+  });
+
+  it.each([
+    ["the currencies match", "AUD", {}],
+    ["the base currency is unknown", null, {}],
+    ["no base currency was read at all (the CLI)", undefined, {}],
+    ["Xero is not connected", "NZD", { operationalXeroConnected: false }],
+    [
+      "the Xero module is off",
+      "NZD",
+      {
+        adminModuleSettings: {
+          ...completeDatabase.adminModuleSettings!,
+          xeroIntegration: false,
+        },
+      },
+    ],
+    ["the club currency is not recorded", "NZD", { clubFormatCurrencyCode: null }],
+  ] as const)("says nothing when %s", (_label, xero, database) => {
+    const step = findStep(readinessWith(xero, database), "xero-operational");
+    expect(step?.message).not.toMatch(/base currency/);
+    expect(step?.details.join(" ")).not.toMatch(/base currency/);
+  });
+
+  it("takes the message ahead of the legacy-variable tidy-up, which stays in the details", () => {
+    const readiness = buildSetupReadiness({
+      env: { ...baseEnv, XERO_CLIENT_ID: "legacy" },
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, clubFormatCurrencyCode: "AUD" },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+      xeroBaseCurrency: "NZD",
+    });
+    const step = findStep(readiness, "xero-operational");
+
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toMatch(/base currency is NZD/);
+    expect(step?.details.join(" ")).toMatch(/XERO_CLIENT_ID/);
+  });
+});
