@@ -245,7 +245,7 @@ describe("toGroupBookingSummary", () => {
     expect(summary).not.toHaveProperty("lodgeId");
   });
 
-  // #3672 (`INV-PAY-XXX`): the join page describes how a member joining NOW
+  // #3672 (`INV-PAY-108`): the join page describes how a member joining NOW
   // pays — the organiser only until their settlement is paid.
   it.each([
     [GroupBookingPaymentMode.ORGANISER_PAYS, null, GroupBookingPaymentMode.ORGANISER_PAYS],

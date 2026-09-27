@@ -660,7 +660,7 @@ export interface JoinGroupBookingResult {
  *     joiner is never billed (requiresPayment is false) and cannot pay it
  *     themselves; the organiser settles the group total as one combined bill.
  *     The booking is still priced and holds the bed exactly as each-pays.
- *   - ORGANISER_PAYS after the settlement is paid (#3672, `INV-PAY-XXX`): the
+ *   - ORGANISER_PAYS after the settlement is paid (#3672, `INV-PAY-108`): the
  *     organiser is never billed again, so the joiner gets an ordinary
  *     member-pays booking, exactly as EACH_PAYS_OWN.
  *
@@ -735,7 +735,7 @@ export async function joinGroupBookingAsMember(
   if (hasGroupStayFullyEnded(group.organiserBooking, clubDayInstantForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
   }
-  // #3672 (`INV-PAY-XXX`, owner option B): once the organiser has paid, a new
+  // #3672 (`INV-PAY-108`, owner option B): once the organiser has paid, a new
   // joiner pays for themselves. Re-decided under `lock(1)` when the booking is
   // written, so a settlement paid in between is caught there too.
   const organiserSettled = organiserPaysForNewJoiner(group);

@@ -202,6 +202,10 @@ function organiserPaysGroup(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // #3672: `clearAllMocks` keeps queued `mockResolvedValueOnce` values, so a
+  // test that stops short of consuming its queue leaks the rest into the next
+  // one. Reset every hoisted mock; the defaults below are re-applied.
+  for (const mock of Object.values(mocks)) mock.mockReset();
   // The transaction callback runs against the shared txClient by default.
   mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) =>
     cb(txClient)
@@ -1397,9 +1401,12 @@ describe("applyGroupSettlementSucceeded", () => {
         },
       })
       .mockResolvedValueOnce(cardLockRow("pi_1"));
-    mocks.bookingFindMany.mockResolvedValueOnce([
-      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
-      { id: "child-2", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
+    // Both the pre-lock lodge discovery and the in-lock re-read see the grown
+    // child. (This used to queue one value and read the second from a value an
+    // earlier test had left queued; #3672 resets the queues between tests.)
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
     ]);
 
     const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
@@ -1534,7 +1541,7 @@ describe("applyGroupSettlementSucceeded", () => {
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
   });
 
-  // #3672 (`INV-PAY-XXX`, owner option B): a joiner who joined while the bill
+  // #3672 (`INV-PAY-108`, owner option B): a joiner who joined while the bill
   // was open but is not on the one the organiser paid is never billed to the
   // organiser and never left unsettleable: the same transaction moves them to
   // member-pays, and they are told to pay.

@@ -47,6 +47,10 @@
  * (never recomputes) the per-child refund mirror. This completes the local
  * booking/capacity/refund-mirror cleanup but does NOT heal the Xero mirror (see
  * resumeInterruptedOrganiserCancels' Xero residual note).
+ *
+ * Fourth phase (#3672, `INV-PAY-108`): a paid organiser-pays group still
+ * holding an organiser-settled joiner its bill did not cover has that joiner
+ * moved to paying for themselves (`releaseJoinersLeftBehindPaidSettlements`).
  */
 import {
   BookingEventType,
@@ -69,6 +73,7 @@ import {
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
+import { releaseJoinersLeftBehindPaidSettlements } from "@/lib/group-late-joiner";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import {
   describeGroupSettlementInvoiceMoney,
@@ -128,6 +133,11 @@ export interface GroupSettlementReapResult {
    * (held until check-in or seven days past the deadline).
    */
   heldForUnreadableInvoice: number;
+  /**
+   * #3672 (`INV-PAY-108`): joiners of a paid organiser-pays group its bill did
+   * not cover, moved to paying for themselves this run.
+   */
+  releasedToMemberPays: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -191,6 +201,7 @@ export async function reapStaleGroupSettlements(
     resumedInterruptedCancels: 0,
     heldForInvoicePayment: 0,
     heldForUnreadableInvoice: 0,
+    releasedToMemberPays: 0,
   };
 
   for (const settlement of candidates) {
@@ -254,6 +265,8 @@ export async function reapStaleGroupSettlements(
   }
 
   await expireReapedChildren(now, result);
+
+  result.releasedToMemberPays = await releaseJoinersLeftBehindPaidSettlements();
 
   await resumeInterruptedOrganiserCancels(now, result, format);
 

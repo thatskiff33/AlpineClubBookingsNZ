@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  releaseLeftBehindJoiners: vi.fn(),
   settlementFindMany: vi.fn(),
   settlementFindUnique: vi.fn(),
   settlementUpdate: vi.fn(),
@@ -114,6 +115,11 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
 vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: mocks.settleHostingCoverage,
 }));
+// #3672: the paid-group self-heal is its own module's subject
+// (`group-late-joiner.test.ts`); here the reaper only has to run it and report.
+vi.mock("@/lib/group-late-joiner", () => ({
+  releaseJoinersLeftBehindPaidSettlements: mocks.releaseLeftBehindJoiners,
+}));
 
 import {
   groupSettlementReapDeadline,
@@ -173,6 +179,7 @@ beforeEach(() => {
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
+  mocks.releaseLeftBehindJoiners.mockResolvedValue(0);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
   mocks.sendSettlementExpired.mockResolvedValue(undefined);
@@ -233,6 +240,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      releasedToMemberPays: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
     // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
@@ -539,6 +547,18 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.alertInvoice).not.toHaveBeenCalled();
   });
 
+  // #3672 (`INV-PAY-108`): every run re-applies the paid-group release, so a
+  // joiner left behind before the rule existed is moved on the first run.
+  it("runs the paid-group self-heal every cycle and reports how many joiners it moved", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+    mocks.releaseLeftBehindJoiners.mockResolvedValue(3);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.releaseLeftBehindJoiners).toHaveBeenCalledTimes(1);
+    expect(result.releasedToMemberPays).toBe(3);
+  });
+
   it("does not reap a settlement still inside the window", async () => {
     mocks.settlementFindMany.mockResolvedValue([
       staleSettlement({ updatedAt: new Date(NOW.getTime() - 47 * HOUR) }),
@@ -556,6 +576,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      releasedToMemberPays: 0,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
@@ -606,6 +627,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      releasedToMemberPays: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -638,6 +660,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      releasedToMemberPays: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     // No-op passes must not rewrite the settlement: that would bump

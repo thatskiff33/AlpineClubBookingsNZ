@@ -1175,7 +1175,7 @@ one, check the other.
   `organiser-group-booking-card.test.tsx` and
   `group-settlement-invoice-binding-races.realdb.test.ts`.
 
-## INV-PAY-XXX
+## INV-PAY-108
 
 **Related: `INV-PAY-105`** (the bound invoice) and **`INV-PAY-031`** (children
 total at apply).
@@ -1190,7 +1190,13 @@ total at apply).
   for review) is moved to member-pays in the transaction that marks the
   settlement paid, and is emailed to pay. The organiser's card lists them as
   paying for themselves.
-- Pinned by `group-late-joiner.test.ts`, `booking-split.test.ts`,
+- "Paid" is the shared captured predicate (`isCapturedTransactionStatus`), so
+  a settlement paid and later refunded still counts. The group-settlement
+  reaper re-applies the release to any live paid group still holding such a
+  joiner, under `lock(1)`; a moved joiner is never selected again, so each is
+  emailed once.
+- Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
+  `booking-split.test.ts`,
   `group-settlement.test.ts`, `group-booking.test.ts`,
   `organiser-group-booking-card.test.tsx` and
   `member-group-join-panel.test.tsx`.

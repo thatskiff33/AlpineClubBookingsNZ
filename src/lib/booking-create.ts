@@ -1037,7 +1037,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
       }
 
-      // #3672 (`INV-PAY-XXX`): a group join's payer is re-decided here, under
+      // #3672 (`INV-PAY-108`): a group join's payer is re-decided here, under
       // `lock(1)`. A settlement paid since the join read the group makes this
       // an ordinary member-pays booking, never one the paid bill left out.
       // Only ever downgrades: the join forced the card method for an

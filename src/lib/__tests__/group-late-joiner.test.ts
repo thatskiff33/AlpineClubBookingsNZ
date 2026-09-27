@@ -7,7 +7,7 @@ import {
 } from "@prisma/client";
 
 /*
- * #3672 (`INV-PAY-XXX`, owner option B): once an organiser-pays group's
+ * #3672 (`INV-PAY-108`, owner option B): once an organiser-pays group's
  * settlement is paid, a member who joins gets an ordinary member-pays booking
  * and is sent to pay; the organiser is never billed for them. Per-member-pays
  * groups are unchanged. The in-lock half (the booking create re-deciding the
@@ -293,7 +293,9 @@ describe("group-late-joiner helpers (#3672)", () => {
     [GroupBookingPaymentMode.ORGANISER_PAYS, null, true],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.PENDING, true],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.FAILED, true],
-    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.REFUNDED, true],
+    // Paid, then refunded in whole or part: the organiser still paid.
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.REFUNDED, false],
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.PARTIALLY_REFUNDED, false],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.SUCCEEDED, false],
     [GroupBookingPaymentMode.EACH_PAYS_OWN, null, false],
     [GroupBookingPaymentMode.EACH_PAYS_OWN, PaymentStatus.SUCCEEDED, false],

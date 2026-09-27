@@ -1223,7 +1223,7 @@ async function settleConfirmedChildrenAndNotify(
       data: { status: PaymentStatus.SUCCEEDED, paidAt: new Date() },
     });
 
-    // #3672 (`INV-PAY-XXX`, owner option B): the organiser has paid the bill
+    // #3672 (`INV-PAY-108`, owner option B): the organiser has paid the bill
     // they were shown and is never billed for anyone else. A joiner who joined
     // while it was open but was not on it (still PAYMENT_PENDING, or held for
     // review) pays for themselves, in this same transaction under `lock(1)`,

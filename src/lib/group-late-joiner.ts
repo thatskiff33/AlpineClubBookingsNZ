@@ -1,5 +1,5 @@
 /**
- * #3672 (`INV-PAY-XXX`, owner option B): once an organiser-pays group's
+ * #3672 (`INV-PAY-108`, owner option B): once an organiser-pays group's
  * settlement is PAID, the organiser has paid the bill they were shown, and
  * nobody else is ever added to it. A member who joins afterwards gets an
  * ordinary member-pays booking — exactly an each-pays-own joiner's — and pays
@@ -11,14 +11,18 @@
  * Both writers hold the global `lock(1)` the whole settlement lifecycle already
  * serialises on (`INV-LOCK-001`): the booking create re-decides a joiner's
  * payer under it, and the paid apply releases the leftovers under it. Whichever
- * commits first, the other sees it.
+ * commits first, the other sees it. The group-settlement reaper re-applies the
+ * release to any paid group still holding a leftover (one left before this rule
+ * existed), under the same lock.
  */
 import {
   BookingStatus,
   GroupBookingPaymentMode,
+  GroupBookingStatus,
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { bookingOwner } from "@/lib/booking-owner";
 import { sendGroupJoinPaySelfEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -26,8 +30,10 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * The one definition of "the organiser pays for a member joining now": an
- * organiser-pays group whose settlement has not been paid. Pure, so the public
- * join page and the join write path give the same answer.
+ * organiser-pays group whose settlement has not captured the organiser's
+ * money. A settlement paid and later refunded (in part or whole) still counts
+ * as paid: the captured predicate is the shared one (`INV-SSOT`). Pure, so the
+ * public join page and the join write path give the same answer.
  */
 export function organiserPaysForNewJoiner(group: {
   paymentMode: GroupBookingPaymentMode;
@@ -35,7 +41,7 @@ export function organiserPaysForNewJoiner(group: {
 }): boolean {
   return (
     group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS &&
-    group.settlement?.status !== PaymentStatus.SUCCEEDED
+    !(group.settlement && isCapturedTransactionStatus(group.settlement.status))
   );
 }
 
@@ -78,6 +84,13 @@ const LEFT_BEHIND_EXCLUDED_STATUSES = [
   BookingStatus.COMPLETED,
 ] as const;
 
+/** An organiser-settled child no paid bill covers (its parent is added per use). */
+const LEFT_BEHIND_CHILD = {
+  organiserSettled: true,
+  deletedAt: null,
+  status: { notIn: [...LEFT_BEHIND_EXCLUDED_STATUSES] },
+} satisfies Prisma.BookingWhereInput;
+
 /**
  * Move every organiser-settled child the paid settlement did not cover to
  * member-pays. Called in the paid apply's transaction, under `lock(1)`, after
@@ -90,9 +103,7 @@ export async function releaseUnpaidJoinersToMemberPaysInTx(
 ): Promise<string[]> {
   const where = {
     parentBookingId: organiserBookingId,
-    organiserSettled: true,
-    deletedAt: null,
-    status: { notIn: [...LEFT_BEHIND_EXCLUDED_STATUSES] },
+    ...LEFT_BEHIND_CHILD,
   } satisfies Prisma.BookingWhereInput;
   const leftBehind = await tx.booking.findMany({ where, select: { id: true } });
   if (leftBehind.length === 0) {
@@ -147,4 +158,74 @@ export async function notifyJoinersReleasedToMemberPays(
       );
     }
   }
+}
+
+/**
+ * The reaper's self-heal: every live organiser-pays group whose settlement is
+ * SUCCEEDED but still has a left-behind organiser-settled child gets the same
+ * release, one group per transaction under `lock(1)` with the group re-read
+ * inside it, then the same email. A released child is no longer
+ * organiser-settled, so it is never selected again and each joiner is emailed
+ * at most once. A cancelled group (or organiser booking) is left to the
+ * organiser-cancel cleanup, which owns its organiser-settled children.
+ * Returns how many joiners it moved.
+ */
+export async function releaseJoinersLeftBehindPaidSettlements(): Promise<number> {
+  const groups = await prisma.groupBooking.findMany({
+    where: {
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      status: { not: GroupBookingStatus.CANCELLED },
+      settlement: { is: { status: PaymentStatus.SUCCEEDED } },
+      organiserBooking: {
+        deletedAt: null,
+        status: { not: BookingStatus.CANCELLED },
+        linkedBookings: { some: LEFT_BEHIND_CHILD },
+      },
+    },
+    select: {
+      id: true,
+      organiserBookingId: true,
+      organiserMember: { select: { firstName: true, lastName: true } },
+    },
+  });
+  let moved = 0;
+  for (const group of groups) {
+    try {
+      const released = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        const current = await tx.groupBooking.findUnique({
+          where: { id: group.id },
+          select: {
+            status: true,
+            settlement: { select: { status: true } },
+            organiserBooking: { select: { status: true, deletedAt: true } },
+          },
+        });
+        if (
+          !current ||
+          current.status === GroupBookingStatus.CANCELLED ||
+          current.settlement?.status !== PaymentStatus.SUCCEEDED ||
+          current.organiserBooking.deletedAt !== null ||
+          current.organiserBooking.status === BookingStatus.CANCELLED
+        ) {
+          return [];
+        }
+        return releaseUnpaidJoinersToMemberPaysInTx(tx, group.organiserBookingId);
+      });
+      if (released.length > 0) {
+        moved += released.length;
+        logger.info(
+          { groupBookingId: group.id, releasedCount: released.length },
+          "Moved joiners a paid group settlement did not cover to member-pays (#3672)"
+        );
+        await notifyJoinersReleasedToMemberPays(group.id, group.organiserMember, released);
+      }
+    } catch (err) {
+      logger.error(
+        { err, groupBookingId: group.id },
+        "Failed to move a paid group's left-behind joiners to member-pays"
+      );
+    }
+  }
+  return moved;
 }

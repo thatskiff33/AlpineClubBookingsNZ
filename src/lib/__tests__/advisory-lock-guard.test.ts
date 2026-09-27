@@ -842,6 +842,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "The post-create fence (moved out of createXeroInvoiceForGroupSettlement by #3642): after the provider call returns it decides create-versus-cancel and create-versus-release under the key the cancellation, the reaper and the settle paths take, binding the invoice with its active link or abandoning it on arrival.",
     invariant: "INV-LOCK-001",
   },
+  {
+    site: "releaseJoinersLeftBehindPaidSettlements#1",
+    tier: "GLOBAL",
+    reason:
+      "#3672: the reaper's self-heal moves a paid group's left-behind organiser-settled joiners to member-pays; it re-reads the group and settlement under the key the paid apply, the group cancel and the booking create (which re-decides a joiner's payer) take, so a cancel or a refund racing it wins.",
+    invariant: "INV-LOCK-001",
+  },
 
   // ── Putting a dismissed money task back on the queue ──────────────────
   {
