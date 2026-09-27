@@ -82,6 +82,7 @@ describe("POST /api/cron/payments", () => {
       scanned: 0,
       released: 0,
       skipped: 0,
+      skippedStarted: 0,
       failed: 0,
       bookingIds: [],
       paymentIds: [],
@@ -131,6 +132,29 @@ describe("POST /api/cron/payments", () => {
       expect.objectContaining({ jobName: "internet-banking-hold-release", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "xero-waiting-invoice-reaper", status: "SUCCESS" }),
     ]);
+  });
+
+  it("records a hold release with item failures as a warning admin cron health shows (#3663)", async () => {
+    mockReleaseExpiredInternetBankingHolds.mockResolvedValueOnce({
+      scanned: 3,
+      released: 1,
+      skipped: 0,
+      skippedStarted: 0,
+      failed: 2,
+      bookingIds: ["b1"],
+      paymentIds: ["p1"],
+    });
+    const { POST } = await import("@/app/api/cron/payments/route");
+    const response = await POST(
+      authorisedRequest("http://localhost/api/cron/payments?task=recovery")
+    );
+
+    expect(response.status).toBe(200);
+    const holdRun = mockCronJobRunCreate.mock.calls
+      .map(([arg]) => (arg as { data: { jobName: string; status: string; resultSummary: Record<string, unknown> } }).data)
+      .find((run) => run.jobName === "internet-banking-hold-release");
+    expect(holdRun?.status).toBe("SUCCESS");
+    expect(holdRun?.resultSummary.warning).toMatch(/^2 expired Internet Banking hold/);
   });
 
   it.each([

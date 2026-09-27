@@ -24,6 +24,7 @@ type CronHealthStatus =
   | "stale"
   | "failed"
   | "skipped"
+  | "warning"
   | "missing"
   | "disabled"
   | "untracked"
@@ -734,6 +735,13 @@ function createUnknownJobDefinition(jobName: string): AdminCronJobDefinition {
   };
 }
 
+function runWarning(run: AdminCronRun): string | null {
+  const summary = run.resultSummary;
+  if (!summary || typeof summary !== "object") return null;
+  const warning = (summary as { warning?: unknown }).warning;
+  return typeof warning === "string" && warning ? warning : null;
+}
+
 function classifyCronJob(
   definition: AdminCronJobDefinition,
   runs: AdminCronRun[],
@@ -826,6 +834,18 @@ function classifyCronJob(
       summary: latestSuccess
         ? "Latest run was skipped; the most recent successful run is still within the freshness threshold."
         : "Latest run was skipped and no successful run has been recorded yet.",
+    };
+  }
+
+  // #3663: a SUCCESS row whose task attached a `warning` (item failures it
+  // will retry) — the task ran, so freshness holds, but it is not healthy.
+  const warning = runWarning(latestRun);
+  if (latestRun.status === "SUCCESS" && warning) {
+    return {
+      ...base,
+      status: "warning",
+      severity: "warning",
+      summary: `Latest run completed with a warning: ${warning}`,
     };
   }
 

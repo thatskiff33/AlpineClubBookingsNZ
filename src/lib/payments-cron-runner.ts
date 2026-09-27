@@ -13,10 +13,13 @@
  * cron registry (`@/lib/admin-cron-health`), so a missing or failing task is
  * visible rather than hidden inside a healthy `payment-recovery` row.
  */
-import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
+import {
+  releaseExpiredInternetBankingHolds,
+  type InternetBankingHoldReleaseResult,
+} from "@/lib/internet-banking-payment-cron";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-invoice-reaper";
-import { recordCronJobRunSafe } from "@/lib/cron-job-run";
+import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reportCronError } from "@/lib/observability-bridge";
 
 export type PaymentsCronJobName =
@@ -60,10 +63,6 @@ export class PaymentsCronCycleError extends Error {
   }
 }
 
-function toErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 async function runRecordedTask<K extends keyof PaymentsCronCycleResult>(
   result: PaymentsCronCycleResult,
   failures: PaymentsCronFailure[],
@@ -72,34 +71,40 @@ async function runRecordedTask<K extends keyof PaymentsCronCycleResult>(
     resultKey: K;
     failureMessage: string;
     work: () => Promise<NonNullable<PaymentsCronCycleResult[K]>>;
+    summaryFor?: (taskResult: NonNullable<PaymentsCronCycleResult[K]>) => unknown;
   }
 ): Promise<void> {
-  const startedAt = new Date();
-  try {
-    const taskResult = await task.work();
-    result[task.resultKey] = taskResult;
-    await recordCronJobRunSafe({
-      jobName: task.jobName,
-      startedAt,
-      status: "SUCCESS",
-      resultSummary: taskResult,
-    });
-  } catch (error) {
-    const message = toErrorMessage(error);
-    reportCronError({
-      tag: task.jobName,
-      err: error,
-      message: task.failureMessage,
-      context: { job: task.jobName },
-    });
-    await recordCronJobRunSafe({
-      jobName: task.jobName,
-      startedAt,
-      status: "FAILURE",
-      error: message,
-    });
-    failures.push({ jobName: task.jobName, message });
+  const outcome = await runRecordedCronTask({
+    jobName: task.jobName,
+    work: task.work,
+    summaryFor: task.summaryFor,
+    onFailure: (error) =>
+      reportCronError({
+        tag: task.jobName,
+        err: error,
+        message: task.failureMessage,
+        context: { job: task.jobName },
+      }),
+  });
+  if (outcome.ok) {
+    result[task.resultKey] = outcome.result;
+  } else {
+    failures.push({ jobName: task.jobName, message: outcome.message });
   }
+}
+
+/**
+ * A hold that throws is rolled back and retried next run, so the task itself
+ * succeeds; the `warning` is what keeps a hold that fails EVERY run from
+ * reading as a healthy job on admin cron health.
+ */
+function holdReleaseSummary(release: InternetBankingHoldReleaseResult) {
+  return release.failed > 0
+    ? {
+        ...release,
+        warning: `${release.failed} expired Internet Banking hold(s) could not be released and will be retried next run; see the application logs.`,
+      }
+    : release;
 }
 
 export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
@@ -121,6 +126,7 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     resultKey: "internetBankingHoldRelease",
     failureMessage: "Failed to release expired Internet Banking payment holds",
     work: () => releaseExpiredInternetBankingHolds(),
+    summaryFor: holdReleaseSummary,
   });
   await runRecordedTask(result, failures, {
     jobName: "xero-waiting-invoice-reaper",

@@ -126,6 +126,29 @@ describe("admin cron health", () => {
     );
   });
 
+  it("shows a successful run that carries a warning as a warning, not current (#3663)", () => {
+    const report = buildCronHealthReport({
+      now: new Date("2026-05-15T00:00:00.000Z"),
+      clubTimeZone: CLUB_TIME_ZONE,
+      definitions: [cronDefinition({ jobName: "warned" })],
+      runs: [
+        cronRun({
+          id: "warned-1",
+          jobName: "warned",
+          status: "SUCCESS",
+          startedAt: "2026-05-14T23:45:00.000Z",
+          resultSummary: { failed: 1, warning: "1 hold could not be released" },
+        }),
+      ],
+    });
+
+    expect(report.jobs[0]).toMatchObject({
+      status: "warning",
+      severity: "warning",
+      summary: "Latest run completed with a warning: 1 hold could not be released",
+    });
+  });
+
   describe("the running zone versus the configured one (CT-5, #2869)", () => {
     /*
       `node-cron` reads a job's zone when the job is REGISTERED and never

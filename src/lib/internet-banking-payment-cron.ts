@@ -12,7 +12,13 @@ import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-al
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
-import { sendBookingCancelledEmail } from "@/lib/email";
+import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  sendAdminPaymentFailureAlert,
+  sendBookingCancelledEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import {
   lockMemberCreditLedger,
@@ -39,12 +45,24 @@ export interface InternetBankingHoldReleaseResult {
   scanned: number;
   released: number;
   skipped: number;
+  /** Expired holds left alone because the stay has started (#3663, INV-PAY-016). */
+  skippedStarted: number;
   failed: number;
   bookingIds: string[];
   paymentIds: string[];
 }
 
-function releaseOneHold(paymentId: string, now: Date) {
+/**
+ * "Once" for the started-stay alert: the claim window outlives any hold, so one
+ * `AlertCooldown` row per payment means the treasurer is told a single time.
+ */
+const STARTED_STAY_ALERT_WINDOW_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+
+function releaseOneHold(
+  paymentId: string,
+  now: Date,
+  clubTodayDateOnly: Date,
+) {
   return prisma.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -74,6 +92,15 @@ function releaseOneHold(paymentId: string, now: Date) {
         fresh.booking.status !== BookingStatus.CONFIRMED
       ) {
         return { type: "skipped" as const };
+      }
+
+      // INV-PAY-016 (#3663): never cancel a stay that has started. Check-in on
+      // or before the club's today means the member may already be at the
+      // lodge, or paid by a transfer nobody has reconciled yet; cancelling
+      // would free occupied beds and credit-note an invoice that may be paid.
+      // Read under the global lock, so a concurrent date move cannot race it.
+      if (fresh.booking.checkIn <= clubTodayDateOnly) {
+        return { type: "skipped-started" as const, payment: fresh };
       }
 
       // Global booking/money first, then the per-member credit ledger (#1881).
@@ -289,6 +316,11 @@ export async function releaseExpiredInternetBankingHolds(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // The club's calendar day at `now`, as the `@db.Date` encoding `checkIn`
+  // uses (INV-DATE-019), resolved once and outside every transaction.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
+  );
   const candidates = await prisma.payment.findMany({
     where: {
       source: PaymentSource.INTERNET_BANKING,
@@ -314,6 +346,7 @@ export async function releaseExpiredInternetBankingHolds(
     scanned: candidates.length,
     released: 0,
     skipped: 0,
+    skippedStarted: 0,
     failed: 0,
     bookingIds: [],
     paymentIds: [],
@@ -322,7 +355,7 @@ export async function releaseExpiredInternetBankingHolds(
   for (const candidate of candidates) {
     let transition: Awaited<ReturnType<typeof releaseOneHold>>;
     try {
-      transition = await releaseOneHold(candidate.id, now);
+      transition = await releaseOneHold(candidate.id, now, clubTodayDateOnly);
     } catch (err) {
       // One poisoned candidate must not starve the rest of the queue: its
       // transaction rolled back whole (hold NOT released, so the next run
@@ -337,6 +370,12 @@ export async function releaseExpiredInternetBankingHolds(
 
     if (transition.type === "skipped") {
       result.skipped += 1;
+      continue;
+    }
+
+    if (transition.type === "skipped-started") {
+      result.skippedStarted += 1;
+      await alertStartedStayHoldOnce(transition.payment, format);
       continue;
     }
 
@@ -443,4 +482,52 @@ export async function releaseExpiredInternetBankingHolds(
   }
 
   return result;
+}
+
+/**
+ * Tell the treasurer ONCE that an expired hold was left alone because its stay
+ * has started (#3663, INV-PAY-016). Claim first, send after, outside any
+ * transaction; best-effort, so a failed send never stops the run.
+ */
+async function alertStartedStayHoldOnce(
+  payment: Extract<
+    Awaited<ReturnType<typeof releaseOneHold>>,
+    { type: "skipped-started" }
+  >["payment"],
+  format: Awaited<ReturnType<typeof clubFormatValues>>,
+): Promise<void> {
+  try {
+    const claimed = await claimAlertCooldown({
+      key: `internet-banking-hold-started-stay:${payment.id}`,
+      windowMs: STARTED_STAY_ALERT_WINDOW_MS,
+    });
+    if (!claimed) return;
+    const owner = bookingOwner(payment.booking);
+    logger.warn(
+      { bookingId: payment.bookingId, paymentId: payment.id },
+      "Overdue Internet Banking hold on a stay that has started; left for manual reconciliation",
+    );
+    await sendAdminPaymentFailureAlert(
+      {
+        memberName: owner.member
+          ? `${owner.member.firstName} ${owner.member.lastName}`
+          : "Unknown member",
+        checkIn: payment.booking.checkIn,
+        checkOut: payment.booking.checkOut,
+        amountCents: payment.amountCents,
+        errorMessage:
+          "Overdue Internet Banking hold on a stay that has started — reconcile by hand. " +
+          `The payment deadline${payment.internetBankingHoldUntil ? ` (${payment.internetBankingHoldUntil.toISOString()})` : ""} passed unpaid, ` +
+          "but check-in has already arrived, so the booking was NOT cancelled automatically. " +
+          "Check the bank account for the member's transfer and record it, or cancel the booking by hand.",
+        paymentIntentId: payment.id,
+      },
+      format,
+    );
+  } catch (err) {
+    logger.error(
+      { err, bookingId: payment.bookingId, paymentId: payment.id },
+      "Failed to alert on an overdue Internet Banking hold whose stay has started",
+    );
+  }
 }
