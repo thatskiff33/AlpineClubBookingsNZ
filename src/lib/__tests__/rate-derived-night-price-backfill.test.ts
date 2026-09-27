@@ -256,10 +256,10 @@ describe("the report and the audit metadata", () => {
     const plans = [
       plan([evenlySplit("a"), evenlySplit("no-snapshot", { rateMembershipTypeId: null })]),
     ];
-    const report = formatRateDerivedBackfillReport(plans);
+    const report = formatRateDerivedBackfillReport(plans, CLUB_FORMAT_TEST);
     expect(report).toContain("Strands to rewrite: 1 (2 night rows)");
     expect(report).toContain("NO_RATE_SNAPSHOT: 1");
-    expect(report).toContain("rewrite guest a (total 13000c): 2026-08-15 6500->6000, 2026-08-16 6500->7000");
+    expect(report).toContain("rewrite guest a (total $130.00): 2026-08-15 $65.00->$60.00, 2026-08-16 $65.00->$70.00");
     // One row per rewritten strand (its before/after pairs, small enough to
     // survive the audit writer's metadata cap), then the booking's own.
     expect(rateDerivedBackfillAuditRows(plans[0]!, CLUB_FORMAT_TEST)).toEqual([
@@ -343,7 +343,7 @@ describe("runRateDerivedNightPriceBackfill (store-facing)", () => {
   it("dry run plans and writes nothing", async () => {
     const { store, updateMany, auditCreate } = storeDouble();
     const { runRateDerivedNightPriceBackfill } = await import("@/lib/rate-derived-night-price-backfill");
-    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: false });
+    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: false, format: CLUB_FORMAT_TEST });
     expect(result.mode).toBe("dry-run");
     expect(result.plans[0]?.rewrite).toHaveLength(1);
     expect(updateMany).not.toHaveBeenCalled();
@@ -354,7 +354,7 @@ describe("runRateDerivedNightPriceBackfill (store-facing)", () => {
   it("apply writes each booking in its own transaction with one audit row carrying before and after", async () => {
     const { store, updateMany, auditCreate } = storeDouble();
     const { runRateDerivedNightPriceBackfill } = await import("@/lib/rate-derived-night-price-backfill");
-    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: true });
+    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: true, format: CLUB_FORMAT_TEST });
     expect(result.applied).toEqual([{ bookingId: "bk1", rows: 2 }]);
     expect(result.raced).toEqual([]);
     expect(updateMany).toHaveBeenCalledTimes(2);
@@ -382,7 +382,7 @@ describe("runRateDerivedNightPriceBackfill (store-facing)", () => {
   it("a raced row rolls the booking back and names it, and the run continues", async () => {
     const { store, auditCreate } = storeDouble({ raceOnSecondRow: true });
     const { runRateDerivedNightPriceBackfill } = await import("@/lib/rate-derived-night-price-backfill");
-    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: true });
+    const result = await runRateDerivedNightPriceBackfill({ store: store as never, apply: true, format: CLUB_FORMAT_TEST });
     expect(result.applied).toEqual([]);
     expect(result.raced).toEqual(["bk1"]);
     expect(auditCreate).not.toHaveBeenCalled();

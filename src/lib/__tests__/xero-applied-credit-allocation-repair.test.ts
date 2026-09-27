@@ -9,6 +9,7 @@ vi.mock("@/lib/xero-inbound/amounts", () => ({
 }));
 
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const createdAt = new Date("2026-01-01T00:00:00.000Z");
 const db = {
@@ -93,6 +94,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
       "booking-1",
       "invoice-1",
       db as never,
+      CLUB_FORMAT_TEST,
     );
 
     expect(created).toBe(1);
@@ -129,7 +131,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
     ).resolves.toBe(0);
     expect(db.memberCreditNoteAllocation.create).not.toHaveBeenCalled();
@@ -157,7 +159,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
       await expect(
         repairLegacyAppliedCreditNoteAllocationsForBooking(
-          "booking-1", "invoice-1", db as never,
+          "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
         ),
       ).rejects.toThrow("allocation-history tombstone(s) prove prior provider handling");
       expect(db.xeroObjectLink.findMany).toHaveBeenCalledWith({
@@ -183,9 +185,9 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
-    ).rejects.toThrow("total 2500c but ledger permits 3000c..3000c");
+    ).rejects.toThrow("total $25.00 but ledger permits $30.00..$30.00");
     expect(db.xeroObjectLink.upsert).not.toHaveBeenCalled();
   });
 
@@ -194,7 +196,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
     ).rejects.toThrow("slice slice-1 has no active Xero provenance");
     expect(db.xeroObjectLink.upsert).not.toHaveBeenCalled();
@@ -211,7 +213,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
     ).resolves.toBe(0);
   });
@@ -227,6 +229,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
       "booking-1",
       "invoice-1",
       db as never,
+      CLUB_FORMAT_TEST,
       { providerTarget: { xeroCreditNoteId: "cn-1", amountCents: target } },
     );
 
@@ -255,9 +258,9 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
-    ).rejects.toThrow("exceeds remaining funding lot 2000c");
+    ).rejects.toThrow("exceeds remaining funding lot $20.00");
   });
 
   it("fails closed when the stamped note has ambiguous positive funding", async () => {
@@ -271,7 +274,7 @@ describe("repairLegacyAppliedCreditNoteAllocationsForBooking", () => {
 
     await expect(
       repairLegacyAppliedCreditNoteAllocationsForBooking(
-        "booking-1", "invoice-1", db as never,
+        "booking-1", "invoice-1", db as never, CLUB_FORMAT_TEST,
       ),
     ).rejects.toThrow("expected one positive funding lot, found 2");
   });

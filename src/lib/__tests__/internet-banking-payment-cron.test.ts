@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mocks = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
@@ -427,7 +428,7 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     );
     expect(
       mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
-    ).toHaveBeenCalledWith("booking_ib_1", "inv_ib_1", txRef.current);
+    ).toHaveBeenCalledWith("booking_ib_1", "inv_ib_1", txRef.current, CLUB_FORMAT_TEST);
     expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
       "mem_1",
       txRef.current,
