@@ -102,15 +102,48 @@ export function PendingGroupInvoice({
 }
 
 /**
- * #3672 (`INV-PAY-XXX`): joiners who joined after the organiser paid. They pay
- * for their own places; the organiser owes nothing for them.
+ * The organiser's group once their settlement is paid. Split from
+ * `organiser-group-booking-card.tsx`. Never says "everyone is confirmed" while
+ * a joiner is unpaid for (#3642), and names the joiners who pay for
+ * themselves (#3672, `INV-PAY-XXX`) rather than asking the organiser to act.
  */
-export function PaysOwnNotice({ names }: { names: string[] }) {
+export function PaidGroupSummary({
+  amountCents,
+  settleComplete,
+  notPaidFor,
+  paysOwn,
+}: {
+  amountCents: number | null;
+  /** Paid in this session: the server's joiner list predates it. */
+  settleComplete: boolean;
+  /** Organiser-settled joiners the payment did not cover. */
+  notPaidFor: string[];
+  /** Joiners who joined after the payment and pay for their own places. */
+  paysOwn: string[];
+}) {
+  const format = useClubFormat();
+  const allPaidFor = settleComplete || notPaidFor.length === 0;
   return (
-    <p className="text-sm text-muted-foreground">
-      Paying for themselves: {names.join(", ")}. They joined after your payment, so they pay for
-      their own places. You don&apos;t need to do anything.
-    </p>
+    <div className="space-y-2">
+      <div className="flex items-start gap-2 text-success-11">
+        <Check className="h-5 w-5 shrink-0" />
+        <p className="text-sm font-medium">
+          Paid{amountCents != null ? ` — ${formatCents(amountCents, format)}` : ""}.
+          {allPaidFor
+            ? paysOwn.length > 0
+              ? " Everyone you paid for is confirmed."
+              : " Everyone in your group is confirmed."
+            : ""}
+        </p>
+      </div>
+      {allPaidFor ? null : <NotPaidForYetNotice names={notPaidFor} />}
+      {paysOwn.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Paying for themselves: {paysOwn.join(", ")}. They joined after your payment, so they pay
+          for their own places. You don&apos;t need to do anything.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -119,7 +152,7 @@ export function PaysOwnNotice({ names }: { names: string[] }) {
  * #3672 nothing leaves one there (a joiner the paid bill missed pays for
  * themselves); kept for a booking left so before that change.
  */
-export function NotPaidForYetNotice({ names }: { names: string[] }) {
+function NotPaidForYetNotice({ names }: { names: string[] }) {
   return (
     <p className="text-sm text-warning-11">
       Not paid for yet: {names.join(", ")}. They joined after your payment, so their places are

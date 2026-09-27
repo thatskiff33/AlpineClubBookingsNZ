@@ -19,6 +19,10 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
+import { bookingOwner } from "@/lib/booking-owner";
+import { sendGroupJoinPaySelfEmail } from "@/lib/email";
+import logger from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
 
 /**
  * The one definition of "the organiser pays for a member joining now": an
@@ -99,4 +103,48 @@ export async function releaseUnpaidJoinersToMemberPaysInTx(
     data: { organiserSettled: false },
   });
   return leftBehind.map((b) => b.id);
+}
+
+/**
+ * After the paid apply commits: email each joiner it moved to member-pays that
+ * their booking is now theirs to pay. The booking link every booking-scoped
+ * message carries opens the pay step. Failures are logged and never undo the
+ * settlement or the move.
+ */
+export async function notifyJoinersReleasedToMemberPays(
+  groupBookingId: string,
+  organiser: { firstName: string; lastName: string },
+  bookingIds: string[]
+): Promise<void> {
+  const organiserName = `${organiser.firstName} ${organiser.lastName}`.trim();
+  const released = await prisma.booking.findMany({
+    where: { id: { in: bookingIds } },
+    select: {
+      id: true,
+      memberId: true,
+      checkIn: true,
+      checkOut: true,
+      member: { select: { email: true, firstName: true } },
+      // #3369: the owner may be an Organisation; bookingOwner() reads both.
+      organisation: { select: { name: true, email: true } },
+    },
+  });
+  for (const booking of released) {
+    const owner = bookingOwner(booking);
+    try {
+      await sendGroupJoinPaySelfEmail({
+        bookingContext: { bookingId: booking.id, recipientMemberId: owner.memberId },
+        email: owner.member.email,
+        firstName: owner.member.firstName,
+        organiserName,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
+    } catch (emailErr) {
+      logger.error(
+        { err: emailErr, groupBookingId, bookingId: booking.id },
+        "Failed to tell a group joiner to pay for their own place"
+      );
+    }
+  }
 }

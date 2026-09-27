@@ -66,7 +66,6 @@ import {
 } from "@/lib/booking-payment-methods";
 import { GroupBookingError, normaliseJoinCode } from "@/lib/group-booking";
 import {
-  sendGroupJoinPaySelfEmail,
   sendGroupJoinSettledEmail,
   sendGroupSettlementReceiptEmail,
 } from "@/lib/email";
@@ -76,7 +75,10 @@ import {
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
-import { releaseUnpaidJoinersToMemberPaysInTx } from "@/lib/group-late-joiner";
+import {
+  notifyJoinersReleasedToMemberPays,
+  releaseUnpaidJoinersToMemberPaysInTx,
+} from "@/lib/group-late-joiner";
 import {
   changesBoundInvoice,
   clearBoundInvoiceForReplacement,
@@ -1347,7 +1349,11 @@ async function settleConfirmedChildrenAndNotify(
   // #3672: tell each joiner the paid bill did not cover that their booking is
   // now theirs to pay. The booking link in the email opens the pay step.
   if (releasedToMemberPays.length > 0) {
-    await notifyJoinersReleasedToMemberPays(settlement, releasedToMemberPays);
+    await notifyJoinersReleasedToMemberPays(
+      settlement.groupBookingId,
+      settlement.groupBooking.organiserMember,
+      releasedToMemberPays
+    );
   }
 
   logger.info(
@@ -1361,50 +1367,6 @@ async function settleConfirmedChildrenAndNotify(
   );
 
   return { outcome: "settled", settledBookingIds: settled };
-}
-
-/**
- * #3672: email each joiner the paid settlement did not cover. Failures are
- * logged and never undo the settlement or the move to member-pays.
- */
-async function notifyJoinersReleasedToMemberPays(
-  settlement: LoadedSettlementForApply,
-  bookingIds: string[]
-): Promise<void> {
-  const organiser = settlement.groupBooking.organiserMember;
-  const organiserName = `${organiser.firstName} ${organiser.lastName}`.trim();
-  const released = await prisma.booking.findMany({
-    where: { id: { in: bookingIds } },
-    select: {
-      id: true,
-      memberId: true,
-      checkIn: true,
-      checkOut: true,
-      member: { select: { email: true, firstName: true } },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-    },
-  });
-  for (const booking of released) {
-    try {
-      await sendGroupJoinPaySelfEmail({
-        bookingContext: {
-          bookingId: booking.id,
-          recipientMemberId: bookingOwner(booking).memberId,
-        },
-        email: bookingOwner(booking).member.email,
-        firstName: bookingOwner(booking).member.firstName,
-        organiserName,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      });
-    } catch (emailErr) {
-      logger.error(
-        { err: emailErr, groupBookingId: settlement.groupBookingId, bookingId: booking.id },
-        "Failed to tell a group joiner to pay for their own place"
-      );
-    }
-  }
 }
 
 /**

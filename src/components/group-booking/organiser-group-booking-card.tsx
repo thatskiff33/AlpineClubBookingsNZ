@@ -32,8 +32,7 @@ import { useClubFormat } from "@/components/club-format-provider";
 import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
 import {
   InvoiceBlockedNotice,
-  NotPaidForYetNotice,
-  PaysOwnNotice,
+  PaidGroupSummary,
   PendingGroupInvoice,
 } from "@/components/group-booking/pending-group-invoice";
 
@@ -553,29 +552,12 @@ export function OrganiserGroupBookingCard({
           <div className="space-y-3 rounded-md border border-border p-3">
             <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (
-              <div className="space-y-2">
-                <div className="flex items-start gap-2 text-success-11">
-                  <Check className="h-5 w-5 shrink-0" />
-                  <p className="text-sm font-medium">
-                    Paid
-                    {group.settlement
-                      ? ` — ${formatCents(group.settlement.amountCents, format)}`
-                      : ""}
-                    .
-                    {settleComplete || unsettledJoiners.length === 0
-                      ? paysOwnJoiners.length > 0
-                        ? " Everyone you paid for is confirmed."
-                        : " Everyone in your group is confirmed."
-                      : ""}
-                  </p>
-                </div>
-                {!settleComplete && unsettledJoiners.length > 0 ? (
-                  <NotPaidForYetNotice names={unsettledJoiners.map((j) => j.name)} />
-                ) : null}
-                {paysOwnJoiners.length > 0 ? (
-                  <PaysOwnNotice names={paysOwnJoiners.map((j) => j.name)} />
-                ) : null}
-              </div>
+              <PaidGroupSummary
+                amountCents={group.settlement?.amountCents ?? null}
+                settleComplete={settleComplete}
+                notPaidFor={unsettledJoiners.map((j) => j.name)}
+                paysOwn={paysOwnJoiners.map((j) => j.name)}
+              />
             ) : pendingReference ? (
               <PendingGroupInvoice
                 reference={pendingReference}
