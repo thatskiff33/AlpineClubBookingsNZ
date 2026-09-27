@@ -12,6 +12,10 @@ import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import {
+  PART_PAYMENT_UNSIZABLE_REFUSAL,
+  readPartPaymentAtCancel,
+} from "@/lib/internet-banking-part-payment-at-cancel";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -62,6 +66,18 @@ export async function GET(
       return NextResponse.json({ error: refusal }, { status: 400 });
     }
 
+    // #3643 (`INV-PAY-107`): an internet banking booking Xero shows partly
+    // paid is cancelled on the paid path, with the policy applied to what was
+    // paid. The preview asks the SAME live question the cancel asks, through
+    // the same reader, so the two cannot disagree except by Xero changing in
+    // between (the cancel reads again). A GET holds no transaction, so the
+    // provider call is safe here; it costs one read per invoice per preview.
+    const partPayment =
+      booking.status === "PENDING" ? null : await readPartPaymentAtCancel(booking);
+    if (partPayment === "unsizable") {
+      return NextResponse.json({ error: PART_PAYMENT_UNSIZABLE_REFUSAL }, { status: 409 });
+    }
+
     // PENDING bookings — no payment taken. #1491: paid-path eligibility is
     // shared with cancelBooking (SUCCEEDED, or PARTIALLY_REFUNDED with a
     // captured ledger row) so the preview can never show $0 for a cancel
@@ -70,7 +86,7 @@ export async function GET(
     if (
       booking.status === "PENDING" ||
       !booking.payment ||
-      !(await paymentEligibleForPaidCancelPath(booking.payment))
+      (!partPayment && !(await paymentEligibleForPaidCancelPath(booking.payment)))
     ) {
       // #1547: the no-refund / never-captured executed path restores applied
       // credit at 100% (ledger truth, no override) — so the preview must show
@@ -105,7 +121,10 @@ export async function GET(
 
     const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
     const preview = calculateCancellationPreview({
-      payment: booking.payment,
+      // #3643: the cash the cancel will record, not the invoice's face value.
+      payment: partPayment
+        ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
+        : booking.payment,
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
