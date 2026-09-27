@@ -395,6 +395,12 @@ export interface BookingClassificationContext {
    */
   editReviewChargeCentsByModificationId: Map<string, number>;
   /**
+   * #3535: the booking's applied credit already allocated to its invoice as a
+   * Xero credit note (sum of `MemberCreditNoteAllocation.amountCents`), so the
+   * cancelled-open-invoice arm sizes its note by INV-PAY-017.
+   */
+  xeroAllocatedAppliedCreditCents: number;
+  /**
    * #3187 fix round: the edits whose additional PaymentIntent mint FAILED and
    * is still owed by the recovery replay (PENDING or PROCESSING).
    *

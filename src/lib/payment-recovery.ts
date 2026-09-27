@@ -20,6 +20,7 @@ import {
   findOrCreateCustomer,
   processRefund,
 } from "@/lib/stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
   reconcilePaymentAggregates,
   recordStripeRefundsAgainstTransaction,
@@ -1770,7 +1771,7 @@ async function processCancelPaymentIntentOperation(
     return;
   }
 
-  if (result.canceled || result.paymentIntent.status === "canceled") {
+  if (isPaymentIntentCancelConfirmed(result)) {
     await markSupersededTransactionFailed(operation);
     await completePaymentRecoveryOperation(operation.id);
     return;

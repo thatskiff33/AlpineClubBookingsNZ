@@ -1,6 +1,6 @@
 import { DIETARY_KEY_FRAGMENTS } from "@/lib/member-dietary-field";
 
-const REDACTED_SECRET = "[REDACTED]";
+export const REDACTED_SECRET = "[REDACTED]";
 
 /**
  * Recursion and failure bounds for the object walk (#2683).
@@ -280,8 +280,21 @@ const SENSITIVE_STRING_VALUE_PATTERNS = [
   // them, internal operation/record IDs that happen to hold 8+ consecutive
   // digits were rewritten to "[REDACTED]", corrupting load-bearing IDs stored
   // in persisted payloads (e.g. a requeue's originalOperationId).
-  /(?<![A-Za-z0-9])\+?[0-9]{8,15}(?![A-Za-z0-9])/,
+  // Tested against the value with UUIDs masked (`PHONE_LIKE_DIGIT_RUN` below).
 ];
+/**
+ * The phone-like digit rule, kept apart from the list above so it alone reads
+ * the value with UUID-shaped identifiers masked. A Xero id is a UUID, and a
+ * hyphen is not an alphanumeric boundary, so a UUID whose first (8) or last
+ * (12) segment happened to be all digits - about 2.7% of them - matched as a
+ * "phone number" and a stored invoice id came back as "[REDACTED]" (#3535).
+ * Only 8-4-4-4-12 hex shapes are masked, and only for this rule: a digit run
+ * anywhere else in the value is still redacted, and the email rules above see
+ * the value unmasked.
+ */
+const PHONE_LIKE_DIGIT_RUN = /(?<![A-Za-z0-9])\+?[0-9]{8,15}(?![A-Za-z0-9])/;
+const UUID_SHAPE =
+  /(?<![A-Za-z0-9-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![A-Za-z0-9-])/gi;
 const STRIPE_SECRET_VALUE_PATTERN =
   /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|whsec_[A-Za-z0-9]+|(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+)\b/g;
 const TOKEN_QUERY_VALUE_PATTERN =
@@ -405,7 +418,10 @@ function isSensitiveQueryKey(key: string) {
 }
 
 function isSensitiveStringValue(value: string) {
-  return SENSITIVE_STRING_VALUE_PATTERNS.some((pattern) => pattern.test(value));
+  return (
+    SENSITIVE_STRING_VALUE_PATTERNS.some((pattern) => pattern.test(value)) ||
+    PHONE_LIKE_DIGIT_RUN.test(value.replace(UUID_SHAPE, "uuid"))
+  );
 }
 
 /**

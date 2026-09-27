@@ -99,3 +99,33 @@ export function isRefundedCardTransactionRepaymentRequired(
     candidate.paymentReceived !== true
   );
 }
+
+/**
+ * #3638 (`INV-PAY-102`): the booking is being paid by Internet Banking — it
+ * switched before this request, or while its card intent was being minted — so
+ * a card door refuses a card payment beside the emailed invoice. THE ONE body
+ * for that refusal, sent by both card doors (the session pay route and the
+ * `/pay/<token>` link), and worded for either reader: the member on their
+ * booking page or a payer holding only the link. A pure leaf, so a page can
+ * recognise it without importing the server module that sends it.
+ */
+export const SWITCHED_TO_INTERNET_BANKING_CODE =
+  "SWITCHED_TO_INTERNET_BANKING" as const;
+
+export const SWITCHED_TO_INTERNET_BANKING_MESSAGE =
+  "This booking is being paid by Internet Banking, so it can't be paid by card. Pay by bank transfer using the booking's Internet Banking details instead.";
+
+export const SWITCHED_TO_INTERNET_BANKING_BODY = Object.freeze({
+  code: SWITCHED_TO_INTERNET_BANKING_CODE,
+  error: SWITCHED_TO_INTERNET_BANKING_MESSAGE,
+});
+
+export function isSwitchedToInternetBanking(
+  value: unknown,
+): value is typeof SWITCHED_TO_INTERNET_BANKING_BODY {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as Record<string, unknown>).code === SWITCHED_TO_INTERNET_BANKING_CODE
+  );
+}

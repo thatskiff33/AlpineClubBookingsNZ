@@ -19,11 +19,5 @@ reason: the writer belongs beside the ledger insert whose "newly recorded"
   The delta review added the Payment-first lock every writer takes and the
   floor on a failed refund's subtraction, both part of that one writer.
 
-file: src/lib/booking-cancel.ts
-lines: 2528
-reason: the paid-path claim takes the Payment row first
-  (`lockPaymentForRefundedTotal`) right after its post-lock re-read and before
-  the #1491 fold, so its row order matches every other writer of the refunded
-  total; the lock belongs at that exact point in the claim, which is the rule,
-  and cannot move to another module without separating it from the fold it
-  precedes.
+booking-cancel.ts is declared once for the epic, in
+`3535-ib-hold-expiry-clearing-note.md`; this lane's share is recorded there.

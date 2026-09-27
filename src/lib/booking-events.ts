@@ -79,6 +79,14 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * failure must never sit inside the transition's own `$transaction`. The `db`
  * parameter exists for tests. Failures are logged and swallowed so a booking
  * transition is never undone purely because its narrative event failed.
+ *
+ * The ban is on SWALLOWING inside a transaction, not on writing an event in
+ * one. The one deliberate exception is #3638's second-instrument conflict
+ * marker (`recordSecondInstrumentMarkerInTransaction`), an admin-only record
+ * written with a direct, un-swallowed `tx.bookingEvent.create` inside the Xero
+ * settle transaction: it must commit or roll back with the bank receipt it
+ * describes, so a failed insert there is meant to abort the transaction and
+ * have the delivery retried.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

@@ -217,6 +217,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
 | `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or dropped |
@@ -290,7 +291,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
-| `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
+| `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |

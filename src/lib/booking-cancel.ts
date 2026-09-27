@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
-import { cancelPaymentIntentIfCancellable, cancelSetupIntentIfCancellable } from "./stripe";
+import { cancelPaymentIntentIfCancellableWithResult, cancelSetupIntentIfCancellable } from "./stripe";
+import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { isXeroConnected } from "./xero";
 import {
   calculateAppliedCreditRestore,
@@ -81,6 +82,7 @@ import {
   memberCancelRefusal,
 } from "@/lib/booking-cancel-eligibility";
 import type { ClubFormat } from "@/lib/club-format";
+import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -1241,12 +1243,11 @@ async function performBookingCancellation(
     // (floored at 0) so the clearing note never over-allocates the invoice.
     const xeroClearingAmountCents =
       fresh.payment?.xeroInvoiceId && !freshPaymentCaptured
-        ? Math.max(
-            0,
-            fresh.finalPriceCents +
-              fresh.payment.changeFeeCents -
-              xeroAllocatedAppliedCreditCents
-          )
+        ? unpaidInvoiceClearingAmountCents({
+            finalPriceCents: fresh.finalPriceCents,
+            changeFeeCents: fresh.payment.changeFeeCents,
+            xeroAllocatedAppliedCreditCents,
+          })
         : 0;
 
     if (fresh.payment?.id && xeroClearingAmountCents > 0) {
@@ -1255,6 +1256,9 @@ async function performBookingCancellation(
           {
             bookingId,
             refundAmountCents: xeroClearingAmountCents,
+            // #3535 (`INV-PAY-017`): nobody paid this invoice, so the note
+            // says it was cleared, never that a card refund was made.
+            clearsUnpaidInvoice: true,
           },
           {
             createdByMemberId: sessionUserId,
@@ -2501,8 +2505,23 @@ async function cancelOutstandingPaymentIntents({
 
   for (const paymentIntentId of paymentIntentIds) {
     try {
-      await cancelPaymentIntentIfCancellable(paymentIntentId);
-      await markPaymentIntentTransactionFailed({ paymentIntentId });
+      // #3638: the local row is marked FAILED only when Stripe confirms the
+      // intent is dead. An intent Stripe will not cancel has usually just
+      // succeeded with the webhook still in flight; writing FAILED over it
+      // was a lie the webhook then had to overwrite (booking-delete refuses
+      // the same write for the same reason). The row is left for the
+      // webhook's cancelled-booking late-capture handler, which records the
+      // capture and refunds it in full.
+      const result =
+        await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
+      if (isPaymentIntentCancelConfirmed(result)) {
+        await markPaymentIntentTransactionFailed({ paymentIntentId });
+      } else {
+        logger.warn(
+          { paymentIntentId, status: result.paymentIntent.status },
+          "Cancelled booking: Stripe would not cancel the PaymentIntent, so its row is left for the late-capture handler (#3638)"
+        );
+      }
     } catch (err) {
       logger.error(
         { err, paymentIntentId },

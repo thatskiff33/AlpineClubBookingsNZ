@@ -3495,7 +3495,15 @@ charged state survives and the stale sweep runs no side effect.
 the authoritative `BOOKING_APPLIED` credit aggregate after acquiring global,
 lodge, then `lockMemberCreditLedger(memberId)` locks in that order;
 the IB payment mirror must never mix a pre-lock price with post-lock credit (or
-vice versa). Waitlist offer confirmation resolves only the immutable lodge key
+vice versa). The switch and both card mint doors (the pay route and the
+`/pay/<token>` link) also exclude each other on lock(1) (#3638,
+`INV-PAY-102`): the switch refuses unless Stripe confirms the card intent is
+dead before its transaction, and under the lock it refuses when the payment
+points at a different intent from the one it retired; each mint door attaches
+its freshly minted intent through `attachMintedCardIntent`, a global-only
+transaction that re-reads the payment's source and the booking's status and
+refuses an Internet Banking or no-longer-payable one.
+Waitlist offer confirmation resolves only the immutable lodge key
 before locking, then re-reads status and expiry under the lodge lock and fuses
 those checks with its update. The expiry reaper returns side effects only for
 rows whose guarded revert/cancel actually claimed one row.
