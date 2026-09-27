@@ -2,6 +2,10 @@
 
 # dependencies
 /node_modules
+# This repository installs with pnpm (#3673); an npm lockfile is always a
+# mistake, so it can never be committed by accident. CI also refuses one.
+/package-lock.json
+/npm-shrinkwrap.json
 /.pnp
 .pnp.*
 .yarn/*

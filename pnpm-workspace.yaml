@@ -1,0 +1,50 @@
+# pnpm settings for this repository (#3673). A single-package repository still
+# keeps them here: since pnpm 11 the `pnpm` field of package.json is not read,
+# and `.npmrc` carries only registry and auth settings.
+
+# Strict layout (owner decision D2 on #3673): each package sees only the
+# dependencies it declares, so an undeclared ("phantom") import fails loudly
+# instead of working by accident. This is pnpm's default; it is written down so
+# nobody flips it to `hoisted` thinking it is unset.
+nodeLinker: isolated
+
+# The single home of the version range for a dependency that an override below
+# pins other packages to (pnpm's "catalog"). package.json names these two as
+# `catalog:` so that the range is written exactly once; bump it here.
+catalog:
+  nodemailer: ^10.0.10
+  sharp: ^0.35.4
+
+# The former npm `overrides` block, translated one entry for one entry. The
+# reasons behind each pin are recorded in docs/MAINTENANCE.md.
+#
+# - `catalog:` pins a transitive copy to this repository's own direct
+#   dependency range, which is what npm's `$sharp` / `$nodemailer` did. (pnpm
+#   still reads `$name` but has deprecated it in favour of catalogs.)
+# - `next-auth>nodemailer` replaces npm's nested `"next-auth": { "nodemailer" }`.
+#   It is written against both packages that declare the optional nodemailer
+#   peer, `next-auth` itself and its `@auth/core`, because npm's nested form
+#   applied to the whole subtree under `next-auth` and pnpm's `>` form names a
+#   direct parent only.
+overrides:
+  sharp: "catalog:"
+  eslint-plugin-react-hooks: 7.1.1
+  postcss: ^8.5.26
+  next-auth>nodemailer: "catalog:"
+  "@auth/core>nodemailer": "catalog:"
+  deepmerge-ts: ^8.0.1
+  browserslist: ^4.28.7
+  mysql2: ^3.22.0
+
+# Dependencies allowed to run install scripts. pnpm runs none by default and
+# fails the install on any unlisted one (`strictDepBuilds`), so a new dependency
+# that wants to run code at install time is a reviewed change to this list, not
+# a silent side effect. These are the same six packages npm's `allowScripts`
+# field approved.
+allowBuilds:
+  "@prisma/engines": true
+  "@sentry/cli": true
+  core-js: true
+  esbuild: true
+  prisma: true
+  unrs-resolver: true

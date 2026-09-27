@@ -12,9 +12,11 @@
   "bugs": {
     "url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues"
   },
+  "packageManager": "pnpm@11.27.1",
   "engines": {
     "node": ">=24.0.0 <25",
-    "npm": ">=11"
+    "pnpm": ">=11.27.1",
+    "npm": "please-use-pnpm"
   },
   "keywords": [
     "booking-system",
@@ -125,7 +127,7 @@
     "next-auth": "5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "node-cron": "^4.6.0",
-    "nodemailer": "^10.0.10",
+    "nodemailer": "catalog:",
     "otpauth": "^9.5.2",
     "photoswipe": "^5.4.4",
     "pino": "^10.3.1",
@@ -141,17 +143,6 @@
     "tailwind-merge": "^3.7.0",
     "xero-node": "^19.2.0",
     "zod": "^4.6.5"
-  },
-  "overrides": {
-    "sharp": "$sharp",
-    "eslint-plugin-react-hooks": "7.1.1",
-    "postcss": "^8.5.26",
-    "next-auth": {
-      "nodemailer": "$nodemailer"
-    },
-    "deepmerge-ts": "^8.0.1",
-    "browserslist": "^4.28.7",
-    "mysql2": "^3.22.0"
   },
   "devDependencies": {
     "@eslint/compat": "^2.1.1",
@@ -176,18 +167,10 @@
     "jsdom": "^30.1.1",
     "knip": "^6.36.0",
     "pg": "^8.23.0",
-    "sharp": "^0.35.4",
+    "sharp": "catalog:",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^6",
     "vitest": "^5.0.1"
-  },
-  "allowScripts": {
-    "@prisma/engines@7.9.1": true,
-    "@sentry/cli@2.58.6": true,
-    "core-js@3.49.0": true,
-    "esbuild@0.28.1": true,
-    "prisma@7.9.1": true,
-    "unrs-resolver@1.12.2": true
   }
 }
