@@ -9,6 +9,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -17,12 +18,16 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  CHILD_FLAG,
+  LOCK_FILE_NAME,
   MAX_ATTEMPTS_PER_RUN,
   STALE_AFTER_MS,
   SWEEP_OPTIONS_ENV,
   SWEEP_SCRIPT,
   TRASH_SUFFIX,
   VITEST_TEMP_DIR_NAME,
+  buildChildEnv,
+  isSweepChild,
   launchSweep,
   nodeSweepFs,
   ownTempDirs,
@@ -39,15 +44,15 @@ import {
  * suite owns, rather than a mocked file system: what the sweep must get right is
  * how real directories, links and modification times look to `lstat`, and a
  * mock would only restate the assumptions under test. The injected calls are
- * the failing ones: an `rm`, a `rename` or an `lstat` that refuses, or an
- * `lstat` reporting another owner, because none of those can be produced
- * portably on a real disk.
+ * the ones a real disk cannot produce portably: an `rm`, `rename`, `lstat`
+ * or `readdir` that refuses, an `lstat` reporting another owner, a sorted
+ * `readdir`, a seeded shuffle, and a dead lock holder.
  *
  * The suite's own root is named `vitest-temp-sweep-test-XXXXXX`, which is not a
  * nanoid, so a sweep started by a concurrent run can never match it.
  *
- * `NOW` is a whole-second instant deliberately far from the frozen test clock
- * (2026-07-01), and it is always passed in. So a `Date.now()` that slipped into
+ * `NOW` is a whole-second instant about three and a half months before the
+ * frozen test clock (2026-07-01), and it is always passed in. So a `Date.now()` that slipped into
  * the code under test would produce a different, detectable time.
  */
 
@@ -129,6 +134,32 @@ function tryLink(target: string, link: string): boolean {
   }
 }
 
+/** A deterministic uniform [0, 1) sequence, so a shuffled visit is repeatable. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+}
+
+/** Reports `uid` as the owner of every path `target` accepts. */
+function foreignOwnerFs(target: (candidate: string) => boolean, uid: number): SweepFs {
+  return {
+    ...nodeSweepFs,
+    lstat: async (candidate) => {
+      const stats = await nodeSweepFs.lstat(candidate);
+      if (!target(candidate)) return stats;
+      return {
+        isDirectory: () => stats.isDirectory(),
+        isSymbolicLink: () => stats.isSymbolicLink(),
+        mtimeMs: stats.mtimeMs,
+        uid,
+      };
+    },
+  };
+}
+
 /** Waits for `condition`, bounded by iterations: `Date` is frozen here. */
 async function eventually(condition: () => boolean, tries = 400): Promise<void> {
   for (let i = 0; i < tries && !condition(); i += 1) {
@@ -140,7 +171,7 @@ describe("sweepStaleVitestTempDirs: what is removed (#3671)", () => {
   it("removes a stale nanoid folder with ssr/, and leaves no trash behind", async () => {
     const stale = vitestDir(root, nanoidName());
     const report = await sweep();
-    expect(report).toEqual({ removed: [stale], failed: [] });
+    expect(report).toEqual({ removed: [stale], failed: [], skipped: false });
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(stale + TRASH_SUFFIX)).toBe(false);
   });
@@ -250,12 +281,46 @@ describe("sweepStaleVitestTempDirs: what is kept (#3671)", () => {
     expect(readFileSync(path.join(extraFile, "notes.txt"), "utf8")).toBe("mine");
   });
 
-  it("keeps a folder whose marker directory holds files that are not Vitest's", async () => {
+  it("keeps a folder whose marker directory holds one file that is not Vitest's, however many are", async () => {
+    // Five real-looking module files sort first in an NTFS listing, which is
+    // what let a first-five sample miss the user's file (#3675 round 2).
     const dir = vitestDir(root, nanoidName());
-    writeFileSync(path.join(dir, "ssr", "thesis.docx"), "precious");
+    for (let i = 1; i <= 5; i += 1) {
+      writeFileSync(path.join(dir, "ssr", String(i).repeat(40)), "x");
+    }
+    writeFileSync(path.join(dir, "ssr", "important-user-file.docx"), "precious");
     setMtime(path.join(dir, "ssr"), STALE);
     expect((await sweep()).removed).toEqual([]);
-    expect(existsSync(path.join(dir, "ssr", "thesis.docx"))).toBe(true);
+    expect(existsSync(path.join(dir, "ssr", "important-user-file.docx"))).toBe(true);
+  });
+
+  it("matches the WHOLE entry name: a 40-hex run inside a longer name is not Vitest's", async () => {
+    const dir = vitestDir(root, nanoidName());
+    writeFileSync(path.join(dir, "ssr", `notes-${SHA1_NAME}.txt`), "mine");
+    setMtime(path.join(dir, "ssr"), STALE);
+    expect((await sweep()).removed).toEqual([]);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it("keeps a folder whose marker directory holds a sub-directory", async () => {
+    const dir = vitestDir(root, nanoidName());
+    mkdirSync(path.join(dir, "ssr", "f".repeat(40)));
+    setMtime(path.join(dir, "ssr"), STALE);
+    expect((await sweep()).removed).toEqual([]);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it("keeps a folder whose marker directory cannot be listed", async () => {
+    const dir = vitestDir(root, nanoidName());
+    const failingFs: SweepFs = {
+      ...nodeSweepFs,
+      readdir: async (target) => {
+        if (target === path.join(dir, "ssr")) throw new Error("EACCES");
+        return nodeSweepFs.readdir(target);
+      },
+    };
+    expect((await sweep({ fs: failingFs })).removed).toEqual([]);
+    expect(existsSync(dir)).toBe(true);
   });
 
   it("keeps a file whose name is a nanoid", async () => {
@@ -275,24 +340,24 @@ describe("sweepStaleVitestTempDirs: what is kept (#3671)", () => {
     expect(existsSync(own)).toBe(true);
   });
 
+  it.runIf(process.platform === "win32")(
+    "compares keep paths case-insensitively on Windows",
+    async () => {
+      const own = vitestDir(root, nanoidName());
+      expect((await sweep({ keep: [own.toUpperCase()] })).removed).toEqual([]);
+      expect(existsSync(own)).toBe(true);
+    },
+  );
+
   it("keeps a folder, or a marker child, owned by somebody else", async () => {
     const dir = vitestDir(root, nanoidName());
     const owner = lstatSync(dir).uid;
     expect((await sweep({ uid: owner + 1 })).removed).toEqual([]);
 
-    const markerOwnedElsewhere: SweepFs = {
-      ...nodeSweepFs,
-      lstat: async (target) => {
-        const stats = await nodeSweepFs.lstat(target);
-        if (target !== path.join(dir, "ssr")) return stats;
-        return {
-          isDirectory: () => stats.isDirectory(),
-          isSymbolicLink: () => stats.isSymbolicLink(),
-          mtimeMs: stats.mtimeMs,
-          uid: owner + 1,
-        };
-      },
-    };
+    const markerOwnedElsewhere = foreignOwnerFs(
+      (target) => target === path.join(dir, "ssr"),
+      owner + 1,
+    );
     const report = await sweep({ uid: owner, fs: markerOwnedElsewhere });
     expect(report.removed).toEqual([]);
     expect(existsSync(dir)).toBe(true);
@@ -377,7 +442,11 @@ describe("sweepStaleVitestTempDirs: failures and limits (#3671)", () => {
       },
     };
     const report = await sweep({ fs: failingFs });
-    expect(report).toEqual({ removed: [], failed: [{ path: dir, error: claimed }] });
+    expect(report).toEqual({
+      removed: [],
+      failed: [{ path: dir, error: claimed }],
+      skipped: false,
+    });
     expect(existsSync(path.join(dir, "ssr", SHA1_NAME))).toBe(true);
   });
 
@@ -391,12 +460,40 @@ describe("sweepStaleVitestTempDirs: failures and limits (#3671)", () => {
     expect(existsSync(badId)).toBe(true);
   });
 
-  it("resolves, never rejects, when the temp root cannot be listed", async () => {
+  it("keeps a trash folder owned by somebody else", async () => {
+    const trash = vitestDir(root, nanoidName() + TRASH_SUFFIX);
+    const owner = lstatSync(trash).uid;
+    const report = await sweep({
+      uid: owner,
+      fs: foreignOwnerFs((target) => target === trash, owner + 1),
+    });
+    expect(report.removed).toEqual([]);
+    expect(existsSync(trash)).toBe(true);
+  });
+
+  it("caps the trash pass too", async () => {
+    const trash = Array.from({ length: 4 }, () =>
+      vitestDir(root, nanoidName() + TRASH_SUFFIX),
+    );
+    const report = await sweep({ maxAttempts: 2 });
+    expect(report.removed).toHaveLength(2);
+    expect(trash.filter((dir) => existsSync(dir))).toHaveLength(2);
+  });
+
+  it("resolves, never rejects, when the temp root is missing or cannot be listed", async () => {
     const missing = path.join(suiteRoot, "does-not-exist");
     const report = await sweep({ tempRoot: missing });
     expect(report.removed).toEqual([]);
-    expect(report.failed).toHaveLength(1);
-    expect(report.failed[0]?.path).toBe(missing);
+
+    const unlistable: SweepFs = {
+      ...nodeSweepFs,
+      readdir: async () => {
+        throw new Error("EACCES");
+      },
+    };
+    const listed = await sweep({ fs: unlistable });
+    expect(listed.removed).toEqual([]);
+    expect(listed.failed.map((failure) => failure.path)).toEqual([root]);
   });
 
   it("resolves when an lstat fails, and skips only that folder", async () => {
@@ -421,6 +518,28 @@ describe("sweepStaleVitestTempDirs: failures and limits (#3671)", () => {
     expect((await sweep()).removed).toHaveLength(MAX_ATTEMPTS_PER_RUN);
     expect((await sweep({ maxAttempts: 1 })).removed).toHaveLength(1);
     expect(dirs.filter((dir) => existsSync(dir))).toHaveLength(1);
+  });
+
+  it("still makes progress when the folders at the front of the listing always fail", async () => {
+    // NTFS lists names in order, so sort the listing to reproduce that anywhere.
+    const blocked = Array.from({ length: MAX_ATTEMPTS_PER_RUN }, (_, i) =>
+      vitestDir(root, `A${String(i).padStart(20, "0")}`),
+    );
+    const reachable = vitestDir(root, "z".repeat(21));
+    const sortedAndStuck: SweepFs = {
+      ...nodeSweepFs,
+      readdir: async (dir) =>
+        (await nodeSweepFs.readdir(dir)).sort((a, b) => (a.name < b.name ? -1 : 1)),
+      rename: async (from, to) => {
+        if (blocked.includes(from)) throw new Error("EBUSY");
+        return nodeSweepFs.rename(from, to);
+      },
+    };
+    const random = seeded(3671);
+    for (let run = 0; run < 20 && existsSync(reachable); run += 1) {
+      await sweep({ fs: sortedAndStuck, random });
+    }
+    expect(existsSync(reachable)).toBe(false);
   });
 
   it("counts failed attempts towards the cap, not just removals", async () => {
@@ -456,12 +575,36 @@ describe("touchVitestTempDirs and the heartbeat (#3671)", () => {
     await eventually(() => statSync(own).mtimeMs === NOW);
     expect(statSync(own).mtimeMs).toBe(NOW);
 
-    stop();
-    // Let any tick already in flight land, then prove no later one does.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // stop() waits for a tick already in flight, so nothing can land after it.
+    await stop();
     setMtime(own, STALE);
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(statSync(own).mtimeMs).toBe(STALE);
+  });
+
+  it("stop() does not resolve until a tick already in flight has finished", async () => {
+    let finishTick: () => void = () => {};
+    let ticks = 0;
+    const slowTouch = () =>
+      new Promise<void>((resolve) => {
+        ticks += 1;
+        finishTick = resolve;
+      });
+    const stop = startHeartbeat(["/unused"], () => NOW, 1, slowTouch);
+    await eventually(() => ticks > 0);
+    // A tick in flight suppresses further ticks rather than stacking them.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ticks).toBe(1);
+
+    let stopped = false;
+    const stopping = stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    finishTick();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 });
 
@@ -505,15 +648,78 @@ describe("ownTempDirs (#3671)", () => {
   });
 });
 
+describe("the single-sweeper lock (#3675 round 2)", () => {
+  const lockPath = () => path.join(root, LOCK_FILE_NAME);
+
+  it("lets only one of several concurrent sweeps run, and releases the lock", async () => {
+    const stale = Array.from({ length: 5 }, () => vitestDir(root, nanoidName()));
+    const reports = await Promise.all([sweep(), sweep(), sweep()]);
+
+    expect(reports.filter((report) => !report.skipped)).toHaveLength(1);
+    expect(reports.flatMap((report) => report.removed).sort()).toEqual(stale.sort());
+    expect(reports.flatMap((report) => report.failed)).toEqual([]);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it("skips while a live, recent sweeper holds the lock, and leaves its lock alone", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    const report = await sweep({ isAlive: () => true });
+    expect(report).toEqual({ removed: [], failed: [], skipped: true });
+    expect(existsSync(stale)).toBe(true);
+    expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
+  });
+
+  it("takes over a lock whose pid is dead", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    const report = await sweep({ isAlive: (pid) => pid !== 4242 });
+    expect(report.skipped).toBe(false);
+    expect(report.removed).toEqual([stale]);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it("takes over a lock older than an hour, even with a live pid", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), "");
+    setMtime(lockPath(), NOW - 2 * 60 * 60 * 1000);
+    const report = await sweep({ isAlive: () => true });
+    expect(report.removed).toEqual([stale]);
+  });
+
+  it("does not delete a lock another sweeper took over while this one ran", async () => {
+    vitestDir(root, nanoidName());
+    // Simulates a takeover mid-sweep: by the time this sweep lists the root,
+    // the lock on disk belongs to somebody else.
+    const takenOver: SweepFs = {
+      ...nodeSweepFs,
+      readdir: async (dir) => {
+        if (dir === root) {
+          writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+        }
+        return nodeSweepFs.readdir(dir);
+      },
+    };
+    await sweep({ fs: takenOver });
+    expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
+  });
+
+  it("treats a recent, still-empty lock as held: it is being written right now", async () => {
+    writeFileSync(lockPath(), "");
+    setMtime(lockPath(), NOW - 1000);
+    expect((await sweep({ isAlive: () => false })).skipped).toBe(true);
+  });
+});
+
 describe("setupVitestTempSweep (#3671)", () => {
   const project = {
     tmpDir: "/t/project",
     vitest: { projects: [{ tmpDir: "/t/project" }], _tmpDir: "/t/root" },
   };
 
-  it("launches the sweep with this run's folders kept, and the teardown stops the heartbeat", () => {
+  it("launches the sweep with this run's folders kept, and the teardown stops the heartbeat", async () => {
     const launch = vi.fn();
-    const stop = vi.fn();
+    const stop = vi.fn(async () => {});
     const heartbeat = vi.fn(() => stop);
     const teardown = setupVitestTempSweep(project, {
       env: {},
@@ -533,13 +739,13 @@ describe("setupVitestTempSweep (#3671)", () => {
       expect.any(Function),
     );
     expect(stop).not.toHaveBeenCalled();
-    teardown();
+    await teardown();
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it("skips everything, and warns once, under libfaketime", () => {
+  it("skips everything, and warns once, under libfaketime", async () => {
     const launch = vi.fn();
-    const heartbeat = vi.fn(() => () => {});
+    const heartbeat = vi.fn(() => async () => {});
     const warn = vi.fn();
     const teardown = setupVitestTempSweep(project, {
       env: { FAKETIME: "+1y" },
@@ -550,10 +756,10 @@ describe("setupVitestTempSweep (#3671)", () => {
     expect(launch).not.toHaveBeenCalled();
     expect(heartbeat).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(() => teardown()).not.toThrow();
+    await expect(teardown()).resolves.toBeUndefined();
   });
 
-  it("never throws: a failure warns once and returns a no-op teardown", () => {
+  it("never throws: a failure warns once and returns a no-op teardown", async () => {
     const warn = vi.fn();
     const hostile = {
       get vitest(): never {
@@ -562,7 +768,7 @@ describe("setupVitestTempSweep (#3671)", () => {
     };
     const teardown = setupVitestTempSweep(hostile, { env: {}, warn });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(() => teardown()).not.toThrow();
+    await expect(teardown()).resolves.toBeUndefined();
 
     const launchThrows = setupVitestTempSweep(project, {
       env: {},
@@ -570,10 +776,10 @@ describe("setupVitestTempSweep (#3671)", () => {
       launch: () => {
         throw new Error("spawn EAGAIN");
       },
-      heartbeat: () => () => {},
+      heartbeat: () => async () => {},
     });
     expect(warn).toHaveBeenCalledTimes(2);
-    expect(() => launchThrows()).not.toThrow();
+    await expect(launchThrows()).resolves.toBeUndefined();
   });
 });
 
@@ -584,31 +790,67 @@ describe("launchSweep and the child process (#3671)", () => {
     return child;
   }
 
-  it("spawns this file, detached and silent, with the options in the environment", () => {
+  function capture() {
     const child = fakeChild();
     const calls: Array<[string, readonly string[], SpawnOptions]> = [];
     const spawnFn = (command: string, args: readonly string[], options: SpawnOptions) => {
       calls.push([command, args, options]);
       return child as unknown as ChildProcess;
     };
+    return { child, calls, spawnFn };
+  }
+
+  it("spawns this file, detached, silent and flagged, in the temp root", () => {
+    const { child, calls, spawnFn } = capture();
     const options = { tempRoot: "/t", maxAgeMs: STALE_AFTER_MS, keep: ["/t/own"] };
     expect(launchSweep(options, spawnFn)).toBe(child);
 
     expect(calls).toHaveLength(1);
     const [command, args, spawnOptions] = calls[0]!;
     expect(command).toBe(process.execPath);
-    expect(args).toEqual(["--no-warnings", SWEEP_SCRIPT]);
+    expect(args).toEqual(["--no-warnings", SWEEP_SCRIPT, CHILD_FLAG]);
     expect(path.basename(SWEEP_SCRIPT)).toBe("vitest-temp-sweep.ts");
     expect(existsSync(SWEEP_SCRIPT)).toBe(true);
     expect(spawnOptions).toMatchObject({ detached: true, stdio: "ignore", windowsHide: true });
-    // The child inherits the run's environment, plus its options.
-    for (const [key, value] of Object.entries(process.env)) {
-      expect(spawnOptions.env?.[key], key).toBe(value);
-    }
+    // Not the worktree: a Windows process holds its working directory open,
+    // which made `git worktree remove` fail while the child ran.
+    expect(spawnOptions.cwd).toBe("/t");
     expect(JSON.parse(spawnOptions.env?.[SWEEP_OPTIONS_ENV] ?? "null")).toEqual(options);
     expect(child.unref).toHaveBeenCalledTimes(1);
     // An async spawn failure is swallowed rather than crashing the run.
     expect(() => child.emit("error", new Error("ENOENT"))).not.toThrow();
+  });
+
+  it("gives the child only allowlisted variables, never NODE_OPTIONS or an inspector", () => {
+    const options = { tempRoot: "/t", maxAgeMs: 1, keep: [] };
+    const env = buildChildEnv(
+      {
+        Path: "C:\\node",
+        SystemRoot: "C:\\Windows",
+        NODE_OPTIONS: "--inspect-brk=0",
+        VSCODE_INSPECTOR_OPTIONS: "{}",
+        NODE_INSPECT_RESUME_ON_START: "1",
+        DATABASE_URL: "postgresql://secret",
+        UNSET: undefined,
+      } as Partial<NodeJS.ProcessEnv> as NodeJS.ProcessEnv,
+      options,
+    );
+    expect(env).toEqual({
+      Path: "C:\\node",
+      SystemRoot: "C:\\Windows",
+      [SWEEP_OPTIONS_ENV]: JSON.stringify(options),
+    });
+
+    const { calls, spawnFn } = capture();
+    const saved = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = "--inspect-brk=0";
+    try {
+      launchSweep(options, spawnFn);
+    } finally {
+      if (saved === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = saved;
+    }
+    expect(calls[0]?.[2].env).not.toHaveProperty("NODE_OPTIONS");
   });
 
   it("returns null rather than throwing when spawn throws", () => {
@@ -616,6 +858,14 @@ describe("launchSweep and the child process (#3671)", () => {
       throw new Error("EAGAIN");
     };
     expect(launchSweep({ tempRoot: "/t", maxAgeMs: 1, keep: [] }, spawnFn)).toBeNull();
+  });
+
+  it("recognises the child by its flag, whatever path it was started through", () => {
+    expect(isSweepChild(["node", "C:\\link\\vitest-temp-sweep.ts", CHILD_FLAG])).toBe(true);
+    expect(isSweepChild(["node", SWEEP_SCRIPT])).toBe(false);
+    expect(isSweepChild(["node", "vitest", "run"])).toBe(false);
+    // The flag as the script path itself does not count.
+    expect(isSweepChild(["node", CHILD_FLAG])).toBe(false);
   });
 
   it("runSweepFromEnv ignores missing or malformed options", async () => {
@@ -636,20 +886,41 @@ describe("launchSweep and the child process (#3671)", () => {
     expect(existsSync(own)).toBe(true);
   });
 
-  // Launches a real Node process that runs this TypeScript file directly, so it
-  // carries its own budget ("A test that launches a process needs its own
-  // budget", docs/TESTING.md).
-  it("really runs as a child process under Node's type stripping", async () => {
+  async function runChild(script?: string): Promise<{ stale: string; own: string }> {
     const stale = vitestDir(root, nanoidName());
     const own = vitestDir(root, nanoidName());
-    const child = launchSweep({ tempRoot: root, maxAgeMs: 0, keep: [own] });
+    const child = launchSweep({ tempRoot: root, maxAgeMs: 0, keep: [own] }, undefined, script);
     expect(child).not.toBeNull();
     await new Promise<void>((resolve) => {
       child!.once("exit", () => resolve());
       child!.once("error", () => resolve());
     });
+    return { stale, own };
+  }
+
+  // These launch a real Node process that runs this TypeScript file directly,
+  // so they carry their own budget ("A test that launches a process needs its
+  // own budget", docs/TESTING.md).
+  it("really runs as a child process under Node's type stripping", async () => {
+    const { stale, own } = await runChild();
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(own)).toBe(true);
+  }, 30_000);
+
+  it("still runs when started through a junction or symlink to the script", async (ctx) => {
+    const linkedLib = path.join(suiteRoot, "linked-lib");
+    if (!tryLink(path.dirname(SWEEP_SCRIPT), linkedLib)) ctx.skip();
+    try {
+      const { stale, own } = await runChild(
+        path.join(linkedLib, path.basename(SWEEP_SCRIPT)),
+      );
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(own)).toBe(true);
+    } finally {
+      // Unlink the junction itself before the suite's recursive cleanup runs,
+      // so that cleanup can never descend into the real scripts/lib.
+      unlinkSync(linkedLib);
+    }
   }, 30_000);
 });
 
