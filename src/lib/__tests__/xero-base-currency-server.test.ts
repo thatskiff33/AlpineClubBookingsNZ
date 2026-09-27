@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -22,6 +25,7 @@ vi.mock("@/lib/xero-organisation", () => ({
 
 import {
   emptyAdminPermissionMatrix,
+  XERO_ORGANISATION_READ_PERMISSION,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
 import { readXeroBaseCurrencyForViewer } from "@/lib/xero-base-currency-server";
@@ -110,5 +114,23 @@ describe("readXeroBaseCurrencyForViewer (#3633)", () => {
     await expect(
       readXeroBaseCurrencyForViewer(viewerWithFinance("view")),
     ).resolves.toBeNull();
+  });
+});
+
+/*
+  The organisation route has to write its gate as a literal (the #2975 census
+  reads handler gates off the source), so this is what keeps the route and the
+  reader on ONE audience: change either and this fails. Disk-reading.
+*/
+describe("the organisation route and the reader share one audience (#3633)", () => {
+  it("gates the organisation route on XERO_ORGANISATION_READ_PERMISSION", () => {
+    const route = readFileSync(
+      path.join(process.cwd(), "src/app/api/admin/xero/organisation/route.ts"),
+      "utf8",
+    );
+    const { area, level } = XERO_ORGANISATION_READ_PERMISSION;
+    expect(route).toContain(
+      `permission: { area: "${area}", level: "${level}" }`,
+    );
   });
 });

@@ -931,10 +931,12 @@ export function hasFinanceViewerAccess(input: AdminPermissionInput) {
  * Who may read the connected Xero organisation's summary — its name, short
  * code and base currency (#2314, owner decision 2 Aug 2026): an admin holding
  * the finance area at view or above. `GET /api/admin/xero/organisation` gates
- * on it, and so does every server surface that shows a value from that summary
- * to an admin outside that route (#3633, the base-currency warning on the Club
- * Currency & Locale page and the setup-readiness list), so the summary reaches
- * exactly the same people whichever screen shows it.
+ * on it (as the same literal, which the #2975 authorisation census reads off the
+ * handler's source; a test pins that the two agree), and so does every server
+ * surface that shows a value from that summary to an admin outside that route
+ * (#3633, the base-currency warning on the Club Currency & Locale page and the
+ * setup-readiness list), so the summary reaches exactly the same people
+ * whichever screen shows it.
  */
 export const XERO_ORGANISATION_READ_PERMISSION: AdminAccessRequirement = {
   area: "finance",
