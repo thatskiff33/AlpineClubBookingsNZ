@@ -3701,7 +3701,9 @@ commit, except for a cancelled group. The create worker's post-create fence
 (`bindCreatedGroupSettlementInvoice`) writes the pointer and the ACTIVE object
 link together under `lock(1)`, or abandons the invoice when the settlement is
 released, superseded by a later attempt, pointing elsewhere, or at another
-total. The paid-invoice and card applies compare what arrived with the total,
+total; `releaseUninvoiceableGroupSettlement` FAILS a bound settlement under the
+same key when its joiners' stored prices cannot make the invoice. The
+paid-invoice and card applies compare what arrived with the total,
 invoice and intent read under `lock(1)`. Every Xero read (the replacement
 check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
 any transaction. No lock key, order or site is added; the realdb proof is

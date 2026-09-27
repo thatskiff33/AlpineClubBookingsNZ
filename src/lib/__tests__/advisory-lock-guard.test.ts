@@ -822,6 +822,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "releaseUninvoiceableGroupSettlement#1",
+    tier: "GLOBAL",
+    reason:
+      "#3642: a bound settlement whose joiners' stored prices cannot make its invoice is FAILED to release the binding; the guarded update must serialise with the settle, card-attach, reaper and create-worker writers of the same settlement, which all take this key.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "bindCreatedGroupSettlementInvoice#1",
     tier: "GLOBAL",
     reason:
