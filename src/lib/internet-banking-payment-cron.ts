@@ -16,7 +16,7 @@ import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
-  sendAdminPaymentFailureAlert,
+  sendAdminInternetBankingHoldStartedStayAlert,
   sendBookingCancelledEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -507,20 +507,15 @@ async function alertStartedStayHoldOnce(
       { bookingId: payment.bookingId, paymentId: payment.id },
       "Overdue Internet Banking hold on a stay that has started; left for manual reconciliation",
     );
-    await sendAdminPaymentFailureAlert(
+    await sendAdminInternetBankingHoldStartedStayAlert(
       {
         memberName: owner.member
           ? `${owner.member.firstName} ${owner.member.lastName}`
           : "Unknown member",
+        bookingId: payment.bookingId,
         checkIn: payment.booking.checkIn,
-        checkOut: payment.booking.checkOut,
-        amountCents: payment.amountCents,
-        errorMessage:
-          "Overdue Internet Banking hold on a stay that has started — reconcile by hand. " +
-          `The payment deadline${payment.internetBankingHoldUntil ? ` (${payment.internetBankingHoldUntil.toISOString()})` : ""} passed unpaid, ` +
-          "but check-in has already arrived, so the booking was NOT cancelled automatically. " +
-          "Check the bank account for the member's transfer and record it, or cancel the booking by hand.",
-        paymentIntentId: payment.id,
+        holdUntil: payment.internetBankingHoldUntil,
+        amountOwingCents: payment.amountCents,
       },
       format,
     );

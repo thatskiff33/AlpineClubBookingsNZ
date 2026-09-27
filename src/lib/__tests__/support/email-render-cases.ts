@@ -246,6 +246,7 @@ import {
   waitlistOfferTemplate,
   waitlistPlaceRestoredTemplate,
 } from "@/lib/email-templates/waitlist";
+import { adminInternetBankingHoldStartedStayTemplate } from "@/lib/email-templates/admin-internet-banking-started-stay";
 import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 
 export interface EmailRenderCase {
@@ -696,6 +697,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminDuplicateCaptureRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", settledPaymentIntentId: "settledPaymentIntentId-6", operationReference: "operationReference-7", reviewUrl: "reviewUrl-8", refundFailed: true }, CLUB_FORMAT_TEST) },
   { id: "adminDuplicateCaptureRefundTemplate:full", fn: "adminDuplicateCaptureRefundTemplate", render: () =>
     adminDuplicateCaptureRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", settledPaymentIntentId: "settledPaymentIntentId-6", operationReference: "operationReference-7", errorMessage: "errorMessage-8", reviewUrl: "reviewUrl-9", refundFailed: true }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldStartedStayTemplate:minimal", fn: "adminInternetBankingHoldStartedStayTemplate", render: () =>
+    adminInternetBankingHoldStartedStayTemplate({ memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), holdUntil: null, amountOwingCents: 105, reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldStartedStayTemplate:full", fn: "adminInternetBankingHoldStartedStayTemplate", render: () =>
+    adminInternetBankingHoldStartedStayTemplate({ memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), holdUntil: new Date("2026-03-02T08:00:00.000Z"), amountOwingCents: 105, reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureAutoRefundTemplate:minimal", fn: "adminLateCaptureAutoRefundTemplate", render: () =>
     adminLateCaptureAutoRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", bookingId: "bookingId-6", bookingDeleted: true, captureKind: "modification", reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureAutoRefundTemplate:full", fn: "adminLateCaptureAutoRefundTemplate", render: () =>

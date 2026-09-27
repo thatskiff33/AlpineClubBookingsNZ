@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   reconcileHostingReviewForSystemCancellation: vi.fn(),
   settleHostingCoverageAfterCommit: vi.fn(),
   claimAlertCooldown: vi.fn(),
-  sendAdminPaymentFailureAlert: vi.fn(),
+  sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -63,7 +63,7 @@ vi.mock("@/lib/booking-events", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendBookingCancelledEmail: mocks.sendBookingCancelledEmail,
-  sendAdminPaymentFailureAlert: mocks.sendAdminPaymentFailureAlert,
+  sendAdminInternetBankingHoldStartedStayAlert: mocks.sendAdminInternetBankingHoldStartedStayAlert,
 }));
 
 vi.mock("@/lib/alert-cooldown", () => ({
@@ -230,7 +230,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     );
     mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
     mocks.claimAlertCooldown.mockResolvedValue(true);
-    mocks.sendAdminPaymentFailureAlert.mockResolvedValue(undefined);
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue(undefined);
   });
 
   // #3663 (INV-PAY-016): NOW is 2026-07-06 20:00 in Pacific/Auckland, so the
@@ -262,9 +262,16 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
       expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
         expect.objectContaining({ key: "internet-banking-hold-started-stay:pay_ib_1" }),
       );
-      expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
-      expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toContain(
-        "stay that has started — reconcile by hand",
+      expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).toHaveBeenCalledWith(
+        {
+          memberName: expect.stringContaining("Alice"),
+          bookingId: "booking_ib_1",
+          checkIn: new Date(checkIn),
+          holdUntil: new Date("2026-07-05T08:00:00Z"),
+          amountOwingCents: 12345,
+        },
+        expect.anything(),
       );
     },
   );
@@ -276,7 +283,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result.skippedStarted).toBe(1);
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
   });
 
   it("still releases an expired hold whose check-in is tomorrow", async () => {
@@ -285,7 +292,7 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     const result = await releaseExpiredInternetBankingHolds(NOW);
 
     expect(result).toMatchObject({ released: 1, skippedStarted: 0 });
-    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
   });
 
   it("judges 'started' by the club's day, not the UTC day", async () => {
