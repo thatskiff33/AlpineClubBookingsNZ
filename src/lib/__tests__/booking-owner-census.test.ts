@@ -485,7 +485,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:495",
+  "src/lib/booking-cancel.ts:496",
   "src/lib/booking-date-modification-service.ts:392",
   "src/lib/booking-delete.ts:124",
   "src/lib/booking-delete.ts:73",
@@ -793,6 +793,5 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/payment-reconciliation.ts:89",
   "src/lib/stuck-state-dashboard.ts:616",
   "src/lib/xero-booking-repair-types.ts:172",
-  "src/lib/xero-inbound/invoice-paid-effects.ts:271",
   "src/lib/xero-inbound/settlement-conflicts.ts:152",
 ];

@@ -176,6 +176,13 @@ const tx = {
   paymentRefund: {
     findMany: (...a: unknown[]) => mocks.paymentRefundFindMany(...a),
   },
+  // #3535's clearing-note evidence, read by the already-cancelled credit arm
+  // these bookings fall through to: no clearing note on file.
+  xeroObjectLink: { findFirst: vi.fn().mockResolvedValue(null) },
+  xeroSyncOperation: {
+    findFirst: vi.fn().mockResolvedValue(null),
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  },
   // The cancelled case's idempotency read: this invoice's marker, in the
   // settle loop's transaction.
   bookingEvent: {
