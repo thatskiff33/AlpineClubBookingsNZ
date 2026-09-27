@@ -1217,6 +1217,34 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("writes the approved refund's record only on the replay that moves it to SUCCEEDED (#3639 delta D6)", async () => {
+    const crashed = makeOperation({
+      id: "recovery-late-approval-2",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 2500,
+      allocationPlan: [{ paymentTransactionId: "txn-late", amountCents: 2500 }],
+      idempotencyKey: "late_capture_approval_refund_recovery_pi_late",
+      stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...crashed, status: "PENDING" }]),
+    );
+    // Someone else (the inline close, late) already moved it.
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      (args: { data?: { status?: unknown } }) =>
+        Promise.resolve({
+          count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : 1,
+        }),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockQueueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
+  });
+
   it("replays a byte-identical refund-request Stripe body after a lost inline recording, so it converges instead of hitting idempotency_error (#1507)", async () => {
     // Regression for #1507 (refund_request half of the #1494 pattern). The admin
     // approve route creates the appeal refund under refund_request_<id>; if it

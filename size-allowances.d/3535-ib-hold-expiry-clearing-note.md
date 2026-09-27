@@ -12,15 +12,8 @@ reason: the transaction-client option and the wording choice belong on the
   second enqueue elsewhere would fork the one booking-anchored clearing note
   the cancel path, the repair tool and the cron all raise.
 
-file: src/lib/booking-cancel.ts
-lines: 2527
-reason: the never-captured cancel path's existing clearing-note enqueue gains
-  the one flag that makes its wording say the invoice was cleared, with a
-  two-line note on why; the call is the rule, and moving it out of the cancel
-  claim's follow-up would separate it from the sizing it sits beside.
-
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1787
+lines: 1836
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -28,6 +21,12 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   by design (its header says why). The delta review added the arm's stand-down
   for a note retired by late cash and its manual-review answer to a shortfall;
   the predicates themselves live in `xero-clearing-allocations.ts`.
+  Composed with #3639 at the epic sync (one file, one allowance, so its growth
+  is declared here): the late-capture arm leaves out captures a
+  treasurer-approval task owns and pins its refund to the rest, and the one
+  home of the "cash retired the clearing note" finding moved before the
+  arm's gate, replacing this arm's own copy. `booking-cancel.ts` needs no
+  allowance any more: #3639 shrank it.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1610

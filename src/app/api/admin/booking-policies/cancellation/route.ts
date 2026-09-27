@@ -5,7 +5,7 @@ import { logAudit } from "@/lib/audit"
 import {
   auditLateCaptureSettingChange,
   checkLateCaptureSettingChange,
-  LATE_CAPTURE_SETTING_NEEDS_FINANCE_MESSAGE,
+  LateCaptureSettingRefusal,
 } from "@/lib/late-capture-refund-setting-change"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
 import {
@@ -61,14 +61,9 @@ export async function PUT(req: NextRequest) {
     waitlistCrossLodgeOrder,
     linkedMoveChargesBothChangeFees,
     lateCaptureRefundNeedsApproval,
+    lateCaptureRefundNeedsApprovalLoaded,
     lodgeId,
   } = parsed.data
-
-  // #3639 review F2: changing the late-capture refund choice needs finance:edit.
-  const lateCapture = await checkLateCaptureSettingChange(session.user, lateCaptureRefundNeedsApproval)
-  if (lateCapture.refused) {
-    return NextResponse.json({ error: LATE_CAPTURE_SETTING_NEEDS_FINANCE_MESSAGE }, { status: 403 })
-  }
 
   if (lodgeId) {
     const lodge = await prisma.lodge.findUnique({
@@ -102,7 +97,19 @@ export async function PUT(req: NextRequest) {
   // also DB-enforced by the CancellationPolicy_clubwide_daysBeforeStay_unique
   // partial index (WHERE "lodgeId" IS NULL, migration 20260709000100 —
   // PostgreSQL treats nulls as distinct under [lodgeId, daysBeforeStay]).
-  const result = await prisma.$transaction(async (tx) => {
+  // #3639 review F2 / delta D3: the late-capture refund choice is checked on
+  // this Serializable transaction, so the stored value it compares is the one
+  // the write replaces.
+  let lateCapture = { before: false, changing: false }
+  let result
+  try {
+  result = await prisma.$transaction(async (tx) => {
+    lateCapture = await checkLateCaptureSettingChange(
+      tx,
+      session.user,
+      lateCaptureRefundNeedsApproval,
+      lateCaptureRefundNeedsApprovalLoaded,
+    )
     await tx.cancellationPolicy.deleteMany({
       where: { lodgeId: lodgeId ?? null },
     })
@@ -169,6 +176,12 @@ export async function PUT(req: NextRequest) {
       ...clubWideDefaults(defaults),
     }
   }, { isolationLevel: "Serializable" })
+  } catch (error) {
+    if (error instanceof LateCaptureSettingRefusal) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    throw error
+  }
 
   logAudit({
     action: "cancellation-policy.update",
@@ -178,7 +191,12 @@ export async function PUT(req: NextRequest) {
   })
 
   if (lateCapture.changing) {
-    auditLateCaptureSettingChange({ actorMemberId: session.user.id, before: lateCapture.before, after: !lateCapture.before })
+    auditLateCaptureSettingChange({
+      actorMemberId: session.user.id,
+      before: lateCapture.before,
+      after: !lateCapture.before,
+      via: "cancellation-page",
+    })
   }
   revalidatePublicPageContent()
   return NextResponse.json(result)

@@ -244,23 +244,29 @@ export async function executeLateCaptureApprovalRefund({
     );
     return null;
   }
-  await markLateCaptureApprovalRefundRecoverySucceeded(route.paymentIntentId).catch(
-    (err) =>
+  // The record is written by whichever of this and the cron replay moves the
+  // debt to SUCCEEDED - exactly once (delta D6). A lost close here leaves it
+  // PENDING, and the replay, answered by Stripe with this refund, writes it.
+  const closed = await markLateCaptureApprovalRefundRecoverySucceeded(route.paymentIntentId).catch(
+    (err) => {
       logger.error(
         { err, bookingId, taskId },
         "Failed to close the late-capture approval refund recovery operation after an inline refund succeeded",
-      ),
+      );
+      return { count: 0 };
+    },
   );
-
-  await finishApprovedLateCaptureRefund({
-    bookingId,
-    paymentId: route.paymentId,
-    paymentIntentId: route.paymentIntentId,
-    amountCents,
-    refundId,
-    captureKind: route.captureKind,
-    approvedByMemberId: actingMemberId,
-    manualRefundTaskId: taskId,
-  });
+  if (closed.count > 0) {
+    await finishApprovedLateCaptureRefund({
+      bookingId,
+      paymentId: route.paymentId,
+      paymentIntentId: route.paymentIntentId,
+      amountCents,
+      refundId,
+      captureKind: route.captureKind,
+      approvedByMemberId: actingMemberId,
+      manualRefundTaskId: taskId,
+    });
+  }
   return refundId;
 }

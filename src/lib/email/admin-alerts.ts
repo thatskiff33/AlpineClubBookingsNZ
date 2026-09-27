@@ -11,4 +11,5 @@ export * from "./admin-alerts-shared";
 export * from "./admin-alerts-booking";
 export * from "./admin-alerts-membership";
 export * from "./admin-alerts-finance";
+export * from "./admin-alerts-late-capture";
 export * from "./admin-alerts-ops";

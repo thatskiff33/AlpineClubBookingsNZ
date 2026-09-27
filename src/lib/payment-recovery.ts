@@ -2217,12 +2217,27 @@ async function processBookingModificationRefundOperation(
   }
 
   // #3639: a replayed treasurer-approved late-capture refund writes the record
-  // and queues the Xero correction its inline attempt would have.
+  // and queues the Xero correction its inline attempt would have - only on the
+  // replay that actually moves the operation to SUCCEEDED (delta D6), so an
+  // inline success whose close was lost is not recorded twice.
   if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
-    await finishApprovedLateCaptureRefundAfterReplay({
-      ...operation,
-      amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
+    const transition = await prisma.paymentRecoveryOperation.updateMany({
+      where: { id: operation.id, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: new Date(),
+      },
     });
+    if (transition.count > 0) {
+      await finishApprovedLateCaptureRefundAfterReplay({
+        ...operation,
+        amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
+      });
+    }
+    return;
   }
 
   await completePaymentRecoveryOperation(operation.id);

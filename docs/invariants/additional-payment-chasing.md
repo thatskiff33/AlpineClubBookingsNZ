@@ -1373,8 +1373,8 @@ Four obligations:
   (nothing failed). The webhook still sends it fire-and-forget with a `.catch`
   that only logs, because webhooks stay non-blocking and the durable record is the
   row plus the audit entry. **The `INV-ADDPAY-039` alert REPLACES this one when it
-  fires.** A capture HELD for a treasurer (`INV-PAY-106`) sends none: the OPEN task
-  and the waiting-items badge are its notice (orchestrator decision, 27 Sep 2026).
+  fires.** A capture HELD for a treasurer (`INV-PAY-106`) sends its own
+  `admin-late-capture-held` alert instead, ONCE per payment (claim-guarded).
 
 ### INV-ADDPAY-039
 

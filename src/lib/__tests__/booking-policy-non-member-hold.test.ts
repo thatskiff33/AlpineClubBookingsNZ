@@ -204,7 +204,11 @@ describe("non-member hold policy admin API", () => {
           action: "booking-defaults.late_capture_refund_approval.changed",
           category: "payment",
           severity: "important",
-          details: JSON.stringify({ before: "refund_automatically", after: "treasurer_approves" }),
+          details: JSON.stringify({
+            before: "refund_automatically",
+            after: "treasurer_approves",
+            via: "cancellation-page",
+          }),
         }),
       );
       expect(h.hasAdminAreaAccess).toHaveBeenCalledWith(
@@ -224,8 +228,34 @@ describe("non-member hold policy admin API", () => {
       );
 
       expect(res.status).toBe(403);
-      expect(h.transaction).not.toHaveBeenCalled();
+      // Refused inside the write transaction (delta D3), before any write.
+      expect(h.cancellationDeleteMany).not.toHaveBeenCalled();
+      expect(h.defaultsUpsert).not.toHaveBeenCalled();
       expect(h.logAudit).not.toHaveBeenCalled();
+    });
+
+    it("refuses a save made against a value that changed while the page was open, with its own message (delta D3)", async () => {
+      // A treasurer switched it on after this page loaded the old answer.
+      h.defaultsFindUnique.mockResolvedValue({
+        id: "default",
+        nonMemberHoldEnabled: false,
+        nonMemberHoldDays: 14,
+        lateCaptureRefundNeedsApproval: true,
+      });
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: false,
+          lateCaptureRefundNeedsApprovalLoaded: false,
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        error: expect.stringContaining("changed how late card payments"),
+      });
+      expect(h.defaultsUpsert).not.toHaveBeenCalled();
     });
 
     it("lets a bookings-only officer save the page when the stored answer is re-sent unchanged", async () => {

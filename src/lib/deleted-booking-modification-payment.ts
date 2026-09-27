@@ -1,5 +1,4 @@
 import {
-  PaymentStatus,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
   Prisma,
@@ -400,21 +399,24 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       where: { stripePaymentIntentId: paymentIntentId },
       select: { status: true, refundedAmountCents: true, amountCents: true },
     });
-    if (
-      settled &&
-      // #3639: the one "already refunded" test, which reads the refunded total.
-      (captureRefundState({
-        ...settled,
-        amountCents: settled.amountCents || amountCents,
-      }).heldCents === 0 ||
-        settled.status === PaymentStatus.PARTIALLY_REFUNDED)
-    ) {
+    // #3639 (delta D4): the one "already refunded" test, which reads the
+    // refunded total rather than the status a browser confirm can rewrite. A
+    // capture Stripe has returned in full needs no task. One returned only in
+    // part still leaves money the club holds against a deleted booking, so the
+    // task is raised - for what is still held, not the full amount, or its
+    // completion would be refused forever as already refunded.
+    const refundState = settled
+      ? captureRefundState({ ...settled, amountCents: settled.amountCents || amountCents })
+      : null;
+    if (refundState && refundState.heldCents === 0) {
       logger.info(
         { bookingId, paymentId, paymentIntentId },
         "Skipped raising the deleted-booking modification refund task: Stripe had already refunded this capture",
       );
       return { taskId: null, created: false, alreadyRefunded: true };
     }
+    const heldAmountCents =
+      refundState?.anyRefunded === true ? Math.min(amountCents, refundState.heldCents) : amountCents;
 
     const task = await tx.manualRefundTask.create({
       // `status: OPEN` is written EXPLICITLY even though the schema defaults to
@@ -425,13 +427,13 @@ export async function raiseDeletedBookingModificationRefundTask(params: {
       data: {
         bookingId,
         paymentId,
-        amountCents,
+        amountCents: heldAmountCents,
         // #2797: Stripe captured a booking-modification payment against a
         // booking that had already been deleted (#2700, INV-ADDPAY-036). Typed
         // so a consumer need not sniff the reason string; `raisedAmountCents`
         // records the fixed amount this task was raised with.
         kind: ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE,
-        raisedAmountCents: amountCents,
+        raisedAmountCents: heldAmountCents,
         reason,
         status: ManualRefundTaskStatus.OPEN,
       },

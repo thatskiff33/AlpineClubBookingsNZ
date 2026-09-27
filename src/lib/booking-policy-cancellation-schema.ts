@@ -40,6 +40,9 @@ export const policySchema = z
     linkedMoveChargesBothChangeFees: z.boolean().optional(),
     // #3639 (owner decision 26 Sep 2026): hold a late capture for a treasurer.
     lateCaptureRefundNeedsApproval: z.boolean().optional(),
+    // #3639 delta D3: the value the page loaded, so a save against a value that
+    // has since changed is refused rather than silently reverting it.
+    lateCaptureRefundNeedsApprovalLoaded: z.boolean().optional(),
     // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
     // the club-wide (null lodgeId) rules. A lodge's rows REPLACE the
     // club-wide set at runtime; an empty rules array for a lodge removes the

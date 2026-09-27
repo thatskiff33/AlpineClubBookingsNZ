@@ -3144,6 +3144,16 @@ describe("#3639 - approving a held late-capture refund", () => {
     expect(mocks.queueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
   });
 
+  it("leaves the record to the cron replay when the inline close is lost, so it is written once (delta D6)", async () => {
+    armHeldLateCapture();
+    mocks.markLateCaptureApprovalRefundRecoverySucceeded.mockResolvedValue({ count: 0 });
+
+    const result = await approve();
+
+    expect(result.stripeRefundId).toBe("re_late");
+    expect(mocks.queueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
+  });
+
   it("keeping the payment moves nothing", async () => {
     armHeldLateCapture();
 

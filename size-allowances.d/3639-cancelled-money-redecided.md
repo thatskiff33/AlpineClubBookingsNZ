@@ -22,7 +22,7 @@ paths share moved out of the webhook into `late-capture-refund-credit-note.ts`,
 which is why the webhook file shrank. What remains below are the seams.
 
 file: src/lib/payment-recovery.ts
-lines: 3242
+lines: 3257
 reason: the approval's refund debt has to be persisted through the module's
   private ledger-recovery writer, the superseded-intent hand-off has to ask the
   late-capture hold before it refunds a change payment on a cancelled booking
@@ -43,19 +43,11 @@ reason: the setting travels with the club's other booking defaults, so it is
   one field and one constraint in that entity's declaration.
 
 file: src/lib/deleted-booking-modification-payment.ts
-lines: 871
+lines: 873
 reason: the confirm route's #2700 raise must see the webhook's approval task
   for the same capture, so its duplicate check matches the approval marker too.
 
 The review round (27 Sep 2026) moved three more files, each by the minimum.
-
-file: src/lib/xero-booking-repair-classify.ts
-lines: 1709
-reason: the late-capture arm has to leave out a capture a treasurer-approval
-  task owns, and the cancelled-open-invoice arm has to report a clearing note
-  retired by cash (#3535's finding, which that arm's gate would otherwise
-  hide); both are branches of arms that already live here, over data the
-  loader already hands them.
 
 file: src/lib/member-credit.ts
 lines: 1029
@@ -65,3 +57,9 @@ reason: one import, so the cancellation credit's description comes from the
 file: src/lib/xero-credit-notes.ts
 lines: 1098
 reason: one import, for the same shared description builder.
+
+file: src/lib/email-message-registry.ts
+lines: 2088
+reason: the held late-capture alert (delta D7) is a new admin template, and
+  every template is registered in this file's lists - its name, its required
+  tokens and its trigger summary - beside the hand-back task alert it mirrors.

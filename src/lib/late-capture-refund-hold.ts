@@ -12,6 +12,10 @@ import {
 } from "@/lib/deleted-booking-modification-payment";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { bookingOwner } from "@/lib/booking-owner";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { sendAdminLateCaptureHeldAlert } from "@/lib/email";
 
 /**
  * #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): a club may have a treasurer
@@ -134,9 +138,12 @@ export async function holdLateCaptureForTreasurerIfRequired(
       select: { id: true },
     });
     if (openQuestion) {
+      // The kind is set in the same write: a #2700 row raised before the kind
+      // existed carries NULL, and the marker's CHECK allows only this kind
+      // (delta D5).
       await tx.manualRefundTask.update({
         where: { id: openQuestion.id },
-        data: marker,
+        data: { ...marker, kind: ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE },
       });
       return { taskId: openQuestion.id, created: false };
     }
@@ -173,7 +180,53 @@ export async function holdLateCaptureForTreasurerIfRequired(
       refundSent: false,
     }),
   });
+  await announceHeldLateCapture(capture);
   return true;
+}
+
+/** Long enough that the claim means "once per payment", ever. */
+const HELD_ALERT_ONCE_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * #3639 (delta D7): the finance alert for a held capture, ONCE per payment
+ * intent. The claim is taken before sending, so a Stripe redelivery, a cron
+ * retry or a second instance never re-sends. Never throws: the task is the
+ * record, and a failed mail must not fail the webhook or the cron over a nudge.
+ */
+async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> {
+  try {
+    const claimed = await claimAlertCooldown({
+      key: `late-capture-held:${capture.paymentIntentId}`,
+      windowMs: HELD_ALERT_ONCE_MS,
+    });
+    if (!claimed) return;
+    const booking = await prisma.booking.findUnique({
+      where: { id: capture.bookingId },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        member: { select: { firstName: true, lastName: true } },
+        organisation: { select: { name: true, email: true } },
+      },
+    });
+    if (!booking) return;
+    const owner = bookingOwner(booking).member;
+    await sendAdminLateCaptureHeldAlert(
+      {
+        memberName: `${owner.firstName} ${owner.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        amountCents: capture.amountCents,
+        bookingId: capture.bookingId,
+      },
+      await clubFormatValues(),
+    );
+  } catch (err) {
+    logger.error(
+      { err, bookingId: capture.bookingId, paymentIntentId: capture.paymentIntentId },
+      "Failed to send the held late-capture alert; the task on the payments board still records it",
+    );
+  }
 }
 
 /**

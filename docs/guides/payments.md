@@ -565,8 +565,9 @@ waiting-items badge in the sidebar like any other refund task.
 
 Once an item exists for a payment, it decides that payment. Switching the setting
 back to automatic does not refund a payment that is waiting for you, or one you
-chose to keep. Nobody is emailed about these items: the item and the sidebar badge
-are how you find out. A Full Admin can find each one in the audit log as a
+chose to keep. Admins who receive payment alerts are emailed once when a payment
+is held (*Late payment held for approval*, naming the booking and the amount), and
+the item and the sidebar badge stay until someone decides it. A Full Admin can find each one in the audit log as a
 `booking.payment.late_capture_refund_held` entry, and each approved refund as
 `booking.payment.refunded_after_cancellation`.
 

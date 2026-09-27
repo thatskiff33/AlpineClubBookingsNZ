@@ -58,6 +58,8 @@ const {
   mockManualRefundTaskFindFirst,
   mockManualRefundTaskCreate,
   mockManualRefundTaskUpdate,
+  mockSendAdminLateCaptureHeldAlert,
+  mockClaimAlertCooldown,
   mockBookingDefaultsFindUnique,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryOperationFindFirst: vi.fn().mockResolvedValue(null),
@@ -68,6 +70,8 @@ const {
   mockManualRefundTaskFindFirst: vi.fn().mockResolvedValue(null),
   mockManualRefundTaskCreate: vi.fn().mockResolvedValue({ id: "task-held" }),
   mockManualRefundTaskUpdate: vi.fn().mockResolvedValue({ id: "task-2700" }),
+  mockSendAdminLateCaptureHeldAlert: vi.fn().mockResolvedValue(undefined),
+  mockClaimAlertCooldown: vi.fn().mockResolvedValue(true),
   mockBookingDefaultsFindUnique: vi.fn().mockResolvedValue(null),
   // #3639: the #1491 decision artefacts the late-capture handler reads before
   // it refunds (`loadCancellationRefundDecisionEvidence`, left REAL).
@@ -343,6 +347,13 @@ vi.mock("@/lib/email", () => ({
   sendAdminLateCaptureHandBackConflictAlert: (...args: unknown[]) =>
     mockSendAdminLateCaptureHandBackConflictAlert(...args),
   sendSetupIntentFailedEmail: (...args: unknown[]) => mockSendSetupIntentFailedEmail(...args),
+  // #3639 (delta D7): the once-only alert for a capture held for a treasurer.
+  sendAdminLateCaptureHeldAlert: (...args: unknown[]) =>
+    mockSendAdminLateCaptureHeldAlert(...args),
+}));
+
+vi.mock("@/lib/alert-cooldown", () => ({
+  claimAlertCooldown: (...args: unknown[]) => mockClaimAlertCooldown(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -2137,6 +2148,8 @@ describe("Stripe webhook Xero alerting", () => {
         );
         expect(mockRecordAutomaticCancelledBookingRefundTask).not.toHaveBeenCalled();
         expect(mockSendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+        // Its own alert instead, once (delta D7).
+        expect(mockSendAdminLateCaptureHeldAlert).toHaveBeenCalledTimes(1);
         expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
         expect(mockLogAudit).not.toHaveBeenCalledWith(
           expect.objectContaining({
@@ -2191,7 +2204,10 @@ describe("Stripe webhook Xero alerting", () => {
         expect(mockManualRefundTaskCreate).not.toHaveBeenCalled();
         expect(mockManualRefundTaskUpdate).toHaveBeenCalledWith({
           where: { id: "task-2700" },
-          data: { lateCaptureApprovalIntentId: "pi_additional_late" },
+          data: {
+            lateCaptureApprovalIntentId: "pi_additional_late",
+            kind: "DELETED_BOOKING_LATE_CAPTURE",
+          },
         });
         expect(mockLogAudit).toHaveBeenCalledWith(
           expect.objectContaining({

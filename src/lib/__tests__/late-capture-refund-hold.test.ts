@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   taskUpdate: vi.fn(),
   executeRaw: vi.fn(),
   logAudit: vi.fn(),
+  claimAlertCooldown: vi.fn(),
+  sendHeldAlert: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => {
@@ -35,6 +37,15 @@ vi.mock("@/lib/prisma", () => {
   };
 });
 vi.mock("@/lib/audit", () => ({ logAudit: (...a: unknown[]) => mocks.logAudit(...a) }));
+vi.mock("@/lib/alert-cooldown", () => ({
+  claimAlertCooldown: (...a: unknown[]) => mocks.claimAlertCooldown(...a),
+}));
+vi.mock("@/lib/email", () => ({
+  sendAdminLateCaptureHeldAlert: (...a: unknown[]) => mocks.sendHeldAlert(...a),
+}));
+vi.mock("@/lib/club-format-server", () => ({
+  clubFormatValues: async () => ({ currency: "NZD" }),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -62,7 +73,15 @@ const OPERATION = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.bookingFindUnique.mockResolvedValue({ status: "CANCELLED" });
+  mocks.bookingFindUnique.mockResolvedValue({
+    status: "CANCELLED",
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    member: { firstName: "Alice", lastName: "Example" },
+    organisation: null,
+  });
+  mocks.claimAlertCooldown.mockResolvedValue(true);
+  mocks.sendHeldAlert.mockResolvedValue(undefined);
   mocks.paymentTransactionFindUnique.mockResolvedValue({ kind: "ADDITIONAL" });
   mocks.bookingDefaultsFindUnique.mockResolvedValue(null);
   mocks.taskFindUnique.mockResolvedValue(null);
@@ -125,9 +144,50 @@ describe("holdSupersededLateCaptureIfRequired", () => {
 
     expect(mocks.taskUpdate).toHaveBeenCalledWith({
       where: { id: "task-2700" },
-      data: { lateCaptureApprovalIntentId: "pi_change_late" },
+      // The kind in the same write: a pre-kind #2700 row carries NULL, and the
+      // marker's CHECK allows only this kind (delta D5).
+      data: {
+        lateCaptureApprovalIntentId: "pi_change_late",
+        kind: "DELETED_BOOKING_LATE_CAPTURE",
+      },
     });
     expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it("emails the finance alert once per payment, claim-guarded, naming the booking and the amount (delta D7)", async () => {
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({ lateCaptureRefundNeedsApproval: true });
+
+    await holdSupersededLateCaptureIfRequired(OPERATION);
+
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "late-capture-held:pi_change_late" }),
+    );
+    expect(mocks.sendHeldAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendHeldAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Alice Example",
+        bookingId: "booking-9",
+        amountCents: 2500,
+      }),
+      expect.anything(),
+    );
+
+    // A replay raises nothing and sends nothing: the task owns it now.
+    mocks.sendHeldAlert.mockClear();
+    mocks.taskFindUnique.mockResolvedValue({ id: "task-held", status: "OPEN" });
+    await holdSupersededLateCaptureIfRequired(OPERATION);
+    expect(mocks.sendHeldAlert).not.toHaveBeenCalled();
+  });
+
+  it("does not send when another instance already holds the claim, and never fails the hold over the mail", async () => {
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({ lateCaptureRefundNeedsApproval: true });
+    mocks.claimAlertCooldown.mockResolvedValueOnce(false);
+    await expect(holdSupersededLateCaptureIfRequired(OPERATION)).resolves.toBe(true);
+    expect(mocks.sendHeldAlert).not.toHaveBeenCalled();
+
+    mocks.taskFindUnique.mockResolvedValue(null);
+    mocks.sendHeldAlert.mockRejectedValueOnce(new Error("smtp down"));
+    await expect(holdSupersededLateCaptureIfRequired(OPERATION)).resolves.toBe(true);
   });
 });
 

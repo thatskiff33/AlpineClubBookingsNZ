@@ -76,8 +76,7 @@ interface CancellationDraft {
   waitlistOrder: WaitlistCrossLodgeOrder
   /** #3232 D2: charge the change fee on BOTH bookings of a linked move. */
   linkedMoveBothFees: boolean
-  /** #3639: hold a late capture for a treasurer (true) or refund it (false). */
-  lateCaptureNeedsApproval: boolean
+  lateCaptureNeedsApproval: boolean // #3639: hold a late capture for a treasurer
   /**
    * Whether this partition actually has persisted rules, as reported by the GET
    * (#2142). A partition with no rows yet gets `FALLBACK_RULES` seeded into
@@ -183,8 +182,7 @@ export function DefaultCancellationPolicySection() {
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
-  // #3639 review F2: the late-capture refund choice needs finance edit too.
-  const canEditFinance = useAdminAreaEditAccess("finance")
+  const canEditFinance = useAdminAreaEditAccess("finance") // #3639: the late-capture choice
 
   // Mirrors `scopeLodgeId` for the async callbacks below, which need to know
   // the CURRENT scope at the moment they resolve rather than the one they
@@ -220,7 +218,7 @@ export function DefaultCancellationPolicySection() {
       }
       return toDraft(data, scope)
     },
-    save: async (draft) => {
+    save: async (draft, savedSnapshot) => {
       if (!policyScopeReady) {
         throw new Error("Choose an available policy scope before saving")
       }
@@ -241,7 +239,11 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
                 linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
-                lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
+                // #3639 delta D3: only from someone who may change it, with the loaded value.
+                ...(canEditFinance === true ? {
+                  lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
+                  lateCaptureRefundNeedsApprovalLoaded: savedSnapshot?.lateCaptureNeedsApproval ?? draft.lateCaptureNeedsApproval,
+                } : {}),
               }),
         }),
       })
