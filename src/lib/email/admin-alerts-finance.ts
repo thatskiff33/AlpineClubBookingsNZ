@@ -1,6 +1,5 @@
 import {
   adminDuplicateCaptureRefundTemplate,
-  adminInternetBankingHoldKeptTemplate,
   adminLateCaptureAutoRefundTemplate,
   adminLateCaptureHandBackConflictTemplate,
   adminManualRefundTaskTemplate,
@@ -20,8 +19,6 @@ import {
 import {
   composeOptionalEmailLine,
   duplicateCaptureRefundOutcomeParagraph,
-  internetBankingHoldKeptParagraph,
-  type InternetBankingHoldKeptReason,
   lateCaptureAutoRefundBookingStateLabel,
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureAutoRefundOutcomeParagraph,
@@ -32,6 +29,7 @@ import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
+import { stampXeroOrganisation } from "./xero-org-stamp";
 import {
   sendToAdmins,
   sendUnmuteableAdminAlert,
@@ -40,45 +38,8 @@ import { renderEmailHtml } from "@/lib/email-theme";
 import {
   emailCalendarDay,
   emailCalendarDayOrUnknown,
-  emailClubDateTime,
 } from "@/lib/email-templates-club-time";
-import { formatBookingReference } from "@/lib/booking-reference";
 import type { ClubFormat } from "@/lib/club-format";
-
-/**
- * Stamp the club's Xero organisation onto an outbound deep link, at SEND time
- * (#2314, owner decision 1 Aug 2026).
- *
- * The URLs reaching these alerts are organisation-agnostic: some are read
- * straight off a `XeroSyncOperation` / `XeroObjectLink` row, which #2314
- * deliberately keeps generic so a reconnect to a different Xero organisation
- * cannot leave stored links aimed at books the club no longer owns. A screen can
- * re-render and pick the current organisation up; an email cannot. So an email
- * is the surface that most needs the organisation named, and send time is the
- * last honest moment to name it — the alert is already a point-in-time snapshot
- * of everything else it reports.
- *
- * The organisation is CONFIRMED with Xero at send time rather than read from
- * the 12-hour cache (`confirmLive`, #2314 review). The cache is per process and
- * its invalidation only reaches the process that handled a reconnect, so a cron
- * or worker process can otherwise hold the previous organisation's short code
- * for hours — and an email stamped with it is stamped forever.
- *
- * Failure degrades, never blocks: no short code (Xero disconnected, the
- * organisation read failed, or Xero reported none) leaves the generic
- * `go.xero.com` link, which is live — it may just ask a multi-organisation
- * admin which organisation they meant. It also STRIPS any organisation the
- * stored URL already carried, so an unconfirmable organisation is never the one
- * an email points at.
- */
-async function stampXeroOrganisation(
-  url: string | null | undefined,
-): Promise<string | null> {
-  if (!url) return null;
-  return applyXeroOrgShortCode(url, {
-    shortCode: await getXeroOrgShortCode({ confirmLive: true }),
-  });
-}
 
 // N-04: Admin alert - payment failure
 export async function sendAdminPaymentFailureAlert(data: {
@@ -462,63 +423,6 @@ export async function sendAdminManualRefundTaskAlert(data: {
       refundAmount: formatMoneyCents(data.refundAmountCents, format),
       bookingId: data.bookingId,
       reason: data.reason,
-      reviewUrl,
-    },
-    preferenceKey: "adminPaymentFailure",
-  });
-}
-
-/**
- * #3643 (`INV-PAY-107`): the hold-expiry job kept an internet banking booking
- * it would otherwise have cancelled, because Xero shows money against its
- * invoice or could not be read. Admin audience through `sendToAdmins` on the
- * `adminPaymentFailure` preference, like the other reconcile-by-hand notices:
- * no money moved, the booking simply stays held. The caller claims a
- * per-hold, per-reason cooldown first, so this is once per situation.
- */
-export async function sendAdminInternetBankingHoldKeptAlert(data: {
-  reason: InternetBankingHoldKeptReason;
-  memberName: string;
-  bookingId: string;
-  checkIn: Date;
-  checkOut: Date;
-  holdUntil: Date;
-  paidCents: number | null;
-  amountOwingCents: number | null;
-  xeroInvoiceNumber: string | null;
-  xeroInvoiceUrl: string | null;
-},
-  format: ClubFormat,
-) {
-  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/payments`;
-  const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
-  const unknown = "unknown";
-
-  await sendToAdmins({
-    subject: `Internet banking hold kept, booking not cancelled: ${data.memberName}`,
-    html: await renderEmailHtml(() => adminInternetBankingHoldKeptTemplate({
-      ...data,
-      xeroInvoiceUrl,
-      reviewUrl,
-    }, format)),
-    templateName: "admin-internet-banking-hold-kept",
-    templateData: {
-      holdKeptNote: internetBankingHoldKeptParagraph(data.reason),
-      memberName: data.memberName,
-      bookingReference: formatBookingReference(data.bookingId),
-      bookingId: data.bookingId,
-      checkIn: emailCalendarDay(data.checkIn),
-      checkOut: emailCalendarDay(data.checkOut),
-      holdUntil: emailClubDateTime(data.holdUntil),
-      paidAmount:
-        data.paidCents === null ? unknown : formatMoneyCents(data.paidCents, format),
-      amountOwing:
-        data.amountOwingCents === null
-          ? unknown
-          : formatMoneyCents(data.amountOwingCents, format),
-      xeroInvoiceNumber: data.xeroInvoiceNumber ?? unknown,
-      xeroObjectUrl: xeroInvoiceUrl ?? "",
       reviewUrl,
     },
     preferenceKey: "adminPaymentFailure",

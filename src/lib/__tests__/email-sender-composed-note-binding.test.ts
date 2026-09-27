@@ -51,10 +51,10 @@ import {
 } from "@/lib/email/admin-alerts-booking";
 import {
   sendAdminDuplicateCaptureRefundAlert,
-  sendAdminInternetBankingHoldKeptAlert,
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
+import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
 import {
   sendBookingBumpedEmail,
   sendSplitGuestPortionCancelledEmail,

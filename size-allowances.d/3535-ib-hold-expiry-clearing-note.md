@@ -20,14 +20,17 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   claim's follow-up would separate it from the sizing it sits beside.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1787
+lines: 1824
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
   all three are decisions of that one arm, and the classifier is kept whole
   by design (its header says why). The delta review added the arm's stand-down
   for a note retired by late cash and its manual-review answer to a shortfall;
-  the predicates themselves live in `xero-clearing-allocations.ts`.
+  the predicates themselves live in `xero-clearing-allocations.ts`. #3643
+  (same integration branch, so one entry per file) adds the manual-review
+  answer to a recorded part payment, whose predicate lives in
+  `xero-inbound/object-links.ts`.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1610
