@@ -164,7 +164,7 @@ async function clean(): Promise<void> {
     it("posts credit applied and a clamp give-back one line per row, summing to what the booking holds applied", async () => {
       await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
       await prisma.$transaction((tx) =>
-        credit.clampAppliedCreditToBookingPrice({ memberId: MEMBER_ID, bookingId: BOOKING_ID, newFinalPriceCents: 6_000 }, tx),
+        credit.clampAppliedCreditToBookingPrice({ memberId: MEMBER_ID, bookingId: BOOKING_ID, newFinalPriceCents: 6_000, format: CLUB_FORMAT_TEST }, tx),
       );
       const posted = await lines();
       expect(posted.map((l) => [l.kind, l.amountCents, l.settlementMethod, l.anchorKind])).toEqual([

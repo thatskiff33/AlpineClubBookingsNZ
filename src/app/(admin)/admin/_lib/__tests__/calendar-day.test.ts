@@ -38,10 +38,11 @@ import {
  *
  * IT IS NOT, ON ITS OWN, A TEST OF THE DEFECT, and that was measured rather than
  * reasoned: restoring the old `APP_TIME_ZONE` projection left every one of those
- * assertions green. `APP_TIME_ZONE` is read once, when `@/config/operational` is
- * first evaluated, so reassigning `process.env.TZ` afterwards cannot move it —
- * and this deployment's value, `Pacific/Auckland`, is ahead of UTC, where the
- * projection is invisible. The last test in this file is the one that moves the
+ * assertions green. That constant was read once, at module load, so reassigning
+ * `process.env.TZ` afterwards could not move it — and this deployment's value,
+ * `Pacific/Auckland`, is ahead of UTC, where the projection is invisible. (The
+ * constant was deleted in #3567; the environment's claim is now modelled by
+ * `ENVIRONMENT_CLUB_ZONE`, read at module load in the same way.) The last test in this file is the one that moves the
  * environment instead, and it is the one that kills that mutant.
  */
 describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () => {
@@ -148,9 +149,9 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
    * THE DISCRIMINATING ONE, and it took a surviving mutant to find it.
    *
    * The hostile-zone sweep above varies the HOST clock (`process.env.TZ` at run
-   * time), and that is not the same axis as the defect. `APP_TIME_ZONE` — what
-   * the old code passed — is read from `process.env.TZ` ONCE, when
-   * `@/config/operational` is first evaluated, so a sweep that reassigns `TZ`
+   * time), and that is not the same axis as the defect. The environment zone the
+   * old code passed (`APP_TIME_ZONE`, deleted in #3567) was read from
+   * `process.env.TZ` ONCE, at module load, so a sweep that reassigns `TZ`
    * afterwards cannot move it.
    *
    * MEASURED: replacing this decoder's UTC read with
@@ -162,7 +163,7 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
    * that only ever runs on this deployment's zone can never see past it.
    *
    * So this test moves the ENVIRONMENT rather than the host: it re-evaluates
-   * `@/config/operational` with `TZ` behind UTC, which is what a Denver
+   * the environment-zone helper with `TZ` behind UTC, which is what a Denver
    * deployment actually is, and re-imports the decoder against it. Now the
    * projection would name 31 March and only the UTC read still says 1 April.
    */
@@ -172,8 +173,8 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
       process.env.TZ = "America/Denver";
       vi.resetModules();
 
-      const { APP_TIME_ZONE: environmentZone } = await import(
-        "@/config/operational"
+      const { ENVIRONMENT_CLUB_ZONE: environmentZone } = await import(
+        "@/lib/__tests__/helpers/environment-club-zone"
       );
       // Premise, in two parts, because either alone can go quietly vacuous:
       // the re-import really did pick the behind-UTC zone up, AND projecting

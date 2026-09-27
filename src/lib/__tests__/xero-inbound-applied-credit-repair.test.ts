@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const h = vi.hoisted(() => {
   const memberCreditFindMany = vi.fn();
@@ -124,6 +125,7 @@ describe("provider-aware inbound applied-credit repair", () => {
         "booking-1",
         "invoice-1",
         h.tx,
+        CLUB_FORMAT_TEST,
         {
           providerTarget: { xeroCreditNoteId: "cn-1", amountCents: targetCents },
         },
@@ -199,6 +201,7 @@ describe("provider-aware inbound applied-credit repair", () => {
       "booking-1",
       "invoice-1",
       h.tx,
+      CLUB_FORMAT_TEST,
       {
         providerTarget: { xeroCreditNoteId: "cn-1", amountCents: 0 },
       },

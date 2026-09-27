@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import {
   clubCalendarDateOf,
   clubToday,
@@ -23,7 +23,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  * ## Why this file exists, measured rather than reasoned
  *
  * `divergentClubZone` refuses to certify a fixture for which no club zone
- * diverges from both `APP_TIME_ZONE` and the host's own zone — correctly, because
+ * diverges from both `ENVIRONMENT_CLUB_ZONE` (the environment's zone) and the host's own zone — correctly, because
  * such a fixture cannot tell a correct implementation from a wrong one. The
  * refusal is a loud FAILURE and never a skip (owner decision, #2870), which means
  * a fixture that only works on the author's machine turns the suite RED
@@ -31,7 +31,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  *
  * That is the right failure mode and a terrible thing to discover on CI. This
  * repository's own CI runner resolves the host zone as plain `UTC` while
- * `APP_TIME_ZONE` falls back to `Pacific/Auckland`; a New Zealand developer's
+ * the environment's zone falls back to `Pacific/Auckland`; a New Zealand developer's
  * machine resolves both as `Pacific/Auckland`; a North American one resolves the
  * host behind UTC. Each of those is a different pair of "wrong answers", so each
  * leaves a different day free — and a fixture measured on one of them says
@@ -40,12 +40,12 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  *
  * So the premise is checked here for every host shape, over the actual fixture
  * derivations the suites use. `withTimeZone` moves the process's own zone, which
- * is what the chooser probes; `APP_TIME_ZONE` is frozen at import and cannot be
+ * is what the chooser probes; `ENVIRONMENT_CLUB_ZONE` is frozen at import and cannot be
  * moved, which is why the CI shape (host `UTC`, environment `Pacific/Auckland`)
  * is reachable from here at all.
  *
  * WHAT THIS DOES NOT PROVE: that the suites pass under a different
- * `APP_TIME_ZONE`. That value is read once at module load, so a behind-UTC
+ * environment zone. That value is read once at module load, so a behind-UTC
  * environment zone needs a re-imported module graph — CT-6's hostile-zone proof
  * (#2991) owns that, and this file states the limit rather than implying more.
  */
@@ -126,7 +126,7 @@ const FIXTURES: Array<{
         A MONTH heading is coarser than a day and this is where that bites. The
         three days that exist at the pinned instant are 30 June, 1 July and
         2 July, so they name only TWO months — three consecutive days never span
-        three. A host at UTC-11 is on June while `APP_TIME_ZONE` is on July, which
+        three. A host at UTC-11 is on June while the environment's zone is on July, which
         takes both, and no club zone is left that names a third month.
 
         The consequence is bounded and named rather than papered over: on a
@@ -180,7 +180,7 @@ describe("the F5 zone-authority fixtures stay discriminating on every host shape
     }
     // The environment axis is not this file's claim (CT-6, #2991) — recorded so
     // a failure elsewhere can be read against the value it was measured under.
-    expect(typeof APP_TIME_ZONE).toBe("string");
-    expect(APP_TIME_ZONE.length).toBeGreaterThan(0);
+    expect(typeof ENVIRONMENT_CLUB_ZONE).toBe("string");
+    expect(ENVIRONMENT_CLUB_ZONE.length).toBeGreaterThan(0);
   });
 });

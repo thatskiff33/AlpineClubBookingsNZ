@@ -62,7 +62,7 @@ import { blankLiterals } from "./support/strip-comments";
  *    `new Date()` — passes rule 1 perfectly.
  * 3. **No legacy environment-zone helper anywhere in the set.** `INV-CONFIG-002`:
  *    the day must come from the persisted setting, and `getTodayDateOnly()` /
- *    `APP_TIME_ZONE` are how it came from the container instead. ESLint's
+ *    the environment zone are how it came from the container instead. ESLint's
  *    `NO_ENVIRONMENT_ZONE_IMPORT` arm covers the import; this covers the call.
  * 4. **Both of the populations above are DERIVED from the tree, not
  *    remembered.** Which spellings open a transaction, and which files call the
@@ -380,12 +380,15 @@ const PRE_TRANSACTION_RESOLVER_HOMES: Readonly<
   "src/lib/booking-exception-approval.ts": ["resolveNewBookingExecutionParams"],
 };
 
-/** The legacy environment-zone spellings this issue retires. */
+/**
+ * The legacy environment-zone spellings this issue retires. The config constant
+ * itself was on this list until #3567 deleted its module, which no production
+ * file can now import.
+ */
 const ENVIRONMENT_ZONE_SPELLINGS = [
   "getTodayDateOnly(",
   "normalizeDateOnlyForTimeZone(",
   "todayDateOnlyForTimeZone(",
-  "APP_TIME_ZONE",
 ] as const;
 
 function read(file: string): string {
@@ -1020,7 +1023,7 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
 
     expect(
       offenders,
-      "`getTodayDateOnly()` and friends default their zone to `APP_TIME_ZONE`, " +
+      "`getTodayDateOnly()` and friends defaulted their zone to the environment's, " +
         "the container's, which is the defect #3123 exists to remove " +
         "(`INV-CONFIG-002`). These seven modules are at zero and may not " +
         "regrow; the census ceiling in " +

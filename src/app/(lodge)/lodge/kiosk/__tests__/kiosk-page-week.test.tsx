@@ -12,31 +12,19 @@ import {
 } from "../_components/kiosk-week-view";
 
 /*
-  THE CLUB'S ZONE NOW ARRIVES THROUGH THE PROVIDER, AND THE ENVIRONMENT IS SET
-  SOMEWHERE ELSE ON PURPOSE (CT-4, #2870; INV-CONFIG-002).
+  THE CLUB'S ZONE ARRIVES THROUGH THE PROVIDER (CT-4, #2870; INV-CONFIG-002).
 
-  Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
-  and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
-  anything once the HOST zone moved. The page now takes the club's day from
-  `ClubTimeProvider` instead, and `renderKiosk` (in `./helpers/kiosk-harness`)
-  supplies it — so the mock
-  is free to become a THIRD zone, and it should be. With three different zones
-  in play (club `Pacific/Auckland`, environment `America/Denver`, host `UTC`)
-  every date assertion in this file discriminates all three: an implementation
-  that read the environment, or the tablet's own clock, would name a different
-  night and go red.
+  Before CT-4 the kiosk read `APP_TIME_ZONE`, and this file mocked it. The page
+  now takes the club's day from `ClubTimeProvider`, which `renderKiosk` (in
+  `./helpers/kiosk-harness`) supplies, and #3567 deleted the environment
+  constant — nothing reads the environment's zone any more — so the mock is gone.
+  With the club on `Pacific/Auckland` and the host on `UTC`, an implementation
+  that read the tablet's own clock would name a different night and go red.
 
-  `APP_LOCALE` still matters and is left alone — the kiosk header's long-weekday
-  formatter is a calendar-date shape with no house entry in the kernel, so it
-  stays local and is pinned to `UTC` over the UTC-midnight encoding.
+  The kiosk header's long-weekday formatter is a calendar-date shape with no
+  house entry in the kernel, so it stays local and is pinned to `UTC` over the
+  UTC-midnight encoding.
 */
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
-
 vi.mock("@/components/kiosk-lodge-instructions", () => ({
   KioskLodgeInstructions: ({ date }: { date: string }) => (
     <div data-testid="kiosk-instructions">{date}</div>

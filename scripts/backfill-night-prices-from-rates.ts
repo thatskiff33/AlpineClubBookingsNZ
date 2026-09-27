@@ -37,6 +37,7 @@ import {
   runRateDerivedNightPriceBackfill,
 } from "../src/lib/rate-derived-night-price-backfill";
 import { prisma } from "../src/lib/prisma";
+import { clubFormatValues } from "../src/lib/club-format-server";
 import { decodeRawRows } from "../src/lib/raw-sql-rows";
 
 function printUsage() {
@@ -123,13 +124,15 @@ async function assertRateDerivedValueExists() {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await assertRateDerivedValueExists();
+  const format = await clubFormatValues();
   const result = await runRateDerivedNightPriceBackfill({
     apply: args.apply,
+    format,
     bookingId: args.bookingId,
     limit: args.limit,
   });
   console.log(`Mode: ${result.mode}`);
-  console.log(formatRateDerivedBackfillReport(result.plans));
+  console.log(formatRateDerivedBackfillReport(result.plans, format));
   if (result.mode === "apply") {
     console.log(
       `Applied: ${result.applied.length} booking(s), ${result.applied.reduce((n, a) => n + a.rows, 0)} night row(s)`,

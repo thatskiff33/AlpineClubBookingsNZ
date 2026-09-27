@@ -49,6 +49,8 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildJoiningFeeNarration } from "./joining-fee-narration";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { getClubFormat } from "@/lib/club-format-settings";
+import { formatCents } from "@/lib/utils";
 
 export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -507,6 +509,7 @@ export async function createXeroEntranceFeeInvoice(
         entranceFeeInvoiceCents(invoice) !== feeAmountCents,
     );
     if (adoptableCandidates.length === 0 && referenceMatchesWrongAmount) {
+      const format = await getClubFormat();
       // Same operator-visibility rationale as the DUPLICATE_REFERENCE branch:
       // the op completes green with nothing minted, so surface the unbilled
       // member via an ERROR log and the shared money-anomaly alert primitive.
@@ -520,7 +523,7 @@ export async function createXeroEntranceFeeInvoice(
       const providerAmountLabel =
         providerAmountCents === null
           ? "an amount that could not be read"
-          : `${providerAmountCents}c`;
+          : formatCents(providerAmountCents, format);
       logger.error(
         {
           memberId,
@@ -537,7 +540,7 @@ export async function createXeroEntranceFeeInvoice(
       await notifyXeroSyncError({
         errorType: "entrance-fee-provider-mismatch",
         operation: `createXeroEntranceFeeInvoice:${memberId}`,
-        errorMessage: `Entrance fee for member ${memberId} was NOT billed: existing AUTHORISED Xero invoice ${conflictInvoiceId} on reference "${reference}" is ${providerAmountLabel} but the expected fee is ${feeAmountCents}c. No invoice was minted; manual reconciliation required.`,
+        errorMessage: `Entrance fee for member ${memberId} was NOT billed: existing AUTHORISED Xero invoice ${conflictInvoiceId} on reference "${reference}" is ${providerAmountLabel} but the expected fee is ${formatCents(feeAmountCents, format)}. No invoice was minted; manual reconciliation required.`,
       });
       await completeXeroSyncOperation(operationId!, {
         status: "SUCCEEDED",
@@ -657,4 +660,3 @@ export async function createXeroEntranceFeeInvoice(
     throw error;
   }
 }
-

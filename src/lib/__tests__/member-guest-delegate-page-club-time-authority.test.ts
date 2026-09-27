@@ -18,21 +18,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The page's own comment already promised those two were worked out from the
  * same clock. They now come from one zone read as well.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — what the
- * removed code answered, and this codebase's own fallback, so it is the value a
- * half-done fix could still pass under. The persisted club zone is
- * `America/Denver`.
+ * DISCRIMINATION. `Pacific/Auckland` is what the removed code answered, and
+ * this codebase's own fallback, so it is the value a half-done fix could still
+ * pass under. (The environment constant once pinned to it here was deleted in
+ * #3567.) The persisted club zone is `America/Denver`.
  *
  * THE `clubTimeSettings` DELEGATE IS NOT OPTIONAL ON THIS MOCK: the reader is
  * fail-soft three ways and every one degrades silently to the environment.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
 const { mockClubTimeSettingsFindUnique, mockIsQuotePricedBooking } = vi.hoisted(
   () => ({
     mockClubTimeSettingsFindUnique: vi.fn(),
@@ -50,7 +43,6 @@ vi.mock("@/lib/booking-modify-validation", () => ({
   isQuotePricedBooking: (...args: unknown[]) => mockIsQuotePricedBooking(...args),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { resolveDelegateConsentPageState } from "@/lib/member-guest-delegate-page";
 
 const utcMidnight = (day: string) => new Date(`${day}T00:00:00.000Z`);
@@ -136,8 +128,7 @@ beforeEach(() => {
 });
 
 describe("PREMISE: the container and the club disagree about today", () => {
-  it("pins the environment to the removed code's own answer", () => {
-    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+  it("the removed code's own answer (Pacific/Auckland) is a day ahead of the club", () => {
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland" }).format(
         NOW,

@@ -5,7 +5,6 @@ import {
 } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
@@ -46,9 +45,11 @@ import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
-  PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
+  PAYMENT_PROCESSING_BODY, PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -118,6 +119,8 @@ export async function POST(request: NextRequest) {
     // The club's format (#3565), resolved once, before any transaction or
     // lock below — never per amount and never inside a transaction.
     const format = await clubFormatValues();
+    // #3567: refused before any claim, credit write, customer lookup or Stripe call.
+    if (chargeCurrencyRefusal(format)) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
@@ -635,9 +638,13 @@ export async function POST(request: NextRequest) {
           paymentId: booking.payment.id,
           newFinalPriceCents: effectivePriceCents,
         });
+      } else if (intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
+        // #3567: an old-currency intent still processing is never superseded (no double charge).
+        return NextResponse.json({ ...PAYMENT_PROCESSING_BODY, creditElection }, { status: 409 });
       } else if (
         existingIntent.status !== "canceled" &&
-        existingIntent.amount !== effectivePriceCents
+        // #3567: an intent minted in another currency is superseded like a stale amount.
+        (existingIntent.amount !== effectivePriceCents || intentCurrencyDiffers(existingIntent, format))
       ) {
         // The booking was modified after this intent was minted (#1161), or the
         // intent predates the #1641 effective-price fix (a legacy full-price
@@ -651,6 +658,7 @@ export async function POST(request: NextRequest) {
             bookingId: booking.id,
             paymentId: booking.payment.id,
             newFinalPriceCents: effectivePriceCents,
+            ...(intentCurrencyDiffers(existingIntent, format) ? { wrongCurrencyPaymentIntentId: existingIntent.id } : {}),
           });
         }
       } else if (
@@ -699,7 +707,6 @@ export async function POST(request: NextRequest) {
     const paymentIntent = await createPaymentIntent({
       format,
       amountCents: effectivePriceCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,
@@ -808,6 +815,8 @@ export async function POST(request: NextRequest) {
     // The $0 settlement lost its status-guarded claim: a concurrent cancel got
     // there first and the whole transaction rolled back (including the credit
     // application), so nothing was settled and nothing was spent.
+    // #3567: refused locally for the currency; nothing was charged.
+    if (error instanceof UnsupportedChargeCurrencyError) return NextResponse.json({ error: CURRENCY_REFUSED }, { status: 409 });
     if (error instanceof CreditCoveredSettlementConflictError) {
       return NextResponse.json(
         {

@@ -17,7 +17,7 @@ import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const openRemovalDialogMock = vi.hoisted(() => vi.fn());
@@ -412,7 +412,7 @@ describe("bed allocation board — a payload with no custodianHolds (#2286)", ()
  * THE DISCRIMINATING ONE (CT-4, #2870).
  *
  * Every render above uses the default `CLUB_TIME_TEST_ZONE`, which is
- * deliberately the zone `APP_TIME_ZONE` also resolves to, so the board's opening
+ * deliberately the environment's default zone too, so the board's opening
  * night is the same string whether the page read its provider or the
  * environment — and this whole file passes against either.
  *
@@ -446,7 +446,7 @@ describe("bed allocation board — the opening night comes from the club's zone 
     vi.clearAllMocks();
   });
 
-  it("opens on the PERSISTED club zone's night, not APP_TIME_ZONE's", async () => {
+  it("opens on the PERSISTED club zone's night, not the environment zone's", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
       answerKey: "day",
@@ -459,7 +459,7 @@ describe("bed allocation board — the opening night comes from the club's zone 
     });
     // `answerKey` makes the chooser check the literal against its own zone, so
     // `chosen.day` is provably not the environment's answer.
-    const environmentDay = dayIn(APP_TIME_ZONE);
+    const environmentDay = dayIn(ENVIRONMENT_CLUB_ZONE);
 
     render(<AdminBedAllocationPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (

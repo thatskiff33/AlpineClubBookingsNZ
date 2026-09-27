@@ -11,7 +11,8 @@ Find it at `/admin/club-format`
 Two settings sit on one page because they are the same kind of answer:
 
 - **Currency** — the three-letter code for the money the club takes, such as
-  `NZD` or `CHF`. It decides how an amount is *written*. It never converts one.
+  `NZD` or `CHF`. It decides how an amount is *written*, and the currency card
+  payments are charged in. It never converts an amount.
 - **Number and date format** — a language tag such as `en-NZ` or `de-CH`, which
   decides whether a date reads 14/03/2026 or 3/14/2026 and whether a thousand
   is written 1,000 or 1 000. It is **not** the language the site is in; the
@@ -21,19 +22,20 @@ Both are properties of the **club**, not of the server the software runs on and
 not of whoever is looking. A member reading the site from another country sees
 the club's currency, not their own.
 
-**Recorded here, and in force for every amount and every date the site
-writes.** This page is where the club's currency and format are *recorded*, and
+**Recorded here, and in force for every amount, every date and every card
+payment.** This page is where the club's currency and format are *recorded*, and
 every price, invoice figure, statement line, email total and Xero description
 follows it as soon as you save — and so does every date and time on screen, in
-the club's time zone and written the club's way. Nothing on this page rewrites
-any amount already recorded.
+the club's time zone and written the club's way, and the currency a member's
+card is charged in. Nothing on this page rewrites any amount already recorded.
 
 **These used to be server settings, and this page is where they are changed
 now.** `CURRENCY` and `LOCALE` were copied here once, on the first start after
 upgrading, so nothing changed for anyone. From then on this page is the
-authority: editing the server value no longer changes what the site shows. That
-is the point of the change — one place answers the question, so nobody has to
-work out which of two is winning.
+authority: editing the server value changes nothing — not what the site shows,
+and not what cards are charged in. That is the point of the change — one place
+answers the question, so nobody has to work out which of two is winning. The
+`NEXT_PUBLIC_CURRENCY` and `NEXT_PUBLIC_LOCALE` variables are not read at all.
 
 **What follows this page.** As soon as you save:
 
@@ -46,6 +48,7 @@ work out which of two is winning.
   well as its rows), the stuck-states page, the induction record, the lobby
   display's date and clock, the month headings and weekday column heads on the
   booking calendars, and the month options in the bookings filter;
+- **the currency card payments are charged in** (see below);
 - the currency code shown beside a fee or a monthly AI spend cap, **and the
   currency AI spend is counted in** (see below);
 - alphabetical order where the site sorts by name — the lockers list, and the
@@ -85,6 +88,91 @@ language tag does more than reorder the day and month. `de-CH`, for example,
 writes the time on a 24-hour clock ("14:30" rather than "2:30 pm") and spells
 the month out in German, so a long month name can make the lobby display's
 date line wider. That is the setting working, not a fault.
+
+**Card payments are charged in this currency.** Every NEW card charge is made in
+the currency a member is shown. Until #3567 cards were
+charged in the server's `CURRENCY` instead, so a club that changed its currency
+here was shown one currency and charged another. Saving a different currency
+therefore changes live card charges **at once**, and three kinds of payment
+already under way behave differently:
+
+- a card payment a member has **already started** stays in the currency it was
+  started in if they finish it from the page they already have open, and is
+  recorded as the same number of cents; if they reopen the payment page, the
+  old payment is replaced by one in the new currency;
+- a **saved card** waiting to be charged later (a pending booking) is charged
+  the same number of cents in the **new** currency, even though its price was
+  set in the old one;
+- a **saved-card charge the payment provider never answered** waits for a
+  person: its retry, now in a different currency, is refused without saying
+  whether the first try charged, so after 23 hours the site asks an
+  administrator to check Stripe rather than risk charging twice;
+- a **payment-recovery retry** that began before the change is refused by the
+  payment provider for the first 24 hours, because it repeats a request in a
+  different currency; after that it is made afresh in the new currency;
+- a **refund** of a payment taken before the change goes back in that payment's
+  original currency (Stripe refunds in the currency it charged), but this site
+  shows the refunded amount in the new currency, because it records every amount
+  as a number of cents without a currency.
+
+The confirmation counts the payments under way before you save, and a currency
+change needs its own tick on top of the ordinary one. It warns; it does not stop
+you. Only a Full Administrator sees the counts, because only a Full Administrator
+can make the change.
+
+**The club's Stripe account and its Xero base currency must match this
+currency.** Invoices this site sends to Xero carry no currency of their own, so
+Xero books them in the organisation's **base currency**; if that is not this
+currency, every invoice lands in the wrong one. Xero sets an organisation's
+base currency when the organisation is created, and it cannot be changed
+afterwards. Stripe can take a charge in a currency other than its payout
+currency, but converts it before paying out, at a fee. Check both **before**
+saving here.
+
+**The site checks Xero's base currency for you (#3633).** Once Xero is
+connected, the site compares the Xero organisation's base currency with this
+currency — the currency cards are actually charged in. When they differ, a
+warning names both currencies and says that Xero books every invoice in its
+base currency. The warning shows in three places:
+
+- on this page, under the currency;
+- on the Xero setup page (**Admin → Xero → Setup**), at the **Connect** step
+  under the name of the connected organisation;
+- in the setup-readiness list (**Admin → Setup**), as a warning on the
+  **Operational Xero** step.
+
+It is a warning only. It blocks nothing and changes no invoice. Because Xero
+cannot change an organisation's base currency, the fix is on one of two sides:
+change this site's currency to match Xero's, or connect a Xero organisation
+whose base currency matches this currency. Talk to the club's accountant first
+either way, because both move where the club's books are kept.
+
+It shows only to administrators who can read the Xero organisation's details,
+which means finance access. With the Xero module switched off, Xero not
+connected, the base currency unreadable, or a recorded currency that is "Not
+usable" (no card is charged at all then, and the Stripe step of the setup list
+already says so), no warning is shown. Stripe's account currency is not checked.
+
+The site re-reads the Xero organisation's details at most every 12 hours. So
+after the Xero side changes (a different organisation), the warning can take up
+to 12 hours to clear, unless Xero is disconnected and reconnected, which re-reads
+them at once. A change to this site's currency takes effect straight away.
+
+**Currencies without two decimal places cannot be chosen.** Every amount here
+is kept in hundredths (cents). For a currency like the Japanese yen (no decimal
+places) or the Kuwaiti dinar (three), a card would be charged a hundred times,
+or a tenth of, what the member was shown. So those currencies are not offered,
+saving one is refused, and a card payment in one is refused too.
+
+If one is **already recorded** — typed into the database by hand, or copied from
+`CURRENCY` by an install that started before #3567 — pages keep working: amounts
+are shown in the server's `CURRENCY`, or in `NZD` if that is unset or unusable too.
+But **no card is charged**, anywhere, until a Full Administrator sets a currency
+with two decimal places here. Every admin page shows a red banner saying so, the
+Stripe step of the setup checklist is blocked, and the line under the currency on
+this page reads **Not usable**. Nothing is lost meanwhile: bookings waiting for a
+saved-card charge stay pending, and a price increase from a booking change is kept
+as a recovery item that is charged once the currency is fixed.
 
 **Changing the currency clears the AI spend conversion rate.** If the club has
 set a rate for AI spend ("how many of our currency one New Zealand dollar
@@ -143,7 +231,11 @@ this page is the same as them on changing and different on viewing.
 2. Filter and pick the currency. Type the language tag in the field beside it —
    the language, then the country, separated by a hyphen.
 3. Read the consequences. Tick the acknowledgement.
-4. Choose **Save currency and format**.
+4. **If you changed the currency**, a second box appears. It counts the card
+   payments already started, the saved cards waiting to be charged, and the
+   payment-recovery retries still open, and says the Stripe account and Xero
+   base currency must match. Check both, then tick it.
+5. Choose **Save currency and format**.
 
 Nothing is saved until you press Save, and re-saving the same values on purpose
 writes nothing at all — no audit entry for a change that did not happen.
@@ -152,7 +244,7 @@ writes nothing at all — no audit entry for a change that did not happen.
 
 | Setting | What it is | Accepted values | Default |
 | --- | --- | --- | --- |
-| Currency | The currency the club charges and displays money in | A three-letter ISO 4217 code: `NZD`, `AUD`, `CHF`. Not a symbol (`$`) and not a name (`dollars`) | `NZD` |
+| Currency | The currency the club charges cards in and displays money in | A three-letter ISO 4217 code with two decimal places: `NZD`, `AUD`, `CHF`. Not a symbol (`$`), not a name (`dollars`), and not a currency without two decimal places (`JPY`, `KWD`) | `NZD` |
 | Number and date format | How numbers and dates are written | A BCP 47 language tag: a two- or three-letter language, optionally then a country — `en-NZ`, `en-AU`, `de-CH`, `fr-CA` | `en-NZ` |
 
 Both are refused if they are not one of those shapes, with a message saying what
@@ -172,8 +264,15 @@ is older than the currency.
 | The AI settings page says the conversion rate is not set | The club's currency was changed, which clears the rate set for the old one | Enter the rate for the new currency on the AI settings page. **Admin → Audit Log**, action `AI_SPEND_CURRENCY_RATE_CLEARED`, says when and by whom |
 | Saving an AI spend rate says the club's currency changed | Someone changed the currency while the rate was being saved, so it was not stored | Reload the page and enter the rate for the new currency |
 | "Not usable" appears under a value | Something was written straight into the database, or restored from a backup that held a value this app cannot read | Save the value again on this page. Restarting will not repair it |
-| The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents | Nothing to fix. This setting changes how an amount is *written*, never what it is worth |
-| Card payments are still taken in the old currency | The payment provider's currency is a separate, server-side setting, and moving a club to a different currency is a conversation with the provider and the club's accountant | Raise it with the club's technical contact before changing anything here |
+| The currency changed but an old invoice still shows the old one | Nothing already recorded is rewritten or re-converted. An amount of 8450 cents is still 8450 cents, in the currency it was paid in | Nothing to fix. No amount is converted: after a change the same numbers are shown, and new card charges are made, in the new currency |
+| Saving a currency says it "does not count in hundredths" | The currency has no decimal places (`JPY`) or three (`KWD`), and every amount here is kept in hundredths | Choose a currency with two decimal places. Supporting other currencies is not planned for now |
+| A card payment was charged in the old currency after a change | The member had already started paying before the change; the payment provider keeps the currency a payment started in | Nothing to fix on this page. Reconcile it in Stripe and Xero as a payment in the old currency |
+| A payment-recovery retry failed straight after a currency change | The retry repeated a request in a different currency, which the payment provider refuses for 24 hours | Nothing to fix unless it is urgent: after 24 hours the retry is made afresh in the new currency. To settle it sooner, finish it by hand from the payment-recovery screens |
+| "Not usable" appears under the currency, naming a currency such as JPY, and every admin page says card payments are switched off | A currency without two decimal places was recorded by hand or copied from `CURRENCY` before #3567. Amounts are shown in the server's `CURRENCY` (or `NZD`), and no card is charged | Set a currency with two decimal places on this page; card payments resume at once |
+| Xero invoices appear in the wrong currency | The Xero organisation's base currency is not the club's currency. Invoices carry no currency of their own | Xero cannot change an organisation's base currency. Talk to the club's accountant first, then either change this site's currency to match Xero's, or connect a Xero organisation whose base currency matches. The base-currency warning on this page names both currencies |
+| A warning says the club's currency and the Xero base currency differ | They do. Xero books every invoice in its base currency, while card payments are charged in the club's currency | Talk to the club's accountant first. Then change this site's currency to match Xero's, or connect a Xero organisation whose base currency matches this currency (Xero cannot change an existing organisation's base currency). A change here clears the warning at once; a change on the Xero side can take up to 12 hours, unless Xero is reconnected |
+| The warning is not shown to one administrator but is to another | The Xero base currency is shown only to administrators with finance access | Nothing to fix. Ask someone with finance access to check it |
+| A card was charged in a currency the club did not expect | Card payments follow this page. Before #3567 they followed the server's `CURRENCY` | Check the currency here. Changing `CURRENCY` on the server no longer affects card payments |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |
 | Someone changed it and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_FORMAT_UPDATED`. The entry names the administrator, and the values before and after |
 | The page says "You have view-only access to this area" and **Change currency and format** is greyed out | Your admin account is not a Full Administrator. Every admin can see these values; only a Full Administrator can change them | Ask a Full Administrator to make the change |
@@ -184,8 +283,7 @@ is older than the currency.
   configuration pages.
 - Sibling guides: [Club Time Zone](club-time.md) — the same shape of setting for
   the club's time zone.
-- [`CONFIGURATION.md`](../../CONFIGURATION.md) — the `CURRENCY` /
-  `NEXT_PUBLIC_CURRENCY` and `LOCALE` / `NEXT_PUBLIC_LOCALE` environment
-  variables and what they still do.
+- [`CONFIGURATION.md`](../../CONFIGURATION.md) — the `CURRENCY` and `LOCALE`
+  environment variables, which only seed this page on a first start.
 - [`docs/invariants/product-configuration.md`](../invariants/product-configuration.md)
   — `INV-CONFIG-006`, the developer-facing rule this page implements.
