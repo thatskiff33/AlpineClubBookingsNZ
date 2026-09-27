@@ -12,6 +12,8 @@ import {
   type EnvironmentClubTimeZoneSeed,
 } from "@/lib/club-time-zone-env";
 import { usableClubCurrencyCode } from "@/lib/club-format";
+import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
+import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -1814,6 +1816,7 @@ function buildOperationalXeroCheck(
   env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
+  xeroBaseCurrency: string | null,
 ): SetupStepCheck {
   const moduleState = buildModuleLayerState(db, "xeroIntegration");
   const enabled = moduleState.effectiveEnabled;
@@ -1832,6 +1835,20 @@ function buildOperationalXeroCheck(
           `Legacy env vars detected (no longer used): ${legacyXeroVars.join(", ")}. Re-enter these in-app, then remove them from the environment.`,
         ]
       : [];
+  // #3633: Xero books every invoice in the organisation's base currency, and
+  // card payments are charged in the club's. A WARNING only — it never blocks
+  // and changes no invoice — and only while Xero is on and connected; an
+  // unknown base currency (null) says nothing.
+  const currencyMismatch =
+    enabled && connected && !needsReentry
+      ? xeroBaseCurrencyMismatch(xeroBaseCurrency, db?.clubFormatCurrencyCode)
+      : null;
+  const currencyMismatchSentence = currencyMismatch
+    ? clubFormatXeroBaseCurrencyMismatch(
+        currencyMismatch.xeroBaseCurrency,
+        currencyMismatch.clubCurrencyCode,
+      )
+    : null;
 
   return applyProgress(
     {
@@ -1845,7 +1862,7 @@ function buildOperationalXeroCheck(
           ? "warning"
           : needsReentry
             ? "warning"
-            : legacyXeroVars.length > 0
+            : legacyXeroVars.length > 0 || currencyMismatchSentence !== null
               ? "warning"
               : connected
                 ? "complete"
@@ -1857,11 +1874,16 @@ function buildOperationalXeroCheck(
           ? "Operational Xero credentials are captured in-app; connection state was not checked."
           : needsReentry
             ? "Xero tokens can no longer be read (the auth secret changed) — reconnect Xero from the in-app setup (Admin > Xero > Setup)."
-            : legacyXeroVars.length > 0
-              ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
-              : connected
-                ? "Operational Xero is connected."
-                : "Connect Xero from the in-app setup (Admin > Xero > Setup).",
+            : currencyMismatchSentence
+              ? // Ahead of the legacy-variable message: that one is tidying
+                // (the variables are ignored, and `legacyDetails` still lists
+                // them), while this one is about the books.
+                currencyMismatchSentence
+              : legacyXeroVars.length > 0
+                ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
+                : connected
+                  ? "Operational Xero is connected."
+                  : "Connect Xero from the in-app setup (Admin > Xero > Setup).",
       details: [
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
@@ -2061,6 +2083,15 @@ export function buildSetupReadiness(
     database?: SetupDatabaseSnapshot;
     progress?: Partial<SetupProgressState> | null;
     now?: Date;
+    /**
+     * The connected Xero organisation's base currency, for the base-currency
+     * warning on the Operational Xero step (#3633). Not part of the database
+     * snapshot: it comes from Xero, and only for a viewer who may read the
+     * organisation summary (`readXeroBaseCurrencyForViewer`). Omitted — the
+     * `setup:check` CLI, which makes no Xero call — means unknown, and unknown
+     * gives no warning.
+     */
+    xeroBaseCurrency?: string | null;
   } = {},
 ): SetupReadiness {
   const env = input.env ?? process.env;
@@ -2089,7 +2120,12 @@ export function buildSetupReadiness(
       buildEmailCheck(env, progress),
       buildSentryCheck(env, progress),
       buildAddressAutocompleteCheck(env, input.database, progress),
-      buildOperationalXeroCheck(env, input.database, progress),
+      buildOperationalXeroCheck(
+        env,
+        input.database,
+        progress,
+        input.xeroBaseCurrency ?? null,
+      ),
     ],
     finance: [
       buildFinanceDashboardCheck(input.database, progress),
