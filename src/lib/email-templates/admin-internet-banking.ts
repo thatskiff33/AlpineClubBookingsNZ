@@ -26,7 +26,8 @@ export function adminInternetBankingHoldKeptTemplate(data: {
   bookingId: string;
   checkIn: Date;
   checkOut: Date;
-  holdUntil: Date;
+  /** Null for a booking that never had a hold (a cancel alert). */
+  holdUntil: Date | null;
   /** Null when Xero could not be read, so nobody knows. */
   paidCents: number | null;
   amountOwingCents: number | null;
@@ -47,7 +48,10 @@ export function adminInternetBankingHoldKeptTemplate(data: {
       },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
-      { label: "Hold deadline", value: emailClubDateTime(data.holdUntil) },
+      {
+        label: "Hold deadline",
+        value: data.holdUntil ? emailClubDateTime(data.holdUntil) : "none",
+      },
       {
         label: "Paid so far",
         value: data.paidCents === null ? "unknown" : formatCents(data.paidCents, format),

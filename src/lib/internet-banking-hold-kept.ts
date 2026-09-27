@@ -12,7 +12,16 @@
  * the invoice owes less than the note (`xero-clearing-allocations.ts`).
  */
 import { PaymentSource } from "@prisma/client";
-import { claimAlertCooldown, releaseAlertCooldown } from "@/lib/alert-cooldown";
+import {
+  claimAlertCooldown,
+  listOwedAlertKeys,
+  markAlertOwed,
+  releaseAlertCooldown,
+  settleOwedAlert,
+} from "@/lib/alert-cooldown";
+import { prisma } from "@/lib/prisma";
+import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
+import type { AdminAlertSendOutcome } from "@/lib/email/admin-alerts-shared";
 import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
@@ -92,21 +101,99 @@ export function selectHoldsToRead<T>(candidates: T[], now: Date, cap = HOLD_READ
 }
 
 /**
+ * Reasons whose subject no later run selects again: the hold was released, or
+ * the booking was cancelled. An undelivered alert for one of these is marked
+ * OWED and drained by the next run (`drainOwedHoldAlerts`), and is audited on
+ * the first attempt regardless of delivery (#3643 delta D4). Every other reason
+ * belongs to a hold that stays a candidate, so its claim is given back instead
+ * and the next run retries through the ordinary path.
+ */
+const AFTER_COMMIT_REASONS: ReadonlySet<InternetBankingHoldKeptReason> = new Set([
+  "released-unreadable",
+  "cancelled-payment-recorded",
+]);
+
+const OWED_ALERT_PREFIX = "internet-banking-hold-alert-owed:";
+
+function owedAlertKey(reason: InternetBankingHoldKeptReason, paymentId: string): string {
+  return `${OWED_ALERT_PREFIX}${reason}:${paymentId}`;
+}
+
+async function sendHoldAlert(
+  hold: ExpiredHoldView,
+  evidence: HoldPaymentEvidence,
+  reason: InternetBankingHoldKeptReason,
+  memberName: string,
+  format: ClubFormat,
+): Promise<AdminAlertSendOutcome> {
+  return sendAdminInternetBankingHoldKeptAlert(
+    {
+      reason,
+      memberName,
+      bookingId: hold.bookingId,
+      checkIn: hold.booking.checkIn,
+      checkOut: hold.booking.checkOut,
+      holdUntil: hold.internetBankingHoldUntil,
+      paidCents: alertPaidCents(evidence),
+      amountOwingCents: evidence.kind === "paid" ? evidence.amountDueCents : null,
+      xeroInvoiceNumber: hold.xeroInvoiceNumber,
+      // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
+      xeroInvoiceUrl: hold.xeroInvoiceId ? buildXeroInvoiceUrl(hold.xeroInvoiceId) : null,
+    },
+    format,
+  ).catch((err) => {
+    logger.error(
+      { err, bookingId: hold.bookingId, paymentId: hold.id, reason },
+      "Failed to alert admins about an Internet Banking hold",
+    );
+    return "undelivered" as const;
+  });
+}
+
+function alertPaidCents(evidence: HoldPaymentEvidence): number | null {
+  return evidence.kind === "paid" && !evidence.fromRecordedLinkOnly ? evidence.paidCents : null;
+}
+
+function readOwner(hold: ExpiredHoldView): { memberName: string; memberId: string | null } {
+  try {
+    const owner = bookingOwner(hold.booking);
+    return {
+      memberName: `${owner.member.firstName} ${owner.member.lastName}`.trim(),
+      memberId: owner.memberId ?? null,
+    };
+  } catch (err) {
+    logger.warn({ err, bookingId: hold.bookingId }, "Internet Banking hold alert has no readable owner");
+    return { memberName: "unknown member", memberId: null };
+  }
+}
+
+/**
  * Tell the treasurer, once per hold per reason. The claim is taken first (so
- * two instances do not both send) and GIVEN BACK when recipients existed but
- * none was reached, so a failed first send is retried by the next run instead
- * of being the only notification, lost. The audit entry is written once the
- * alert is settled — delivered, muted by the club's delivery rules, or with
- * nobody to send to.
+ * two instances do not both send).
+ *  - A hold that stays a candidate: when recipients existed but none was
+ *    reached, the claim is GIVEN BACK and the next run retries; the audit entry
+ *    is written once the alert settles.
+ *  - A released hold or a cancelled booking (`AFTER_COMMIT_REASONS`): audited
+ *    on the first attempt whatever happened, and an undelivered send is marked
+ *    owed for the next run to deliver.
+ * A `part-paid` hold the app cannot credit — an organisation's, or a payment
+ * Xero could not size — is worded `part-paid-manual` (#3643 delta D5).
  */
 export async function alertExpiredHold(
   hold: ExpiredHoldView,
   evidence: HoldPaymentEvidence,
-  reason: InternetBankingHoldKeptReason,
+  requestedReason: InternetBankingHoldKeptReason,
   format: ClubFormat,
 ): Promise<void> {
-  const holdUntil = hold.internetBankingHoldUntil ?? new Date(0);
-  const key = `internet-banking-hold-kept:${reason}:${hold.id}:${holdUntil.toISOString()}`;
+  const owner = readOwner(hold);
+  const reason: InternetBankingHoldKeptReason =
+    requestedReason === "part-paid" &&
+    evidence.kind === "paid" &&
+    (!owner.memberId || !evidence.cashComplete)
+      ? "part-paid-manual"
+      : requestedReason;
+  const holdUntilLabel = hold.internetBankingHoldUntil?.toISOString() ?? "none";
+  const key = `internet-banking-hold-kept:${reason}:${hold.id}:${holdUntilLabel}`;
   const context = { bookingId: hold.bookingId, paymentId: hold.id, reason };
 
   const holdsClaim = await claimAlertCooldown({ key, windowMs: KEPT_HOLD_ALERT_WINDOW_MS }).catch(
@@ -120,64 +207,45 @@ export async function alertExpiredHold(
   );
   if (!holdsClaim) return;
 
-  const paidCents =
-    evidence.kind === "paid" && !evidence.fromRecordedLinkOnly ? evidence.paidCents : null;
-  const amountOwingCents = evidence.kind === "paid" ? evidence.amountDueCents : null;
-  let memberName = "unknown member";
-  let subjectMemberId: string | null = null;
-  try {
-    const owner = bookingOwner(hold.booking);
-    memberName = `${owner.member.firstName} ${owner.member.lastName}`.trim();
-    subjectMemberId = owner.memberId ?? null;
-  } catch (err) {
-    logger.warn({ err, ...context }, "Internet Banking hold alert has no readable owner");
-  }
-
-  const outcome = await sendAdminInternetBankingHoldKeptAlert(
-    {
-      reason,
-      memberName,
-      bookingId: hold.bookingId,
-      checkIn: hold.booking.checkIn,
-      checkOut: hold.booking.checkOut,
-      holdUntil,
-      paidCents,
-      amountOwingCents,
-      xeroInvoiceNumber: hold.xeroInvoiceNumber,
-      // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
-      xeroInvoiceUrl: hold.xeroInvoiceId ? buildXeroInvoiceUrl(hold.xeroInvoiceId) : null,
-    },
-    format,
-  ).catch((err) => {
-    logger.error({ err, ...context }, "Failed to alert admins about an Internet Banking hold");
-    return "undelivered" as const;
-  });
+  const outcome = await sendHoldAlert(hold, evidence, reason, owner.memberName, format);
+  const afterCommit = AFTER_COMMIT_REASONS.has(reason);
 
   if (outcome === "undelivered") {
-    await releaseAlertCooldown({ key }).catch((err) =>
-      logger.error({ err, ...context }, "Failed to give back an undelivered hold alert's claim"),
+    if (!afterCommit) {
+      await releaseAlertCooldown({ key }).catch((err) =>
+        logger.error({ err, ...context }, "Failed to give back an undelivered hold alert's claim"),
+      );
+      return;
+    }
+    await markAlertOwed({ key: owedAlertKey(reason, hold.id) }).catch((err) =>
+      logger.error({ err, ...context }, "Failed to mark an undelivered hold alert as owed"),
     );
-    return;
   }
 
+  const paidCents = alertPaidCents(evidence);
+  const amountOwingCents = evidence.kind === "paid" ? evidence.amountDueCents : null;
   writeInternetBankingHoldAudit({
     action:
       reason === "released-unreadable"
         ? "booking.internet_banking_hold_released_unreadable"
-        : "booking.internet_banking_hold_kept",
+        : reason === "cancelled-payment-recorded"
+          ? "booking.internet_banking_cancelled_payment_recorded"
+          : "booking.internet_banking_hold_kept",
     bookingId: hold.bookingId,
-    subjectMemberId,
-    outcome: reason === "released-unreadable" ? "success" : "blocked",
+    subjectMemberId: owner.memberId,
+    outcome: afterCommit ? "success" : "blocked",
     summary:
       reason === "released-unreadable"
         ? "Expired Internet Banking hold released at its bound: its invoice could not be read from Xero"
-        : reason === "unreadable"
-          ? "Expired Internet Banking hold kept: its invoice could not be read from Xero"
-          : "Expired Internet Banking hold kept: money is paid against its invoice",
+        : reason === "cancelled-payment-recorded"
+          ? "Internet Banking booking cancelled as unpaid with a payment recorded to settle by hand"
+          : reason === "unreadable"
+            ? "Expired Internet Banking hold kept: its invoice could not be read from Xero"
+            : "Expired Internet Banking hold kept: money is paid against its invoice",
     details: {
       paymentId: hold.id,
       reason,
-      holdUntil: holdUntil.toISOString(),
+      holdUntil: holdUntilLabel,
       paidCents,
       amountOwingCents,
       alertDelivery: outcome,
@@ -188,11 +256,68 @@ export async function alertExpiredHold(
     metadata: {
       paymentId: hold.id,
       reason,
-      holdUntil: holdUntil.toISOString(),
+      holdUntil: holdUntilLabel,
       paidCents,
       amountOwingCents,
     },
   });
+}
+
+/**
+ * Deliver the alerts an earlier run marked owed (D4). Runs at the start of the
+ * hold-expiry job, outside every transaction; never throws. The marker is
+ * settled once the alert is delivered, muted by the club's rules, or has
+ * nobody to go to; a still-undelivered one stays for the next run.
+ */
+export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
+  let keys: string[];
+  try {
+    keys = await listOwedAlertKeys({ prefix: OWED_ALERT_PREFIX });
+  } catch (err) {
+    logger.error({ err }, "Failed to read owed Internet Banking hold alerts");
+    return;
+  }
+  for (const key of keys) {
+    const [reason, paymentId] = key.slice(OWED_ALERT_PREFIX.length).split(":") as [
+      InternetBankingHoldKeptReason,
+      string,
+    ];
+    try {
+      const payment = await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          booking: {
+            include: { member: true, organisation: { select: { name: true, email: true } } },
+          },
+        },
+      });
+      if (!payment) {
+        await settleOwedAlert({ key });
+        continue;
+      }
+      const hold: ExpiredHoldView = { ...payment, booking: payment.booking };
+      const evidence: HoldPaymentEvidence = {
+        kind: "unreadable",
+        readStartedAt: new Date(),
+        reason: "Resent after an earlier alert could not be delivered.",
+        notFound: false,
+      };
+      const outcome = await sendHoldAlert(hold, evidence, reason, readOwner(hold).memberName, format);
+      if (outcome !== "undelivered") await settleOwedAlert({ key });
+    } catch (err) {
+      logger.error({ err, key }, "Failed to deliver an owed Internet Banking hold alert");
+    }
+  }
+}
+
+/**
+ * One unit of the club-wide daily budget for live hold reads (D9). A limiter
+ * failure degrades to the limiter's own in-process fallback, never to "no
+ * budget", so an outage of the counter cannot stall releases.
+ */
+export async function takeHoldReadBudget(): Promise<boolean> {
+  const result = await checkRateLimit(rateLimiters.internetBankingHoldXeroReads, "club");
+  return result.success;
 }
 
 /**
@@ -204,7 +329,8 @@ export function writeInternetBankingHoldAudit(entry: {
   action:
     | "booking.internet_banking_hold_expired"
     | "booking.internet_banking_hold_kept"
-    | "booking.internet_banking_hold_released_unreadable";
+    | "booking.internet_banking_hold_released_unreadable"
+    | "booking.internet_banking_cancelled_payment_recorded";
   bookingId: string;
   subjectMemberId: string | null;
   outcome: "success" | "blocked";

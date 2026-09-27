@@ -14,9 +14,10 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
 import {
-  PART_PAYMENT_UNSIZABLE_REFUSAL,
+  PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   readPartPaymentAtCancel,
 } from "@/lib/internet-banking-part-payment-at-cancel";
+import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -72,12 +73,28 @@ export async function GET(
     // paid. The preview asks the SAME live question the cancel asks, through
     // the same reader, so the two cannot disagree except by Xero changing in
     // between (the cancel reads again). A GET holds no transaction, so the
-    // provider call is safe here; it costs one read per invoice per preview.
-    const partPayment =
-      booking.status === "PENDING" ? null : await readPartPaymentAtCancel(booking);
-    if (partPayment === "unsizable") {
-      return NextResponse.json({ error: PART_PAYMENT_UNSIZABLE_REFUSAL }, { status: 409 });
+    // provider call is safe here. It is bounded twice (D8): a per-user limit on
+    // the existing booking-query limiter, and a one-minute cache per booking,
+    // so reopening the dialog does not spend the tenant's Xero allowance.
+    const isOfficer =
+      hasAdminAccess(session.user) ||
+      hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" });
+    let partPaymentRead = null as Awaited<ReturnType<typeof readPartPaymentAtCancel>>;
+    if (booking.status !== "PENDING") {
+      const limited = await checkRateLimit(
+        rateLimiters.bookingQuery,
+        `cancel-preview:${session.user.id}`,
+      );
+      if (!limited.success) return rateLimitedResponse(limited);
+      partPaymentRead = await readPartPaymentAtCancel(booking, { cached: true });
     }
+    // DECISION 2: money the app cannot credit — an officer may cancel it as
+    // unpaid (the treasurer settles it by hand); a member is sent to the club.
+    const manualPartPayment = partPaymentRead?.kind === "manual";
+    if (manualPartPayment && !isOfficer) {
+      return NextResponse.json({ error: PART_PAYMENT_MANUAL_MEMBER_REFUSAL }, { status: 409 });
+    }
+    const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
 
     // PENDING bookings — no payment taken. #1491: paid-path eligibility is
     // shared with cancelBooking (SUCCEEDED, or PARTIALLY_REFUNDED with a
@@ -117,6 +134,8 @@ export async function GET(
         totalPaidCents: 0,
         hasPayment: false,
         manualRefund: false,
+        // DECISION 2: say that a recorded payment is left to the treasurer.
+        paymentSettledByHand: manualPartPayment,
       });
     }
 

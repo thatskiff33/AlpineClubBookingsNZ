@@ -60,6 +60,7 @@ import {
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
+import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
@@ -1319,10 +1320,19 @@ export function classifyBookingContext(
         );
         // #3643: a payment the inbound sync recorded against the primary or
         // any supplementary invoice (the only local trace of a part payment).
-        const invoicePaymentRecorded = [
+        const recordedInvoicePayments = [
           ...paymentLinks,
           ...[...context.modificationLinksById.values()].flat(),
-        ].some(isRecordedBookingInvoicePayment);
+        ].filter(isRecordedBookingInvoicePayment);
+        // #3643 delta D2: the cancel path recorded Xero's part payment as the
+        // payment's receipt (an internet banking row, so not among the captured
+        // Stripe rows this arm is gated on). Its clearing note covers only the
+        // unpaid rest, so a missing or failed one is never re-queued full-size.
+        const partPaymentRecognised = (payment.transactions ?? []).some(
+          (transaction) => transaction.reason === PART_PAYMENT_RECOGNISED_REASON
+        );
+        const invoicePaymentRecorded =
+          recordedInvoicePayments.length > 0 || partPaymentRecognised;
         if (
           blockingOperation &&
           isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
@@ -1385,6 +1395,11 @@ export function classifyBookingContext(
               invoiceId: primaryInvoice.objectId,
               clearingAmountCents,
               operationId: blockingOperation?.operation.id ?? null,
+              // DECISION 2 on #3643: name the payment a person has to place.
+              recordedPayments: recordedInvoicePayments.map((link) => ({
+                xeroPaymentId: link.xeroObjectId,
+                metadata: link.metadata,
+              })),
             },
             actionKeys: [action.key],
           });

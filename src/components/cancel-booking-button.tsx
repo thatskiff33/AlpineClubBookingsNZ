@@ -43,6 +43,12 @@ interface CancelPreview {
    * by the preview. When set, the dialog shows only that option.
    */
   refundMethodForced?: "credit" | null;
+  /**
+   * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
+   * so an officer's cancel treats the booking as unpaid and the treasurer
+   * settles that payment by hand.
+   */
+  paymentSettledByHand?: boolean;
 }
 
 export function CancelBookingButton({
@@ -431,9 +437,17 @@ export function CancelBookingButton({
 
         {!preview.hasPayment ? (
           <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">
-              No payment has been taken for this booking. No refund applies.
-            </p>
+            {preview.paymentSettledByHand ? (
+              <p className="text-sm text-muted-foreground" data-testid="payment-settled-by-hand">
+                Xero shows a payment against this booking that the app cannot hand back as
+                account credit. Cancelling treats the booking as unpaid: no refund or credit is
+                given, and the treasurer is alerted to settle that payment by hand.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No payment has been taken for this booking. No refund applies.
+              </p>
+            )}
             {preview.creditRestoredCents > 0 && (
               <p className="text-sm text-success-11">
                 {formatCents(preview.creditRestoredCents, format)} of previously applied

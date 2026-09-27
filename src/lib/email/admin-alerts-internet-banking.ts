@@ -29,7 +29,7 @@ export async function sendAdminInternetBankingHoldKeptAlert(data: {
   bookingId: string;
   checkIn: Date;
   checkOut: Date;
-  holdUntil: Date;
+  holdUntil: Date | null;
   paidCents: number | null;
   amountOwingCents: number | null;
   xeroInvoiceNumber: string | null;
@@ -57,7 +57,7 @@ export async function sendAdminInternetBankingHoldKeptAlert(data: {
       bookingId: data.bookingId,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
-      holdUntil: emailClubDateTime(data.holdUntil),
+      holdUntil: data.holdUntil ? emailClubDateTime(data.holdUntil) : "none",
       paidAmount:
         data.paidCents === null ? unknown : formatMoneyCents(data.paidCents, format),
       amountOwing:

@@ -82,8 +82,10 @@ import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
 import {
-  PART_PAYMENT_UNSIZABLE_REFUSAL,
-  queueClearingNoteForUnpaidRest,
+  alertManualPartPaymentCancel,
+  kickClearingNoteForUnpaidRest,
+  PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
+  PartPaymentChangedError,
   readPartPaymentAtCancel,
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
@@ -982,11 +984,15 @@ async function performBookingCancellation(
   // #3643 (`INV-PAY-107`): Xero may show part of an internet banking invoice
   // paid while the payment is still PENDING here (the inbound sync settles only
   // a fully paid invoice). Read live, before any transaction; recognised cash
-  // routes the cancel into the paid path, where the claim records it.
-  const partPayment = await readPartPaymentAtCancel(booking);
-  if (partPayment === "unsizable") {
-    return { status: 409, error: PART_PAYMENT_UNSIZABLE_REFUSAL };
+  // routes the cancel into the paid path, where the claim records it. Money
+  // the app cannot credit (DECISION 2) is an officer's cancel on the unpaid
+  // path, with no clearing note, a repair finding and a treasurer alert.
+  const partPaymentRead = await readPartPaymentAtCancel(booking);
+  const manualPartPayment = partPaymentRead?.kind === "manual" ? partPaymentRead : null;
+  if (manualPartPayment && sessionUserRole !== "ADMIN" && !hasBookingsEditAccess) {
+    return { status: 409, error: PART_PAYMENT_MANUAL_MEMBER_REFUSAL };
   }
+  const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
   const paidRefundPathEligible =
     partPayment !== null ||
     (await paymentEligibleForPaidCancelPath(booking.payment));
@@ -1254,7 +1260,7 @@ async function performBookingCancellation(
     // src/lib/xero-inbound/credit-note-repairs.ts). Subtract exactly those
     // (floored at 0) so the clearing note never over-allocates the invoice.
     const xeroClearingAmountCents =
-      fresh.payment?.xeroInvoiceId && !freshPaymentCaptured
+      fresh.payment?.xeroInvoiceId && !freshPaymentCaptured && !manualPartPayment
         ? unpaidInvoiceClearingAmountCents({
             finalPriceCents: fresh.finalPriceCents,
             changeFeeCents: fresh.payment.changeFeeCents,
@@ -1326,11 +1332,14 @@ async function performBookingCancellation(
       reason: appendReturnedCreditSentence(
         freshPaymentCaptured
           ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
-          : "Cancelled before payment was captured. Nothing was charged.",
+          : manualPartPayment
+            ? "Cancelled as unpaid. A payment recorded against the invoice is left for the treasurer to settle by hand."
+            : "Cancelled before payment was captured. Nothing was charged.",
         creditRestoredCents,
         format,
       ),
     });
+    if (manualPartPayment) await alertManualPartPaymentCancel(fresh, manualPartPayment, format);
 
     if (notifyMember) {
       sendBookingCancelledEmail(
@@ -1429,19 +1438,20 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
-    // #3643: record the part payment Xero showed as captured money, exactly
-    // once, before eligibility is re-derived. A payment that changed since the
-    // read refuses the claim (409); a retry reads again.
+    // #3643: record the part payment Xero showed as captured money and queue
+    // the unpaid rest's clearing note, exactly once, before eligibility is
+    // re-derived. Anything that moved since the read throws, rolling back.
+    let clearingOperationId: string | null = null;
     if (partPayment) {
       const recognised = await recordPartPaymentInClaim(
         tx,
+        bookingId,
         fresh.payment.id,
         partPayment,
+        sessionUserId,
       );
-      if (!recognised) {
-        return { claimed: false as const };
-      }
-      fresh.payment = recognised;
+      fresh.payment = recognised.payment;
+      clearingOperationId = recognised.clearingOperationId;
     }
     // #1491: the same paid-path eligibility as the outer gate, re-derived
     // under the lock (the outer read is stale by definition here). A
@@ -1454,6 +1464,8 @@ async function performBookingCancellation(
       tx
     );
     if (!freshPaidPathEligible) {
+      // #3643 (D7): never commit a recorded receipt on a refused claim.
+      if (partPayment) throw new PartPaymentChangedError();
       return { claimed: false as const };
     }
     const payment = fresh.payment;
@@ -1776,7 +1788,11 @@ async function performBookingCancellation(
       plannedCardRefundCents,
       manualDisposition,
       manualRefundTaskId,
+      clearingOperationId,
     };
+  }).catch((err: unknown) => {
+    if (err instanceof PartPaymentChangedError) return { claimed: false as const };
+    throw err;
   });
 
   // Loser contract: a concurrent cancel / retry that failed to claim gets a
@@ -1803,6 +1819,7 @@ async function performBookingCancellation(
     plannedCardRefundCents,
     manualDisposition,
     manualRefundTaskId,
+    clearingOperationId,
   } = claim;
   const paymentId = payment.id;
 
@@ -1813,10 +1830,8 @@ async function performBookingCancellation(
     );
   }
 
-  // #3643: clear only what the part-paid invoices still owe.
-  if (partPayment) {
-    await queueClearingNoteForUnpaidRest(bookingId, partPayment, sessionUserId);
-  }
+  // #3643: the unpaid rest's clearing note was queued in the claim; kick it.
+  await kickClearingNoteForUnpaidRest(bookingId, clearingOperationId);
 
   // ── Phase 2 — external work, AFTER tx1 committed ──────────────────
   // The claim already stands; no failure below may abort it.

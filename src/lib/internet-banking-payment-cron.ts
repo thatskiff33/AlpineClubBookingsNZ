@@ -42,7 +42,9 @@ import {
 import {
   alertExpiredHold,
   decideExpiredHold,
+  drainOwedHoldAlerts,
   selectHoldsToRead,
+  takeHoldReadBudget,
   writeInternetBankingHoldAudit,
 } from "@/lib/internet-banking-hold-kept";
 
@@ -380,11 +382,18 @@ export async function releaseExpiredInternetBankingHolds(
     (candidate) => candidate.booking.status === BookingStatus.CONFIRMED,
   );
   const toRead = new Set(selectHoldsToRead(actionable, now));
+  // #3643 (D4): alerts an earlier run could not deliver for holds it released.
+  await drainOwedHoldAlerts(format);
   result.deferred = actionable.length - toRead.size;
 
   for (const candidate of candidates) {
     const confirmed = candidate.booking.status === BookingStatus.CONFIRMED;
     if (confirmed && !toRead.has(candidate)) continue;
+    // #3643 (D9): the club-wide daily budget of live hold reads.
+    if (confirmed && !(await takeHoldReadBudget())) {
+      result.deferred += 1;
+      continue;
+    }
     // #3643 (`INV-PAY-107`): has anybody paid? Read live from Xero BEFORE the
     // release transaction — a provider call never runs inside it.
     const evidence = confirmed ? await readHoldPaymentEvidence(candidate) : null;

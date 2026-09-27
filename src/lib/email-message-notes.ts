@@ -232,21 +232,32 @@ export function lateCaptureHandBackConflictOutcomeParagraph(
 /** #3643: why the hold-expiry job is telling the treasurer about a hold. */
 export type InternetBankingHoldKeptReason =
   | "part-paid"
+  | "part-paid-manual"
   | "paid-in-full"
   | "unreadable"
-  | "released-unreadable";
+  | "released-unreadable"
+  | "cancelled-payment-recorded";
 
 /**
  * #3643 (`INV-PAY-107`) — the paragraph that says what the hold-expiry job did
  * with an expired hold it could not simply release, shared by the hand-built
  * HTML and the `{{holdKeptNote}}` token (the #2268 rule: one editable body,
- * four situations that need different instructions).
+ * six situations that need different instructions). `part-paid` is for a
+ * member's booking whose payment Xero sizes exactly — the only case the app's
+ * cancel can credit; `part-paid-manual` covers an organisation's booking and a
+ * payment Xero could not size (#3643 delta D5).
  */
 export function internetBankingHoldKeptParagraph(
   reason: InternetBankingHoldKeptReason,
 ): string {
   if (reason === "part-paid") {
     return "This booking's internet banking hold reached its deadline, but Xero shows part of its invoice already paid, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. Either wait for the member to pay the rest — the booking is marked paid once Xero shows the invoice fully paid — or cancel the booking in the app: the cancellation records the part payment as money received, applies the club's cancellation policy to it and returns the refundable share as account credit, and clears only what the invoice still owes.";
+  }
+  if (reason === "part-paid-manual") {
+    return "This booking's internet banking hold reached its deadline, but Xero shows money paid against its invoice, so the booking was NOT cancelled and its beds are still held. Nothing has been refunded or credited. The app cannot hand this payment back as account credit — the booking belongs to an organisation, or Xero could not give the amount exactly. Either wait for the rest to be paid, or have an officer cancel the booking in the app: it is then cancelled as unpaid, with no refund, no credit and the invoice left open, and you settle the payment and clear the rest of the invoice by hand in Xero. The Xero repair tool lists the booking for review.";
+  }
+  if (reason === "cancelled-payment-recorded") {
+    return "This internet banking booking has been cancelled, but Xero shows money paid against its invoice that the app could not hand back as account credit — the booking belongs to an organisation, or Xero could not give the amount exactly. It was cancelled as unpaid: no refund or credit was given and the invoice was left open. Settle the payment (refund, credit or keep it) and clear the rest of the invoice by hand in Xero; the Xero repair tool lists the booking for review.";
   }
   if (reason === "paid-in-full") {
     return "This booking's internet banking hold reached its deadline, and Xero shows its invoice paid in full, but the payment has not reached the app from the Xero sync yet. The booking was NOT cancelled and its beds are still held. The next Xero sync should mark it paid; if it is still unpaid in the app after a day, check the Xero sync.";
