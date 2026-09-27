@@ -59,18 +59,18 @@ describe("the census can see the kernel at all", () => {
 describe("the comment stripper the census depends on", () => {
   it("removes comments and keeps string literals", () => {
     const source = [
-      '// APP_TIME_ZONE in a line comment',
-      '/* APP_TIME_ZONE in a block comment */',
+      '// ENV_ZONE in a line comment',
+      '/* ENV_ZONE in a block comment */',
       'const specifier = "server-only";',
       'const url = "https://example.test/not-a-comment";',
-      'const kept = `APP_TIME_ZONE in a template`;',
+      'const kept = `ENV_ZONE in a template`;',
     ].join("\n");
     const stripped = stripComments(source);
     expect(stripped).not.toContain("line comment");
     expect(stripped).not.toContain("block comment");
     expect(stripped).toContain('"server-only"');
     expect(stripped).toContain("https://example.test/not-a-comment");
-    expect(stripped).toContain("APP_TIME_ZONE in a template");
+    expect(stripped).toContain("ENV_ZONE in a template");
   });
 });
 
@@ -134,7 +134,7 @@ describe("the kernel owns exactly one formatter factory", () => {
   it("freezes no formatter at module level, in any module", () => {
     /*
       The 41 frozen module-level constants this kernel replaces were frozen
-      against `APP_TIME_ZONE` at import time, which is exactly what a persisted,
+      against the environment's zone at import time, which is exactly what a persisted,
       changeable club timezone makes impossible. Re-introducing one inside the
       kernel would put the old defect back underneath the new API.
     */
@@ -166,40 +166,47 @@ describe("the kernel owns exactly one formatter factory", () => {
     );
   });
 
-  it("never mentions APP_TIME_ZONE", () => {
+  it("never reads the environment's zone", () => {
+    /*
+      This census used to look for the `APP_TIME_ZONE` constant, which #3567
+      deleted. The environment's claim itself is still there to be read —
+      `process.env.TZ`, `NEXT_PUBLIC_TZ`, or the seed reader that combines them —
+      so those are what the kernel must never touch.
+    */
+    const pattern = /\benv\s*\.\s*(?:NEXT_PUBLIC_)?TZ\b|\bNEXT_PUBLIC_TZ\b|club-time-zone-env/;
+    expect(pattern.test("const zone = process.env.TZ;")).toBe(true);
     const mentions = kernelFiles
-      .filter((file) => file.text.includes("APP_TIME_ZONE"))
+      .filter((file) => pattern.test(file.text))
       .map((file) => file.rel);
     expect(
       mentions,
       "INV-CONFIG-002: the kernel takes the club's zone as an argument and never reads " +
-        "the environment for it. `APP_TIME_ZONE` is process.env.TZ, which is precisely " +
-        "the competing authority this epic exists to retire.",
+        "the environment for it. The environment's zone is process.env.TZ, which is " +
+        "precisely the competing authority this epic exists to retire.",
     ).toEqual([]);
   });
 
   it("never reads the locale from configuration either (#3566)", () => {
     /*
-      Stage 4 of programme #3205 took `APP_LOCALE` out of `intl.ts`, the last
-      configuration read in the kernel: every rendering now takes the club's
-      persisted locale as a REQUIRED `format` argument. A kernel module that
-      imported `@/config/operational` again would hand every date in the product
-      back to the build's `NEXT_PUBLIC_LOCALE` (browser) or the server's `LOCALE`
-      — which could differ from each other, and from the club's setting.
+      Stage 4 of programme #3205 took the configured-locale import out of
+      `intl.ts`, the last configuration read in the kernel, and #3567 deleted the
+      configuration module itself: every rendering now takes the club's persisted
+      locale as a REQUIRED `format` argument. A kernel module that read the
+      environment's locale again would hand every date in the product back to the
+      build's `NEXT_PUBLIC_LOCALE` (browser) or the server's `LOCALE` — which
+      could differ from each other, and from the club's setting.
     */
+    const pattern = /\benv\s*\.\s*(?:NEXT_PUBLIC_)?LOCALE\b|\bNEXT_PUBLIC_LOCALE\b/;
+    expect(pattern.test("const locale = process.env.NEXT_PUBLIC_LOCALE;")).toBe(true);
     const mentions = kernelFiles
-      .filter(
-        (file) =>
-          file.text.includes("APP_LOCALE") ||
-          file.text.includes("@/config/operational"),
-      )
+      .filter((file) => pattern.test(file.text))
       .map((file) => file.rel);
     expect(
       mentions,
       "INV-CONFIG-006: the kernel takes the club's locale as an argument — a " +
         "`ClubDateFormat`, from `clubTime()` / `clubFormatValues()` on the server or " +
         "`useClubTime()` / `useClubFormat()` in the browser — and never reads " +
-        "`APP_LOCALE` or anything else from `@/config/operational`.",
+        "the environment's locale (`LOCALE` / `NEXT_PUBLIC_LOCALE`).",
     ).toEqual([]);
   });
 
@@ -512,22 +519,6 @@ const DATE_FORMATTER_EXEMPTIONS = new Map<string, { hits: number; reason: string
       hits: 2,
       reason:
         "TWO VALIDATION PROBES, not renderings: the zone normalisers ask the runtime to accept an IANA identifier and report its canonical name through `resolvedOptions().timeZone`. Nothing is formatted.",
-    },
-  ],
-  [
-    "src/lib/ai-assistant-usage.ts",
-    {
-      hits: 1,
-      reason:
-        "An `en-CA` ISO MONTH-KEY EXTRACTOR for the AI page-help budget ledger (`yyyy-MM`), an encoding rather than a display string, and an `ENVIRONMENT_ZONE_ADAPTERS` ratchet entry with its own reason in `eslint.config.mjs`.",
-    },
-  ],
-  [
-    "src/lib/ai-diagnostics-usage.ts",
-    {
-      hits: 1,
-      reason:
-        "The same `en-CA` ISO month-key extractor for the diagnostics budget ledger, on the same ratchet for the same reason.",
     },
   ],
 ]);

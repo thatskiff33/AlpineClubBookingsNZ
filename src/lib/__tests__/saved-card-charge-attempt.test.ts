@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BelowStripeMinimumError, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import {
   PaymentSource,
   PaymentStatus,
@@ -241,7 +242,7 @@ const {
 // (the ledger decision under the claim's locks, the Stripe call with no lock
 // held, recording the answer). It is exercised from this one suite because the
 // scenarios that matter run across all three.
-const { chargeSavedCardAttempt, isDefiniteSavedCardChargeFailure } =
+const { chargeSavedCardAttempt, definiteChargeFailure, isDefiniteSavedCardChargeFailure } =
   await import("../saved-card-charge-request");
 const {
   adoptSavedCardChargeAttemptForIntent,
@@ -747,9 +748,8 @@ describe("chargeSavedCardAttempt", () => {
     expect(intent).toBe(succeeded);
     expect(mocks.chargePaymentMethod).toHaveBeenCalledWith({
       amountCents: 10000,
-      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-      // caller states it. Same value the default supplied.
-      currency: "nzd",
+      // #3567 D1: no `currency` argument; the charge currency is worked out
+      // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_1",
       paymentMethodId: "pm_1",
       metadata: { bookingId: BOOKING, memberId: MEMBER },
@@ -962,6 +962,60 @@ describe("chargeSavedCardAttempt", () => {
 
       const next = await begin();
       expect(next).toMatchObject({ kind: "replay", attemptRowId: attempt.attemptRowId, idempotencyKey: attempt.idempotencyKey });
+    });
+
+    /*
+      #3567 review, a double charge: a replay with NO intent re-sends a key
+      whose first POST may have executed. After a currency change the body
+      differs, and Stripe's idempotency_error says nothing about whether that
+      first POST charged — so the row must stay pending, never FAILED, or the
+      next attempt mints a fresh key and charges a second time.
+    */
+    it("AMBIGUOUS on a replay with no intent: idempotency_error leaves the row PENDING and the next attempt replays the SAME key", async () => {
+      const noAnswer = seedAttempt({ status: PaymentStatus.PENDING });
+      const attempt = await begin();
+      expect(attempt).toMatchObject({ kind: "replay", attemptRowId: noAnswer.id, paymentIntentId: null });
+      const err = stripeSdkError({
+        type: "idempotency_error",
+        message: "Keys for idempotent requests can only be used with the same parameters they were first used with.",
+      });
+      mocks.chargePaymentMethod.mockRejectedValue(err);
+
+      await expect(charge(attempt)).rejects.toBe(err);
+
+      expect(row(noAnswer.id).status).toBe(PaymentStatus.PENDING);
+      expect(definiteChargeFailure(err, attempt)).toBe(false);
+      const next = await begin();
+      expect(next).toMatchObject({ kind: "replay", attemptRowId: noAnswer.id, idempotencyKey: attempt.idempotencyKey });
+    });
+
+    it.each([
+      ["a currency without two decimal places", new UnsupportedChargeCurrencyError("JPY")],
+      ["an amount under the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
+    ])("DEFINITE on a FRESH attempt (%s, refused before Stripe was called): the row is FAILED", async (_label, err) => {
+      const attempt = await begin();
+      expect(attempt.kind).toBe("fresh");
+      mocks.chargePaymentMethod.mockRejectedValue(err);
+
+      await expect(charge(attempt)).rejects.toBe(err);
+
+      expect(row(attempt.attemptRowId).status).toBe(PaymentStatus.FAILED);
+      expect(definiteChargeFailure(err, attempt)).toBe(true);
+    });
+
+    it.each([
+      ["a currency without two decimal places", new UnsupportedChargeCurrencyError("JPY")],
+      ["an amount under the Stripe minimum", new BelowStripeMinimumError("Amount $0.30 is below the Stripe minimum ($0.50)")],
+    ])("AMBIGUOUS on a replay with no intent (%s): the row stays PENDING, the only record of a first POST that may have charged (#3567 re-review)", async (_label, err) => {
+      const noAnswer = seedAttempt({ status: PaymentStatus.PENDING });
+      const attempt = await begin();
+      expect(attempt).toMatchObject({ kind: "replay", attemptRowId: noAnswer.id, paymentIntentId: null });
+      mocks.chargePaymentMethod.mockRejectedValue(err);
+
+      await expect(charge(attempt)).rejects.toBe(err);
+
+      expect(row(noAnswer.id).status).toBe(PaymentStatus.PENDING);
+      expect(definiteChargeFailure(err, attempt)).toBe(false);
     });
 
     describe("on a RETRIEVE (a replay that names its intent) the partition is different: only resource_missing is definite", () => {

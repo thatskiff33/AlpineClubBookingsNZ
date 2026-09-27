@@ -10,15 +10,13 @@
  *
  * ## How this suite can fail, which is the whole point
  *
- * `APP_TIME_ZONE` — the container's `TZ`, and the only thing `formatNZDate`
- * ever read — is pinned to `America/Denver`, BEHIND Greenwich, because that is
- * the side on which the defect is visible. The club's own zone is then supplied
- * as data and varied per test, so no assertion here can pass by coincidence and
- * none can pass by falling back to the environment.
- *
- * Deliberately NOT `Pacific/Auckland` as the environment zone: that is what
- * `APP_TIME_ZONE` falls back to, so a suite pinning it could not tell the
- * club's answer from the container's.
+ * The environment zone — the container's `TZ`, and the only thing
+ * `formatNZDate` ever read — used to be pinned here to `America/Denver`, BEHIND
+ * Greenwich, via a `@/config/operational` mock. #3567 deleted that module and
+ * nothing reads the environment's zone any more, so the pin is gone; the
+ * premise below still compares against Denver, the side on which the defect is
+ * visible. The club's own zone is supplied as data and varied per test, so no
+ * assertion here can pass by coincidence.
  *
  * The fixture instant `2026-07-01T02:00:00Z` is 1 July 14:00 in Auckland and
  * 30 June 20:00 in Denver — two different calendar days. The frozen clock
@@ -34,15 +32,8 @@
  * zone" would break exactly that, which is why it is asserted here rather than
  * left to the reader of a docblock.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { BookingEventType } from "@prisma/client";
-
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {

@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import type { Member } from "../../_types";
@@ -47,7 +47,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  *    and the premise below asserts the opposition really exists rather than
  *    assuming it.
  * 2. **Zone authority** — the club's PERSISTED zone decided this, not
- *    `APP_TIME_ZONE`. That needs the club zone to DISAGREE with the environment,
+ *    the environment's zone. That needs the club zone to DISAGREE with the environment,
  *    and at UTC midnight there are only two possible days on earth, both of them
  *    already spoken for by claim 1. So on a behind-UTC host — `TZ=America/Denver`
  *    is the measured case — claim 2 is unsatisfiable at this fixture: the club's
@@ -225,8 +225,8 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
    * opposition fixture above cannot do this — see the file docblock.
    *
    * The host is pinned to the environment's own zone for the render. That is not
-   * a weakening: it collapses the two ways of being wrong ("read
-   * `APP_TIME_ZONE`" and "read the machine") into ONE answer, which the single
+   * a weakening: it collapses the two ways of being wrong ("read the
+   * environment's zone" and "read the machine") into ONE answer, which the single
    * assertion below then excludes. With the two left free, at date granularity
    * they can occupy both available days between them and no club zone can
    * contradict both.
@@ -244,7 +244,7 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
       // would render" through the kernel under test would let one kernel-wide
       // defect satisfy both sides. It also has to accept zones the kernel
       // rightly refuses as a CLUB zone — a runner with `TZ=UTC` makes
-      // `APP_TIME_ZONE` a fixed offset, which `requireClubTimeZone` throws on.
+      // the environment zone a fixed offset, which `requireClubTimeZone` throws on.
       answerFor: (zone) =>
         new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
           timeZone: zone,
@@ -252,12 +252,12 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
         }).format(new Date(MID_DAY_INSTANT)),
     });
     const environmentDay = new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
-      timeZone: APP_TIME_ZONE,
+      timeZone: ENVIRONMENT_CLUB_ZONE,
       dateStyle: "medium",
     }).format(new Date(MID_DAY_INSTANT));
     expect(chosen.civilDay).not.toBe(environmentDay);
 
-    withTimeZone(APP_TIME_ZONE, () => {
+    withTimeZone(ENVIRONMENT_CLUB_ZONE, () => {
       renderInClubZone(
         [{ ...baseMember, joinedDate: null, createdAt: MID_DAY_INSTANT }],
         chosen.zone,

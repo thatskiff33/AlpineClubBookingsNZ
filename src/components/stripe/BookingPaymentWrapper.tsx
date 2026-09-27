@@ -11,6 +11,7 @@ import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   isRefundedCardTransactionRepaymentRequired,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
@@ -173,6 +174,13 @@ export default function BookingPaymentWrapper({
             setInitRecoveryError(
               EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
             );
+            return;
+          }
+          // #3567: an earlier payment is still processing. The server's own copy,
+          // not a provider detail, and not an error worth reporting.
+          if (response.status === 409 && isPaymentProcessing(data)) {
+            setRecoveryHeading("Payment being processed");
+            setInitRecoveryError(data.error);
             return;
           }
           // The raw provider detail (data.error) may leak partial key material;

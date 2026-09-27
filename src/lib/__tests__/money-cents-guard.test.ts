@@ -743,7 +743,7 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "src/app/(admin)/admin/site-style/site-style-wizard.tsx": "standard",
     "src/components/admin/notice-editor.tsx": "standard",
     "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx": "standard",
-    "src/lib/ai-diagnostics-usage.ts": "standard",
+    "src/lib/club-time-zone-env.ts": "standard",
     "src/lib/xero-x.ts": "moneyModule",
     "src/lib/xero.ts": "moneyModule",
     "src/lib/xero-inbound/x.ts": "moneyModule",
