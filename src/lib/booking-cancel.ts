@@ -1377,8 +1377,7 @@ async function performBookingCancellation(
   // policy math, branches, events, emails, audit — sees one consistent
   // method. The cancel-preview surface returns both methods' figures, so
   // preview parity holds.
-  // The decision lives in `cancel-refund-method.ts`, which the cancel preview
-  // also reads, so the dialog offers exactly this.
+  // Decided in `cancel-refund-method.ts`, shared with the cancel preview.
   refundMethod = forcedCancelRefundMethod(booking.payment?.source) ?? refundMethod;
 
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
