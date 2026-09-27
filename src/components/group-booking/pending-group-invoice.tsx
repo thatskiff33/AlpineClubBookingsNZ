@@ -101,7 +101,24 @@ export function PendingGroupInvoice({
   );
 }
 
-/** #3642: joiners who joined after the group was paid, never hidden. */
+/**
+ * #3672 (`INV-PAY-XXX`): joiners who joined after the organiser paid. They pay
+ * for their own places; the organiser owes nothing for them.
+ */
+export function PaysOwnNotice({ names }: { names: string[] }) {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Paying for themselves: {names.join(", ")}. They joined after your payment, so they pay for
+      their own places. You don&apos;t need to do anything.
+    </p>
+  );
+}
+
+/**
+ * #3642: organiser-settled joiners left unpaid behind a paid settlement. Since
+ * #3672 nothing leaves one there (a joiner the paid bill missed pays for
+ * themselves); kept for a booking left so before that change.
+ */
 export function NotPaidForYetNotice({ names }: { names: string[] }) {
   return (
     <p className="text-sm text-warning-11">

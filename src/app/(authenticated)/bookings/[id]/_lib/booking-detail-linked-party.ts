@@ -167,6 +167,9 @@ export function resolveBookingDetailLinkedParty({
                 { canSeeAdminTools },
               ),
               isMember: join.isMember,
+              // #3672: in an organiser-pays group, a joiner who arrived after
+              // the settlement was paid pays for their own place.
+              paysOwn: !joinerBooking.organiserSettled,
             },
           ];
         }),

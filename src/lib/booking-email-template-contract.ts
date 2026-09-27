@@ -49,6 +49,7 @@ export const BOOKING_URL_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   "whole-lodge-guest-names-reminder",
   "group-settlement-receipt",
   "group-join-settled",
+  "group-join-pay-self",
   "group-settlement-expired",
   "group-join-released",
   "group-join-cancelled",

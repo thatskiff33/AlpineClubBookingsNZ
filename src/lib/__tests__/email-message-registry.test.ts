@@ -264,6 +264,7 @@ const NEWLY_REGISTERED_HARDCODED_KEYS = [
   "group-booking-join-verification",
   "group-settlement-receipt",
   "group-join-settled",
+  "group-join-pay-self",
   "group-settlement-expired",
   "group-join-released",
   "group-join-cancelled",

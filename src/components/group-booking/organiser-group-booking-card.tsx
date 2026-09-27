@@ -33,6 +33,7 @@ import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoi
 import {
   InvoiceBlockedNotice,
   NotPaidForYetNotice,
+  PaysOwnNotice,
   PendingGroupInvoice,
 } from "@/components/group-booking/pending-group-invoice";
 
@@ -54,6 +55,12 @@ interface JoinerRow {
    */
   moneyReconciliation: BookingMoneyReconciliationView;
   isMember: boolean;
+  /**
+   * #3672 (`INV-PAY-XXX`): this joiner pays for their own place — every joiner
+   * of an each-pays group, and a joiner of an organiser-pays group who arrived
+   * after the settlement was paid. Never on the organiser's bill.
+   */
+  paysOwn: boolean;
 }
 
 interface SettlementState {
@@ -387,19 +394,25 @@ export function OrganiserGroupBookingCard({
   const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
     ? "preparing"
     : (group.settlement?.invoiceDisplay ?? "preparing");
+  // #3672: joiners on the organiser's bill. One who joined after it was paid
+  // pays for themselves and is never counted as owed by the organiser.
+  const organiserPaidJoiners = activeJoiners.filter((j) => !j.paysOwn);
+  const paysOwnJoiners = activeJoiners.filter((j) => j.paysOwn);
   // #3642: joiners the organiser has not paid for — while an invoice is
-  // outstanding, the ones not on it (PAYMENT_PENDING); after payment, the ones
-  // who joined afterwards. Never hidden behind "everyone is confirmed".
-  const unsettledJoiners = activeJoiners.filter(
+  // outstanding, the ones not on it (PAYMENT_PENDING). Never hidden behind
+  // "everyone is confirmed".
+  const unsettledJoiners = organiserPaidJoiners.filter(
     (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
   );
   // Not after a settle this session, which just committed them.
-  const notOnInvoice = settleReference ? [] : activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  const notOnInvoice = settleReference
+    ? []
+    : organiserPaidJoiners.filter((j) => j.status === "PAYMENT_PENDING");
   const sumCents = (rows: JoinerRow[]) => rows.reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
   const invoiceTotalChanged =
     !settleReference &&
     pendingInvoiceCents != null &&
-    sumCents(activeJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
+    sumCents(organiserPaidJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
   const outstandingCents = sumCents(unsettledJoiners);
 
   return (
@@ -550,12 +563,17 @@ export function OrganiserGroupBookingCard({
                       : ""}
                     .
                     {settleComplete || unsettledJoiners.length === 0
-                      ? " Everyone in your group is confirmed."
+                      ? paysOwnJoiners.length > 0
+                        ? " Everyone you paid for is confirmed."
+                        : " Everyone in your group is confirmed."
                       : ""}
                   </p>
                 </div>
                 {!settleComplete && unsettledJoiners.length > 0 ? (
                   <NotPaidForYetNotice names={unsettledJoiners.map((j) => j.name)} />
+                ) : null}
+                {paysOwnJoiners.length > 0 ? (
+                  <PaysOwnNotice names={paysOwnJoiners.map((j) => j.name)} />
                 ) : null}
               </div>
             ) : pendingReference ? (

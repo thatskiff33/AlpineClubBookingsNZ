@@ -120,6 +120,7 @@ import {
 import { recordAdultMemberHostingReviewForNewBooking } from "@/lib/adult-member-hosting-review";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { withOptionalTransaction } from "@/lib/db-transaction";
+import { organiserPaysForJoinerInTx } from "@/lib/group-late-joiner";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { resolveBookingGuestDietary } from "@/lib/member-dietary-booking-writes";
 
@@ -1036,6 +1037,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
       }
 
+      // #3672 (`INV-PAY-XXX`): a group join's payer is re-decided here, under
+      // `lock(1)`. A settlement paid since the join read the group makes this
+      // an ordinary member-pays booking, never one the paid bill left out.
+      // Only ever downgrades: the join forced the card method for an
+      // organiser-pays joiner, which is also what a member-pays one may use.
+      const organiserSettledInLock =
+        Boolean(organiserSettled) &&
+        (!groupJoin ||
+          (await organiserPaysForJoinerInTx(tx, groupJoin.groupBookingId)));
+
       const nonMemberHoldUntil = primaryShouldBePending && !internetBankingPaymentSelected
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
@@ -1063,7 +1074,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           // and the organiser settles it. Omitted entirely otherwise so the
           // column defaults to false and the create-payload assertions in
           // booking-split.test.ts stay unchanged.
-          ...(organiserSettled ? { organiserSettled: true } : {}),
+          ...(organiserSettledInLock ? { organiserSettled: true } : {}),
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           requestedRoomId: requestedRoomId || null,

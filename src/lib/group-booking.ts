@@ -48,6 +48,10 @@ import { PUBLIC_GROUP_JOIN_MINIMUM_STAY_MESSAGE } from "@/lib/policies/minimum-s
 import { PUBLIC_GROUP_JOIN_ADULT_MEMBER_HOSTING_MESSAGE } from "@/lib/policies/adult-member-hosting";
 import { prisma } from "@/lib/prisma";
 import {
+  organiserPaysForNewJoiner,
+  paymentModeForNewJoiner,
+} from "@/lib/group-late-joiner";
+import {
   hashActionToken,
   isActionTokenFormat,
   issueActionToken,
@@ -412,6 +416,12 @@ export interface GroupBookingSummary {
   code: string;
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
+  /**
+   * #3672: how a member joining NOW pays — each-pays-own once an
+   * organiser-pays group's settlement is paid. The join page describes this,
+   * not `paymentMode`.
+   */
+  joinerPaymentMode: GroupBookingPaymentMode;
   organiserFirstName: string;
   // The name of the lodge the group is actually staying at (the organiser
   // booking's lodge), so public join copy names the right property in a
@@ -430,6 +440,7 @@ export interface GroupBookingRecordForSummary {
   joinCode: string;
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
+  settlement: { status: PaymentStatus } | null;
   joinDeadline: Date | null;
   organiserBooking: {
     checkIn: Date;
@@ -517,6 +528,7 @@ export function toGroupBookingSummary(
     code: group.joinCode,
     status: group.status,
     paymentMode: group.paymentMode,
+    joinerPaymentMode: paymentModeForNewJoiner(group),
     organiserFirstName: group.organiserMember.firstName,
     lodgeName: group.organiserBooking.lodge.name,
     checkIn: group.organiserBooking.checkIn,
@@ -551,6 +563,7 @@ export async function resolveGroupBookingByCode(
       joinCode: true,
       status: true,
       paymentMode: true,
+      settlement: { select: { status: true } },
       joinDeadline: true,
       organiserBooking: {
         select: {
@@ -626,7 +639,8 @@ export interface JoinGroupBookingResult {
   requiresPayment: boolean;
   // True for ORGANISER_PAYS: the joiner's beds are priced and held but the
   // organiser settles them, so the joiner is never billed and requiresPayment
-  // is always false.
+  // is always false. False for a joiner of an organiser-pays group whose
+  // settlement was already paid (#3672): they pay for themselves.
   organiserSettled: boolean;
 }
 
@@ -646,6 +660,9 @@ export interface JoinGroupBookingResult {
  *     joiner is never billed (requiresPayment is false) and cannot pay it
  *     themselves; the organiser settles the group total as one combined bill.
  *     The booking is still priced and holds the bed exactly as each-pays.
+ *   - ORGANISER_PAYS after the settlement is paid (#3672, `INV-PAY-XXX`): the
+ *     organiser is never billed again, so the joiner gets an ordinary
+ *     member-pays booking, exactly as EACH_PAYS_OWN.
  *
  * Non-member friends use the public join-request path, so every guest here must
  * be a member; a non-member guest is rejected with a clear message.
@@ -673,6 +690,8 @@ export async function joinGroupBookingAsMember(
           paymentMode: true,
           maxJoiners: true,
           organiserMemberId: true,
+          // #3672: a paid settlement makes a new joiner member-pays.
+          settlement: { select: { status: true } },
           organiserBooking: {
             select: {
               id: true,
@@ -716,8 +735,10 @@ export async function joinGroupBookingAsMember(
   if (hasGroupStayFullyEnded(group.organiserBooking, clubDayInstantForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
   }
-  const organiserSettled =
-    group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS;
+  // #3672 (`INV-PAY-XXX`, owner option B): once the organiser has paid, a new
+  // joiner pays for themselves. Re-decided under `lock(1)` when the booking is
+  // written, so a settlement paid in between is caught there too.
+  const organiserSettled = organiserPaysForNewJoiner(group);
   if (
     group.organiserBooking.deletedAt ||
     !(ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
@@ -1128,11 +1149,13 @@ export async function joinGroupBookingAsMember(
     isZeroDollarConfirmed: outcome.isZeroDollarConfirmed,
     finalPriceCents: booking.finalPriceCents,
     // ORGANISER_PAYS joiners never pay; the organiser settles the group total.
+    // Read from the written booking (#3672): the payer is decided under the
+    // lock, so a joiner the paid settlement missed is sent to pay.
     requiresPayment:
-      !organiserSettled &&
+      !booking.organiserSettled &&
       booking.status === BookingStatus.PAYMENT_PENDING &&
       booking.finalPriceCents > 0,
-    organiserSettled,
+    organiserSettled: booking.organiserSettled,
   };
 }
 

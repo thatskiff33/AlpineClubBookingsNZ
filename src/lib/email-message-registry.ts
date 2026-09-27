@@ -1074,6 +1074,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
   },
+  "group-join-pay-self": {
+    triggerSummary:
+      "Organiser-pays group settlement was paid without a joiner on it, so the joiner now pays for their own place (#3672)",
+    frequency: "One email per joiner booking the paid settlement did not cover",
+  },
   "group-settlement-expired": {
     triggerSummary:
       "Organiser's started combined group payment expired before completion; held beds released",
