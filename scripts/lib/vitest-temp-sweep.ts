@@ -52,11 +52,18 @@
  *
  * ## Concurrency
  *
- * One sweeper at a time per temp root: a sweep first creates `LOCK_FILE_NAME`
- * exclusively, recording its pid, and a sweep that finds the lock held skips.
- * A lock is taken over only when its pid is dead or the lock is older than
- * `LOCK_STALE_MS`. The takeover is not atomic, so two sweepers that find the
- * same stale lock at the same instant can both run. That costs duplicate
+ * One sweeper at a time per temp root and user: a sweep first creates the
+ * lock file (`lockFileName`) exclusively, recording its pid, and a sweep that
+ * finds a live, recent lock skips. A lock is taken over only when its pid is
+ * dead or the lock is older than `LOCK_STALE_MS`.
+ *
+ * The lock is an optimisation, never a gate. Only `EEXIST` on the exclusive
+ * create means "held". Any other failure means the sweep runs without the lock
+ * rather than skipping forever: a full disk or read-only temp root that cannot
+ * create or write it, a stale lock that cannot be removed, or something that
+ * is not a file at the lock path. An empty lock this sweep created but could
+ * not write is removed again. Running unlocked, like a non-atomic takeover
+ * where two sweepers find the same stale lock at once, costs duplicate
  * `EPERM`/`ENOENT` noise, not data: each candidate is still claimed by an
  * atomic `rename`, and only one sweeper can win it.
  *
@@ -103,7 +110,9 @@ import {
   readFile,
   rename,
   rm,
+  unlink,
   utimes,
+  writeFile,
 } from "node:fs/promises";
 import { constants as osConstants, setPriority, tmpdir } from "node:os";
 import path from "node:path";
@@ -142,8 +151,17 @@ export const MAX_ATTEMPTS_PER_RUN = 10;
 /** How often a live run refreshes its own folders' modification time. */
 export const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000;
 
-/** The single-sweeper lock, a direct child of the temp root. */
-export const LOCK_FILE_NAME = "vitest-temp-sweep.lock";
+/** The longest teardown waits for a heartbeat tick already in flight. */
+export const HEARTBEAT_STOP_WAIT_MS = 5000;
+
+/**
+ * The single-sweeper lock, a direct child of the temp root. Off Windows the
+ * name carries the uid, because `/tmp` is shared: another user's lock must not
+ * be able to block this user's sweep, and cannot be removed anyway (sticky bit).
+ */
+export function lockFileName(uid: number | null): string {
+  return uid === null ? "vitest-temp-sweep.lock" : `vitest-temp-sweep-${uid}.lock`;
+}
 
 /** A lock older than this is abandoned whatever its pid says. */
 export const LOCK_STALE_MS = 60 * 60 * 1000;
@@ -178,6 +196,7 @@ const CHILD_ENV_ALLOWLIST = new Set([
 
 export type SweepStats = {
   isDirectory(): boolean;
+  isFile(): boolean;
   isSymbolicLink(): boolean;
   mtimeMs: number;
   uid: number;
@@ -189,6 +208,11 @@ export type SweepFs = {
   lstat(target: string): Promise<SweepStats>;
   rename(from: string, to: string): Promise<void>;
   rm(target: string): Promise<void>;
+  /** Creates an empty file, failing with `EEXIST` if anything is there. */
+  createExclusive(target: string): Promise<void>;
+  writeText(target: string, content: string): Promise<void>;
+  readText(target: string): Promise<string>;
+  unlink(target: string): Promise<void>;
 };
 
 export const nodeSweepFs: SweepFs = {
@@ -196,6 +220,12 @@ export const nodeSweepFs: SweepFs = {
   lstat: (target) => lstat(target),
   rename: (from, to) => rename(from, to),
   rm: (target) => rm(target, { recursive: true, force: true }),
+  createExclusive: async (target) => {
+    await (await open(target, "wx")).close();
+  },
+  writeText: (target, content) => writeFile(target, content, "utf8"),
+  readText: (target) => readFile(target, "utf8"),
+  unlink: (target) => unlink(target),
 };
 
 /** The current user's uid off Windows; `null` (no ownership check) on Windows. */
@@ -241,6 +271,12 @@ export type SweepReport = {
   failed: Array<{ path: string; error: unknown }>;
   /** True when another sweeper held the lock, so nothing was attempted. */
   skipped: boolean;
+  /**
+   * True when this sweep held the lock. False when it skipped, or swept without
+   * the lock because the lock could not be used (a full disk, a read-only temp
+   * root, an unremovable or non-file lock).
+   */
+  locked: boolean;
 };
 
 function samePath(a: string, b: string): boolean {
@@ -331,56 +367,74 @@ async function holdsOnlyVitestFiles(
   return true;
 }
 
-type HeldLock = { release(): Promise<void> };
+/**
+ * What `acquireLock` decided. `held`: a live, recent sweeper has it, so skip.
+ * `locked`: this sweep holds it. `unlocked`: the lock could not be used, so
+ * sweep without it. `release` removes only a lock that is still this sweep's.
+ */
+type LockOutcome =
+  | { state: "held" }
+  | { state: "locked" | "unlocked"; release(): Promise<void> };
+
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | null)?.code;
+}
 
 /**
- * Takes the single-sweeper lock, or returns `null` when a live, recent sweeper
- * holds it. An abandoned lock (dead pid, or older than `LOCK_STALE_MS`) is
- * removed and taken once; losing that race to another sweeper also returns
- * `null`.
+ * Takes the single-sweeper lock. Only `EEXIST` from the exclusive create
+ * counts as the lock being held; every other failure (see the module docstring)
+ * returns `unlocked` so the sweep still runs.
  */
 async function acquireLock(
-  tempRoot: string,
+  fs: SweepFs,
+  lockPath: string,
   now: number,
   isAlive: (pid: number) => boolean,
-): Promise<HeldLock | null> {
-  const lockPath = path.join(tempRoot, LOCK_FILE_NAME);
+): Promise<LockOutcome> {
   const token = `${process.pid}:${now}:${Math.random().toString(36).slice(2)}`;
+  // Set once this sweep has created a file at the lock path.
+  let created = false;
 
-  const tryCreate = async (): Promise<boolean> => {
+  const release = async () => {
+    if (!created) return;
     try {
-      const handle = await open(lockPath, "wx");
-      try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, token }));
-      } finally {
-        await handle.close();
-      }
-      return true;
+      const content = await fs.readText(lockPath);
+      // Ours: our token, or the empty file we created but could not write.
+      if (content === "" || content.includes(token)) await fs.unlink(lockPath);
     } catch {
-      return false;
+      // Already gone, or taken over: not ours to remove.
     }
   };
+  const unlocked: LockOutcome = { state: "unlocked", release };
 
-  const held: HeldLock = {
-    async release() {
-      try {
-        const content = await readFile(lockPath, "utf8");
-        if (content.includes(token)) await rm(lockPath, { force: true });
-      } catch {
-        // Already gone, or taken over: not ours to remove.
-      }
-    },
+  /** `exists`, `locked`, or `unusable` (any other failure). */
+  const tryCreate = async (): Promise<"exists" | "locked" | "unusable"> => {
+    try {
+      await fs.createExclusive(lockPath);
+    } catch (error) {
+      return errorCode(error) === "EEXIST" ? "exists" : "unusable";
+    }
+    created = true;
+    try {
+      await fs.writeText(lockPath, JSON.stringify({ pid: process.pid, token }));
+    } catch {
+      return "unusable"; // ENOSPC/EDQUOT after the create: `release` removes it.
+    }
+    return "locked";
   };
 
-  if (await tryCreate()) return held;
+  const first = await tryCreate();
+  if (first === "locked") return { state: "locked", release };
+  if (first === "unusable") return unlocked;
 
-  let abandoned = false;
+  let abandoned: boolean;
   try {
-    const stats = await lstat(lockPath);
-    if (!stats.isFile()) return null;
+    const stats = await fs.lstat(lockPath);
+    // A directory or link at the lock path would block every sweep forever.
+    if (!stats.isFile() || stats.isSymbolicLink()) return unlocked;
     let pid: unknown;
     try {
-      pid = (JSON.parse(await readFile(lockPath, "utf8")) as { pid?: unknown }).pid;
+      pid = (JSON.parse(await fs.readText(lockPath)) as { pid?: unknown }).pid;
     } catch {
       pid = undefined; // Being written right now, or corrupt: judge by age.
     }
@@ -388,16 +442,22 @@ async function acquireLock(
       now - stats.mtimeMs > LOCK_STALE_MS ||
       (typeof pid === "number" && !isAlive(pid));
   } catch {
-    abandoned = true; // Released between our create and our read.
+    return unlocked; // Released between our create and our read.
   }
-  if (!abandoned) return null;
+  if (!abandoned) return { state: "held" };
 
   try {
-    await rm(lockPath, { force: true });
-  } catch {
-    return null;
+    await fs.unlink(lockPath);
+  } catch (error) {
+    // Already gone is fine; anything else (EPERM, EBUSY) means the lock cannot
+    // be cleared, and waiting would mean waiting forever.
+    if (errorCode(error) !== "ENOENT") return unlocked;
   }
-  return (await tryCreate()) ? held : null;
+  const second = await tryCreate();
+  if (second === "locked") return { state: "locked", release };
+  // Another sweeper took it over first, which is exactly what the lock is for.
+  if (second === "exists") return { state: "held" };
+  return unlocked;
 }
 
 /**
@@ -408,16 +468,26 @@ async function acquireLock(
 export async function sweepStaleVitestTempDirs(
   options: SweepOptions,
 ): Promise<SweepReport> {
-  const report: SweepReport = { removed: [], failed: [], skipped: false };
-  let lock: HeldLock | null = null;
+  const report: SweepReport = {
+    removed: [],
+    failed: [],
+    skipped: false,
+    locked: false,
+  };
+  let lock: LockOutcome | null = null;
   try {
     const now = options.now();
     lock = await acquireLock(
-      options.tempRoot,
+      options.fs ?? nodeSweepFs,
+      path.join(
+        options.tempRoot,
+        lockFileName(options.uid === undefined ? currentUid() : options.uid),
+      ),
       now,
       options.isAlive ?? isProcessAlive,
     );
-    if (lock === null) {
+    report.locked = lock.state === "locked";
+    if (lock.state === "held") {
       report.skipped = true;
       return report;
     }
@@ -425,7 +495,7 @@ export async function sweepStaleVitestTempDirs(
   } catch (error) {
     report.failed.push({ path: options.tempRoot, error });
   } finally {
-    await lock?.release();
+    if (lock && lock.state !== "held") await lock.release();
   }
   return report;
 }
@@ -516,13 +586,15 @@ export async function touchVitestTempDirs(
 
 /**
  * Starts the heartbeat. The returned function stops it, and resolves once any
- * tick already in flight has finished, so no touch can land after it.
+ * tick already in flight has finished, so no touch can land after it. That
+ * wait is capped at `stopWaitMs`, so a hung `utimes` cannot hold teardown.
  */
 export function startHeartbeat(
   dirs: readonly string[],
   now: () => number,
   intervalMs: number = HEARTBEAT_INTERVAL_MS,
   touch: typeof touchVitestTempDirs = touchVitestTempDirs,
+  stopWaitMs: number = HEARTBEAT_STOP_WAIT_MS,
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;
   const timer = setInterval(() => {
@@ -534,7 +606,16 @@ export function startHeartbeat(
   timer.unref();
   return async () => {
     clearInterval(timer);
-    await inFlight;
+    if (!inFlight) return;
+    let cap: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      inFlight,
+      new Promise<void>((resolve) => {
+        cap = setTimeout(resolve, stopWaitMs);
+        cap.unref();
+      }),
+    ]);
+    clearTimeout(cap);
   };
 }
 

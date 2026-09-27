@@ -19,7 +19,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CHILD_FLAG,
-  LOCK_FILE_NAME,
   MAX_ATTEMPTS_PER_RUN,
   STALE_AFTER_MS,
   SWEEP_OPTIONS_ENV,
@@ -29,6 +28,7 @@ import {
   buildChildEnv,
   isSweepChild,
   launchSweep,
+  lockFileName,
   nodeSweepFs,
   ownTempDirs,
   runSweepFromEnv,
@@ -152,6 +152,7 @@ function foreignOwnerFs(target: (candidate: string) => boolean, uid: number): Sw
       if (!target(candidate)) return stats;
       return {
         isDirectory: () => stats.isDirectory(),
+        isFile: () => stats.isFile(),
         isSymbolicLink: () => stats.isSymbolicLink(),
         mtimeMs: stats.mtimeMs,
         uid,
@@ -171,7 +172,7 @@ describe("sweepStaleVitestTempDirs: what is removed (#3671)", () => {
   it("removes a stale nanoid folder with ssr/, and leaves no trash behind", async () => {
     const stale = vitestDir(root, nanoidName());
     const report = await sweep();
-    expect(report).toEqual({ removed: [stale], failed: [], skipped: false });
+    expect(report).toEqual({ removed: [stale], failed: [], skipped: false, locked: true });
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(stale + TRASH_SUFFIX)).toBe(false);
   });
@@ -446,6 +447,7 @@ describe("sweepStaleVitestTempDirs: failures and limits (#3671)", () => {
       removed: [],
       failed: [{ path: dir, error: claimed }],
       skipped: false,
+      locked: true,
     });
     expect(existsSync(path.join(dir, "ssr", SHA1_NAME))).toBe(true);
   });
@@ -582,6 +584,17 @@ describe("touchVitestTempDirs and the heartbeat (#3671)", () => {
     expect(statSync(own).mtimeMs).toBe(STALE);
   });
 
+  it("stop() gives up waiting on a hung tick after its cap", async () => {
+    let ticks = 0;
+    const hungTouch = () => {
+      ticks += 1;
+      return new Promise<void>(() => {});
+    };
+    const stop = startHeartbeat(["/unused"], () => NOW, 1, hungTouch, 30);
+    await eventually(() => ticks > 0);
+    await expect(stop()).resolves.toBeUndefined();
+  });
+
   it("stop() does not resolve until a tick already in flight has finished", async () => {
     let finishTick: () => void = () => {};
     let ticks = 0;
@@ -649,7 +662,11 @@ describe("ownTempDirs (#3671)", () => {
 });
 
 describe("the single-sweeper lock (#3675 round 2)", () => {
-  const lockPath = () => path.join(root, LOCK_FILE_NAME);
+  const lockPath = () => path.join(root, lockFileName(null));
+
+  function enospc(): Error {
+    return Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  }
 
   it("lets only one of several concurrent sweeps run, and releases the lock", async () => {
     const stale = Array.from({ length: 5 }, () => vitestDir(root, nanoidName()));
@@ -665,7 +682,7 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
     const stale = vitestDir(root, nanoidName());
     writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
     const report = await sweep({ isAlive: () => true });
-    expect(report).toEqual({ removed: [], failed: [], skipped: true });
+    expect(report).toEqual({ removed: [], failed: [], skipped: true, locked: false });
     expect(existsSync(stale)).toBe(true);
     expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
   });
@@ -702,6 +719,105 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
     };
     await sweep({ fs: takenOver });
     expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
+  });
+
+  it("still sweeps, and leaves no lock behind, when the lock cannot be written (disk full)", async () => {
+    const stale = vitestDir(root, nanoidName());
+    const diskFull: SweepFs = {
+      ...nodeSweepFs,
+      writeText: async () => {
+        throw enospc();
+      },
+    };
+    const report = await sweep({ fs: diskFull });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: false });
+    expect(existsSync(lockPath())).toBe(false);
+    // And so the next sweep is not blocked by our own empty file.
+    const again = vitestDir(root, nanoidName());
+    expect((await sweep({ fs: diskFull })).removed).toEqual([again]);
+  });
+
+  it("still sweeps when the lock cannot even be created (ENOSPC, read-only root)", async () => {
+    const stale = vitestDir(root, nanoidName());
+    const cannotCreate: SweepFs = {
+      ...nodeSweepFs,
+      createExclusive: async () => {
+        throw enospc();
+      },
+    };
+    const report = await sweep({ fs: cannotCreate });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: false });
+  });
+
+  it("only EEXIST means held: another create error sweeps even beside a live lock", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    const readOnly: SweepFs = {
+      ...nodeSweepFs,
+      createExclusive: async () => {
+        throw Object.assign(new Error("EROFS: read-only file system"), { code: "EROFS" });
+      },
+    };
+    const report = await sweep({ fs: readOnly, isAlive: () => true });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: false });
+    expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
+  });
+
+  it("skips when another sweeper wins the takeover of an abandoned lock", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "dead" }));
+    let creates = 0;
+    const racedFs: SweepFs = {
+      ...nodeSweepFs,
+      createExclusive: async (target) => {
+        creates += 1;
+        if (creates === 2) {
+          // The other sweeper re-creates the lock between our unlink and create.
+          writeFileSync(target, JSON.stringify({ pid: 4343, token: "winner" }));
+        }
+        return nodeSweepFs.createExclusive(target);
+      },
+    };
+    const report = await sweep({ fs: racedFs, isAlive: (pid) => pid !== 4242 });
+    expect(report).toMatchObject({ removed: [], skipped: true });
+    expect(existsSync(stale)).toBe(true);
+    expect(readFileSync(lockPath(), "utf8")).toContain("winner");
+  });
+
+  it("still sweeps when an abandoned lock cannot be removed, and leaves that lock alone", async () => {
+    const stale = vitestDir(root, nanoidName());
+    writeFileSync(lockPath(), JSON.stringify({ pid: 4242, token: "theirs" }));
+    const cannotUnlink: SweepFs = {
+      ...nodeSweepFs,
+      unlink: async () => {
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      },
+    };
+    const report = await sweep({ fs: cannotUnlink, isAlive: () => false });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: false });
+    expect(readFileSync(lockPath(), "utf8")).toContain("theirs");
+  });
+
+  it("still sweeps when something that is not a file sits at the lock path", async () => {
+    const stale = vitestDir(root, nanoidName());
+    mkdirSync(lockPath());
+    const report = await sweep({ isAlive: () => true });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: false });
+    expect(statSync(lockPath()).isDirectory()).toBe(true);
+  });
+
+  it("names the lock per user off Windows, so another user's lock never blocks this one", async () => {
+    expect(lockFileName(null)).toBe("vitest-temp-sweep.lock");
+    expect(lockFileName(1000)).toBe("vitest-temp-sweep-1000.lock");
+
+    const owner = lstatSync(root).uid;
+    const stale = vitestDir(root, nanoidName());
+    // Another user's live, recent lock, and a planted one at the shared name.
+    writeFileSync(path.join(root, lockFileName(owner + 1)), JSON.stringify({ pid: 1 }));
+    writeFileSync(path.join(root, lockFileName(null)), JSON.stringify({ pid: 1 }));
+    const report = await sweep({ uid: owner, isAlive: () => true });
+    expect(report).toMatchObject({ removed: [stale], skipped: false, locked: true });
+    expect(existsSync(path.join(root, lockFileName(owner)))).toBe(false);
   });
 
   it("treats a recent, still-empty lock as held: it is being written right now", async () => {
