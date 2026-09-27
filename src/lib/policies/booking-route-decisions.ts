@@ -22,6 +22,7 @@ import {
   type CancellationRule,
 } from "./cancellation";
 import { formatCents } from "@/lib/utils";
+import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import type { ClubFormat } from "@/lib/club-format";
 
 export type { CancellationRule };
@@ -467,11 +468,14 @@ export function calculateCancellationPreview(input: {
   const paidAmountCents =
     input.payment.amountCents - input.payment.refundedAmountCents;
   const changeFeeCents = input.payment.changeFeeCents;
-  // Same refundable-base cap as cancelBooking (#1031): the preview must not
+  // The refundable base cancelBooking itself uses (#1031): the preview must not
   // promise a refund the stale Payment mirror can no longer back.
-  const refundableBaseCents =
-    Math.min(paidAmountCents, input.finalPriceCents + changeFeeCents) -
-    changeFeeCents;
+  const refundableBaseCents = cancelRefundableBaseCents({
+    amountCents: input.payment.amountCents,
+    refundedAmountCents: input.payment.refundedAmountCents,
+    finalPriceCents: input.finalPriceCents,
+    changeFeeCents,
+  });
   const days = daysUntilDate(input.checkIn, input.todayAtClub);
   const {
     cardRefundAmountCents,

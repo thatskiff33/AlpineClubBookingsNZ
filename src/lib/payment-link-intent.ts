@@ -5,7 +5,7 @@
  * capacity revalidation as the session-gated payment-intent route. Token
  * resolution and the refusal vocabulary it throws stay in `payment-link.ts`.
  */
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentSource, PaymentStatus } from "@prisma/client";
 import {
   bookingOwner,
   bookingOwnerProviderMetadata,
@@ -18,14 +18,13 @@ import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import {
-  findPaymentTransactionByIntentId,
-  upsertPaymentIntentTransaction,
-} from "@/lib/payment-transactions";
+import { attachMintedCardIntent } from "@/lib/card-intent-attach";
+import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import {
   NOT_PAYABLE_MESSAGE,
+  PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
   PaymentLinkError,
   REVOKED_LINK_MESSAGE,
   USED_LINK_MESSAGE,
@@ -41,6 +40,7 @@ import {
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -84,6 +84,19 @@ class UnconsumedCreditElectionError extends Error {
   }
 }
 
+/**
+ * #3638 (`INV-PAY-102`): the shared switched-to-Internet-Banking refusal
+ * (`SWITCHED_TO_INTERNET_BANKING_BODY`, one definition for both card doors),
+ * carried as a PaymentLinkError so the route sends its code with the message.
+ */
+function switchedToInternetBankingError() {
+  return new PaymentLinkError(
+    SWITCHED_TO_INTERNET_BANKING_BODY.error,
+    409,
+    SWITCHED_TO_INTERNET_BANKING_BODY.code,
+  );
+}
+
 export type PaymentLinkIntentResult =
   | { type: "alreadyPaid" }
   | { type: "clientSecret"; clientSecret: string; paymentIntentId: string };
@@ -115,6 +128,14 @@ export async function createPaymentIntentForPaymentLink(
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
+  // #3638 — a booking switched to Internet Banking has an emailed invoice; a
+  // card payment beside it is the double collection `INV-PAY-102` forbids.
+  // Checked here with no lock, and again under lock(1) where the intent is
+  // attached, for a switch that commits in between.
+  if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
+    throw switchedToInternetBankingError();
+  }
+
   // Reuse or reconcile an existing PaymentIntent before creating a new one
   // (same behaviour as the session payment-intent route).
   //
@@ -134,14 +155,10 @@ export async function createPaymentIntentForPaymentLink(
       // must lead to a fresh repayment intent.
       let refundedHistory: boolean;
       try {
-        const pointedTransaction = await findPaymentTransactionByIntentId({
+        refundedHistory = await isRefundedPaymentIntentHistory({
           paymentIntentId: existingIntent.id,
+          paymentStatus: booking.payment.status,
         });
-        refundedHistory = pointedTransaction
-          ? pointedTransaction.status === PaymentStatus.REFUNDED ||
-            pointedTransaction.status === PaymentStatus.PARTIALLY_REFUNDED
-          : booking.payment.status === PaymentStatus.REFUNDED ||
-            booking.payment.status === PaymentStatus.PARTIALLY_REFUNDED;
       } catch (error) {
         logger.error(
           { err: error, bookingId: booking.id },
@@ -398,30 +415,34 @@ export async function createPaymentIntentForPaymentLink(
       : `pl_pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
   });
 
-  const payment = await prisma.payment.upsert({
-    where: { bookingId: booking.id },
-    create: {
-      bookingId: booking.id,
+  // #3638 (`INV-PAY-102`): attached under lock(1) after re-reading the
+  // payment's source and the booking's status — see the shared helper. A
+  // refused intent is cancelled there and its secret never leaves the server.
+  const attached = await attachMintedCardIntent({
+    bookingId: booking.id,
+    paymentIntentId: paymentIntent.id,
+    payableStatuses: PAYMENT_LINK_PAYABLE_BOOKING_STATUSES,
+    paymentCreate: {
       amountCents: booking.finalPriceCents,
       stripeCustomerId: customer.id,
-      status: PaymentStatus.PENDING,
     },
-    update: {
+    paymentUpdate: {
+      stripeCustomerId: customer.id,
+    },
+    transaction: {
+      amountCents: booking.finalPriceCents,
+      reason: repaySupersededIntentId
+        ? "payment_link_repay_after_refund"
+        : "payment_link_booking_payment",
       stripeCustomerId: customer.id,
     },
   });
-
-  await upsertPaymentIntentTransaction({
-    paymentId: payment.id,
-    kind: PaymentTransactionKind.PRIMARY,
-    paymentIntentId: paymentIntent.id,
-    amountCents: booking.finalPriceCents,
-    status: PaymentStatus.PROCESSING,
-    reason: repaySupersededIntentId
-      ? "payment_link_repay_after_refund"
-      : "payment_link_booking_payment",
-    stripeCustomerId: customer.id,
-  });
+  if (attached === "switchedToInternetBanking") {
+    throw switchedToInternetBankingError();
+  }
+  if (attached === "notPayable") {
+    throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
+  }
 
   if (!paymentIntent.client_secret) {
     throw new PaymentLinkError("Unable to start the payment. Please try again.", 500);

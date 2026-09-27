@@ -1325,6 +1325,16 @@ passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
 
+## Mocking a money seam: never in a test that asserts its money
+
+The rule is `INV-OPS-015` ([`invariants/operations.md`](invariants/operations.md));
+the seams and what each decides are `MONEY_SEAMS` in
+`src/lib/__tests__/money-seam-mock-census.test.ts`, which fails the build on an
+offender. To keep a seam real while stubbing its neighbours, spread the real
+module (`...((await importOriginal()) as typeof import("…"))`) and answer the
+seam's own reads truthfully: a ledger read that returns `[]` while the fixture
+carries a live ask is the #543 shape, and the census cannot see it.
+
 ## Mocking `requireAdmin`: reference the helper, never wrap it
 
 A fourth convention in the same family — written the obvious way, a suite that

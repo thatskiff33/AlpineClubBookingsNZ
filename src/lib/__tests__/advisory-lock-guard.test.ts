@@ -248,6 +248,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "attachMintedCardIntent#1",
+    tier: "GLOBAL",
+    reason:
+      "#3638: both card mint doors (create-payment-intent and the /pay/<token> link) attach a freshly minted intent here, re-reading the payment's source and the booking's status under the key the Internet Banking switch holds, so a switch that committed during the mint is refused, and a mint that attached first leaves the switch a different intent from the one it cancelled (INV-PAY-102). Global key alone: no capacity or credit is touched.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:
@@ -1129,6 +1136,18 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // serialisation itself is proven against real PostgreSQL by
   // `edit-financial-review-races.realdb.test.ts`.
   "src/lib/xero-operation-outbox.ts": 1,
+  //
+  // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
+  // which both the enqueue and the late-capture re-queue
+  // (`xero-supplementary-invoice-late-capture.ts`,
+  // `requeueRetiredSupplementaryInvoiceOperation`) call, so the two cannot drift
+  // onto different keys. The re-queue takes it on a reaper-retired operation's
+  // anchor for covered-check -> link-check -> queued-check -> revive, so a
+  // revived invoice and a fresh enqueue can never both go out (forced against
+  // real PostgreSQL in `edit-financial-review-races.realdb.test.ts`). Its
+  // callers (the Stripe webhook's additional-payment handler, the
+  // confirm-modification-payment route, the waiting-invoice reaper) hold no
+  // transaction or other advisory lock there, and no provider call runs inside.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1255,6 +1274,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // and an ordinary rejection. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Approve, reject and release of one `DeletionRequest`".
   "src/lib/deletion-request-decision.ts": 1,
+  // #3640 (delta review, D1): `lockPaymentForRefundedTotal` takes the Payment
+  // row `FOR NO KEY UPDATE` FIRST in every writer of the transaction refund
+  // mirror - the card-refund writer, `applyLocalRefundAllocation`, and the
+  // cancel claim before its #1491 fold - so the order is Payment row -> refund
+  // rows -> transaction row everywhere. NO KEY strength so a `PaymentRefund`
+  // insert's FK check (`FOR KEY SHARE`) is not blocked. Keyed on an immutable
+  // cuid; taken after `lock(1)` where the caller holds it. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> the #3640 paragraph.
+  "src/lib/payment-transactions.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

@@ -41,7 +41,10 @@ const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
 const mockCompleteCanceledSupersededPaymentIntentRecovery = vi.fn();
 const mockQueueSupersededPaymentIntentRefundRecovery = vi.fn();
-const mockQueueSupersededAdditionalIntentCancellations = vi.fn();
+// #3341: the ADDITIONAL supersede runs for REAL (`INV-OPS-015`). These are its
+// I/O: the ledger read of the asks it retires, and the durable cancel it queues.
+const mockPaymentTransactionFindMany = vi.fn();
+const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 const mockQueueSupersededPrimaryIntentCancellations = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
@@ -50,7 +53,7 @@ const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
-const mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
+const mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -104,6 +107,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: { count: mockMemberCount, findUnique: mockMemberFindUnique },
     auditLog: { create: mockAuditCreate },
+    // The real supersede reads the GLOBAL client for the live ADDITIONAL asks it
+    // is about to retire. Empty by default because the default fixture carries
+    // no earlier ask; the #3244 carry case below puts its unpaid row here.
+    paymentTransaction: { findMany: mockPaymentTransactionFindMany },
   },
 }));
 
@@ -200,7 +207,9 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
+  releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 }));
 vi.mock("@/lib/webhook-log", () => ({ recordWebhookLog: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/logger", () => ({
@@ -232,6 +241,9 @@ vi.mock("@/lib/payment-transactions", async (importActual) => ({
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueAdditionalPaymentIntentRecovery: vi.fn().mockResolvedValue({ id: "recovery_additional" }),
+  enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
+    mockEnqueuePaymentIntentCancellationRecovery(...args),
+  runPaymentRecoveryOperationNow: vi.fn().mockResolvedValue("succeeded"),
   completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
     mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
   queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
@@ -244,9 +256,8 @@ vi.mock("@/lib/payment-recovery", () => ({
       : paymentIntent.payment_method?.id ?? null,
 }));
 
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations: (...args: unknown[]) =>
-    mockQueueSupersededAdditionalIntentCancellations(...args),
+vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-payment-cleanup")),
   queueSupersededPrimaryIntentCancellations: (...args: unknown[]) =>
     mockQueueSupersededPrimaryIntentCancellations(...args),
 }));
@@ -269,7 +280,6 @@ import {
   hostingMemberRow,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
-import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -568,7 +578,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(FIXED_NOW);
-  mockQueueSupersededAdditionalIntentCancellations.mockResolvedValue([]);
+  mockPaymentTransactionFindMany.mockResolvedValue([]);
+  mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({ id: "op_cancel" });
   mockQueueSupersededPrimaryIntentCancellations.mockResolvedValue([]);
   mockUpsertPaymentIntentTransaction.mockResolvedValue({});
   mockRefundPaymentTransactions.mockResolvedValue({
@@ -1288,12 +1299,17 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
         status: "PENDING",
       })
     );
-    expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
-      format: CLUB_FORMAT_TEST,
-      bookingId: "bk1",
-      paymentId: "p1",
-      newPaymentIntentId: "pi_guest_extra",
-    });
+    // The real supersede looked for older live asks, excluding this one.
+    expect(mockPaymentTransactionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentId: "p1",
+          kind: "ADDITIONAL",
+          stripePaymentIntentId: { not: "pi_guest_extra" },
+        }),
+      }),
+    );
+    expect(mockEnqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
 
     await Promise.resolve();
     expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
@@ -1428,6 +1444,10 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       },
     });
     const tx = makeTx(booking);
+    // The ledger row behind that unpaid 4000: the ask this mint must retire.
+    mockPaymentTransactionFindMany.mockResolvedValue([
+      { id: "txn_earlier_extra", stripePaymentIntentId: "pi_earlier_extra", amountCents: 4000 },
+    ]);
     mockedAuth.mockResolvedValue(makeSession() as any);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
@@ -1454,12 +1474,14 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     expect(res.status).toBe(200);
     // 12500 for this change, plus the 4000 still unpaid from the last one.
     expect(data.additionalAmountCents).toBe(16500);
-    // And the earlier intent is retired rather than left live beside this one.
-    expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
-      format: CLUB_FORMAT_TEST,
+    // And the earlier intent is retired rather than left live beside this one:
+    // the REAL supersede found its row and queued the durable cancel.
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
       bookingId: "bk1",
       paymentId: "p1",
-      newPaymentIntentId: "pi_guest_extra",
+      paymentTransactionId: "txn_earlier_extra",
+      paymentIntentId: "pi_earlier_extra",
+      amountCents: 4000,
     });
   });
 
@@ -1596,7 +1618,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
       })
     );
     expect(
-      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+      mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent
     ).toHaveBeenCalledWith("pi_additional");
   });
 
@@ -1804,7 +1826,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       })
     );
     expect(
-      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+      mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent
     ).toHaveBeenCalledWith("pi_additional");
   });
 
@@ -2068,6 +2090,48 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(200);
+  });
+
+  /*
+    #3641 (`INV-PAY-104`): Stripe's half of the pay door. A cancelled intent
+    still carries a client secret, so handing it out showed a form Stripe.js
+    then rejected; money Stripe already took must not be offered a second form.
+  */
+  it("refuses an intent Stripe cancelled, or no longer has, with 404", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(
+      additionalPaymentRow({ additionalPaymentStatus: "FAILED" })
+    );
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      status: "canceled",
+      client_secret: "pi_additional_secret_xyz",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const cancelled = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(cancelled.status).toBe(404);
+
+    mockedGetPaymentIntent.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), { code: "resource_missing" })
+    );
+    const missing = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(missing.status).toBe(404);
+  });
+
+  it("answers 409 for an intent Stripe has already captured, never a second form", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      status: "succeeded",
+      client_secret: "pi_additional_secret_xyz",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(409);
+    expect((await res.json()).clientSecret).toBeUndefined();
   });
 
   it("returns 403 for a different member trying to access", async () => {

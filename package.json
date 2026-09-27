@@ -91,7 +91,8 @@
     "payments:backfill-orphaned-credits": "tsx --conditions=react-server scripts/backfill-orphaned-applied-credits.ts",
     "bookings:backfill-night-prices-from-rates": "tsx --conditions=react-server scripts/backfill-night-prices-from-rates.ts",
     "payments:audit-ib-hold-clearing": "tsx --conditions=react-server scripts/audit-ib-hold-clearing.ts",
-    "payments:audit-booking-ledger": "tsx --conditions=react-server scripts/audit-booking-ledger-residual.ts"
+    "payments:audit-booking-ledger": "tsx --conditions=react-server scripts/audit-booking-ledger-residual.ts",
+    "payments:audit-refunded-total": "tsx --conditions=react-server scripts/audit-refunded-total-shortfall.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -169,7 +170,7 @@
     "@types/react-dom": "^19",
     "@types/sanitize-html": "^2.16.1",
     "@vitest/coverage-v8": "^5.0.1",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.1",
     "eslint": "^10.10.0",
     "eslint-config-next": "16.3.5",
     "fast-check": "^4.10.0",

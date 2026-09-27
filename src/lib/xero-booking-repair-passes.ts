@@ -18,6 +18,7 @@ import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -330,8 +331,10 @@ async function applyLateCaptureRefundRepair(
  * the worker books the invoice's own net as the Stripe receipt, so releasing
  * would assert money the club does not hold - the overstatement
  * `planEditReviewChargeInvoicePayment` refuses at classify time, arriving by a
- * different door. That case is reported instead, and the invoice it leaves
- * behind is retired by the 14-day reaper; a stated limit, not a silent one.
+ * different door. That case is reported instead. The invoice it leaves behind
+ * is not issued: the waiting-invoice reaper's next run (#3641) finds its payment
+ * captured, applies the same capture rule, and cancels it unsent with an alert
+ * to an officer, so the shortfall is collected by hand.
  */
 async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
   action: BookingXeroRepairAction;
@@ -496,6 +499,9 @@ async function applyQueuedAction(
             ? action.payload.bookingModificationId
             : undefined,
         refundAmountCents: Number(action.payload.refundAmountCents),
+        // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
+        // edit's note keeps the default (method) wording.
+        ...readModificationNoteWording(action.payload),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

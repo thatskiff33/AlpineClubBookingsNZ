@@ -11,7 +11,9 @@ its lines (`xero-group-settlement-invoice-lines.ts`), its VOIDs and Xero read
 (`xero-group-settlement-invoice-voids.ts`), the operator alert
 (`group-settlement-invoice-alerts.ts`) and the organiser's pending-invoice panel
 (`pending-group-invoice.tsx`). What remains sits inside the transaction or the
-arm it guards.
+arm it guards. The growth of `xero-inbound/invoice-paid-effects.ts` and
+`xero-operation-retry.ts` is declared in the #3535 fragment (one allowance per
+file across the epic).
 
 file: src/lib/group-settlement.ts
 lines: 1549
@@ -22,14 +24,6 @@ reason: the bound-invoice checks run inside the lock(1) transactions whose
   from the transaction that makes it safe; the rule itself already lives in
   group-settlement-invoice-replacement.ts.
 
-file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1827
-reason: the paid group invoice arm gains the cash hand-off, the recognition of
-  a payment on an abandoned invoice (by its link, with the cancelled-group
-  wording) and the card double-payment arm; all read the same fetched invoice
-  and cash evidence that arm already classifies. The alert itself moved to
-  group-settlement-invoice-alerts.ts.
-
 file: src/lib/cron-group-settlement-reaper.ts
 lines: 980
 reason: the reaper reads an Internet Banking settlement's invoice in Xero
@@ -38,10 +32,3 @@ reason: the reaper reads an Internet Banking settlement's invoice in Xero
   cannot show, and releases one Xero does not have. Its release transaction
   retires the invoice in the same commit, except for a cancelled group. Each
   rule decides the release it sits beside.
-
-file: src/lib/xero-operation-retry.ts
-lines: 1632
-reason: the operator's Retry returns a failed group-settlement invoice row
-  (CREATE or VOID) to the outbox, rebuilding the CREATE's queued payload; it
-  joins the existing outbox-requeue branch beside the applied-credit one, the
-  one place Retry decides how a row runs again.

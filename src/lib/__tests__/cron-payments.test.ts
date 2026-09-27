@@ -25,7 +25,12 @@ vi.mock("@/lib/payment-recovery", () => ({
     mockProcessPaymentRecoveryOperations(...args),
 }));
 
-vi.mock("@/lib/xero-operation-outbox", () => ({
+// The route reaches the Xero outbox transitively as well; kept doubled so this
+// suite never loads the outbox's provider-client import graph (#3641 moved the
+// reaper out of it, and dropping this double took the first test past its limit).
+vi.mock("@/lib/xero-operation-outbox", () => ({}));
+
+vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
   reapStaleWaitingPaymentXeroOutboxOperations: (...args: unknown[]) =>
     mockReapStaleWaitingPaymentXeroOutboxOperations(...args),
 }));

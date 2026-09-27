@@ -395,6 +395,34 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(conflict?.requiredTokens).toContain("handBackConflictNote");
   });
 
+  it("keeps the second-instrument alert admin-audience, delivery-locked and pinned to its note and invoice link (#3638)", () => {
+    /*
+      The club may hold the price twice and nothing is refunded automatically, so
+      this is the one thing that pulls a person to reconcile it. The sender reads
+      no per-member preference; this entry is what stops it being disabled
+      club-wide. MUTATION PROOF: drop it from LOCKED_DELIVERY_TEMPLATE_NAMES and
+      this fails.
+    */
+    const definition = getEmailTemplateDefinition(
+      "admin-second-instrument-settlement-conflict",
+    );
+    if (!definition) throw new Error("missing admin-second-instrument-settlement-conflict");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-second-instrument-settlement-conflict")).toBe(
+      "always",
+    );
+    expect(definition.defaultSubject).toContain("may have been paid twice");
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining([
+        "secondInstrumentConflictNote",
+        "xeroObjectUrl",
+        "memberName",
+        "reviewUrl",
+      ]),
+    );
+  });
+
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
     // It ships via sendToAdmins, so it must classify as an admin alert like its
     // siblings (audience "admin") rather than "member". It stays in
