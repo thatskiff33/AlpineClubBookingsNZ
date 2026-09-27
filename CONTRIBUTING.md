@@ -74,8 +74,11 @@ separator is needed, in PowerShell or Git Bash.
 
 **npm refuses to install here, on purpose.** `.npmrc` sets `engine-strict=true`
 and `package.json` `engines.npm` is a value no npm version satisfies, so
-`npm install` or `npm ci` typed out of habit stops with `EBADENGINE` before it
-writes a `package-lock.json` or a `node_modules` tree. `package-lock.json` is
+`npm install` or `npm ci` typed out of habit stops with an error before it
+writes a `package-lock.json` or a `node_modules` tree (measured on npm 11.16:
+`npm install` fails first on the `catalog:` dependencies with
+`EUNSUPPORTEDPROTOCOL`, `npm ci` on the missing npm lockfile, and `EBADENGINE` is
+the backstop behind both). `package-lock.json` is
 git-ignored and CI fails a branch that carries one; `pnpm-lock.yaml` is the only
 lockfile. `npm run` and `npx` may still happen to work, but they are not the
 supported spelling.
