@@ -72,6 +72,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/issue-thread.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
+  // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript
+  // for the same reason as the stale-containers and issue-thread suites.
+  "scripts/remove-worktree.test.mjs",
   "scripts/run-named-tests.test.mjs",
   "scripts/stale-containers.test.mjs",
 ];
