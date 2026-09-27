@@ -13,6 +13,7 @@ import {
   asDuplicateCaptureRefundSnapshot,
   isDuplicateCaptureRefundEvent,
 } from "@/lib/duplicate-capture-refund-event";
+import { settlementMarkerTimelineEntries } from "@/lib/manual-settlement-reversal-event";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
@@ -153,6 +154,14 @@ export async function loadBookingDetailHistory({
         }))
     : [];
 
+  // #3638 — the settlement markers (#2262's reversal and reciprocal fence,
+  // #3638's second instrument) are admin-only for the same reason, and gated the
+  // same way: the data feed, not just the render. They are the durable record
+  // an admin reconciles from, so this timeline is where they are seen.
+  const settlementMarkers = canSeeAdminTools
+    ? settlementMarkerTimelineEntries(bookingEvents)
+    : [];
+
   // #3530: an edit's itemised lines name each guest's rate category with the
   // same member/non-member word the invoice line uses (#2543), which needs the
   // club's NON_MEMBER type id. Read only when some edit stored lines.
@@ -188,6 +197,7 @@ export async function loadBookingDetailHistory({
     refundRequests: booking.refundRequests,
     auditLogs: bookingAuditLogs,
     duplicateCaptureRefunds,
+    settlementMarkers,
     // #3033: the same flag the banner above is built from, so the timeline's
     // priced modification row and the banner cannot disagree about whether this
     // booking's money is settled.
