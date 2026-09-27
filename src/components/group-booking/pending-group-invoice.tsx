@@ -100,3 +100,23 @@ export function PendingGroupInvoice({
     </div>
   );
 }
+
+/** #3642: joiners who joined after the group was paid, never hidden. */
+export function NotPaidForYetNotice({ names }: { names: string[] }) {
+  return (
+    <p className="text-sm text-warning-11">
+      Not paid for yet: {names.join(", ")}. They joined after your payment, so their places are
+      not confirmed. Contact the club to pay for them.
+    </p>
+  );
+}
+
+/** #3642: the last invoice could not be raised; card still works. */
+export function InvoiceBlockedNotice() {
+  return (
+    <p role="status" className="text-sm text-warning-11">
+      We couldn&apos;t prepare an invoice for your group because a booking&apos;s prices need
+      checking. The club has been told and will sort it out. You can pay by card in the meantime.
+    </p>
+  );
+}

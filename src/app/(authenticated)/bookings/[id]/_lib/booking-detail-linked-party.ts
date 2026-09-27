@@ -2,6 +2,7 @@ import type { FeatureFlags } from "@/config/schema";
 import { formatDateOnly } from "@/lib/date-only";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
 import {
+  groupSettlementInvoiceBlocked,
   groupSettlementInvoiceDisplay,
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
@@ -131,6 +132,9 @@ export function resolveBookingDetailLinkedParty({
                     booking.groupSettlementInvoiceCreate ?? null
                   )
                 : null,
+              invoiceBlocked:
+                !isGroupSettlementBoundToInvoice(organiserGroup.settlement) &&
+                groupSettlementInvoiceBlocked(booking.groupSettlementInvoiceCreate ?? null),
             }
           : null,
         // A `flatMap` rather than `filter().map()` so the joiner's booking

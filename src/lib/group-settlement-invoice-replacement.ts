@@ -81,7 +81,13 @@ export function refuseChangeToBoundSettlement(
       }
     | null
     | undefined,
-  change: SettlementChange
+  change: SettlementChange,
+  /**
+   * Set by the settle transaction, which runs after the claim transaction has
+   * committed: its refusal cannot say nothing changed, because the beds it
+   * claimed stay claimed until the organiser's next settle or the reaper.
+   */
+  options?: { afterClaim?: boolean }
 ): void {
   if (!isGroupSettlementBoundToInvoice(settlement)) return;
   const bound = settlement!;
@@ -100,7 +106,9 @@ export function refuseChangeToBoundSettlement(
     return;
   }
   throw new GroupBookingError(
-    "Your group's invoice changed while it was being updated. Nothing has been changed; please try again.",
+    options?.afterClaim
+      ? "Your group's invoice changed while it was being updated, so no new invoice was raised. Please try again to get an invoice for everyone."
+      : "Your group's invoice changed while it was being updated. Nothing has been changed; please try again.",
     409,
     {
       code: "GROUP_SETTLEMENT_INVOICE_RETRY",
@@ -155,9 +163,24 @@ export async function clearBoundInvoiceForReplacement(
       { code: "GROUP_SETTLEMENT_INVOICE_UNVERIFIED" }
     );
   }
+  if (state.kind === "not_found") {
+    // Deleted in Xero, or Xero now points at another organisation: nothing
+    // here can be paid or voided, so the settlement is no longer bound to it.
+    await alertGroupSettlementInvoice(
+      {
+        kind: "invoice_not_found",
+        settlementId: bound.id,
+        invoiceId: bound.xeroInvoiceId,
+        errorMessage: `The organiser asked for an updated group invoice, and the current one (${bound.xeroInvoiceId}) is not in the connected Xero organisation (deleted, or Xero was reconnected elsewhere). A new invoice is being raised; check the old one in the organisation it was raised in.`,
+      },
+      format
+    );
+    return { xeroInvoiceId: bound.xeroInvoiceId };
+  }
   if (state.kind === "has_money") {
     await alertGroupSettlementInvoice(
       {
+        kind: "replace_blocked_by_money",
         settlementId: bound.id,
         invoiceId: bound.xeroInvoiceId,
         errorMessage: `The organiser's group changed and they asked for an updated invoice, but the current combined invoice ${bound.xeroInvoiceId} already has ${describeGroupSettlementInvoiceMoney(state, format)}, so it was not replaced. Work out with the organiser what is owed for the joiners not on it.`,

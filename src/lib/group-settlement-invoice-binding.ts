@@ -77,6 +77,21 @@ export function groupSettlementInvoiceDisplay(
   return emailed ? "emailed" : "raised";
 }
 
+/**
+ * #3642: the settlement's last invoice request was refused because a joiner's
+ * stored prices do not add up (`releaseUninvoiceableGroupSettlement`), so the
+ * organiser is told the club will sort it out and that card still works.
+ */
+export function groupSettlementInvoiceBlocked(
+  latestCreate: { status: string; responsePayload: unknown } | null
+): boolean {
+  const payload =
+    latestCreate?.responsePayload && typeof latestCreate.responsePayload === "object"
+      ? (latestCreate.responsePayload as Record<string, unknown>)
+      : null;
+  return latestCreate?.status === "FAILED" && payload?.invoiceLinesDisagreeWithPrices === true;
+}
+
 export function groupSettlementTotalCents(
   children: ReadonlyArray<{ finalPriceCents: number }>
 ): number {

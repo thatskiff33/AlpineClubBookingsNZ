@@ -21,7 +21,11 @@
 
   When an unpaid settlement lapses, its invoice is cancelled in Xero
   automatically. If the invoice has started being paid, the group keeps its
-  beds and the admins are alerted rather than the group being released. A
+  beds and the admins are alerted rather than the group being released. If
+  Xero can't be reached to check, the group is held and the admins alerted,
+  for up to seven days or until check-in. If a booking's prices mean no invoice
+  can be raised, the organiser is told the club will sort it out and can pay by
+  card instead. A
   payment is only applied when it matches what the group owes. An invoice paid
   for a different total, a payment on an invoice that was already replaced or
   cancelled, and an invoice paid on top of a card payment each send the admins

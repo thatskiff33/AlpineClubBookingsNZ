@@ -2002,6 +2002,23 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("answers 409, not a uniqueness 500, when the organiser already queued the same attempt again (#3642 D6)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+      })
+    );
+    mocks.updateManyOperation.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
   it("atomically queues applied-credit allocation for sole outbox execution", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({

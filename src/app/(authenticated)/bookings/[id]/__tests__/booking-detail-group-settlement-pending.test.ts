@@ -96,3 +96,23 @@ describe("where the organiser's outstanding invoice has got to (#3642)", () => {
     ).toMatchObject({ invoiceDisplay: null });
   });
 });
+
+describe("an invoice that could not be raised (#3642 D2)", () => {
+  it("tells the card when the last request failed on the joiners' stored prices", () => {
+    expect(
+      organiserSettlement(
+        { status: "FAILED", source: "INTERNET_BANKING", amountCents: 60000, paidAt: null, xeroInvoiceId: null },
+        { status: "FAILED", responsePayload: { invoiceLinesDisagreeWithPrices: true } }
+      )
+    ).toMatchObject({ invoiceBlocked: true, internetBankingReference: null });
+  });
+
+  it("does not for an ordinary failed or lapsed settlement", () => {
+    expect(
+      organiserSettlement(
+        { status: "FAILED", source: "INTERNET_BANKING", amountCents: 60000, paidAt: null, xeroInvoiceId: null },
+        { status: "FAILED", responsePayload: { error: "timeout" } }
+      )
+    ).toMatchObject({ invoiceBlocked: false });
+  });
+});

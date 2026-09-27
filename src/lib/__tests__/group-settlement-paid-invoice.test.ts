@@ -144,7 +144,7 @@ describe("syncGroupSettlementForPaidInvoice (#3642)", () => {
     expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
     expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(/paid twice/);
     expect(mocks.cooldownCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ key: "group-settlement-invoice-conflict:settle-1:xinv_1" }),
+      data: expect.objectContaining({ key: "group-settlement-invoice:paid_twice:settle-1:xinv_1" }),
     });
   });
 
@@ -205,7 +205,7 @@ describe("syncGroupSettlementForPaidInvoice (#3642)", () => {
     expect(mocks.applyFromInvoice).toHaveBeenCalledTimes(2);
     expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
     expect(mocks.cooldownCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ key: "group-settlement-invoice-conflict:settle-1:xinv_1" }),
+      data: expect.objectContaining({ key: "group-settlement-invoice:paid_not_applied:settle-1:xinv_1" }),
     });
   });
 

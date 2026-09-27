@@ -221,12 +221,15 @@ export async function loadBookingDetail(id: string) {
     },
   });
   if (!booking) return null;
-  // #3642: the latest CREATE row of the organiser's outstanding group invoice,
-  // so the organiser card can say whether it is being prepared, failed, or was
-  // actually emailed. Read only while the settlement is bound to that invoice.
+  // #3642: the latest CREATE row of the organiser's group invoice, so the card
+  // can say whether it is being prepared, failed, was actually emailed, or
+  // could not be raised at all. Read only for an Internet Banking settlement
+  // still waiting on it, or one whose last request was refused.
   const settlement = booking.groupBookingAsOrganiser?.settlement ?? null;
   const groupSettlementInvoiceCreate =
-    settlement && isGroupSettlementBoundToInvoice(settlement)
+    settlement &&
+    (isGroupSettlementBoundToInvoice(settlement) ||
+      (settlement.source === "INTERNET_BANKING" && settlement.status === "FAILED"))
       ? await prisma.xeroSyncOperation.findFirst({
           where: {
             direction: "OUTBOUND",

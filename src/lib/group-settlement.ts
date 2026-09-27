@@ -538,12 +538,11 @@ async function createGroupSettlementInvoice(
       where: { groupBookingId },
       select: SETTLEMENT_BINDING_SELECT,
     });
-    refuseChangeToBoundSettlement(current, {
-      method: "internet_banking",
-      amountCents,
-      claimedNewChild,
-      replacement,
-    });
+    refuseChangeToBoundSettlement(
+      current,
+      { method: "internet_banking", amountCents, claimedNewChild, replacement },
+      { afterClaim: true }
+    );
     const bound = isGroupSettlementBoundToInvoice(current);
     const changed =
       bound && changesBoundInvoice(current!, { amountCents, claimedNewChild });

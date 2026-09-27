@@ -27,6 +27,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { completeXeroSyncOperation, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {
   groupSettlementInvoiceLink,
   groupSettlementInvoiceVoidKey,
@@ -38,6 +39,13 @@ import { formatCents } from "@/lib/utils";
 /** What a combined invoice's state in Xero lets the app do with it. */
 export type GroupSettlementInvoiceState =
   | { kind: "void"; status: string }
+  /**
+   * Xero has no such invoice: deleted there, or the club is now connected to
+   * a different Xero organisation. Never voided (there is nothing here to
+   * void, and in another organisation it may have been paid); the operators
+   * are told, and the settlement is treated as no longer bound to it.
+   */
+  | { kind: "not_found" }
   | { kind: "open"; totalCents: number | null }
   | {
       kind: "has_money";
@@ -77,19 +85,25 @@ export async function readGroupSettlementInvoiceState(
   context: string
 ): Promise<GroupSettlementInvoiceState> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const response = await callXeroApi(
-    () => xero.accountingApi.getInvoice(tenantId, invoiceId),
-    {
-      operation: "getInvoice",
-      resourceType: "INVOICE",
-      workflow: "groupSettlementInvoiceState",
-      context: `getInvoice(${context} ${invoiceId})`,
-    }
-  );
-  const invoice = response.body.invoices?.[0];
-  if (!invoice?.invoiceID) {
-    throw new Error(`Xero group settlement invoice not found: ${invoiceId}`);
+  let response: Awaited<ReturnType<typeof xero.accountingApi.getInvoice>>;
+  try {
+    response = await callXeroApi(
+      () => xero.accountingApi.getInvoice(tenantId, invoiceId),
+      {
+        operation: "getInvoice",
+        resourceType: "INVOICE",
+        workflow: "groupSettlementInvoiceState",
+        context: `getInvoice(${context} ${invoiceId})`,
+      }
+    );
+  } catch (err) {
+    // A definite "no such invoice" is an answer; anything else (Xero
+    // disconnected, rate-limited, down) is not, and is thrown for the caller.
+    if (getXeroErrorStatusCode(err) === 404) return { kind: "not_found" };
+    throw err;
   }
+  const invoice = response.body.invoices?.[0];
+  if (!invoice?.invoiceID) return { kind: "not_found" };
   return classifyGroupSettlementInvoiceState(invoice);
 }
 
@@ -182,6 +196,26 @@ async function voidStillNeeded(params: {
     params.reason === "cancel" ? "cancelled group" : "abandoned group invoice"
   );
   if (state.kind === "open") return true;
+  if (state.kind === "not_found") {
+    logger.error(
+      { settlementId: params.settlementId, invoiceId: params.invoiceId },
+      "Group settlement invoice to void is not in the connected Xero organisation - not voided"
+    );
+    await alertGroupSettlementInvoice(
+      {
+        kind: "invoice_not_found",
+        settlementId: params.settlementId,
+        invoiceId: params.invoiceId,
+        errorMessage: `The group's combined invoice ${params.invoiceId} should be voided, but the connected Xero organisation has no such invoice (it was deleted, or Xero was reconnected to a different organisation). Nothing was voided; check the invoice in the organisation it was raised in.`,
+      },
+      await clubFormatValues()
+    );
+    await completeXeroSyncOperation(params.syncOperationId, {
+      status: "SUCCEEDED",
+      responsePayload: { invoiceNotFoundInXero: true },
+    });
+    return false;
+  }
   if (state.kind === "void") {
     await completeXeroSyncOperation(params.syncOperationId, {
       status: "SUCCEEDED",
@@ -200,6 +234,7 @@ async function voidStillNeeded(params: {
   );
   await alertGroupSettlementInvoice(
     {
+      kind: "void_blocked_by_money",
       settlementId: params.settlementId,
       invoiceId: params.invoiceId,
       errorMessage:

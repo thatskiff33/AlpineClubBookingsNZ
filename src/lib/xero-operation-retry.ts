@@ -14,6 +14,7 @@ import {
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
@@ -1071,17 +1072,24 @@ export async function retryXeroSyncOperation(
 
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
   if (groupSettlementPayload) {
-    const queued = await prisma.xeroSyncOperation.updateMany({
-      where: { id: operation.id, status: "FAILED" },
-      data: {
-        status: "PENDING",
-        requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
-        startedAt: null,
-        completedAt: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-      },
-    });
+    const queued = await prisma.xeroSyncOperation
+      .updateMany({
+        where: { id: operation.id, status: "FAILED" },
+        data: {
+          status: "PENDING",
+          requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
+          startedAt: null,
+          completedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      })
+      .catch((error: unknown) => {
+        // The organiser's own settle already queued this attempt again: the
+        // active-correlation-key index refuses a second live row for it.
+        if (isPrismaUniqueConstraintError(error)) return { count: 0 };
+        throw error;
+      });
     if (queued.count !== 1) {
       throw new XeroOperationRetryError(
         "This group settlement invoice operation was already queued or claimed by another retry.",

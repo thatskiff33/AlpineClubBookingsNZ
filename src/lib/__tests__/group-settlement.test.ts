@@ -1969,6 +1969,46 @@ describe("a settlement bound to its Internet Banking invoice (#3642)", () => {
     expect(mocks.settlementUpsert).not.toHaveBeenCalled();
   });
 
+  it("replaces an invoice the connected Xero organisation no longer has, telling the operators (#3642 D3)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: BOUND }));
+    childrenOnTheInvoice([{ id: "child-3", cents: 2000 }]);
+    mocks.settlementFindUnique.mockResolvedValue(BOUND);
+    mocks.readInvoiceState.mockResolvedValue({ kind: "not_found" });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking");
+
+    expect(result).toMatchObject({ outcome: "invoice_sent", amountCents: 11000 });
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invoice_not_found", invoiceId: "xinv_1" }),
+      CLUB_FORMAT_TEST
+    );
+    expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1", {
+      newAttempt: true,
+      store: txClient,
+    });
+  });
+
+  it("does not claim nothing changed when it refuses after the claim transaction committed (#3642 D5)", async () => {
+    // Cleared while the invoice was still being prepared; the create worker
+    // bound it between the claim transaction and the settle transaction.
+    const preparing = { ...BOUND, xeroInvoiceId: null };
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: preparing }));
+    childrenOnTheInvoice([{ id: "child-3", cents: 2000 }]);
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(preparing) // the claim transaction
+      .mockResolvedValueOnce({ ...BOUND, xeroInvoiceId: "xinv_race" }); // the settle transaction
+
+    const refusal = await createGroupSettlementIntent(
+      "ABCD2345",
+      ORGANISER,
+      "internet_banking"
+    ).catch((err: unknown) => err as { code?: string; message: string });
+
+    expect(refusal).toMatchObject({ code: "GROUP_SETTLEMENT_INVOICE_RETRY" });
+    expect((refusal as { message: string }).message).not.toMatch(/Nothing has been changed/);
+    expect((refusal as { message: string }).message).toMatch(/try again to get an invoice for everyone/);
+  });
+
   it("refuses a card payment on a bound settlement before claiming a bed or minting an intent (scenario B)", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup({ settlement: BOUND }));
     childrenOnTheInvoice();

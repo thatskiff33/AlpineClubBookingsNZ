@@ -24,6 +24,10 @@ import {
 import { applyHutFeeLineCodes, resolvePromoLineCodes } from "./xero-hut-fee-line-codes";
 import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { completeXeroSyncOperation } from "@/lib/xero-sync";
+import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
+import { clubFormatValues } from "@/lib/club-format-server";
+import { formatCents } from "@/lib/utils";
 
 /** A built invoice's total in cents, line by line as Xero will add it. */
 export function invoiceLineItemsTotalCents(lineItems: ReadonlyArray<LineItem>): number {
@@ -132,4 +136,51 @@ export async function buildGroupSettlementInvoiceLines(
     ),
     lineCents: invoiceLineItemsTotalCents(lineItems),
   };
+}
+
+/**
+ * #3642: a bound settlement whose joiners' stored prices cannot be turned into
+ * an invoice at its total. Under `lock(1)` the settlement FAILS (only while it
+ * is still bound, with no invoice, at the same total), releasing the binding so
+ * the organiser can pay by card; the operators are alerted once; the CREATE row
+ * FAILS with a flag the organiser's page reads.
+ */
+export async function releaseUninvoiceableGroupSettlement(
+  settlementId: string,
+  amountCents: number,
+  detail: { syncOperationId?: string; childrenCents: number; lineCents: number }
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await tx.groupBookingSettlement.updateMany({
+      where: {
+        id: settlementId,
+        source: "INTERNET_BANKING",
+        status: "PENDING",
+        xeroInvoiceId: null,
+        amountCents,
+      },
+      data: { status: "FAILED" },
+    });
+  });
+  const format = await clubFormatValues();
+  await alertGroupSettlementInvoice(
+    {
+      kind: "lines_disagree_with_prices",
+      settlementId,
+      invoiceId: null,
+      errorMessage: `The group's combined invoice could not be raised: its joiners' bookings total ${formatCents(detail.childrenCents, format)}, but their stored night prices add up to ${formatCents(detail.lineCents, format)}. No invoice was sent and the settlement was released so the organiser can pay by card. Correct the booking prices, then the organiser can settle again.`,
+    },
+    format
+  );
+  if (detail.syncOperationId) {
+    await completeXeroSyncOperation(detail.syncOperationId, {
+      status: "FAILED",
+      responsePayload: {
+        invoiceLinesDisagreeWithPrices: true,
+        childrenCents: detail.childrenCents,
+        lineCents: detail.lineCents,
+      },
+    });
+  }
 }

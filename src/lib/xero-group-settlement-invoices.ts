@@ -45,7 +45,10 @@ import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
-import { buildGroupSettlementInvoiceLines } from "./xero-group-settlement-invoice-lines";
+import {
+  buildGroupSettlementInvoiceLines,
+  releaseUninvoiceableGroupSettlement,
+} from "./xero-group-settlement-invoice-lines";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDatesFromColumnAndInstant } from "@/lib/xero-provider-dates";
 import {
@@ -252,25 +255,16 @@ export async function createXeroInvoiceForGroupSettlement(
     return null;
   }
 
-  // Already raised on a prior run: re-assert the link and return it.
+  // Already raised: its link was written beside the pointer under the lock
+  // (#3642); re-writing it here could re-activate a retired invoice's link.
   if (settlement.xeroInvoiceId) {
-    await upsertXeroObjectLink(
-      groupSettlementInvoiceLink(settlement.id, {
-        id: settlement.xeroInvoiceId,
-        number: settlement.xeroInvoiceNumber,
-      })
-    );
     return settlement.xeroInvoiceId;
   }
 
   const organiserMemberId = settlement.groupBooking.organiserMemberId;
 
-  // #3642 (`INV-SSOT-002`): the lines are built from exactly the children the
-  // settlement committed, and an invoice whose total is not the settlement's is
-  // never raised — a joiner who edited or left after the settle, or a line the
-  // builder prices differently, is refused here, before Xero is asked for
-  // anything. The organiser's next settle asks for a replacement at the new
-  // total; until then the page shows the invoice as not sent.
+  // #3642 (`INV-SSOT-002`): built from exactly the committed children, and
+  // never raised unless it totals the settlement.
   const lines = await buildGroupSettlementInvoiceLines(
     settlement.groupBooking.organiserBookingId
   );
@@ -279,14 +273,25 @@ export async function createXeroInvoiceForGroupSettlement(
       `No settleable children found for group settlement: ${settlementId}`
     );
   }
-  if (
-    lines.childrenCents !== settlement.amountCents ||
-    lines.lineCents !== settlement.amountCents
-  ) {
+  if (lines.childrenCents !== settlement.amountCents) {
+    // The group moved since the settle: the next settle replaces the request.
     const format = await clubFormatValues();
     throw new Error(
-      `Group settlement ${settlementId} is for ${formatCents(settlement.amountCents, format)}, but its committed children now total ${formatCents(lines.childrenCents, format)} and the invoice lines ${formatCents(lines.lineCents, format)}; no invoice was raised. The organiser settles again for an invoice at the current total.`
+      `Group settlement ${settlementId} is for ${formatCents(settlement.amountCents, format)}, but its committed children now total ${formatCents(lines.childrenCents, format)}; no invoice was raised. The organiser settles again for an invoice at the current total.`
     );
+  }
+  if (lines.lineCents !== lines.childrenCents) {
+    // A joiner's stored night prices do not add up to their final price — a
+    // stored-money defect the organiser cannot fix, and settling again would
+    // fail the same way. The binding is released (the settlement FAILS, so a
+    // card payment is no longer refused), the operators are alerted once, and
+    // the page says the club will sort it out.
+    await releaseUninvoiceableGroupSettlement(settlement.id, settlement.amountCents, {
+      syncOperationId: options?.syncOperationId,
+      childrenCents: lines.childrenCents,
+      lineCents: lines.lineCents,
+    });
+    return null;
   }
   const lineItems = lines.lineItems;
 
@@ -400,6 +405,7 @@ export async function createXeroInvoiceForGroupSettlement(
         // rounding the lines to a different total. A person has to look.
         await alertGroupSettlementInvoice(
           {
+            kind: "raised_at_wrong_total",
             settlementId,
             invoiceId: createdInvoice.invoiceID,
             errorMessage: `Xero raised the group's combined invoice ${createdInvoice.invoiceID} at a total different from the settlement's, so it was voided and not sent. Check the invoice lines, then ask the organiser to settle again.`,

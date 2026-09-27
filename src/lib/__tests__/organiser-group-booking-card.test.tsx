@@ -244,6 +244,55 @@ describe("OrganiserGroupBookingCard settlement", () => {
     );
   });
 
+  // #3642 D1: a first settle commits the PAYMENT_PENDING joiners it covers; the
+  // page's props still say PAYMENT_PENDING, and must not be read as "not on it".
+  it("does not call the joiners a settle just paid for 'not on this invoice'", async () => {
+    stubFetch({
+      internetBankingEnabled: true,
+      settleBody: { outcome: "invoice_sent", amountCents: 4500, childCount: 1, reference: "GROUP-ABCD1234" },
+    });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{ ...base, joiners: base.joiners.map((j) => ({ ...j, status: "PAYMENT_PENDING" })) }}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Internet Banking/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Settle by invoice \(emailed\)/ }));
+
+    expect(await screen.findByText(/Your invoice is being prepared/)).toBeDefined();
+    expect(screen.queryByText(/Not on this invoice/)).toBeNull();
+    expect(screen.queryByText(/don't pay it/)).toBeNull();
+  });
+
+  it("tells the organiser an invoice could not be raised and that card still works (#3642 D2)", async () => {
+    stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "FAILED",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: null,
+            invoiceDisplay: null,
+            invoiceBlocked: true,
+          },
+        })}
+      />
+    );
+
+    expect(
+      (await screen.findByRole("status")).textContent
+    ).toMatch(/couldn't prepare an invoice.*pay by card/);
+  });
+
   it("says an invoice that failed to send has not been sent, and offers to try again", async () => {
     stubFetch({ internetBankingEnabled: true });
 

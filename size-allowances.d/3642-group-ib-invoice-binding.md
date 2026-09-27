@@ -14,7 +14,7 @@ its lines (`xero-group-settlement-invoice-lines.ts`), its VOIDs and Xero read
 arm it guards.
 
 file: src/lib/group-settlement.ts
-lines: 1550
+lines: 1549
 reason: the bound-invoice checks run inside the lock(1) transactions whose
   re-read they depend on — the child-commit, the Internet Banking settle (which
   retires the old invoice and asks for the next attempt), the card attach and
@@ -23,7 +23,7 @@ reason: the bound-invoice checks run inside the lock(1) transactions whose
   group-settlement-invoice-replacement.ts.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1823
+lines: 1827
 reason: the paid group invoice arm gains the cash hand-off, the recognition of
   a payment on an abandoned invoice (by its link, with the cancelled-group
   wording) and the card double-payment arm; all read the same fetched invoice
@@ -31,15 +31,16 @@ reason: the paid group invoice arm gains the cash hand-off, the recognition of
   group-settlement-invoice-alerts.ts.
 
 file: src/lib/cron-group-settlement-reaper.ts
-lines: 891
+lines: 980
 reason: the reaper reads an Internet Banking settlement's invoice in Xero
-  before releasing it (keeping and alerting on a group whose invoice has
-  started being paid), and its release transaction retires the invoice in the
-  same commit, except for a cancelled group. Both belong beside the release they
-  decide.
+  before releasing it: it keeps and alerts on a group whose invoice has started
+  being paid, holds (with an alert, bounded by check-in or seven days) one Xero
+  cannot show, and releases one Xero does not have. Its release transaction
+  retires the invoice in the same commit, except for a cancelled group. Each
+  rule decides the release it sits beside.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1624
+lines: 1632
 reason: the operator's Retry returns a failed group-settlement invoice row
   (CREATE or VOID) to the outbox, rebuilding the CREATE's queued payload; it
   joins the existing outbox-requeue branch beside the applied-credit one, the

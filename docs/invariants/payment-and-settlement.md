@@ -1046,7 +1046,7 @@ one, check the other.
 ## INV-PAY-105
 
 **Related: `INV-PAY-031`** (children total at apply) and **`INV-PAY-035`**
-(the cancellation VOID). Locking: `docs/CONCURRENCY_AND_LOCKING.md`.
+(the cancellation VOID).
 
 - An organiser-pays group settlement is **bound** to its combined Internet
   Banking invoice while it waits for it (`isGroupSettlementBoundToInvoice`)
@@ -1056,21 +1056,20 @@ one, check the other.
   the issue's item 1, which allowed refuse-or-replace). The invoice is read in
   Xero first: with no payment or credit it is retired and a new one raised at
   the new total; with any money on it nothing changes and the operators are
-  alerted. The claim is refused under `lock(1)` unless the settlement still
-  points at the checked invoice, rolling the new joiner's bed back. Asking again when nothing changed returns the same
-  invoice and does not restart the reaper's clock.
-- An invoice is bound only to the settlement's current attempt, at the
-  settlement's own total; anything else is abandoned on arrival. An abandoned
-  invoice is retired in the same transaction: a VOID naming it, the pointer
-  cleared, its link kept but inactive.
+  alerted. A claim for a moved invoice rolls back under `lock(1)`. Asking
+  again unchanged returns the same invoice and keeps the reaper's clock.
+- An invoice is bound only to the current attempt at the settlement's total;
+  anything else is abandoned on arrival: VOID queued, pointer cleared, link
+  kept inactive.
 - **Money on an invoice is never walked away from.** An invoice that has
   started being paid or credited is not voided, not released (the group keeps
-  its beds, the owner's #3643 rule) and not replaced; each alerts once. A paid
+  its beds, the owner's #3643 rule) and not replaced; each alerts once per
+  kind. One Xero cannot show is held, with an alert, until check-in or seven
+  days past the deadline; one Xero does not have is never voided. Joiner
+  prices that cannot make the invoice release the binding and alert. A paid
   invoice settles the group only for the settlement's total read under
   `lock(1)` while it is still the settlement's invoice; a card capture only
   while the settlement is still on that intent (otherwise it is refunded).
-- The organiser's page shows the invoice's real state and names joiners not
-  on it.
 - Pinned by `group-settlement.test.ts`, `cron-group-settlement-reaper.test.ts`,
   `xero-group-settlement-invoices.test.ts`,
   `xero-group-settlement-invoice-outbox.test.ts`,

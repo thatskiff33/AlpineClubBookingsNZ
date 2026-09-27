@@ -393,6 +393,7 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
       // The claim of C's bed rolled back with the refusal.
       const c = await prisma.booking.findUniqueOrThrow({ where: { id: CHILD_C }, select: { status: true } });
       expect(c.status).toBe("PAYMENT_PENDING");
+      expect(await prisma.bedAllocation.count({ where: { bookingId: CHILD_C } })).toBe(0);
       const settlement = await prisma.groupBookingSettlement.findUniqueOrThrow({
         where: { id: SETTLEMENT_ID },
         select: { amountCents: true, xeroInvoiceId: true },
@@ -427,6 +428,14 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
             invoice: { id: invoiceId, number: "INV-LATE", totalCents: 9_000 },
           }),
         );
+      // The reaper scans every settlement in the shared database: the forced
+      // order only means "this settlement first" when no other suite's
+      // settlement is waiting to be reaped ahead of it.
+      expect(
+        await prisma.groupBookingSettlement.count({
+          where: { id: { not: SETTLEMENT_ID }, status: { in: ["PENDING", "FAILED"] } },
+        }),
+      ).toBe(0);
       const reap = () => reapStaleGroupSettlements(reapAt);
       const settled = await raceBehindLockOne(
         order === "fence-first" ? [fence, reap] : [reap, fence],

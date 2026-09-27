@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => {
         persisted.current = { ...persisted.current, ...args.data };
         return settlementUpdate(args);
       }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     /*
       #3642: which attempt the worker's row is (its correlation key) and every
@@ -1220,6 +1221,98 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     expect(mocks.alert.mock.calls[0][0].errorMessage).toMatch(/cancelled/);
   });
 
+
+  it("releases the binding, alerts once and says so when a joiner's stored prices cannot make the invoice (#3642 D2)", async () => {
+    const { buildInvoiceLineItems } = await import("@/lib/xero-booking-invoices");
+    // The child's final price is $45, but its night prices add up to $40.
+    vi.mocked(buildInvoiceLineItems).mockReturnValueOnce([
+      { description: "One lodge stay", unitAmount: 40, quantity: 1 },
+    ]);
+    mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+    ).resolves.toBeNull();
+
+    expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.tx.groupBookingSettlement.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "settle-1",
+        status: "PENDING",
+        xeroInvoiceId: null,
+        amountCents: 4500,
+      }),
+      data: { status: "FAILED" },
+    });
+    expect(mocks.alert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "lines_disagree_with_prices",
+        settlementId: "settle-1",
+        invoiceId: null,
+      }),
+      expect.anything()
+    );
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "op-1",
+      expect.objectContaining({
+        status: "FAILED",
+        responsePayload: expect.objectContaining({ invoiceLinesDisagreeWithPrices: true }),
+      })
+    );
+  });
+
+  it("returns an invoice already raised without re-writing its link outside the lock (#3642 D7)", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({
+      ...settlement(GroupBookingStatus.OPEN),
+      xeroInvoiceId: "inv-raised",
+      xeroInvoiceNumber: "INV-RAISED",
+    });
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+    ).resolves.toBe("inv-raised");
+
+    expect(mocks.upsertLink).not.toHaveBeenCalled();
+    expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+  });
+
+  it("never voids, and alerts, an abandoned invoice the connected Xero organisation does not have (#3642 D3)", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+    mocks.accountingApi.getInvoice.mockRejectedValue(
+      Object.assign(new Error("Not Found"), { response: { statusCode: 404 } })
+    );
+
+    await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
+      syncOperationId: "void-op-9",
+    });
+
+    expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
+    expect(mocks.alert).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invoice_not_found", invoiceId: "inv-old" }),
+      expect.anything()
+    );
+    expect(mocks.completeSync).toHaveBeenCalledWith(
+      "void-op-9",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: { invoiceNotFoundInXero: true },
+      })
+    );
+  });
+
+  it("leaves a transient Xero failure to the retry machinery rather than calling it not found", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+    mocks.accountingApi.getInvoice.mockRejectedValue(
+      Object.assign(new Error("Service Unavailable"), { response: { statusCode: 503 } })
+    );
+
+    await expect(
+      voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
+        syncOperationId: "void-op-9",
+      })
+    ).rejects.toThrow("Service Unavailable");
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
 
   it("never voids the invoice a settlement still points at", async () => {
     mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: "inv-old" });

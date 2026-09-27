@@ -1689,6 +1689,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       );
       await alertGroupSettlementInvoice(
         {
+          kind: "paid_after_abandon",
           settlementId,
           invoiceId,
           errorMessage: abandonedGroupCancelled
@@ -1715,6 +1716,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       );
       await alertGroupSettlementInvoice(
         {
+          kind: "paid_twice",
           settlementId,
           invoiceId,
           errorMessage: `Group settlement invoice ${invoiceId} was paid, but the group had already been settled by card. The organiser has paid twice; refund one payment.`,
@@ -1756,6 +1758,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
     );
     await alertGroupSettlementInvoice(
       {
+        kind: "paid_unreadable",
         settlementId: settlement.id,
         invoiceId,
         errorMessage: `Group settlement invoice ${invoiceId} was paid, but the amount paid could not be read exactly (at least ${formatCents(cash.knownCents, format)}). No bookings were settled; check the payment in Xero and settle the group by hand.`,
@@ -1792,6 +1795,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       // re-fetch.
       await alertGroupSettlementInvoice(
         {
+          kind: "paid_not_applied",
           settlementId: settlement.id,
           invoiceId,
           errorMessage:

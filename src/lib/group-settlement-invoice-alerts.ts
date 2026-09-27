@@ -6,10 +6,11 @@
  * void or replace it. Every arm names the group's organiser and stay, the
  * invoice and its Xero link, and what a person has to do.
  *
- * ONE COOLDOWN PER INVOICE: every arm keys on (settlement, invoice), so a PAID
- * invoice re-fetched on every Xero event, and the same money seen by the
- * inbound reconciliation, the reaper and the VOID worker, alerts once per
- * window rather than once per observer.
+ * ONE COOLDOWN PER INVOICE AND KIND: each alert keys on (kind, settlement,
+ * invoice), so a PAID invoice re-fetched on every Xero event alerts once per
+ * window, while a later, DIFFERENT instruction about the same invoice (the
+ * group cancelled after the reaper held it, say) is never swallowed by the
+ * first one's cooldown.
  *
  * CONVERGENCE WITH #3638: `claimGroupSettlementInvoiceAlert` is the cooldown
  * half of #3638's settlement-conflict alert (`src/lib/xero-inbound/
@@ -27,12 +28,43 @@ import type { ClubFormat } from "@/lib/club-format";
 
 const GROUP_SETTLEMENT_INVOICE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-/** The cooldown key every alert about one invoice on one settlement shares. */
+/**
+ * What an alert asks a person to do. Two alerts of one kind about one invoice
+ * are the same instruction; two kinds are two instructions.
+ */
+export type GroupSettlementInvoiceAlertKind =
+  /** A paid invoice the settle refused (wrong total, superseded, cancelled). */
+  | "paid_not_applied"
+  /** A payment on an invoice the settlement had already abandoned. */
+  | "paid_after_abandon"
+  /** An invoice paid on top of a card settlement. */
+  | "paid_twice"
+  /** A paid invoice whose cash could not be read exactly. */
+  | "paid_unreadable"
+  /** A VOID not attempted because the invoice carries money. */
+  | "void_blocked_by_money"
+  /** An invoice Xero no longer has (deleted, or another organisation). */
+  | "invoice_not_found"
+  /** A replacement refused because the invoice carries money. */
+  | "replace_blocked_by_money"
+  /** The reaper kept a group whose invoice has started being paid. */
+  | "reaper_held_for_money"
+  /** The reaper kept a group whose invoice Xero could not show. */
+  | "reaper_held_unreadable"
+  /** The reaper released a group it could not check, at the end of the hold. */
+  | "reaper_released_unchecked"
+  /** Xero raised an invoice at a total different from the settlement's. */
+  | "raised_at_wrong_total"
+  /** A joiner's stored prices do not add up, so no invoice can be raised. */
+  | "lines_disagree_with_prices";
+
+/** The cooldown key of one kind of alert about one invoice (or settlement). */
 export function groupSettlementInvoiceAlertKey(
+  kind: GroupSettlementInvoiceAlertKind,
   settlementId: string,
-  invoiceId: string
+  invoiceId: string | null
 ): string {
-  return `group-settlement-invoice-conflict:${settlementId}:${invoiceId}`;
+  return `group-settlement-invoice:${kind}:${settlementId}:${invoiceId ?? "no-invoice"}`;
 }
 
 /** True when this caller holds the alert for `key`; fails open. */
@@ -52,14 +84,16 @@ export async function claimGroupSettlementInvoiceAlert(key: string): Promise<boo
 /** Alert the operators about one invoice, at most once per window. */
 export async function alertGroupSettlementInvoice(
   params: {
+    kind: GroupSettlementInvoiceAlertKind;
     settlementId: string;
-    invoiceId: string;
+    /** Null when no invoice exists yet (the lines could not be raised). */
+    invoiceId: string | null;
     errorMessage: string;
   },
   format: ClubFormat
 ): Promise<void> {
   const holdsClaim = await claimGroupSettlementInvoiceAlert(
-    groupSettlementInvoiceAlertKey(params.settlementId, params.invoiceId)
+    groupSettlementInvoiceAlertKey(params.kind, params.settlementId, params.invoiceId)
   );
   if (!holdsClaim) return;
   try {
@@ -82,8 +116,10 @@ export async function alertGroupSettlementInvoice(
       checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
       checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
       amountCents: settlementDetail?.amountCents ?? 0,
-      errorMessage: `${params.errorMessage} Xero invoice: ${buildXeroInvoiceUrl(params.invoiceId)}`,
-      paymentIntentId: params.invoiceId,
+      errorMessage: params.invoiceId
+        ? `${params.errorMessage} Xero invoice: ${buildXeroInvoiceUrl(params.invoiceId)}`
+        : params.errorMessage,
+      paymentIntentId: params.invoiceId ?? `group settlement ${params.settlementId}`,
     }, format);
   } catch (alertErr) {
     logger.error(

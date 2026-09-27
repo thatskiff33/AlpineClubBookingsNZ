@@ -30,7 +30,11 @@ import {
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
 import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
-import { PendingGroupInvoice } from "@/components/group-booking/pending-group-invoice";
+import {
+  InvoiceBlockedNotice,
+  NotPaidForYetNotice,
+  PendingGroupInvoice,
+} from "@/components/group-booking/pending-group-invoice";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -69,6 +73,8 @@ interface SettlementState {
    * when no invoice is outstanding.
    */
   invoiceDisplay: GroupSettlementInvoiceDisplay | null;
+  /** #3642: the last invoice could not be raised; the club is sorting it out. */
+  invoiceBlocked?: boolean;
 }
 
 export interface OrganiserGroupState {
@@ -373,15 +379,11 @@ export function OrganiserGroupBookingCard({
     settleComplete || group.settlement?.status === "SUCCEEDED";
   // #3642: the pending invoice this session just asked for, or the one the
   // server says is still outstanding — never forgotten on a reload.
-  const pendingReference =
-    settleReference ?? group.settlement?.internetBankingReference ?? null;
+  const pendingReference = settleReference ?? group.settlement?.internetBankingReference ?? null;
   const pendingInvoiceCents =
     settleAmountCents ??
-    (group.settlement?.internetBankingReference
-      ? group.settlement.amountCents
-      : null);
-  // An invoice this session just asked for is being prepared; otherwise the
-  // server says where the outstanding one has got to.
+    (group.settlement?.internetBankingReference ? group.settlement.amountCents : null);
+  // Just asked for this session: being prepared. Otherwise the server says.
   const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
     ? "preparing"
     : (group.settlement?.invoiceDisplay ?? "preparing");
@@ -391,7 +393,8 @@ export function OrganiserGroupBookingCard({
   const unsettledJoiners = activeJoiners.filter(
     (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
   );
-  const notOnInvoice = activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  // Not after a settle this session, which just committed them.
+  const notOnInvoice = settleReference ? [] : activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
   const sumCents = (rows: JoinerRow[]) => rows.reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
   const invoiceTotalChanged =
     !settleReference &&
@@ -552,10 +555,7 @@ export function OrganiserGroupBookingCard({
                   </p>
                 </div>
                 {!settleComplete && unsettledJoiners.length > 0 ? (
-                  <p className="text-sm text-warning-11">
-                    Not paid for yet: {unsettledJoiners.map((j) => j.name).join(", ")}. They joined after your
-                    payment, so their places are not confirmed. Contact the club to pay for them.
-                  </p>
+                  <NotPaidForYetNotice names={unsettledJoiners.map((j) => j.name)} />
                 ) : null}
               </div>
             ) : pendingReference ? (
@@ -603,6 +603,7 @@ export function OrganiserGroupBookingCard({
               </div>
             ) : (
               <>
+                {group.settlement?.invoiceBlocked ? <InvoiceBlockedNotice /> : null}
                 <p className="text-sm text-muted-foreground">
                   Pay for every joiner&apos;s beds in one combined payment. Their spots are
                   confirmed and held while you settle.
