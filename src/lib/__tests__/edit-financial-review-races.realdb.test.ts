@@ -772,10 +772,16 @@ let observerClient: PrismaClient;
      * finds the revived row outstanding and queues nothing; a revival after the
      * enqueue finds that invoice outstanding and alerts instead of reviving.
      *
-     * FORCED like the cases above: the production key is held, both contenders
-     * are proven queued behind it, then released.
+     * FORCED like the cases above, and in BOTH orders (delta review N5). The
+     * production key is held; the first contender is started and proven queued
+     * behind it, THEN the second is started and proven queued. PostgreSQL grants
+     * a contended advisory lock to its waiters in queue order, so the first
+     * started is the first to decide, and each order's expectations run on
+     * every run rather than whichever order the scheduler happened to pick.
      */
-    it("FORCES the revive-versus-enqueue interleaving: a late capture and a fresh enqueue of ONE edit leave exactly one invoice outstanding", async () => {
+    it.each([["revive-first"], ["enqueue-first"]] as const)(
+      "FORCES the revive-versus-enqueue interleaving (%s): a late capture and a fresh enqueue of ONE edit leave exactly one invoice outstanding",
+      async (order) => {
       await clearReviewRunState();
       lateCaptureAlert.mockClear();
 
@@ -852,24 +858,34 @@ let observerClient: PrismaClient;
         );
       }
 
-      const revive =
+      const startRevive = () =>
         releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
           LATE_CAPTURE_INTENT_ID,
         );
-      const enqueue = enqueueXeroSupplementaryInvoiceOperation({
-        bookingId: BOOKING_ID,
-        bookingModificationId: MODIFICATION_ID,
-        priceDiffCents: 20000,
-        changeFeeCents: 0,
-      });
-
-      await waitForBlockedBy(
-        holderPid,
-        2,
+      const startEnqueue = () =>
+        enqueueXeroSupplementaryInvoiceOperation({
+          bookingId: BOOKING_ID,
+          bookingModificationId: MODIFICATION_ID,
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+        });
+      const notQueued =
         "The late-capture re-queue and the enqueue did not both queue on the per-anchor supplementary-invoice " +
-          "key, so a revived invoice and a fresh one could BOTH be sent for one booking edit " +
-          "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-104).",
-      );
+        "key, so a revived invoice and a fresh one could BOTH be sent for one booking edit " +
+        "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-104).";
+
+      let revive: ReturnType<typeof startRevive>;
+      let enqueue: ReturnType<typeof startEnqueue>;
+      if (order === "revive-first") {
+        revive = startRevive();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        enqueue = startEnqueue();
+      } else {
+        enqueue = startEnqueue();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        revive = startRevive();
+      }
+      await waitForBlockedBy(holderPid, 2, notQueued);
 
       releaseLock.resolve();
       await holder;
@@ -890,13 +906,14 @@ let observerClient: PrismaClient;
         where: { id: retired.id },
         select: { status: true, lastErrorCode: true },
       });
-      if (revived.outcome === "requeued") {
-        // Revival first: the enqueue found the revived row and queued nothing.
+      if (order === "revive-first") {
+        // The enqueue found the revived row and queued nothing.
+        expect(revived.outcome).toBe("requeued");
         expect(outstanding[0]?.id).toBe(retired.id);
         expect(enqueued.queueOperationId).toBe(retired.id);
         expect(lateCaptureAlert).not.toHaveBeenCalled();
       } else {
-        // Enqueue first: the revival saw that invoice and told an officer.
+        // The revival saw that invoice and told an officer instead.
         expect(revived.outcome).toBe("alerted");
         expect(outstanding[0]?.id).not.toBe(retired.id);
         expect(retiredAfter).toEqual({
@@ -905,7 +922,8 @@ let observerClient: PrismaClient;
         });
         expect(lateCaptureAlert).toHaveBeenCalledTimes(1);
       }
-    });
+      },
+    );
 
     /**
      * #3166 — THE TWO MONEY RULES THAT READ AS ONE RULE, PINNED SEPARATELY.
