@@ -21,11 +21,13 @@ import process from "node:process";
 import {
   auditCardAppliedCreditDoublePays,
   auditIbAppliedCreditStrands,
-  auditIbHoldClearingUnderclears,
   formatCardAppliedCreditDoublePayReport,
   formatIbAppliedCreditStrandReport,
-  formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
+import {
+  auditIbHoldClearingUnderclears,
+  formatIbHoldClearingAuditReport,
+} from "../src/lib/ib-hold-clearing-underclear-audit";
 import { prisma } from "../src/lib/prisma";
 import { getClubFormat } from "../src/lib/club-format-settings";
 

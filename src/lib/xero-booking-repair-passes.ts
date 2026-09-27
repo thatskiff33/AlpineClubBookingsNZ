@@ -18,6 +18,7 @@ import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -230,7 +231,19 @@ async function applyLateCaptureRefundRepair(
       ? action.payload.invoiceId
       : null;
 
-  if (!Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
+  // #3639 delta D1: the classifier pins the refund to the captures no
+  // treasurer-approval task owns. Without that plan this refuses rather than
+  // letting a newest-first allocation reach a held capture.
+  // A legacy payment with no ledger rows carries no plan (and can hold nothing).
+  const allocation = Array.isArray(action.payload.allocation)
+    ? (action.payload.allocation as { paymentTransactionId: string; amountCents: number }[])
+    : null;
+  if (
+    !Number.isFinite(refundAmountCents) ||
+    refundAmountCents <= 0 ||
+    (allocation !== null &&
+      allocation.reduce((sum, slice) => sum + slice.amountCents, 0) !== refundAmountCents)
+  ) {
     action.status = "failed";
     action.resultMessage = "Late-capture repair payload is incomplete.";
     return;
@@ -244,6 +257,7 @@ async function applyLateCaptureRefundRepair(
       format,
       paymentId,
       amountCents: refundAmountCents,
+      allocation: allocation ?? undefined,
       reason: "requested_by_customer",
       metadata: {
         bookingId,
@@ -496,6 +510,9 @@ async function applyQueuedAction(
             ? action.payload.bookingModificationId
             : undefined,
         refundAmountCents: Number(action.payload.refundAmountCents),
+        // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
+        // edit's note keeps the default (method) wording.
+        ...readModificationNoteWording(action.payload),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

@@ -38,6 +38,10 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
+import {
+  hasInvoiceClearingNote,
+  retirePendingClearingNote,
+} from "@/lib/invoice-clearing-note-evidence";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -774,6 +778,13 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                 select: { id: true },
               })
             : null;
+          // #3535: cash arrived, so the pending clearing note is retired here
+          // too, as in the member arm - left to run, the worker would refuse it
+          // (the invoice owes less than the note), and the alert would claim a
+          // note "was ALREADY issued" when none will be.
+          if (shouldHandBack) {
+            await retirePendingClearingNote(tx, settlementPayment.bookingId);
+          }
           if (shouldHandBack && !alreadyRaised) {
             await tx.manualRefundTask.create({
               data: {
@@ -822,9 +833,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             // back — a replay, an allocation-cleared invoice — and stays silent
             // exactly as the member arm does in the same states.
             organisationHandBackCents: shouldHandBack ? handBackCents : 0,
-            clearingNoteAlreadyIssued: Boolean(
-              settlementPayment.xeroRefundCreditNoteId,
-            ),
+            // #3535: either note shape, not only the old refund note's field.
+            clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
           };
         }
 
@@ -936,6 +946,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               status: "CANCELLED",
             },
           });
+          // #3535: a hold released since then queued the booking-anchored
+          // clearing note instead, just as obsolete once cash arrived.
+          await retirePendingClearingNote(tx, settlementPayment.bookingId);
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
             mintableCents,
@@ -958,9 +971,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // construction — it only runs when there IS a member. Stated rather
           // than left to the union, so both arms return the same shape.
           organisationHandBackCents: 0,
-          clearingNoteAlreadyIssued: Boolean(
-            settlementPayment.xeroRefundCreditNoteId,
-          ),
+          // #3535: either note shape, not only the old refund note's field.
+          clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
         };
       };
 
@@ -1331,7 +1343,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             : outcome.creditedPartial
             ? `Internet Banking cash of ${formatCents(outcome.creditedCents, format)} was received for an already-cancelled booking whose ${formatCents(outcome.payment.amountCents, format)} payment was otherwise settled by credit allocation in Xero (mixed invoice). Only the cash portion is held as the member's account credit — verify the allocation source on the invoice (the app's own invoice-clearing credit note is routine; a manual write-off or an operator-allocated member credit note needs its own follow-up). If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
             : outcome.clearingNoteAlreadyIssued
-              ? `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit — and an invoice-clearing credit note was ALREADY issued for this invoice, so Xero needs manual reconciliation (void the clearing note's refund payment or the duplicate artifact).${unverifiedSuffix}`
+              ? `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit — and an invoice-clearing credit note was ALREADY issued for this invoice, so Xero needs manual reconciliation (remove the clearing note's allocation or void the clearing note — or, for an older refund note, its refund payment — or the duplicate artifact).${unverifiedSuffix}`
               : `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit; follow up with the member if a bank refund is more appropriate.${unverifiedSuffix}`,
           paymentIntentId: invoiceId,
         }, format).catch((err) =>

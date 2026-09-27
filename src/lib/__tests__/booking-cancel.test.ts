@@ -554,6 +554,7 @@ describe("cancelBooking credit refunds", () => {
       {
         bookingId: "booking_2",
         refundAmountCents: 10000,
+        clearsUnpaidInvoice: true,
       },
       {
         createdByMemberId: "member_1",
@@ -620,6 +621,7 @@ describe("cancelBooking credit refunds", () => {
       {
         bookingId: "booking_3",
         refundAmountCents: 5000,
+        clearsUnpaidInvoice: true,
       },
       {
         createdByMemberId: "member_1",
@@ -1083,6 +1085,7 @@ describe("cancelBooking credit refunds", () => {
       {
         bookingId: "booking_fold",
         refundAmountCents: 7000,
+        clearsUnpaidInvoice: true,
       },
       {
         createdByMemberId: "member_1",
@@ -2646,7 +2649,7 @@ describe("cancelBooking credit refunds", () => {
       expect(
         mocks.enqueueXeroModificationCreditNoteOperation
       ).toHaveBeenCalledWith(
-        { bookingId: "bk_ib", refundAmountCents: 8500 },
+        { bookingId: "bk_ib", refundAmountCents: 8500, clearsUnpaidInvoice: true },
         { createdByMemberId: "member_1" }
       );
 
@@ -2685,7 +2688,7 @@ describe("cancelBooking credit refunds", () => {
       expect(
         mocks.enqueueXeroModificationCreditNoteOperation
       ).toHaveBeenCalledWith(
-        { bookingId: "bk_ib2", refundAmountCents: 7000 },
+        { bookingId: "bk_ib2", refundAmountCents: 7000, clearsUnpaidInvoice: true },
         { createdByMemberId: "member_1" }
       );
       expect(

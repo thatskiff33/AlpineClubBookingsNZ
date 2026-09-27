@@ -275,6 +275,7 @@ export async function loadAuditData(
     editReviewChargeShares,
     editReviewChargeIntentRecoveries,
     lateCaptureApprovalTasks,
+    appliedCreditAllocations,
   ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
@@ -368,7 +369,30 @@ export async function loadAuditData(
       : Promise.resolve(
           [] as { bookingId: string; lateCaptureApprovalIntentId: string | null }[],
         ),
+    // #3535: INV-PAY-017's allocation term, per booking, for the
+    // cancelled-open-invoice arm's clearing-note size. The release and the
+    // cancel path first run `repairLegacyAppliedCreditNoteAllocationsForBooking`,
+    // a write this read-only loader does not make; on a legacy booking whose
+    // stamp-era allocations have no slices yet the sum can read low and size
+    // the note above the release's. That fails safe: the builder's live
+    // AmountDue read refuses an oversize note (a shortfall, reported for a
+    // person, never auto-retried).
+    bookingIds.length > 0
+      ? deps.prisma.memberCreditNoteAllocation.groupBy({
+          by: ["appliedToBookingId"],
+          where: { appliedToBookingId: { in: bookingIds } },
+          _sum: { amountCents: true },
+        })
+      : Promise.resolve(
+          [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
+        ),
   ]);
+  const allocatedAppliedCreditByBookingId = new Map(
+    appliedCreditAllocations.map((row) => [
+      row.appliedToBookingId,
+      row._sum.amountCents ?? 0,
+    ])
+  );
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
   for (const link of links) {
@@ -485,6 +509,8 @@ export async function loadAuditData(
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),
+    xeroAllocatedAppliedCreditCents:
+      allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
       editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
       new Set<string>(),

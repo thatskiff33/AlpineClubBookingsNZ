@@ -12,6 +12,8 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
 interface RepairPaymentTransaction {
+  /** The ledger row's id; null for a legacy payment's reconstructed slice. */
+  id: string | null;
   kind: PaymentTransactionKind;
   source: PaymentSource;
   stripePaymentIntentId: string | null;
@@ -86,6 +88,7 @@ function buildRepairPaymentTransactions(
 
   const ledgerTransactions = (payment.transactions ?? []).map(
     (transaction): RepairPaymentTransaction => ({
+      id: transaction.id,
       kind: transaction.kind,
       source: transaction.source,
       stripePaymentIntentId: transaction.stripePaymentIntentId,
@@ -129,6 +132,7 @@ function buildRepairPaymentTransactions(
 
   if (payment.stripePaymentIntentId) {
     legacyTransactions.push({
+      id: null,
       kind: PaymentTransactionKind.PRIMARY,
       source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.stripePaymentIntentId,
@@ -145,6 +149,7 @@ function buildRepairPaymentTransactions(
 
   if (payment.additionalPaymentIntentId) {
     legacyTransactions.push({
+      id: null,
       kind: PaymentTransactionKind.ADDITIONAL,
       source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.additionalPaymentIntentId,

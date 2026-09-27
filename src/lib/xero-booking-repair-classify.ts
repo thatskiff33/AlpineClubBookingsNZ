@@ -6,6 +6,11 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import {
+  isClearingAllocationShortfall,
+  partialClearingNoteIsIncomplete,
+} from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingClassificationContext,
@@ -1280,10 +1285,11 @@ export function classifyBookingContext(
   }
 
   // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
-  // was released retires the clearing note (a CANCELLED create op) and settles
-  // the payment, so the arm below skips the booking - but the operator is still
-  // told why no note exists. #3535's own copy of this finding sits behind the
-  // gate and can no longer fire; this one is the owner of the sentence.
+  // was released retires the pending clearing note (`retirePendingClearingNote`
+  // cancels its queued MODIFICATION_CREDIT_NOTE create) and settles the payment,
+  // so the arm below skips the booking - but the operator is still told why no
+  // note exists. The ONE home of this finding (#3535's copy inside the arm was
+  // removed at the sync, delta D2).
   if (
     booking.status === "CANCELLED" &&
     payment &&
@@ -1294,6 +1300,7 @@ export function classifyBookingContext(
       (operation) =>
         operation.entityType === "CREDIT_NOTE" &&
         operation.operationType === "CREATE" &&
+        operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE &&
         operation.status === "CANCELLED"
     )
   ) {
@@ -1317,7 +1324,10 @@ export function classifyBookingContext(
     !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) &&
     primaryInvoice
   ) {
-    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
+    const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
+      booking,
+      context.xeroAllocatedAppliedCreditCents
+    );
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
@@ -1334,7 +1344,32 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (
+          blockingOperation &&
+          isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
+        ) {
+          // #3535: the invoices owe less than the note - retrying changes
+          // nothing until a person looks, so it is never a safe auto-retry.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "The invoice-clearing credit note was refused because the booking's invoices owe less than it (part of the booking may have been paid) - review it by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "An invoice-clearing credit note was refused because the booking's invoices owe less than it - review by hand; it is not retried automatically.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
             actionMap,
             buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
@@ -1362,6 +1397,8 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               refundAmountCents: clearingAmountCents,
+              // #3535 (`INV-PAY-017`): the note clears an unpaid invoice.
+              clearsUnpaidInvoice: true,
             },
           });
           addFinding(findings, {
@@ -1377,8 +1414,56 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else {
+          // #3535: a live or failed clearing operation the retry helper cannot
+          // replay must still be SEEN - silence here left an unpaid invoice open
+          // with nothing in the report (the #1356 third-arm rule).
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+              ? "A Xero invoice-clearing credit note operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero invoice-clearing credit note operation looks stuck."
+                : "A Xero invoice-clearing credit note operation is already pending or running.",
+            safeToAutoApply: false,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              retryUnsupportedReason: blockingOperation.retryMeta.reason,
+            },
+            actionKeys: [],
+          });
         }
       } else {
+        // #3535: a note whose own operation went PARTIAL did not finish its
+        // allocations. Its row records the plan (one invoice, or the primary
+        // and supplementary invoices a clearing note is spread across), so the
+        // retry replays exactly that - a fresh allocation sized here would be
+        // the note's whole amount against the primary invoice alone.
+        const partialNoteOperation = bookingOperations.find(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            operation.status === "PARTIAL" &&
+            operation.xeroObjectId === cancellationCreditNote.objectId
+        );
+        // Only while a planned invoice still has no allocation link from this
+        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
+        // would report a whole note as broken forever.
+        const partialNoteRetryMeta =
+          partialNoteOperation &&
+          partialClearingNoteIsIncomplete(
+            partialNoteOperation.requestPayload,
+            cancellationCreditNote.objectId,
+            bookingLinks.filter(
+              (link) =>
+                link.xeroObjectType === "ALLOCATION" &&
+                link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+            )
+          )
+            ? getXeroOperationRetryMeta(partialNoteOperation)
+            : null;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,
@@ -1387,7 +1472,25 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (!allocation) {
+        if (partialNoteOperation && partialNoteRetryMeta?.supported) {
+          const action = addAction(
+            actionMap,
+            buildRetryAction(booking.id, partialNoteOperation, partialNoteRetryMeta)
+          );
+          addFinding(findings, {
+            code: "MISSING_CREDIT_NOTE_ALLOCATION",
+            severity: "critical",
+            summary:
+              "The invoice-clearing credit note exists, but its allocations did not all complete; retrying replays the recorded plan.",
+            safeToAutoApply: true,
+            details: {
+              bookingId: booking.id,
+              creditNoteId: cancellationCreditNote.objectId,
+              operationId: partialNoteOperation.id,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (!allocation) {
           const blockingOperation = getBlockingOperation(
             bookingOperations,
             "ALLOCATION",
@@ -1520,18 +1623,41 @@ export function classifyBookingContext(
         transaction.stripePaymentIntentId !== null &&
         context.lateCaptureApprovalIntentIds.has(transaction.stripePaymentIntentId)
     );
-    const refundAmountCents =
+    const unheldOutstandingCents =
       outstandingCapturedRefundAmountCents -
       heldOutstanding.reduce(
         (sum, t) => sum + Math.max(t.amountCents - t.refundedAmountCents, 0),
         0
       );
-    if (!cancellationRefundDecisionRecorded && refundAmountCents > 0) {
-      const lateCaptureTransactions = capturedPaymentTransactions.filter(
-        (transaction) =>
-          transaction.amountCents > transaction.refundedAmountCents &&
-          !heldOutstanding.includes(transaction)
+    const lateCaptureTransactions = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.amountCents > transaction.refundedAmountCents &&
+        !heldOutstanding.includes(transaction)
+    );
+    // #3639 delta D1: the refund is PINNED to the unheld captures, slice by
+    // slice, so no newest-first allocation can ever reach a held capture's money.
+    // A legacy payment (no ledger rows, so no ids) cannot have a held capture —
+    // approval tasks are raised on ledger rows — and keeps the derived refund.
+    const pinnable = lateCaptureTransactions.every((transaction) => transaction.id !== null);
+    const lateCaptureAllocation: { paymentTransactionId: string; amountCents: number }[] = [];
+    let unallocatedCents = Math.max(unheldOutstandingCents, 0);
+    for (const transaction of [...lateCaptureTransactions].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    )) {
+      if (!pinnable || transaction.id === null || unallocatedCents <= 0) break;
+      const sliceCents = Math.min(
+        transaction.amountCents - transaction.refundedAmountCents,
+        unallocatedCents
       );
+      lateCaptureAllocation.push({ paymentTransactionId: transaction.id, amountCents: sliceCents });
+      unallocatedCents -= sliceCents;
+    }
+    const refundAmountCents = pinnable
+      ? lateCaptureAllocation.reduce((sum, slice) => sum + slice.amountCents, 0)
+      : heldOutstanding.length === 0
+        ? Math.max(unheldOutstandingCents, 0)
+        : 0;
+    if (!cancellationRefundDecisionRecorded && refundAmountCents > 0) {
       const action = addAction(actionMap, {
         key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
         bookingId: booking.id,
@@ -1543,6 +1669,7 @@ export function classifyBookingContext(
           bookingId: booking.id,
           paymentId: payment.id,
           refundAmountCents,
+          allocation: pinnable ? lateCaptureAllocation : null,
           invoiceId: primaryInvoice?.objectId ?? null,
         },
       });
