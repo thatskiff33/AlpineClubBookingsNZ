@@ -27,6 +27,12 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { readHoldPaymentEvidence } from "@/lib/internet-banking-hold-payment-evidence";
+import logger from "@/lib/logger";
+import { isXeroConnected } from "@/lib/xero";
+import {
+  enqueueXeroModificationCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import {
   reconcilePaymentAggregates,
   recordInternetBankingPaymentTransaction,
@@ -146,4 +152,34 @@ export async function recordPartPaymentInClaim(
     reason: PART_PAYMENT_RECOGNISED_REASON,
     store: tx,
   });
+}
+
+/**
+ * After the cancel claim commits: clear what the invoices still owe with
+ * #3535's booking-anchored clearing note, sized from Xero's own amount due at
+ * the read. The builder re-reads the invoices and creates nothing if they owe
+ * less by then. Never throws — the cancellation already stands.
+ */
+export async function queueClearingNoteForUnpaidRest(
+  bookingId: string,
+  partPayment: PartPaymentAtCancel,
+  createdByMemberId: string,
+): Promise<void> {
+  if (partPayment.amountDueCents <= 0) return;
+  try {
+    const queued = await enqueueXeroModificationCreditNoteOperation(
+      { bookingId, refundAmountCents: partPayment.amountDueCents, clearsUnpaidInvoice: true },
+      { createdByMemberId },
+    );
+    if (queued.queueOperationId && (await isXeroConnected())) {
+      void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to kick Xero invoice-clearing credit note outbox worker"),
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, bookingId, amountDueCents: partPayment.amountDueCents },
+      "Failed to queue Xero invoice-clearing credit note for the unpaid rest of a part-paid booking",
+    );
+  }
 }

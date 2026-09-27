@@ -13,11 +13,16 @@ reason: the transaction-client option and the wording choice belong on the
   the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
-lines: 2527
+lines: 2560
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
-  claim's follow-up would separate it from the sizing it sits beside.
+  claim's follow-up would separate it from the sizing it sits beside. #3643
+  (same integration branch, one entry per file) adds the three call sites of
+  the part-payment recognition - the read before the dispatch, the record
+  inside the paid claim, the clearing note after it - whose bodies live in
+  `internet-banking-part-payment-at-cancel.ts`; the calls must sit at those
+  three points of the cancel's own sequence.
 
 file: src/lib/xero-booking-repair-classify.ts
 lines: 1824
@@ -41,12 +46,13 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1726
+lines: 1730
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
   same; the reading and the retirement themselves live in
-  `invoice-clearing-note-evidence.ts`.
+  `invoice-clearing-note-evidence.ts`. #3643 exports the cash rule for the
+  hold payment check and corrects its "only caller" comments.
 
 file: src/lib/redact-sensitive-json.ts
 lines: 914

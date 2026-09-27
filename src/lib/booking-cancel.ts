@@ -81,6 +81,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import {
   PART_PAYMENT_UNSIZABLE_REFUSAL,
+  queueClearingNoteForUnpaidRest,
   readPartPaymentAtCancel,
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
@@ -1811,34 +1812,9 @@ async function performBookingCancellation(
     );
   }
 
-  // #3643 (`INV-PAY-107`): the recognised part payment settled only part of the
-  // invoices; clear what they still owe with #3535's booking-anchored clearing
-  // note. Sized from Xero's own amount due at the read; the builder re-reads the
-  // invoices and creates nothing if they owe less by then.
-  if (partPayment && partPayment.amountDueCents > 0) {
-    try {
-      const queued = await enqueueXeroModificationCreditNoteOperation(
-        {
-          bookingId,
-          refundAmountCents: partPayment.amountDueCents,
-          clearsUnpaidInvoice: true,
-        },
-        { createdByMemberId: sessionUserId }
-      );
-      if (queued.queueOperationId && (await isXeroConnected())) {
-        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
-          logger.error(
-            { err: xeroErr, bookingId, paymentId },
-            "Failed to kick Xero invoice-clearing credit note outbox worker"
-          );
-        });
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId, paymentId, amountDueCents: partPayment.amountDueCents },
-        "Failed to queue Xero invoice-clearing credit note for the unpaid rest of a part-paid booking"
-      );
-    }
+  // #3643: clear only what the part-paid invoices still owe.
+  if (partPayment) {
+    await queueClearingNoteForUnpaidRest(bookingId, partPayment, sessionUserId);
   }
 
   // ── Phase 2 — external work, AFTER tx1 committed ──────────────────
