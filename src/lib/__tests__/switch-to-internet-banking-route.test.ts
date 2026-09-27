@@ -741,6 +741,25 @@ describe("POST /api/payments/switch-to-internet-banking — the card payment mus
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalled();
   });
 
+  // The E2E stack (prisma/demo-seed.ts, `e2e-ib-pending`) runs with no Stripe
+  // keys. Its switchable booking is a card booking whose card payment was never
+  // started — no stored intent — and switches without a Stripe call (next
+  // test). A booking that DOES store an intent cannot be verified dead without
+  // Stripe, so it is refused, whatever the environment.
+  it("refuses as unconfirmed when a stored intent cannot be checked because Stripe is not configured", async () => {
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValueOnce(
+      new Error("Stripe secret key is not configured"),
+    );
+
+    const res = await POST(postRequest());
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CARD_PAYMENT_CANCEL_UNCONFIRMED",
+    });
+    expectNothingWritten();
+  });
+
   it("does not call Stripe at all when the booking has no card intent", async () => {
     mocks.findUnique.mockResolvedValueOnce(
       stripeBooking({
