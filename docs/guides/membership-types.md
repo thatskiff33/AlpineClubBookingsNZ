@@ -77,6 +77,10 @@ change.
 
 1. **Archive** hides a type from new assignments without deleting it;
    **Reactivate** brings it back.
+   Existing members without a season assignment can still use an archived
+   built-in role-default type for booking and annual billing. Its saved
+   subscription rule and effective annual fee continue to apply; officers
+   review any resulting charge in the billing preview.
 2. **Delete** is only offered for **Custom** (non-built-in) types. If the type has
    no assignments you confirm and it is gone. If it still has assignments, a
    **Delete … / Move assignments to** dialog opens: pick an active target type,

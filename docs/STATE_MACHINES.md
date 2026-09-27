@@ -2556,6 +2556,7 @@ member role backfill -> current-season assignment created if missing
 type assignment preview -> apply-from date/reason saved -> audited assignment update
 booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
 subscription display/gate -> resolve season assignment/default -> required or not required
+annual billing preview/confirm -> resolve stored season assignment or role-default row (active or archived) -> require effective fee or surface exception -> snapshot charge
 ```
 
 Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
@@ -2573,6 +2574,11 @@ subscription like anyone else. The optional assignment `applyFrom`
 date is date-only metadata for mid-season changeover reporting and audit; the
 guarded preview remains the required save path and existing future bookings are
 not automatically repriced by a type or apply-from change.
+
+An archived role-default row continues to govern existing members with no season
+assignment. Booking keeps its synthetic built-in policy if that row is absent;
+annual billing needs the stored type ID and an effective fee, so a missing row
+or fee becomes an exception instead of a charge (`INV-MONEY-016`).
 
 ## Nomination Lifecycle
 

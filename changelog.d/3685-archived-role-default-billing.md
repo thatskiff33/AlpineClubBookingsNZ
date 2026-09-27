@@ -1,0 +1,1 @@
+- **Annual billing honours an archived role-default membership type for an existing member (#3685).** When a member has no seasonal assignment, the billing preview uses the saved type and its effective fee even if an officer archived the type. A missing type or fee still appears as an exception, and officers review any resulting charge before confirming it.
