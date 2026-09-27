@@ -360,9 +360,8 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        // #3663. Rides the 15-minute payments cycle (`payments-cron-runner`)
-        // beside payment recovery, recorded under its own name so a missing
-        // release is visible rather than hidden in a healthy recovery row.
+        // #3663. A task of the 15-minute payments cycle (`payments-cron-runner`),
+        // recorded under its own name so a missing release is visible.
         jobName: "internet-banking-hold-release",
         label: "Expired Internet Banking hold release",
         schedule: "*/15 * * * *",

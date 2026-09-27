@@ -473,10 +473,8 @@ export async function register() {
       );
 
       try {
-        // #3663: the same cycle `POST /api/cron/payments` runs — recovery,
-        // expired Internet Banking hold release and the waiting-invoice reaper,
-        // each error-isolated and recorded under its own CronJobRun job name by
-        // the runner. The Sentry monitor slug stays `payment-recovery`.
+        // #3663: the cycle `POST /api/cron/payments` runs (recovery, IB hold release,
+        // waiting-invoice reaper); the runner isolates and records each task.
         const { runPaymentsCronCycle } = await import(
           "./lib/payments-cron-runner"
         );
@@ -484,9 +482,7 @@ export async function register() {
         logger.info({ job: "payments-cron", ...result }, "Payments cron cycle complete");
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "ok" });
       } catch (err) {
-        // Each failed task already bridged to Sentry and recorded its FAILURE
-        // row inside the runner, so this only logs the aggregate and marks the
-        // monitor check-in, avoiding a double-send.
+        // Failed tasks already bridged to Sentry and recorded FAILURE in the runner.
         logger.error({ err, job: "payments-cron" }, "Error in payments cron cycle");
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "error" });
       } finally {
@@ -494,10 +490,7 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info(
-      { job: "payments-cron" },
-      "Scheduled payments cycle: recovery, Internet Banking hold release, waiting-invoice reaper (every 15 minutes)"
-    );
+    logger.info({ job: "payments-cron" }, "Scheduled payments cycle (every 15 minutes)");
 
     if (optionalCron.xeroIntegration) {
       // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)
