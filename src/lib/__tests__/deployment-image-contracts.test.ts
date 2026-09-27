@@ -694,14 +694,16 @@ describe("deployment image contracts", () => {
       expect(verify.length).toBeGreaterThan(0);
       expect(verify).not.toContain("npm audit");
       // The gates that were skipped must all still be in `verify`, and none of
-      // them may have acquired a condition of its own on the way out.
+      // them may have acquired a condition of its own on the way out. #3431
+      // moves the suite itself to independent shard jobs but keeps its
+      // fail-closed bridge as a step in this required job.
       for (const step of [
         "run: npm run lint",
         "run: npm run quality:budget",
         "run: npm run db:generate",
         "run: npm run typecheck",
         "run: npx knip",
-        "run: npm test",
+        "run: node scripts/ci/require-test-shards.mjs",
         "run: npm run build",
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
