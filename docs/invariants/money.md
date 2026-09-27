@@ -661,8 +661,8 @@ check the others.
   row's `subscriptionBehavior` and an effective stored fee, including for a
   legacy family invoice holder whose own `PER_MEMBER` basis can lift family
   suppression. An explicit season assignment takes precedence. If the row or
-  effective fee is missing, billing fails closed; it never uses booking's
-  synthetic missing-row policy as a billable type.
+  an effective fee is missing for a member who requires billing, billing fails
+  closed; it never uses booking's synthetic missing-row policy as a billable type.
 
 ## INV-MONEY-017
 

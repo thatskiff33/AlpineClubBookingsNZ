@@ -2556,7 +2556,7 @@ member role backfill -> current-season assignment created if missing
 type assignment preview -> apply-from date/reason saved -> audited assignment update
 booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
 subscription display/gate -> resolve season assignment/default -> required or not required
-annual billing preview/confirm -> resolve stored season assignment or role-default row (active or archived) -> require effective fee or surface exception -> snapshot charge
+annual billing preview/confirm -> resolve stored season assignment or role-default row (active or archived) -> when billing is required, require effective fee or surface exception -> snapshot charge
 ```
 
 Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
