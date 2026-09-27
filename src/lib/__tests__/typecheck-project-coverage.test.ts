@@ -446,6 +446,7 @@ describe("typecheck project coverage", () => {
       "vitest.config.mts",
       "vitest.setup.ts",
       "vitest.clock-setup.ts",
+      "vitest.global-setup.ts",
     ]) {
       expect(test.files.has(file), `${file} is a test-project root`).toBe(true);
       expect(app.files.has(file), `${file} is out of tsconfig.json`).toBe(false);
