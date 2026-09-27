@@ -64,9 +64,12 @@ the part payment as money received, applies the club's cancellation policy to
 it and returns the refundable share as account credit, and clears only what the
 invoice still owes with a credit note reading "Unpaid balance cleared - booking
 cancelled". The cancel dialog checks Xero the same way before you confirm, so
-the credit it shows is the credit the cancellation gives. If Xero shows a
-payment whose amount it cannot give exactly, the dialog and the cancel both
-refuse until Xero can be read.
+the credit it shows is the credit the cancellation gives. If the booking belongs
+to an organisation, or Xero cannot give the amount paid exactly, the app cannot
+credit the payment: the email says so, an officer's cancel treats the booking as
+unpaid (no refund, no credit, invoice left open) and the treasurer is emailed to
+settle the payment by hand in Xero, and a member cancelling online is asked to
+contact the club.
 
 If Xero shows the invoice **paid in full** but the app has not caught up, the
 email says so; the next Xero sync marks the booking paid. If the invoice
@@ -77,7 +80,7 @@ the check-in date or seven days after the hold deadline, whichever comes first,
 the hold is released and a second email goes out; the invoice-clearing credit
 note is only created once Xero can be read and shows the invoice still owes it.
 The email goes to admins with the **payment failure** notification switched on,
-and a send that reaches nobody is retried on the next run.
+and a send that reaches nobody is retried on a later run.
 
 ## Troubleshooting
 
@@ -86,7 +89,8 @@ and a send that reaches nobody is retried on the next run.
 | Everything is read-only ("… can view Internet Banking settings but cannot change them") | Your finance role is view-only | Ask a finance-edit admin |
 | The page shows **Xero off** / **Module Not Ready** | The Xero integration or Internet Banking module is off | Enable Xero and the Internet Banking module — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | An expired hold was not cancelled and an **Internet banking hold needs attention** email arrived | Xero shows part (or all) of the invoice paid, or the invoice could not be read | Follow the email: wait for the rest, or cancel the booking in the app (the part payment is credited under the policy); reconnect Xero if it could not be read |
-| Cancelling says "Xero shows a payment against this booking's invoice, but its amount could not be read exactly" | Xero is unreachable, or one of the booking's invoices could not be read, while a payment is recorded | Reconnect Xero or wait, then cancel again |
+| A member is told a payment "the club needs to settle by hand" stops them cancelling online | The booking has a payment recorded that the app cannot credit (an organisation's booking, or Xero could not give the amount exactly) | An officer cancels it; the treasurer is emailed to settle the payment in Xero |
+| Cancelling says the booking's payment changed while it was being cancelled | A further payment reached Xero after the cancel checked it | Cancel again; it re-reads Xero |
 | Members aren't offered Internet Banking at checkout | The module is off, or the booking is inside the minimum lead time | Turn the module on and check the **Minimum lead time** value |
 | An admin alert says "Booking may have been paid twice — card and Xero" | A card payment had already settled the booking, and Xero then reported its Internet Banking invoice paid too (#3638). The bank payment is recorded; nothing was refunded | Check the invoice's payment in Xero: if it is separate money from the member, agree with them which payment to refund; if it is the card money matched to the invoice by hand, correct the match in Xero |
 | The same alert says the booking was "paid by card and later cancelled" | The booking was paid by card and cancelled, and a bank transfer then arrived against its Internet Banking invoice (#3638). The cancellation already settled the card payment; the bank payment is recorded and was not credited | Check the payment in Xero; if it is the member's money, return it or add it to their account credit |

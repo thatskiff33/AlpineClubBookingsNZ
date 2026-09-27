@@ -670,18 +670,16 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   #3643): the club's check-in date or seven days past the deadline, whichever
   comes first, then released (a 404 counts). Its clearing note is created only
   once the builder reads what the invoices owe.
-- **One admin alert per hold per reason** (part-paid, paid in full but not yet
-  synced, unreadable, released unreadable). The claim is given back when
-  recipients existed but none was reached; the audit entry is written once it
-  settles. Reads per run are capped and rotate.
-- **The normal cancel path recognises the part payment** (same decision): the
-  claim records Xero's exact cash as captured internet banking money, so the
-  paid path tiers the policy on it (as credit) and the clearing note is sized to
-  what the invoices still owe, worded *Unpaid balance cleared - booking
-  cancelled* ([INV-PAY-101]'s one home). The cancel preview asks the same live
-  question through the same reader, so it quotes the same figure. Cash Xero
-  shows but cannot size refuses both. Organisation-owned bookings are not
-  recognised (#3369).
+- **One admin alert per hold per reason**, claim-guarded; an undelivered one
+  is retried (given back, or marked owed once the hold is gone) and a release's
+  audit row is written regardless. Live reads: 20 a run, 400 holds a day.
+- **The cancel path recognises the part payment** (same decision): the claim
+  re-checks for payments recorded since its read, records Xero's exact cash as
+  captured money, so the policy tiers on it as credit, and queues a note for
+  the unpaid rest (*Unpaid balance cleared - booking cancelled*, [INV-PAY-101]).
+  Money it cannot credit (an organisation's, or unsizable) is an officer's
+  unpaid cancel with no note, a repair finding and an alert (DECISION 2). The
+  preview asks the same reader, rate-limited and cached a minute.
 - The repair tool raises manual review, never a queued or retried full
   clearing note, over a recorded part payment.
 - Pinned by `internet-banking-payment-cron.test.ts`,

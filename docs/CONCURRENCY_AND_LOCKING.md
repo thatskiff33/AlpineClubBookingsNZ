@@ -1390,8 +1390,10 @@ lock, so this narrows the race rather than serialising it; the clearing-note
 builder's shortfall refusal is the backstop. The live read runs before the
 transaction, never inside it. The paid cancel path's claim may now also record
 a part payment Xero showed (read before the claim) as the payment's captured
-row, under the same lock(1) and lodge lock it already holds. No lock is
-added. The
+row and queue the unpaid rest's clearing-note outbox row, under the same
+lock(1) and lodge lock it already holds; it first re-checks, the same narrowing
+way, for payment links recorded since its read, and throws to roll back on any
+change. No lock is added. The
 paid/captured cancel (refund) path does not take the credit-ledger lock or this
 fence: it restores credit from the payment mirror (mirror-based and capped) and
 never sizes clearing from slices. Legacy inbound rows missing
