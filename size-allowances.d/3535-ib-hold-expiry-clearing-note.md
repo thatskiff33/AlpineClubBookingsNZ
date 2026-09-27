@@ -10,21 +10,8 @@ merged in: #3641 moved the waiting-invoice reaper and the late-capture release
 out of `xero-operation-outbox.ts`, so the composed file (3205 lines) is below
 its base length and needs no allowance.
 
-file: src/lib/booking-cancel.ts
-lines: 2547
-reason: the never-captured cancel path's existing clearing-note enqueue gains
-  the one flag that makes its wording say the invoice was cleared, with a
-  two-line note on why; the call is the rule, and moving it out of the cancel
-  claim's follow-up would separate it from the sizing it sits beside.
-  #3638 (same epic) adds its share: the card-intent cancel marks the row FAILED
-  only when Stripe confirms the intent dead, through the shared predicate.
-  #3640 (same epic) adds its share: the paid-path claim takes the Payment row
-  first (`lockPaymentForRefundedTotal`) before its #1491 fold, so its row order
-  matches every other writer of the refunded total (the fold's increment and
-  the shared refundable-base helper make the rest of its lines).
-
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1794
+lines: 1838
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -38,7 +25,8 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   is declared here): the late-capture arm leaves out captures a
   treasurer-approval task owns and pins its refund to the rest, and the one
   home of the "cash retired the clearing note" finding moved before the
-  arm's gate, replacing this arm's own copy; the #1491 test is the shared
+  arm's gate, replacing this arm's own copy; `booking-cancel.ts` needs no
+  allowance any more, as #3639 shrank it; the #1491 test is the shared
   `isCancellationRefundDecisionRecorded`, which excludes #3638's marker too.
 
 file: src/lib/xero-operation-retry.ts

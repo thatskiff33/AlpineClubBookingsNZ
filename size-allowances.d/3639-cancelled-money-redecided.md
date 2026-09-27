@@ -6,23 +6,8 @@ cancellation already settled before they refund. The rule itself lives in
 `src/lib/cancelled-booking-late-capture.ts`; what stays in the handlers is one
 call each, its early return, and the provenance mark on the primary's own write.
 
-file: src/lib/stripe-webhook-service.ts
-lines: 1803
-reason: the question has to be asked inside BOTH late-capture handlers,
-  before their first write and their refund, and the provenance constant has
-  to be the one the primary handler writes; the rule, its reads and its audit
-  record already sit in their own modules, so what remains is two call sites
-  and their early returns.
-
-The owner's added requirement (26 Sep 2026): a club setting to refund a
-genuine late capture automatically or have a treasurer approve it. The rule,
-the raise, the completion route and its executor live in the new
-`src/lib/late-capture-refund-approval.ts`; the Xero correction the three refund
-paths share moved out of the webhook into `late-capture-refund-credit-note.ts`,
-which is why the webhook file shrank. What remains below are the seams.
-
 file: src/lib/payment-recovery.ts
-lines: 3257
+lines: 3224
 reason: the approval's refund debt has to be persisted through the module's
   private ledger-recovery writer, the superseded-intent hand-off has to ask the
   late-capture hold before it refunds a change payment on a cancelled booking
@@ -57,9 +42,3 @@ reason: one import, so the cancellation credit's description comes from the
 file: src/lib/xero-credit-notes.ts
 lines: 1098
 reason: one import, for the same shared description builder.
-
-file: src/lib/email-message-registry.ts
-lines: 2088
-reason: the held late-capture alert (delta D7) is a new admin template, and
-  every template is registered in this file's lists - its name, its required
-  tokens and its trigger summary - beside the hand-back task alert it mirrors.

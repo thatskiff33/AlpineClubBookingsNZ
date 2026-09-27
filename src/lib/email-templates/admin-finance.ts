@@ -566,31 +566,14 @@ export function adminManualRefundTaskTemplate(data: {
   `);
 }
 
-// ---- #3639: Admin Alert — late capture held for a treasurer's approval ----
-//
-// A card payment went through after its booking was cancelled, and the club
-// has a treasurer approve these refunds, so NOTHING was refunded. Sent once per
-// payment (claim-guarded); the durable task on the payments board is the
-// record, this is the nudge.
+// ---- #3639: Admin Alert — late capture held for a treasurer (once per payment; the task is the record) ----
 export function adminLateCaptureHeldTemplate(data: {
-  memberName: string;
-  checkIn: Date;
-  checkOut: Date;
-  amountCents: number;
-  bookingId: string;
-  reviewUrl: string;
-},
-  format: ClubFormat,
-): string {
+  memberName: string; checkIn: Date; checkOut: Date; amountCents: number; bookingId: string; reviewUrl: string;
+}, format: ClubFormat): string {
   return layout(`
     ${heading("Late Payment Held for Approval")}
-    ${alertBox(
-      "A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.",
-      "warning"
-    )}
-    ${paragraph(
-      "Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake."
-    )}
+    ${alertBox("A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.", "warning")}
+    ${paragraph("Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
