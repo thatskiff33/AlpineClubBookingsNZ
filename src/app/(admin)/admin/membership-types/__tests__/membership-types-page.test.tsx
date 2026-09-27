@@ -185,6 +185,51 @@ describe("AdminMembershipTypesPage", () => {
     );
   });
 
+  it("hides both Full archive controls while leaving ordinary built-ins archivable", async () => {
+    await renderPage();
+    expect(screen.getAllByRole("button", { name: "Archive" })).toHaveLength(1);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    const dialog = screen.getByRole("dialog", { name: "Edit Full" });
+    expect(within(dialog).queryByRole("button", { name: "Archive" })).toBeNull();
+    expect(within(dialog).getByLabelText("Active and assignable")).toHaveProperty("disabled", true);
+    expect(within(dialog).queryByRole("button", { name: "Restore expected booking behavior" })).toBeNull();
+    expect(within(dialog).getByText(/expected: Member rate/)).not.toBeNull();
+  });
+
+  it("offers an archived, changed Full type a repair and reactivation path", async () => {
+    const drifted = { ...membershipTypes[0], isActive: false, bookingBehavior: "NON_MEMBER_RATE" };
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/admin/membership-types") {
+        return jsonResponse({ membershipTypes: [drifted] });
+      }
+      if (url.startsWith("/api/admin/xero/contact-groups")) {
+        return jsonResponse({ groups: [] });
+      }
+      if (url === "/api/admin/membership-types/type-full" && init?.method === "PATCH") {
+        return jsonResponse({ membershipType: { ...drifted, ...JSON.parse(String(init.body)) } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    await renderPage();
+    expect(screen.getByRole("button", { name: "Reactivate" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit Full" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore expected booking behavior" }));
+    fireEvent.click(within(dialog).getByLabelText("Active and assignable"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/membership-types/type-full",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"bookingBehavior":"MEMBER_RATE"'),
+      }),
+    ));
+    expect(JSON.parse(String(fetchMock.mock.calls.find((call) =>
+      call[0] === "/api/admin/membership-types/type-full" && call[1]?.method === "PATCH",
+    )?.[1]?.body)).isActive).toBe(true);
+  });
+
   it("keeps dirty editor state when outside pointer dismissal is attempted", async () => {
     await renderPage();
 

@@ -204,6 +204,12 @@ async function gaps(): Promise<string[]> {
   return snapshot.membershipTypeRateGaps ?? [];
 }
 
+async function keyHolderWarnings(): Promise<string[]> {
+  const { getSetupDatabaseSnapshot } = await import("@/lib/setup-readiness-db");
+  const snapshot = await getSetupDatabaseSnapshot();
+  return snapshot.keyResolvedRateHolderWarnings ?? [];
+}
+
 const WINTER_2026 = {
   id: "season-1",
   name: "Winter 2026",
@@ -220,6 +226,23 @@ describe("setup readiness sees every rate-bearing type (#2933)", () => {
     db.state.clubTimeZone = "Pacific/Auckland";
     db.state.membershipTypeWheres = [];
     db.state.seasonWheres = [];
+  });
+
+  it("warns about an archived or changed key-resolved rate holder, but not an ordinary archived type", async () => {
+    db.state.membershipTypes = [
+      { ...FULL, isActive: false },
+      { ...NON_MEMBER, bookingBehavior: "MEMBER_RATE" },
+      { ...ASSOCIATE, isActive: false },
+    ];
+    const warnings = await keyHolderWarnings();
+    expect(warnings).toEqual([
+      "Full (FULL) is archived; Reactivate it.",
+      "Non-Member (NON_MEMBER) uses Member rate for bookings; restore Non-member rate.",
+    ]);
+  });
+
+  it("has no key-holder warning when both protected types are active and canonical", async () => {
+    expect(await keyHolderWarnings()).toEqual([]);
   });
 
   // A case that pins its own instant is left alone by the root re-freeze, so it

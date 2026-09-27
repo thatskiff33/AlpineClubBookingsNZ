@@ -15,6 +15,10 @@ import {
   formatMembershipTypeRateGap,
   selectTypesRequiringHutRates,
 } from "@/lib/membership-type-rate-coverage";
+import {
+  MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS,
+  canonicalKeyResolvedRateHolderBookingBehavior,
+} from "@/lib/membership-types";
 import { type SetupDatabaseSnapshot } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
@@ -329,6 +333,22 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     bookableAgeTiers:
       bookableAgeTiers.length > 0 ? bookableAgeTiers : BOOKABLE_AGE_TIER_VALUES,
   }).map(formatMembershipTypeRateGap);
+  const keyResolvedRateHolderWarnings = membershipTypesForRateGaps.flatMap(
+    (type) => {
+      const expected = canonicalKeyResolvedRateHolderBookingBehavior(type);
+      if (expected === null) return [];
+      const warnings: string[] = [];
+      if (!type.isActive) {
+        warnings.push(`${type.name} (${type.key}) is archived; Reactivate it.`);
+      }
+      if (type.bookingBehavior !== expected) {
+        warnings.push(
+          `${type.name} (${type.key}) uses ${MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS[type.bookingBehavior]} for bookings; restore ${MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS[expected]}.`,
+        );
+      }
+      return warnings;
+    },
+  );
 
   // Public {{hut-fees}} readiness (#2129): the embed renders one nightly-rate
   // column per publicly-listed active membership type that carries rate rows
@@ -526,6 +546,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
+    keyResolvedRateHolderWarnings,
     publicHutFeeSingleColumnSeasons,
     basedOnAgeTierTypesWithoutSubscribingTier,
     defaultLodgeCapacity,

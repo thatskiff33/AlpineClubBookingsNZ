@@ -2552,11 +2552,17 @@ nominator replacement, and email retry behavior.
 ```text
 built-in type seeded -> admin reviews policy -> type edited/reordered
 custom type created -> active -> archived -> reactivated
+built-in FULL or NON_MEMBER -> archive and booking-rule changes refused -> existing archive may be reactivated, existing wrong rule restored
 member role backfill -> current-season assignment created if missing
 type assignment preview -> apply-from date/reason saved -> audited assignment update
 booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
 subscription display/gate -> resolve season assignment/default -> required or not required
 ```
+
+The `FULL` and `NON_MEMBER` built-ins are also resolved directly by key, so they
+remain in booking use even if an old row was archived. Admin editing refuses
+archiving them and changing their booking behavior away from the built-in value;
+reactivation and restoration to that value remain available (`INV-LIFE-093`).
 
 Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
 stops owners or linked member guests with a structured policy error.
