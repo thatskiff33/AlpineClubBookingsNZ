@@ -201,7 +201,7 @@ spot-verified against live code during this review.)*
 
 ## 6. Needs a human decision
 
-1. **Node engine pin `>=24 <25`** (`package.json:15`). Biggest clone-to-run tripwire for
+1. **Node engine pin `>=24 <25`** (`package.json` `engines.node`). Biggest clone-to-run tripwire for
    contributors on Node 20/22 LTS. Widen the range (and test on 22), or keep the pin and
    surface a prominent `nvm use` gate in the README quickstart. Support-surface trade-off.
 2. **Connection-pool sizing target** (F17 lane). Recommended web slots `connection_limit=10`,

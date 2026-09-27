@@ -27,7 +27,7 @@ import {
  * schema, reading every model with it — are exercised by RUNNING the script
  * against a throwaway container, and the evidence for that lives in the pull
  * request rather than here. Standing up a database in the unit suite would make
- * every developer's `npm test` depend on Docker, which this repository
+ * every developer's `pnpm test` depend on Docker, which this repository
  * deliberately does not do (`data-migration-verification.realdb.test.ts` gates
  * its real-database half on an explicit environment variable for the same
  * reason).

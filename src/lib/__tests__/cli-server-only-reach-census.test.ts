@@ -51,7 +51,7 @@ import { describe, expect, it } from "vitest";
  * an operator copies from, and (since #2850) the scripts' own sources, where
  * the `--help` text and the shebang publish a command too. A root that reaches
  * `server-only` must ask for the `react-server` condition at EVERY one of
- * those sites, or be published as an `npm run` script that carries it. The
+ * those sites, or be published as a `pnpm run` script that carries it. The
  * repository
  * publishes one spelling, `--conditions=react-server`, because one form is
  * greppable — but the check accepts Node's space form and comma lists too,

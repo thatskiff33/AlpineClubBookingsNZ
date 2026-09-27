@@ -77,7 +77,7 @@ import { readEnvironmentClubFormatSeed } from "@/lib/club-format-env";
 // The environment-role declaration and its resolver (#3034, epic #2986). Both
 // carry the marker since #3204, and both stay fixtures here for the same reason
 // as above: `setup-readiness-db.ts` reaches the resolver from the
-// `npm run setup:check` entrypoint, which since #2850 carries the condition, so
+// `pnpm run setup:check` entrypoint, which since #2850 carries the condition, so
 // the marker costs that command nothing. The declaration module reads
 // `process.env.APP_ENVIRONMENT_ROLE`, which is deliberately NOT `NEXT_PUBLIC_*`
 // and therefore inlines as `undefined` in a browser. A client import would read

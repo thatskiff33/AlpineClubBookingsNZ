@@ -38,7 +38,7 @@ describe("repository agent workflow contract", () => {
     expect(agents).toContain("checkpoint outside the worktree");
     expect(agents).toContain("PR CI owns the full unit suite in four test shards");
     expect(agents).toMatch(/Do not\s+delay a draft PR/);
-    expect(agents).not.toContain("Run the **full** `pnpm test` before opening the PR");
+    expect(agents).not.toMatch(/Run the \*\*full\*\* `p?npm test` before opening the PR/);
     expect(agents).toContain("Keep a private 25% weekly reserve");
     expect(agents).toContain("Gate the blueprint by risk");
     expect(agents).toContain("Validate coherent batches");
