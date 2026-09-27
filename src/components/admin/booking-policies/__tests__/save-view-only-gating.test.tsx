@@ -550,6 +550,7 @@ describe("view-only live region is mounted before the loading early-return (#214
         showPricingToNonMembers: false,
         quoteResponseTtlDays: 14,
         quoteReminderLeadDays: 3,
+        assignSchoolTeachersAsHutLeaders: false,
         attendeeConfirmationLeadDays: 14,
         attendeeConfirmationReminderDays: 3,
       },
@@ -866,6 +867,7 @@ describe("PublicBookingRequestsSection Save gating (#2142)", () => {
     showPricingToNonMembers: false,
     quoteResponseTtlDays: 14,
     quoteReminderLeadDays: 3,
+    assignSchoolTeachersAsHutLeaders: false,
     attendeeConfirmationLeadDays: 14,
     attendeeConfirmationReminderDays: 3,
   };
@@ -978,6 +980,7 @@ describe("PublicBookingRequestsSection indicative pricing stages behind Save (#2
     showPricingToNonMembers: false,
     quoteResponseTtlDays: 14,
     quoteReminderLeadDays: 3,
+    assignSchoolTeachersAsHutLeaders: false,
     attendeeConfirmationLeadDays: 14,
     attendeeConfirmationReminderDays: 3,
   };
@@ -1132,6 +1135,33 @@ describe("PublicBookingRequestsSection indicative pricing stages behind Save (#2
       screen.queryByRole("button", { name: "Save indicative pricing" }),
     ).toBeNull();
     expect(pricingCheckbox().checked).toBe(true);
+  });
+
+  it("stages the school teacher policy and merges it only on Save", async () => {
+    const fetchMock = stubSettings();
+    render(<PublicBookingRequestsSection />);
+    await loadSection();
+
+    const checkbox = screen.getByLabelText(
+      "Assign school teachers as hut leaders",
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Edit school teacher hut-leader assignments",
+    }));
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    expect(writeCalls(fetchMock)).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Save school teacher policy",
+    }));
+    await waitFor(() => expect(writeCalls(fetchMock)).toHaveLength(1));
+    expect(JSON.parse(String(writeCalls(fetchMock)[0][1]?.body))).toMatchObject({
+      assignSchoolTeachersAsHutLeaders: true,
+    });
   });
 
   // #2143: the write logs `booking_request.settings_updated` unconditionally, so
