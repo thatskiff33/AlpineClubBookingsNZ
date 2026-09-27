@@ -61,9 +61,10 @@ import { captureHostTimeZone, withTimeZone } from "./helpers/timezone";
  * `process.env.TZ` (which is what `withTimeZone` does, and what Node re-reads
  * its cached zone from on ASSIGNMENT — never on `delete`, #2485), and
  * `vi.resetModules()` plus a dynamic import for anything frozen at module load.
- * The second matters because `APP_TIME_ZONE` is read once when
- * `src/config/operational.ts` is first evaluated: `withTimeZone` alone moves the
- * host and leaves that constant where it was, so a suite using only the first
+ * The second matters because anything that reads the environment's zone at
+ * module load (the config constant #3567 deleted was one; `ENVIRONMENT_CLUB_ZONE`
+ * models it) is frozen on first evaluation: `withTimeZone` alone moves the
+ * host and leaves such a constant where it was, so a suite using only the first
  * lever cannot tell the two apart. Measured on this epic: the same wrong pin
  * killed 1 test in the file that used both mechanisms and 0 in the file that
  * used only the first.
@@ -81,7 +82,7 @@ const INSTANT = requireInstant("2026-08-15T10:30:00.000Z");
 
 /**
  * The club's configured zone, held fixed across every row. Deliberately NOT
- * `Pacific/Auckland`: that is what `APP_TIME_ZONE` falls back to, so a club on
+ * `Pacific/Auckland`: that is what the environment zone falls back to, so a club on
  * it could not be told apart from the environment's claim.
  */
 const CLUB_ZONE: ClubTimeZone = requireClubTimeZone("America/Denver");
@@ -204,7 +205,7 @@ describe("the matrix premise: each row's host really answers differently", () =>
     );
   });
 
-  it("moves APP_TIME_ZONE itself when the module graph is re-imported", async () => {
+  it("moves a module-load environment zone when the module graph is re-imported", async () => {
     // The second lever, and the premise for the second matrix below. Without
     // this assertion that matrix would be six identical runs of one
     // configuration, which is precisely the shape that has passed while
@@ -213,8 +214,10 @@ describe("the matrix premise: each row's host really answers differently", () =>
     for (const zone of HOST_ZONES) {
       vi.resetModules();
       process.env.TZ = zone;
-      const { APP_TIME_ZONE } = await import("@/config/operational");
-      seen.set(zone, APP_TIME_ZONE);
+      const { ENVIRONMENT_CLUB_ZONE } = await import(
+        "@/lib/__tests__/helpers/environment-club-zone"
+      );
+      seen.set(zone, ENVIRONMENT_CLUB_ZONE);
     }
     hostTimeZone.restore();
 
@@ -243,9 +246,10 @@ describe("club-facing answers do not move when the host does", () => {
     }
   });
 
-  it("is identical when APP_TIME_ZONE moves with the host", async () => {
+  it("is identical when the environment zone moves with the host", async () => {
     // The stronger row: the whole module graph is re-evaluated under each zone,
-    // so `APP_TIME_ZONE` and every module-load `Intl` constant move too. This is
+    // so any module-load environment read and every module-load `Intl` constant
+    // move too. This is
     // what catches a formatter pinned at import, which `withTimeZone` alone
     // cannot reach.
     const rows: Array<{ zone: string; answers: unknown }> = [];
@@ -299,7 +303,7 @@ describe("club-facing answers do not move when the host does", () => {
     for (const row of rest) {
       expect(
         row.answers,
-        `the club's answers with APP_TIME_ZONE at ${row.zone} differ from ${first.zone}`,
+        `the club's answers with the environment zone at ${row.zone} differ from ${first.zone}`,
       ).toEqual(first.answers);
     }
   });

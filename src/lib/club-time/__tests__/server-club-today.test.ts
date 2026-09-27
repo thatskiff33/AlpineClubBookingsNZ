@@ -12,15 +12,15 @@
  * - the ENCODING could stop being UTC midnight, which `INV-DATE-026`'s corollary
  *   says silently becomes the previous day once the adapter narrows it;
  * - the ZONE could come from somewhere other than `ClubTimeSettings` — the host,
- *   or `APP_TIME_ZONE` — which is `INV-CONFIG-002`.
+ *   or the environment's zone (`ENVIRONMENT_CLUB_ZONE`) — which is `INV-CONFIG-002`.
  *
  * The second is the one this repository keeps failing to catch, because the
- * shared test harness pins `CLUB_TIME_TEST_ZONE` equal to `APP_TIME_ZONE`'s
- * fallback and 46 of 49 client suites measured on #2870 group D therefore cannot
+ * shared test harness pins `CLUB_TIME_TEST_ZONE` equal to the environment
+ * zone's fallback and 46 of 49 client suites measured on #2870 group D therefore cannot
  * tell the persisted zone from the environment. So the persisted zone here is
  * mocked to **`Pacific/Pago_Pago` (UTC-11)**, which on the frozen clock lands on
- * a DIFFERENT CALENDAR DAY from both `Pacific/Auckland` (`APP_TIME_ZONE`'s
- * fallback) and `UTC` (what the CI runner's host resolves). A helper that read
+ * a DIFFERENT CALENDAR DAY from both `Pacific/Auckland` (the environment
+ * zone's fallback) and `UTC` (what the CI runner's host resolves). A helper that read
  * either of those instead of the setting fails here rather than passing quietly.
  *
  * The frozen clock is `2026-07-01T00:00:00.000Z`, so: Auckland reads 1 July
@@ -30,7 +30,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 
 /** UTC-11. Behind both the club default and the runner's host. */
@@ -45,22 +45,22 @@ vi.mock("@/lib/club-time-zone-settings", () => ({
 const { clubTime, clubTodayDateOnlyInstant } = await import("../server");
 
 describe("the premise this suite rests on", () => {
-  it("pins a persisted zone that is neither APP_TIME_ZONE nor the host's", () => {
+  it("pins a persisted zone that is neither the environment's nor the host's", () => {
     /*
-      ASSERTED, NOT ASSUMED. If `APP_TIME_ZONE` were overridden to Pago Pago — or
+      ASSERTED, NOT ASSUMED. If the environment's zone were overridden to Pago Pago — or
       to anything sharing its calendar day at the frozen instant — every
       assertion below would pass while proving nothing about where the zone came
       from. That failure mode is exactly what #2870's group D measured across 46
       suites, so it is refused out loud rather than left to chance.
     */
     expect(
-      APP_TIME_ZONE,
-      "APP_TIME_ZONE is being overridden (TZ / NEXT_PUBLIC_TZ). This suite proves " +
+      ENVIRONMENT_CLUB_ZONE,
+      "The environment's zone is being overridden (TZ / NEXT_PUBLIC_TZ). This suite proves " +
         "the club's PERSISTED zone decides the day, which needs the environment " +
         "zone to differ from the persisted one. This is an environment problem, " +
         "not the defect these tests describe.",
     ).toBe("Pacific/Auckland");
-    expect(PERSISTED_ZONE).not.toBe(APP_TIME_ZONE);
+    expect(PERSISTED_ZONE).not.toBe(ENVIRONMENT_CLUB_ZONE);
   });
 
   it("the three zones really disagree about what day it is", () => {
@@ -83,7 +83,7 @@ describe("clubTodayDateOnlyInstant", () => {
     getClubTimeZone.mockResolvedValue(PERSISTED_ZONE);
   });
 
-  it("encodes the CLUB's day, not the host's and not APP_TIME_ZONE's", async () => {
+  it("encodes the CLUB's day, not the host's and not the environment's", async () => {
     // The whole point: 30 June, from the persisted setting. Auckland and UTC both
     // say 1 July at this instant, so either would be visible here.
     await expect(clubTodayDateOnlyInstant()).resolves.toEqual(

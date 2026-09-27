@@ -94,8 +94,8 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
     why: "number formatting — drops only toLocaleString",
   },
   {
-    file: "src/lib/ai-diagnostics-usage.ts",
-    why: "an ENVIRONMENT_ZONE_ADAPTER_FILES member (the induction formatter held this row until #3566 moved it onto the club's binding and off the list) — the one narrowed block that has demonstrably hidden a defect. It lifts the environment-zone READ, and a lift written for a read lifted a `= APP_TIME_ZONE` DEFAULT with it for months, on a different file that was on the same list until #3126 deleted the default. Nothing else about THIS file is special, so any guard behaving differently here than at `src/lib/x.ts` is behaving differently because of that block — which is what makes it worth a roster row rather than a string comparison",
+    file: "src/lib/club-time-zone-env.ts",
+    why: "the one ENVIRONMENT_ZONE_ADAPTER_FILES member left (ai-diagnostics-usage.ts held this row until #3567 moved its metering month onto the club's stored zone and off the list, as the induction formatter did before it in #3566) — the one narrowed block that has demonstrably hidden a defect. It lifts the environment-zone READ, and a lift written for a read lifted an environment-zone DEFAULT with it for months, on a different file that was on the same list until #3126 deleted the default. Nothing else about THIS file is special, so any guard behaving differently here than at `src/lib/x.ts` is behaving differently because of that block — which is what makes it worth a roster row rather than a string comparison",
   },
   // --- the money-domain modules --------------------------------------------
   { file: "src/lib/xero-x.ts", why: "a Xero domain module" },

@@ -28,9 +28,11 @@
  * ## Why no existing suite caught it
  *
  * Every other suite runs with the environment zone resolving to
- * `Pacific/Auckland`, where the projection is the identity. This file pins the
- * environment zone behind Greenwich with a module mock, and moves the HOST
- * separately with `withTimeZone` / `withTimeZoneAsync` - separately, because a
+ * `Pacific/Auckland`, where the projection is the identity. This file pinned the
+ * environment zone behind Greenwich with a module mock (gone since #3567 deleted
+ * that constant; nothing reads the environment's zone any more, so the premise
+ * now measures the old projection through `America/Denver` directly), and moves
+ * the HOST separately with `withTimeZone` / `withTimeZoneAsync` - separately, because a
  * test moving both together could not tell a projection through the configured
  * zone from one through the host's, and one instant can move both axes.
  *
@@ -39,15 +41,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `APP_TIME_ZONE` is frozen at module load, so the environment zone has to move
-// above the imports. This moves it ALONE, leaving the host where the runner put
-// it.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
+/** The zone behind Greenwich the removed projection is measured under. */
+const PROJECTION_ZONE = "America/Denver";
 
 const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
@@ -68,7 +63,6 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { AgeTier } from "@prisma/client";
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   checkCapacityForGuestRanges,
   type NightAvailability,
@@ -142,12 +136,11 @@ beforeEach(() => {
   mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 10 });
 });
 
-describe("#3107 premise: the environment zone really is behind Greenwich", () => {
-  it("pins it, so nothing below measures the identity", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
+describe("#3107 premise: the projection zone really is behind Greenwich", () => {
+  it("moves the day, so nothing below measures the identity", () => {
     // The projection the fix removed. While `dateOnlyKey` used this, every key
     // it produced was this day rather than the day the column holds.
-    expect(formatDateOnlyForTimeZone(day("2026-07-04"), APP_TIME_ZONE)).toBe(
+    expect(formatDateOnlyForTimeZone(day("2026-07-04"), PROJECTION_ZONE)).toBe(
       "2026-07-03",
     );
   });

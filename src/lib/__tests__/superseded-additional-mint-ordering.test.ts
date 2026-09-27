@@ -54,6 +54,7 @@ vi.mock("@/lib/payment-recovery", () => ({
   processPaymentRecoveryOperations: mocks.processRecovery,
 }));
 
+import { resolveClubFormat } from "@/lib/club-format";
 import { sizeAdditionalAsk } from "@/lib/additional-payment-ask";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -177,5 +178,33 @@ describe("createModificationAdditionalPaymentIntent ordering (#3340)", () => {
       "queueSuperseded",
     ]);
     expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refused increase keeps its debt (#3567 re-review)", () => {
+  it("with a stored JPY club: mints nothing, looks up no customer, and writes the durable recovery row", async () => {
+    const stored = resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null);
+    const result = await createModificationAdditionalPaymentIntent({
+      format: stored,
+      bookingId: "booking_1",
+      result: CONTEXT,
+      reason: "guest_add_price_increase",
+      idempotencyKey: "mod_guest_booking_1_mod_1",
+      failureMessage: "boom",
+    });
+
+    expect(result.additionalPaymentIntentId).toBeUndefined();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    // The debt survives: the recovery runner leaves it unclaimed until the
+    // currency is fixed, then mints it under the same keys.
+    expect(mocks.enqueueRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        amountCents: 14000,
+        stripeIdempotencyKey: "mod_guest_booking_1_mod_1",
+      }),
+    );
   });
 });

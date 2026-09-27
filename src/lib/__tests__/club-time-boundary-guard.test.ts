@@ -108,13 +108,15 @@ export const zone = APP_TIME_ZONE;
 `;
 
 /**
- * Its control: the OTHER exports of that module are ordinary configuration and
- * must stay importable, or the arm is banning a module instead of banning the
- * environment's claim about civil time.
+ * Its control: an ordinary configuration import must stay clean under THIS arm,
+ * or it is banning configuration instead of the environment's claim about civil
+ * time. It used to import the other two exports of `@/config/operational`;
+ * #3567 deleted that module (a separate arm now refuses any import of it), so
+ * the control names a configuration module that still exists.
  */
 const ENVIRONMENT_ZONE_IMPORT_CONTROL = `
-import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
-export const money = APP_CURRENCY + APP_LOCALE;
+import { MODULE_KEYS } from "@/config/modules";
+export const keys = MODULE_KEYS;
 `;
 
 const HOST_CLOCK_PREFIX = "INV-DATE-014 / INV-CONFIG-002";
@@ -307,7 +309,7 @@ describe("the environment-zone guard is present at every production path", () =>
           entry.file,
           ENVIRONMENT_ZONE_PREFIX,
         ),
-        `${entry.file} rejected APP_CURRENCY/APP_LOCALE, so this arm bans a module rather than banning the environment's claim about civil time`,
+        `${entry.file} rejected an ordinary configuration import, so this arm bans configuration rather than the environment's claim about civil time`,
       ).toEqual([]);
     }
   }, 120_000);
@@ -409,22 +411,24 @@ describe("the environment-zone allowlist is a ratchet", () => {
       - FIVE until #3566 MIGRATED `src/lib/induction-display.ts`: its
         module-level formatter took the caller's `BoundClubTime` instead, so
         the zone (and the locale) arrive through `ClubTimeProvider`.
-      - FOUR today. Of the five that have left, THREE migrated
-        (`member-guest-consent-labels.ts`, `member-guest-delegate-page.ts`,
-        `induction-display.ts`), one
-        was DELETED outright (`nzst-date.ts`) and one left by having its DEFAULT
-        deleted (`member-merge-field-kinds.ts`, #3126) while still naming the
-        zone in prose. Three routes off, not one — and migration is the intended
-        one. An earlier version of this note said "three of the four MIGRATED",
-        which counted the default deletion as a migration two lines after saying
-        it was not.
+      - FOUR until #3567 took three at once: it DELETED `src/config/operational.ts`,
+        the definition of `APP_TIME_ZONE` itself, and MIGRATED the two AI
+        metering month keys (`ai-assistant-usage.ts`, `ai-diagnostics-usage.ts`)
+        onto the club's stored zone, resolved before any lock.
+      - ONE today: `club-time-zone-env.ts`, the seed reader, which is structural.
+        Of the eight that have left, FIVE migrated (`member-guest-consent-labels.ts`,
+        `member-guest-delegate-page.ts`, `induction-display.ts` and the two AI
+        metering modules), two were DELETED outright (`nzst-date.ts`,
+        `operational.ts`) and one left by having its DEFAULT deleted
+        (`member-merge-field-kinds.ts`, #3126) while still naming the zone in
+        prose.
 
       THIS NUMBER IS TIGHT AND DELIBERATELY SO. It equals the live count; there
       is no headroom, no rounding and no allowance for work in flight. A ratchet
       with slack in it is not a ratchet — the slack is simply room to regrow in
       without anything failing.
     */
-    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(4);
+    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(1);
   });
 
   it("excuses exactly the files it gives reasons for", () => {

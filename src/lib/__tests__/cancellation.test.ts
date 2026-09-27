@@ -1,16 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
 /*
-  THE PINNED ZONE IS THE DISCRIMINATOR, AND IT IS `Atlantic/Azores` (#3123).
+  THE PROJECTION ZONE IS THE DISCRIMINATOR, AND IT IS `Atlantic/Azores` (#3123).
 
-  `daysUntilDate` reads no timezone at all any more, so nothing in this file can
-  be moved by this pin while the function is correct — which is the point. The
+  `daysUntilDate` reads no timezone at all any more — which is the point. The
   regression it guards is the PROJECTION it used to perform: both operands went
   through `normalizeDateOnlyForTimeZone`, so a stored `@db.Date` night was pushed
-  into `APP_TIME_ZONE` before being counted. Under this repo's own fallback zone,
-  `Pacific/Auckland`, that projection is the identity for a UTC-midnight value, so
-  reintroducing it would not move a single number here. Pinned to a zone BEHIND
-  Greenwich it does.
+  into the environment zone before being counted. Under this repo's own fallback
+  zone, `Pacific/Auckland`, that projection is the identity for a UTC-midnight
+  value, so it would not move a single number here. Through a zone BEHIND
+  Greenwich it does. (This zone used to be pinned as the environment zone via a
+  `@/config/operational` mock; #3567 deleted that module and nothing reads the
+  environment's zone any more, so it is now just the zone the oracle projects
+  through.)
 
   `Atlantic/Azores` rather than any other such zone because it is the only IANA
   zone that changes the SIGN of its offset across DST — UTC-1 in standard time,
@@ -20,18 +22,12 @@ import { describe, it, expect, vi } from "vitest";
   do not, which is what lets the DST case below compare two ranges of equal
   length and see the projection appear in one of them and not the other.
 */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Atlantic/Azores",
-  APP_LOCALE: "en-NZ",
-}));
+const PROJECTION_ZONE = "Atlantic/Azores";
 
 // getRefundTier / calculateRefundAmount are re-implemented below to avoid
 // importing "../cancellation", which pulls in prisma. daysUntilDate is imported
 // straight from the prisma-free policy module so these tests exercise the real
 // lodge-day boundary logic (issue #1166) rather than a stale copy.
-import { APP_TIME_ZONE } from "@/config/operational";
 import { daysUntilDate } from "../policies/cancellation";
 import { requireCalendarDate } from "@/lib/club-time";
 import type { CancellationRule } from "../cancellation";
@@ -41,7 +37,7 @@ const storedNight = (day: string) => new Date(`${day}T00:00:00.000Z`);
 
 /** What the removed projection would have made of that stored night. */
 const projected = (day: string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: APP_TIME_ZONE }).format(
+  new Intl.DateTimeFormat("en-CA", { timeZone: PROJECTION_ZONE }).format(
     storedNight(day),
   );
 
@@ -306,7 +302,7 @@ describe("calculateRefundAmount", () => {
 //
 // AND THE SECOND OPERAND IS NOW A CALENDAR DAY, NOT AN INSTANT. Every case
 // below used to hand in a `Date` and rely on this function projecting it through
-// `APP_TIME_ZONE` to reach a New Zealand day — which is exactly the environment
+// the environment zone to reach a New Zealand day — which is exactly the environment
 // authority #3123 removes. The club's day is resolved by the caller now and
 // arrives as a `CalendarDate`, so these cases STATE the day instead of encoding
 // it as an instant plus an assumed zone.
@@ -407,7 +403,7 @@ describe("daysUntilDate", () => {
 // WHERE HALF OF THIS BLOCK'S CLAIM WENT (#3123). It used to prove two things at
 // once: that the boundary is a whole-day count, and that the day either side of
 // it is derived in New Zealand's zone. The second half was only ever true
-// because `APP_TIME_ZONE` happened to be `Pacific/Auckland` — the environment
+// because the environment zone happened to be `Pacific/Auckland` — the environment
 // deciding a club-facing answer, which is the defect this issue removes.
 // Deriving a club calendar day from an instant is now `clubCalendarDateOf` /
 // `clubToday`, tested against the PERSISTED zone in
@@ -417,7 +413,7 @@ describe("daysUntilDate", () => {
 describe("daysUntilDate — whole-lodge-day boundary (issue #1166)", () => {
   it("the boundary day keeps the 7-day tier, summer or winter", () => {
     // 13 Jan -> 20 Jan and 13 Jul -> 20 Jul are both 7 nights, and "summer or
-    // winter" is load-bearing under the pin above: January is Azores STANDARD
+    // winter" is load-bearing under the projection zone above: January is Azores STANDARD
     // time, where the removed projection moves the stored night back a day and
     // this count becomes 6 — a whole refund tier — while July is Azores summer,
     // where it moves nothing. One fixture proves the arithmetic and the pair
@@ -485,9 +481,8 @@ describe("daysUntilDate — whole-lodge-day boundary (issue #1166)", () => {
   });
 });
 
-describe("PREMISE: the pinned zone's projection is not a uniform shift", () => {
+describe("PREMISE: the projection zone's projection is not a uniform shift", () => {
   it("moves a stored night on one side of a DST change and not the other", () => {
-    expect(APP_TIME_ZONE).toBe("Atlantic/Azores");
     // Asserted from raw `Intl`, never from a helper, so the premise cannot drift
     // with the code under test. Standard time is UTC-1: a `@db.Date` UTC
     // midnight lands on the previous evening.
