@@ -1,7 +1,7 @@
 # File-size allowances for #3672 — a late joiner pays for themselves
 
 Once an organiser-pays group's settlement is paid, a joiner the paid bill does
-not cover pays for their own place (`INV-PAY-XXX`). The rule, the release of
+not cover pays for their own place (`INV-PAY-108`). The rule, the release of
 left-behind joiners and their notice live in their own module
 (`group-late-joiner.ts`), and the organiser's paid summary moved to
 `pending-group-invoice.tsx`. What remains is the call at each site that decides
