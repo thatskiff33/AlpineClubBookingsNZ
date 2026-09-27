@@ -495,6 +495,23 @@ export function readQueuedOutboxPayload(
   };
 }
 
+/**
+ * WHAT A QUEUED SUPPLEMENTARY INVOICE BILLS: `priceDiffCents + changeFeeCents`,
+ * the sum `createXeroSupplementaryInvoice` sends, read through the typed parser
+ * above (#3641 review round). `null` when the payload is not a readable
+ * supplementary invoice. The one reading, so the restate's "never lower" and the
+ * late capture's "does the capture cover it" cannot coerce the same row two ways.
+ */
+export function supplementaryInvoiceBilledCents(
+  requestPayload: unknown
+): number | null {
+  const payload = readQueuedOutboxPayload(requestPayload);
+  if (!payload || payload.queueType !== XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
+    return null;
+  }
+  return payload.priceDiffCents + payload.changeFeeCents;
+}
+
 export function getQueuedOutboxExpectedOperation(
   queueType: string | null
 ): QueuedOutboxExpectedOperation {

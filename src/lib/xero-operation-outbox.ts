@@ -65,6 +65,7 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  supplementaryInvoiceBilledCents,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
@@ -1136,7 +1137,7 @@ const RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES = [
  * restatable set by `RUNNING`: an operation the outbox is executing right now
  * cannot have its amount changed, but it is very much still an invoice.
  */
-const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
+export const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
   "PENDING",
   "RUNNING",
   "WAITING_PAYMENT",
@@ -1207,6 +1208,21 @@ const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
  * rely on.
  */
 const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
+
+/**
+ * TAKE THE PER-ANCHOR SUPPLEMENTARY-INVOICE LOCK, the one spelling of it
+ * (#3641 review round). The anchor is the operation's `localId`: the
+ * BookingModification id, or the review task id for a second ask. The enqueue
+ * below and the late-capture re-queue
+ * (`xero-supplementary-invoice-late-capture.ts`) both call this, so they cannot
+ * drift onto two different keys and stop contending without anyone noticing.
+ */
+export async function lockSupplementaryInvoiceAnchor(
+  tx: Prisma.TransactionClient,
+  anchorId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE}), hashtext(${anchorId}))`;
+}
 
 /**
  * DOES THIS EDIT'S ACCOUNTING ASK NOW BILL WHAT THE CALLER ASKED FOR? (#3170 fix
@@ -1518,7 +1534,7 @@ async function enqueueSupplementaryInvoiceForAnchor(
    * stale, smaller total arriving second changes nothing.
    */
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE}), hashtext(${localId}))`;
+    await lockSupplementaryInvoiceAnchor(tx, localId);
 
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {
@@ -1686,14 +1702,24 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
     select: { id: true },
   });
 
-  if (waitingOperations.length === 0) {
-    return {
-      released: 0,
-      queueOperationIds: [] as string[],
-    };
-  }
+  return releaseWaitingSupplementaryInvoiceOperations(
+    waitingOperations.map((operation) => operation.id),
+  );
+}
 
-  const queueOperationIds = waitingOperations.map((operation) => operation.id);
+/**
+ * THE RELEASE WRITE: move these waiting invoices to PENDING for the outbox to
+ * send. Guarded on WAITING_PAYMENT, so a row the reaper retired, or another
+ * caller released, in the meantime matches nothing. The one home for it: the
+ * repair tool's release above and the late-capture release (#3641) both end
+ * here.
+ */
+export async function releaseWaitingSupplementaryInvoiceOperations(
+  queueOperationIds: string[],
+): Promise<{ released: number; queueOperationIds: string[] }> {
+  if (queueOperationIds.length === 0) {
+    return { released: 0, queueOperationIds: [] };
+  }
   const updateResult = await prisma.xeroSyncOperation.updateMany({
     where: {
       id: {
@@ -1869,20 +1895,14 @@ export async function restatePendingSupplementaryInvoiceAmount({
   let restated = 0;
   let alreadyCovering = 0;
   for (const operation of operations) {
-    const payload =
-      operation.requestPayload &&
-      typeof operation.requestPayload === "object" &&
-      !Array.isArray(operation.requestPayload)
-        ? (operation.requestPayload as Record<string, unknown>)
-        : null;
+    const payload = supplementaryInvoicePayload(operation.requestPayload);
     if (!payload) continue;
-    // What the queued invoice would BILL, which is the sum of its two signed
-    // components (`createXeroSupplementaryInvoice` bills `priceDiffCents +
-    // changeFeeCents`). Comparing the net rather than one component is what makes
-    // "never lower" mean what it says on a queued row carrying a change fee.
+    // What the queued invoice would BILL (`supplementaryInvoiceBilledCents`, the
+    // one reading of it). Comparing the net rather than one component is what
+    // makes "never lower" mean what it says on a queued row carrying a change
+    // fee. An unreadable row bills nothing, so it is raised to this total.
     const queuedNetCents =
-      (typeof payload.priceDiffCents === "number" ? payload.priceDiffCents : 0) +
-      (typeof payload.changeFeeCents === "number" ? payload.changeFeeCents : 0);
+      supplementaryInvoiceBilledCents(operation.requestPayload) ?? 0;
     if (queuedNetCents >= requestedNetCents) {
       // Already asking for at least this much: an exact replay, or a stale,
       // smaller total arriving after a larger one. Neither may write.
@@ -2029,128 +2049,6 @@ export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations
   }
 
   return { attached };
-}
-
-const STALE_WAITING_PAYMENT_AGE_DAYS = 14;
-
-// F19 (#1887): a FAILED Stripe payment does not reap its WAITING_PAYMENT Xero
-// op immediately. A failed PaymentIntent can be retried and SUCCEED on the same
-// intent id, so cancelling the moment the transaction flips FAILED races that
-// retry — the member's card is captured but the Xero invoice op is gone. Only
-// reap a FAILED transaction that has stayed FAILED past this grace window, by
-// which point a retry-success is no longer realistic (Stripe intents do not
-// stay retriable this long). The 14-day createdAt sweep is the separate,
-// intent-agnostic backstop for ops whose intent never resolved at all.
-const FAILED_TRANSACTION_REAP_GRACE_HOURS = 24;
-
-export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {
-  /** Override the staleness threshold in days. Defaults to 14. */
-  ageInDays?: number;
-  /**
-   * Override the FAILED-transaction grace window in hours. Defaults to 24. A
-   * FAILED Stripe transaction only reaps its WAITING_PAYMENT op once it has been
-   * FAILED for at least this long (F19, #1887).
-   */
-  failedTransactionGraceHours?: number;
-}): Promise<{ reaped: number; queueOperationIds: string[] }> {
-  const ageInDays =
-    options?.ageInDays ?? STALE_WAITING_PAYMENT_AGE_DAYS;
-  const ageThreshold = new Date(
-    Date.now() - ageInDays * 24 * 60 * 60 * 1000,
-  );
-  const failedGraceHours =
-    options?.failedTransactionGraceHours ?? FAILED_TRANSACTION_REAP_GRACE_HOURS;
-  const failedGraceThreshold = new Date(
-    Date.now() - failedGraceHours * 60 * 60 * 1000,
-  );
-
-  const waitingOperations = await prisma.xeroSyncOperation.findMany({
-    where: {
-      status: "WAITING_PAYMENT",
-      direction: "OUTBOUND",
-    },
-    select: {
-      id: true,
-      createdAt: true,
-      requestPayload: true,
-    },
-  });
-
-  if (waitingOperations.length === 0) {
-    return { reaped: 0, queueOperationIds: [] };
-  }
-
-  const reapableIds: string[] = [];
-  for (const operation of waitingOperations) {
-    if (operation.createdAt <= ageThreshold) {
-      reapableIds.push(operation.id);
-      continue;
-    }
-
-    const payload = operation.requestPayload as
-      | { paymentIntentId?: string | null }
-      | null;
-    const paymentIntentId = payload?.paymentIntentId ?? null;
-    if (!paymentIntentId) continue;
-
-    // F19 (#1887): require the transaction to have been FAILED, by its
-    // `updatedAt`, since before the grace window, so a not-yet-retried failure
-    // cannot be cancelled out from under a same-intent retry about to succeed. A
-    // retry that already succeeded flips this same row to SUCCEEDED, so the
-    // status filter alone excludes it; the grace only guards the narrow
-    // FAILED→about-to-SUCCEED race.
-    //
-    // Caveat (not "stable in the terminal state"): a redelivered
-    // payment_intent.payment_failed re-runs markPaymentIntentTransactionFailed,
-    // which writes status=FAILED unconditionally, so Prisma's @updatedAt bumps
-    // and the 24h grace RESTARTS on each redelivered failure. The effect is
-    // benign — it can only DELAY the reap, never reap early — and the
-    // intent-agnostic 14-day createdAt sweep is the hard backstop that bounds it.
-    // If exact grace semantics are ever needed, anchor on a dedicated
-    // last-failure timestamp rather than @updatedAt.
-    const failedTransaction = await prisma.paymentTransaction.findFirst({
-      where: {
-        source: "STRIPE",
-        stripePaymentIntentId: paymentIntentId,
-        status: "FAILED",
-        updatedAt: { lte: failedGraceThreshold },
-      },
-      select: { id: true },
-    });
-    if (failedTransaction) {
-      reapableIds.push(operation.id);
-    }
-  }
-
-  if (reapableIds.length === 0) {
-    return { reaped: 0, queueOperationIds: [] };
-  }
-
-  const updateResult = await prisma.xeroSyncOperation.updateMany({
-    where: {
-      id: { in: reapableIds },
-      status: "WAITING_PAYMENT",
-    },
-    data: {
-      status: "CANCELLED",
-      completedAt: new Date(),
-      lastErrorCode: "STALE_WAITING_PAYMENT",
-      lastErrorMessage:
-        "Reaped: linked Stripe payment failed or did not confirm in time.",
-    },
-  });
-
-  if (updateResult.count > 0) {
-    logger.info(
-      { reaped: updateResult.count, ageInDays },
-      "Reaped stale WAITING_PAYMENT Xero outbox operations",
-    );
-  }
-
-  return {
-    reaped: updateResult.count,
-    queueOperationIds: reapableIds,
-  };
 }
 
 export async function recordSkippedXeroBookingInvoiceUpdateOperation(params: {

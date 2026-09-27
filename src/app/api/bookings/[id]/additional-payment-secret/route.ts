@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { isAdditionalPayableBookingStatus } from "@/lib/additional-payment-chase";
+import { resolveAdditionalPaymentDoor } from "@/lib/additional-payment-chase";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -55,19 +55,36 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (
-      !payment.additionalPaymentIntentId ||
-      payment.additionalPaymentStatus === "SUCCEEDED" ||
-      payment.booking.deletedAt !== null ||
-      !isAdditionalPayableBookingStatus(payment.booking.status)
-    ) {
+    // #3641 (`INV-PAY-104`): the member's pay door, shared with the Xero
+    // outbox reaper, which keeps a supplementary invoice waiting for exactly as
+    // long as this door answers `payable`. Stripe's half is part of it: an intent
+    // cancelled at the provider still carries a client secret, and handing it
+    // out showed a form Stripe.js then rejected.
+    const door = await resolveAdditionalPaymentDoor(
+      {
+        bookingStatus: payment.booking.status,
+        bookingDeletedAt: payment.booking.deletedAt,
+        payment,
+      },
+      getPaymentIntent,
+    );
+    if (door.state === "closed") {
       return NextResponse.json(
         { error: "No pending additional payment" },
         { status: 404 }
       );
     }
+    if (door.state === "captured-at-provider") {
+      return NextResponse.json(
+        {
+          error:
+            "This payment has already been made. Refresh the page to see it.",
+        },
+        { status: 409 }
+      );
+    }
 
-    const pi = await getPaymentIntent(payment.additionalPaymentIntentId);
+    const pi = door.intent;
     if (!pi.client_secret) {
       return NextResponse.json(
         { error: "PaymentIntent has no client secret" },

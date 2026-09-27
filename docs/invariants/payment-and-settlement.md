@@ -1008,9 +1008,40 @@ operations, and neither covers the other's ground. Change one, check the other.
   grace is measured on the transaction's `updatedAt`, which is NOT immutable in
   the FAILED state: a redelivered `payment_intent.payment_failed` re-writes
   status=FAILED unconditionally, so `@updatedAt` bumps and the grace restarts.
-  This can only DELAY a reap, never trigger one early, and the intent-agnostic
-  14-day `createdAt` sweep is the hard backstop that bounds it (and covers ops
-  whose intent never resolved at all).
+  This can only DELAY a reap, never trigger one early, and the 14-day
+  `createdAt` arm bounds it. Past the grace, whether the op is retired at all is
+  `INV-PAY-104`'s question: a decline is not abandonment.
+
+## INV-PAY-104
+
+**Related: `INV-PAY-029`** (when a failed ask is looked at) **and #3403** (the
+supersession trigger, an open owner decision this rule deliberately leaves as
+it was).
+
+- **A waiting supplementary invoice is retired only when the pay door is
+  closed** (#3641). One door, `resolveAdditionalPaymentDoor`
+  (`additional-payment-chase.ts`): `closed` when the booking no longer names
+  the intent, the intent SUCCEEDED, the booking is deleted or not payable, or
+  Stripe says `canceled` or missing; `captured-at-provider` when Stripe has
+  the money; else `payable`. The secret route serves only `payable` (404, 409);
+  the page card asks its booking half. The reaper
+  (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
+  only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
+  rows never recorded alerts once after three days.
+- **Only a capture the webhook kept is invoiced.** `isLateCaptureRefunded` (a
+  CANCELLED booking, or a superseded intent's supersede recovery) makes both
+  the reaper and `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`
+  leave the invoice unsent, so it retires; #3403 is unchanged. A kept one is
+  released or re-queued, never retired. An invoice the capture does not cover
+  is not issued, and an officer is told. A retired row is re-queued from
+  **that row**, the largest ask per change, under
+  `lockSupplementaryInvoiceAnchor`, once; it alerts once where another invoice
+  is linked or queued. One for the same request (its sent payload keeps
+  `paymentIntentId`) covers it, stamped `STALE_WAITING_PAYMENT_COVERED`.
+- Pinned by `xero-operation-outbox.test.ts`, `additional-payment-chase.test.ts`,
+  `fix-mod-payment.test.ts`, `additional-payment-card-gate.test.ts`,
+  `xero-supplementary-invoices.test.ts` and
+  `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-030
 
