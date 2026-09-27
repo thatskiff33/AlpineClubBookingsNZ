@@ -5,12 +5,10 @@ modification credit note inside its own transaction, so the one enqueue that
 builds that note learns to take the caller's transaction client and to carry
 the unpaid-invoice wording choice through to the worker.
 
-file: src/lib/xero-operation-outbox.ts
-lines: 3307
-reason: the transaction-client option and the wording choice belong on the
-  existing enqueue and its dispatch arm, beside the dedupe they change; a
-  second enqueue elsewhere would fork the one booking-anchored clearing note
-  the cancel path, the repair tool and the cron all raise.
+The outbox entry this fragment carried (3307 lines) was removed when #3641
+merged in: #3641 moved the waiting-invoice reaper and the late-capture release
+out of `xero-operation-outbox.ts`, so the composed file (3205 lines) is below
+its base length and needs no allowance.
 
 file: src/lib/booking-cancel.ts
 lines: 2547
