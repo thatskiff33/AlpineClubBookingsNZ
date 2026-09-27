@@ -224,6 +224,12 @@ raw-cent drift; only its direct formatter return in
 `xero-invoice-rounding-audit.ts` has a file-scoped c-suffix lint exception, pinned
 by the guard test. It is not a general exemption for Xero reports.
 
+These repair messages use the club's current display format. The booking and
+credit amounts read by these repair paths do not carry a currency per amount,
+so a formatted repair message is not proof of the original document's currency
+after a club currency change; reconcile that from the source records. This
+presentation rule does not change stored cents or provider amounts.
+
 Declare the shape in `club-format-intl.ts` beside the others and expose it from
 the module the callers already import. **Never construct another
 `Intl.NumberFormat`**: `club-format-kernel.test.ts` fails a second one anywhere
