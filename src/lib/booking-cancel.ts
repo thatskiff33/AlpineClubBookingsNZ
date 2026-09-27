@@ -617,6 +617,7 @@ async function performBookingCancellation(
       payment: true, member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
+      heldForBookingRequest: { select: { status: true } },
     },
       });
       // Race loser / retry: under the lock the booking has left the no-payment
@@ -624,6 +625,12 @@ async function performBookingCancellation(
       // claimed it). Do NOT flip status, detach, reconcile, or run any side
       // effects.
       if (!fresh || !NO_PAYMENT_CANCELLABLE_STATUSES.includes(fresh.status)) {
+        return { claimed: false as const };
+      }
+      // An accepted request intentionally keeps its AWAITING_REVIEW hold until
+      // an officer approves or declines it. This is inside the global-lock
+      // re-read so a generic hold-release cannot race the accept transition.
+      if (fresh.heldForBookingRequest?.status === "ACCEPTED") {
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);

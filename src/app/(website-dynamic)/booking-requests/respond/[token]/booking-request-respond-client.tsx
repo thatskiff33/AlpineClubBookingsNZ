@@ -51,6 +51,9 @@ interface QuoteContext {
   guestCount: number;
   message: string | null;
   expiresAt: string;
+  accepted: boolean;
+  declinedAfterAcceptance: boolean;
+  declineReason: string | null;
   options: QuoteOption[];
 }
 
@@ -270,6 +273,21 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>
+        ) : context.accepted ? (
+          <>
+            <div className="flex gap-3 text-success-11">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : "Your quote has been accepted."}</p>
+                <p className="text-sm text-muted-foreground">{context.declinedAfterAcceptance ? context.declineReason || "Please contact the club if you would like to discuss other dates." : "The booking team will review it before confirming your stay. Your places remain held while they review it."}</p>
+              </div>
+            </div>
+            <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
+              <p><span className="text-muted-foreground">Dates:</span> {formatStayDay(context.checkIn, format)} to {formatStayDay(context.checkOut, format)}</p>
+              <p><span className="text-muted-foreground">Guests:</span> {context.guestCount}</p>
+              <p><span className="text-muted-foreground">Accepted total:</span> {selectedOption ? formatCents(selectedOption.totalCents, format) : "Recorded"}</p>
+            </div>
+          </>
         ) : (
           <>
             <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">

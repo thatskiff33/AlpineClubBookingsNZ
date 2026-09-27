@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => {
     $executeRaw: vi.fn(),
     bookingRequest: { findUnique: vi.fn(), update: vi.fn() },
     booking: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    bookingRequestQuote: { count: vi.fn() },
+    bookingRequestQuote: { count: vi.fn(), findUnique: vi.fn() },
   };
   return {
     tx,
@@ -103,6 +103,9 @@ beforeEach(() => {
   // #1881 — the hold-release flips are now status-guarded updateMany; default
   // to a successful claim (count 1) so the release proceeds.
   mocks.tx.booking.updateMany.mockResolvedValue({ count: 1 });
+  mocks.tx.bookingRequestQuote.findUnique.mockResolvedValue({
+    status: BookingRequestQuoteStatus.SENT,
+  });
   stubQuoteFindMany({ reminderQuotes: [], releaseQuotes: [] });
   // Phase 3 (stale MODIFY/QUERY hold release, #1254) is a no-op by default.
   vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([] as never);
@@ -238,7 +241,10 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
         },
       ],
     });
-    mocks.tx.bookingRequest.findUnique.mockResolvedValue({ heldBookingId: "held-9" });
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-9",
+      status: BookingRequestStatus.QUOTE_SENT,
+    });
     mocks.tx.booking.findUnique.mockResolvedValue({
       status: BookingStatus.AWAITING_REVIEW,
     });

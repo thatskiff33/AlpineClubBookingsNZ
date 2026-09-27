@@ -75,6 +75,8 @@ const mocks = vi.hoisted(() => ({
   mockResolveSchoolGuestOverride: vi.fn(),
   mockLogAudit: vi.fn(),
   mockSendQuoteEmail: vi.fn(),
+  mockSendQuoteAcceptedEmail: vi.fn(),
+  mockSendQuoteAcceptedAdminEmail: vi.fn(),
   mockGetSettings: vi.fn(),
   // MG4 (#2309): both post-commit dispatchers, which the pipeline imports
   // lazily. Stubbed so these tests assert the WIRING — that the right people
@@ -233,6 +235,10 @@ vi.mock("@/lib/school-booking-request", async () => {
 vi.mock("@/lib/email", () => ({
   sendBookingRequestQuoteEmail: (...args: unknown[]) =>
     mocks.mockSendQuoteEmail(...args),
+  sendBookingRequestQuoteAcceptedEmail: (...args: unknown[]) =>
+    mocks.mockSendQuoteAcceptedEmail(...args),
+  sendAdminBookingRequestQuoteAcceptedEmail: (...args: unknown[]) =>
+    mocks.mockSendQuoteAcceptedAdminEmail(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.mockLogAudit }));

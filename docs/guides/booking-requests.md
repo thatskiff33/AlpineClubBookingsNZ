@@ -170,10 +170,13 @@ are listed on the booking for you to relay.
    unlinked anyone without saving, the panel warns that approving would go ahead
    with the saved links instead. A member you linked but did not save would be
    invoiced at non-member rates.
-3. When the requester accepts (or for a priced general request), click
+3. When the requester accepts, the request moves to **Accepted** and stays in
+   the Queue with its beds held. Review the accepted quote, then click
    **Approve & send payment link** (general) or **Approve & invoice school**
-   (school groups) to convert it into a booking. Use **Decline** with an
-   optional reason to turn it down.
+   (school groups) to create the booking. The requester receives a read-only
+   confirmation while they wait; accepting does not create an invoice, payment
+   link, or hut-leader PIN. Use **Decline** with an optional reason to release
+   the held beds and turn it down.
 
 #### Correcting a request before you convert it
 

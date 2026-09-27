@@ -2,6 +2,7 @@ import {
   bookingRequestApprovedTemplate,
   bookingRequestDeclinedTemplate,
   bookingRequestPaymentExpiredTemplate,
+  bookingRequestQuoteAcceptedTemplate,
   bookingRequestQuoteTemplate,
   bookingRequestVerificationTemplate,
   schoolAttendeeConfirmationTemplate,
@@ -129,6 +130,34 @@ export async function sendBookingRequestApprovedEmail(params: {
       // different DAY. `emailClubDateTime` is the same accessor the default body
       // uses, so the override and the default can no longer disagree.
       expiresAt: emailClubDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendBookingRequestQuoteAcceptedEmail(params: {
+  bookingContext: BookingEmailSourceContext;
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  lodgeId?: string | null;
+}, format: ClubFormat): Promise<EmailSendOutcome> {
+  return sendEmail({
+    to: params.email,
+    lodgeId: params.lodgeId,
+    subject: `Quote accepted — awaiting booking team review — ${CLUB_NAME}`,
+    html: await renderEmailHtml(() => bookingRequestQuoteAcceptedTemplate(params, format)),
+    bookingContext: classifyBookingOwnerContext(params.bookingContext),
+    templateName: "booking-request-quote-accepted",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      price: formatMoneyCents(params.priceCents, format),
     },
   });
 }

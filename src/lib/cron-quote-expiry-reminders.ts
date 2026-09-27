@@ -239,9 +239,17 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
         // we must never cancel that live booking.
         const request = await tx.bookingRequest.findUnique({
           where: { id: quote.bookingRequestId },
-          select: { heldBookingId: true },
+          select: { heldBookingId: true, status: true, acceptedQuoteId: true },
         });
-        if (request?.heldBookingId !== heldBookingId) return false;
+        if (
+          request?.heldBookingId !== heldBookingId ||
+          request.status !== BookingRequestStatus.QUOTE_SENT
+        ) return false;
+        const liveQuote = await tx.bookingRequestQuote.findUnique({
+          where: { id: quote.id },
+          select: { status: true },
+        });
+        if (liveQuote?.status !== BookingRequestQuoteStatus.SENT) return false;
 
         const held = await tx.booking.findUnique({
           where: { id: heldBookingId },
