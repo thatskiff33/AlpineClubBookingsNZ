@@ -160,17 +160,13 @@ export async function alertExpiredHold(
     return;
   }
 
-  createAuditLog({
+  writeInternetBankingHoldAudit({
     action:
       reason === "released-unreadable"
         ? "booking.internet_banking_hold_released_unreadable"
         : "booking.internet_banking_hold_kept",
-    targetId: hold.bookingId,
+    bookingId: hold.bookingId,
     subjectMemberId,
-    entityType: "Booking",
-    entityId: hold.bookingId,
-    category: "payment",
-    severity: "important",
     outcome: reason === "released-unreadable" ? "success" : "blocked",
     summary:
       reason === "released-unreadable"
@@ -178,7 +174,7 @@ export async function alertExpiredHold(
         : reason === "unreadable"
           ? "Expired Internet Banking hold kept: its invoice could not be read from Xero"
           : "Expired Internet Banking hold kept: money is paid against its invoice",
-    details: JSON.stringify({
+    details: {
       paymentId: hold.id,
       reason,
       holdUntil: holdUntil.toISOString(),
@@ -188,16 +184,50 @@ export async function alertExpiredHold(
       ...(evidence.kind === "unreadable"
         ? { readFailure: evidence.reason, invoiceNotFound: evidence.notFound }
         : {}),
-    }),
+    },
     metadata: {
       paymentId: hold.id,
-      paymentSource: PaymentSource.INTERNET_BANKING,
       reason,
       holdUntil: holdUntil.toISOString(),
       paidCents,
       amountOwingCents,
     },
+  });
+}
+
+/**
+ * The ONE audit writer for the hold-expiry job's outcomes — released, kept,
+ * released at the unreadable bound. Fire-and-forget: a failed audit write is
+ * logged and never fails the release or the alert that already happened.
+ */
+export function writeInternetBankingHoldAudit(entry: {
+  action:
+    | "booking.internet_banking_hold_expired"
+    | "booking.internet_banking_hold_kept"
+    | "booking.internet_banking_hold_released_unreadable";
+  bookingId: string;
+  subjectMemberId: string | null;
+  outcome: "success" | "blocked";
+  summary: string;
+  details: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}): void {
+  createAuditLog({
+    action: entry.action,
+    targetId: entry.bookingId,
+    subjectMemberId: entry.subjectMemberId,
+    entityType: "Booking",
+    entityId: entry.bookingId,
+    category: "payment",
+    severity: "important",
+    outcome: entry.outcome,
+    summary: entry.summary,
+    details: JSON.stringify(entry.details),
+    metadata: { ...entry.metadata, paymentSource: PaymentSource.INTERNET_BANKING },
   }).catch((err) =>
-    logger.error({ err, ...context }, "Failed to audit an Internet Banking hold alert"),
+    logger.error(
+      { err, bookingId: entry.bookingId, action: entry.action },
+      "Failed to audit an Internet Banking hold outcome",
+    ),
   );
 }

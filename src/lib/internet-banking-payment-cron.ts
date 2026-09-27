@@ -5,7 +5,6 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
-import { createAuditLog } from "@/lib/audit";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -44,6 +43,7 @@ import {
   alertExpiredHold,
   decideExpiredHold,
   selectHoldsToRead,
+  writeInternetBankingHoldAudit,
 } from "@/lib/internet-banking-hold-kept";
 
 export interface InternetBankingHoldReleaseResult {
@@ -460,34 +460,24 @@ export async function releaseExpiredInternetBankingHolds(
       },
     });
 
-    createAuditLog({
+    writeInternetBankingHoldAudit({
       action: "booking.internet_banking_hold_expired",
-      targetId: payment.bookingId,
+      bookingId: payment.bookingId,
       subjectMemberId: bookingOwner(payment.booking).memberId,
-      entityType: "Booking",
-      entityId: payment.bookingId,
-      category: "payment",
-      severity: "important",
       outcome: "success",
       summary: "Expired Internet Banking hold released",
-      details: JSON.stringify({
+      details: {
         paymentId: payment.id,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
         amountCents: payment.amountCents,
-      }),
+      },
       metadata: {
         paymentId: payment.id,
-        paymentSource: PaymentSource.INTERNET_BANKING,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
         amountCents: payment.amountCents,
         creditRestoredCents,
       },
-    }).catch((err) =>
-      logger.error(
-        { err, bookingId: payment.bookingId, paymentId: payment.id },
-        "Failed to audit expired Internet Banking hold release",
-      ),
-    );
+    });
 
     // The credit note is already durably enqueued (inside the transaction
     // above); the kick is best-effort — the outbox cron sweeps the row anyway.
