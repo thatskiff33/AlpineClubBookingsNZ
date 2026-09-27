@@ -7,8 +7,9 @@ import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
@@ -887,7 +888,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     },
   });
 
-  if (bookingRecord?.status === "CANCELLED") {
+  // #3641: the one "refunded, not kept" predicate, shared with the late-capture Xero release.
+  if (bookingRecord && isLateCaptureRefundedBookingStatus(bookingRecord.status)) {
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,
@@ -898,7 +900,7 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
     if (released.released > 0) {
@@ -938,7 +940,7 @@ async function handleAdditionalModificationPaymentSucceeded(
       : paymentIntent.payment_method?.id ?? null,
   });
 
-  const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     paymentIntent.id
   );
   if (released.released > 0) {
@@ -1139,7 +1141,7 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   );
 
   if (refundSync.refundDeltaCents > 0) {
-    // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
+    // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
         refundSync.paymentId,

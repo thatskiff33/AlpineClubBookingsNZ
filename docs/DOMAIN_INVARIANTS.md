@@ -217,6 +217,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
 | `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or dropped |
@@ -225,6 +226,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
+| `INV-PAY-103` | A card refund adds only newly recorded money, through one writer |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
 | `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
@@ -304,6 +306,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-027` | Payment, refund and credit operations are idempotent across retries, replays and reruns |
 | `INV-PAY-028` | The Stripe webhook dedup claim is a processing lease, not "seen" |
 | `INV-PAY-029` | A FAILED Stripe payment keeps its WAITING_PAYMENT Xero op for 24h |
+| `INV-PAY-104` | Waiting invoice retired only when the pay door closes; captures never silent |
 | `INV-PAY-030` | External provider side effects require clear retry and idempotency behaviour |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
@@ -312,6 +315,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
 
 ## Member-Guest Consent
 

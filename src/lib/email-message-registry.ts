@@ -12,6 +12,7 @@ import {
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCaptureHandBackConflictSubjectLabel,
+  secondInstrumentConflictOutcomeParagraph,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "@/lib/email-message-notes";
@@ -73,6 +74,11 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // channel and preference as the hand-back task alert: a nudge for a durable
   // task, moving no money, so not delivery-locked.
   "admin-late-capture-held",
+  // #3638: the second-instrument conflict — a card payment and a Xero payment
+  // on one booking. Admin audience, sent through the unmuteable sender and
+  // delivery-locked below, because the system refunds nothing on its own and
+  // this mail is the only thing that pulls a person to reconcile it.
+  "admin-second-instrument-settlement-conflict",
   // #2761: the alert for an automatically refunded late capture on a cancelled
   // booking. Ships to admins, so admin audience — but through the unmuteable
   // sender rather than sendToAdmins, because it reports an automatic MONEY
@@ -175,6 +181,11 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // thing that pulls a person to reconcile real money, so it must not be
   // silenceable club-wide any more than its sibling.
   "admin-late-capture-hand-back-conflict",
+  // #3638: the same lock for the same reason as #2774 — this alert says the
+  // club may hold the price twice (a card payment and a Xero payment on one
+  // booking), and nothing is refunded or credited automatically, so muting it
+  // club-wide would leave the money with nobody to reconcile it.
+  "admin-second-instrument-settlement-conflict",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -523,6 +534,16 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
   "admin-manual-refund-task": ["memberName", "reviewUrl"],
   "admin-late-capture-held": ["memberName", "bookingId", "amount", "reviewUrl"],
+  // #3638: {{secondInstrumentConflictNote}} is the sentence that differs
+  // between a live booking and a cancelled one — what the card money already
+  // did, and so what the treasurer does next — and {{xeroObjectUrl}} is the
+  // invoice they reconcile against.
+  "admin-second-instrument-settlement-conflict": [
+    "memberName",
+    "reviewUrl",
+    "secondInstrumentConflictNote",
+    "xeroObjectUrl",
+  ],
   // #2761: memberName and reviewUrl as its siblings, plus the two tokens that
   // carry WHICH of the two populations this was. An override that drops
   // {{bookingStateLabel}} or {{refundOutcomeNote}} leaves an operator unable to
@@ -792,6 +813,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "A card payment went through after its booking was cancelled and the club has a treasurer approve these refunds, so it was held on the payments board instead of refunded",
     frequency:
       "Once per late payment held - claim-guarded, so a Stripe redelivery or a retry does not re-send",
+  },
+  "admin-second-instrument-settlement-conflict": {
+    triggerSummary:
+      "Xero reported a booking's Internet Banking invoice PAID after a card payment had already settled it, so the club may be holding the price twice",
+    frequency:
+      "On the inbound second-instrument check firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
   },
   "admin-manual-refund-task": {
     triggerSummary:
@@ -1366,6 +1393,11 @@ export function sampleValue(token: string): string {
   if (token === "handBackConflictLabel") {
     return lateCaptureHandBackConflictSubjectLabel(false);
   }
+  // #3638: previewed as the live-booking arm — the double payment the alert is
+  // named for; the cancelled-booking arm is the sender's other branch.
+  if (token === "secondInstrumentConflictNote") {
+    return secondInstrumentConflictOutcomeParagraph("settled");
+  }
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
   }
@@ -1885,6 +1917,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // sender supplies the finished sentence rather than the facts behind it.
   "lateCaptureLeadNote",
   "handBackConflictNote",
+  // #3638: the second-instrument alert's live-versus-cancelled sentence.
+  "secondInstrumentConflictNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and
   // paid-twice arms cannot collapse into one claim when an admin saves the template
   // — the {{bookingStateLabel}} construction (#2761), plus the subject requirement

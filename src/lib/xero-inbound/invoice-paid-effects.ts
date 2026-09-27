@@ -4,20 +4,23 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
-  sendAdminManualSettlementConflictAlert,
   sendAdminPaymentFailureAlert,
   sendBookingCancelledEmail,
   sendBookingConfirmedEmail,
 } from "@/lib/email";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
-import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
-  MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-  type ManualSettlementConflictEventSnapshot,
-} from "@/lib/manual-settlement-reversal-event";
-import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
+  findSecondInstrumentSettlement,
+  recordManualSettlementConflict,
+  raiseSecondInstrumentSettlementAlert,
+  recordSecondInstrumentMarkerInTransaction,
+} from "@/lib/xero-inbound/settlement-conflicts";
+import {
+  applyGroupSettlementSucceededFromInvoice,
+  type GroupSettlementMismatch,
+} from "@/lib/group-settlement";
+import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
+import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
@@ -26,7 +29,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { bookingHasCapacityOverride } from "@/lib/booking-status";
+import { bookingHasCapacityOverride, isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
@@ -246,109 +249,6 @@ async function sumInternetBankingMintedCentsForBookings(
   return aggregate._sum.amountCents ?? 0;
 }
 
-/**
- * B5 (#2262): repeat-alert window for the reciprocal fence. A webhook replay
- * must RE-COUNT the conflict (it is still unreconciled) without re-mailing the
- * admins every time Xero redelivers the same event.
- */
-const MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-/**
- * B5 (#2262): the durable half of the reciprocal fence. Records the conflict
- * ONCE per (payment, invoice) as an admin-only BookingEvent, then alerts the
- * admins behind a cross-instance cooldown. Runs AFTER the transaction — the
- * provider call must never sit inside one — and never changes money state.
- */
-async function recordManualSettlementConflict({
-  payment,
-  bookingStatus,
-  invoiceId,
-  invoiceNumber,
-  format,
-}: {
-  payment: Prisma.PaymentGetPayload<{
-    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    include: { booking: { include: { member: true, organisation: { select: { name: true, email: true } } } } };
-  }>;
-  bookingStatus: BookingStatus;
-  invoiceId: string;
-  invoiceNumber: string | null;
-  /** The club's format (#3565), resolved before any transaction by the caller. */
-  format: ClubFormat;
-}) {
-  const snapshot: ManualSettlementConflictEventSnapshot = {
-    kind: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
-    invoiceId,
-    invoiceNumber,
-    bookingStatus,
-  };
-
-  // BEST-EFFORT once per (payment, invoice): this is a read-then-create with
-  // no unique key, so two concurrent replays of the same invoice event can
-  // both pass the read and record twice. That duplicate is harmless — the
-  // event is an admin-only history marker, the alert below has its own
-  // cross-instance cooldown, and no money state keys off the event — so a
-  // unique constraint is deliberately not added. A DIFFERENT invoice reporting
-  // paid against the same payment still records its own conflict.
-  const alreadyRecorded = await prisma.bookingEvent
-    .findFirst({
-      where: {
-        bookingId: payment.bookingId,
-        type: BookingEventType.CANCELLED,
-        snapshot: { path: ["kind"], equals: MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND },
-        AND: [{ snapshot: { path: ["invoiceId"], equals: invoiceId } }],
-      },
-      select: { id: true },
-    })
-    .catch((err) => {
-      logger.error(
-        { err, bookingId: payment.bookingId, invoiceId },
-        "Failed to look up an existing manual-settlement conflict event; recording a fresh one"
-      );
-      return null;
-    });
-
-  if (!alreadyRecorded) {
-    await recordBookingEvent({
-      bookingId: payment.bookingId,
-      type: BookingEventType.CANCELLED,
-      actorMemberId: null,
-      amountCents: payment.amountCents,
-      reason: MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
-      snapshot: snapshot as unknown as Prisma.InputJsonValue,
-    });
-  }
-
-  const holdsClaim = await claimAlertCooldown({
-    key: `manual-settlement-conflict:${payment.id}:${invoiceId}`,
-    windowMs: MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS,
-  }).catch((err) => {
-    logger.error(
-      { err, paymentId: payment.id, invoiceId },
-      "Failed to claim the manual-settlement conflict alert cooldown; sending anyway rather than staying silent about unreconciled money"
-    );
-    return true;
-  });
-  if (!holdsClaim) return;
-
-  await sendAdminManualSettlementConflictAlert({
-    memberName: `${bookingOwner(payment.booking).member.firstName} ${bookingOwner(payment.booking).member.lastName}`,
-    checkIn: payment.booking.checkIn,
-    checkOut: payment.booking.checkOut,
-    amountCents: payment.amountCents,
-    bookingId: payment.bookingId,
-    bookingStatus,
-    xeroInvoiceNumber: invoiceNumber,
-    // Cross-lane #2283: Xero deep links are BUILT, never hand-rolled.
-    xeroInvoiceUrl: buildXeroInvoiceUrl(invoiceId),
-  }, format).catch((err) =>
-    logger.error(
-      { err, bookingId: payment.bookingId, paymentId: payment.id, invoiceId },
-      "Failed to alert admins about a manual-settlement vs Xero payment conflict"
-    )
-  );
-}
-
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
   linkedPaymentIds: string[],
@@ -368,6 +268,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // booking. Surfaced in the inbound-event result JSON the replay route
     // returns, so the fence is never a quiet return.
     manualSettlementConflicts: 0,
+    // #3638: inbound cash on the invoice of a booking a card payment had
+    // already settled. Counted here as well as raised, like the #2262 fence.
+    secondInstrumentSettlementConflicts: 0,
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -596,6 +499,18 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         };
       }
 
+      // #3638 — read BEFORE the receipt below is written: for a CANCELLED
+      // booking the test asks whether this bank cash is new (and, when it is
+      // not, whether this invoice's conflict was already recorded). Acted on
+      // after the receipt, which is recorded either way.
+      const secondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: fresh.id,
+        bookingId: fresh.bookingId,
+        bookingStatus: fresh.booking.status,
+        invoiceId,
+        includeCancelled: true,
+      });
+
       const transactionUpdate = await tx.paymentTransaction.updateMany({
         where: {
           paymentId: fresh.id,
@@ -669,7 +584,40 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         });
       }
 
-      if (fresh.booking.status === BookingStatus.PAID) {
+      // #3638 — a SECOND instrument. The receipt above is recorded, because the
+      // bank transfer did arrive; but a card payment had already settled this
+      // booking, so the club may now hold the price twice. Before #3638 this
+      // fell into the quiet `alreadyPaid` arm below (a counter, nothing else).
+      // Raised instead, once per invoice, and nothing further is written: no
+      // PAID re-claim (which would also flip a COMPLETED booking back to PAID),
+      // no credit, no refund. The durable marker is written HERE, in this
+      // transaction, so it commits with the receipt; the alert follows the
+      // commit. The rule: `INV-PAY-102`.
+      if (secondInstrument) {
+        return {
+          type: "secondInstrumentConflict" as const,
+          payment: fresh,
+          paymentWasPending,
+          bookingStatus: fresh.booking.status,
+          settledBy: secondInstrument,
+          marker: await recordSecondInstrumentMarkerInTransaction(tx, {
+            bookingId: fresh.bookingId,
+            amountCents: fresh.amountCents,
+            bookingStatus: fresh.booking.status,
+            invoiceId,
+            invoiceNumber,
+            settledBy: secondInstrument,
+          }),
+        };
+      }
+
+      // #3638: COMPLETED is as settled as PAID. A replay on a completed
+      // booking used to fall through to the PAID claim below, flipping it
+      // back to PAID and re-running the paid arm's side effects (the
+      // confirmation email among them).
+      if (
+        isPaidLikeBookingStatus(fresh.booking.status)
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,
@@ -1003,7 +951,39 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           "Internet Banking payment disappeared during Xero reconciliation",
         );
       }
-      if (locked.booking.status === BookingStatus.PAID) {
+      // #3638: the same second-instrument test against the post-lodge-lock
+      // snapshot. Defence in depth, not a second chance: lock(1) has been held
+      // since the read above, and card settlement and cancellation both take
+      // lock(1), so the booking's status cannot have changed during the
+      // lodge-lock wait. The CANCELLED question is not asked here because the
+      // receipt is already written — the read above is where it is answered.
+      const lockedSecondInstrument = await findSecondInstrumentSettlement(tx, {
+        paymentId: locked.id,
+        bookingId: locked.bookingId,
+        bookingStatus: locked.booking.status,
+        invoiceId,
+        includeCancelled: false,
+      });
+      if (lockedSecondInstrument) {
+        return {
+          type: "secondInstrumentConflict" as const,
+          payment: fresh,
+          paymentWasPending,
+          bookingStatus: locked.booking.status,
+          settledBy: lockedSecondInstrument,
+          marker: await recordSecondInstrumentMarkerInTransaction(tx, {
+            bookingId: locked.bookingId,
+            amountCents: locked.amountCents,
+            bookingStatus: locked.booking.status,
+            invoiceId,
+            invoiceNumber,
+            settledBy: lockedSecondInstrument,
+          }),
+        };
+      }
+      if (
+        isPaidLikeBookingStatus(locked.booking.status)
+      ) {
         return {
           type: "alreadyPaid" as const,
           payment: fresh,
@@ -1282,6 +1262,35 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
 
     if (outcome.paymentWasPending) {
       result.paidInternetBankingPayments += 1;
+    }
+
+    if (outcome.type === "secondInstrumentConflict") {
+      // #3638. Loud on the same axes as the #2262 fence: a counter, an error
+      // log, one durable admin-only BookingEvent per invoice (written in the
+      // transaction above) and an admin alert sent once per marker. No money
+      // moved.
+      result.secondInstrumentSettlementConflicts += 1;
+      logger.error(
+        {
+          bookingId: outcome.payment.bookingId,
+          paymentId: outcome.payment.id,
+          bookingStatus: outcome.bookingStatus,
+          settledBySource: outcome.settledBy.source,
+          settledByPaymentIntentId: outcome.settledBy.stripePaymentIntentId,
+          conflictKind: outcome.settledBy.conflictKind,
+          markerId: outcome.marker.id,
+          invoiceId,
+          invoiceNumber,
+        },
+        "Inbound Xero PAID landed on a booking a card payment had already settled (#3638): the club may hold the price twice"
+      );
+      await raiseSecondInstrumentSettlementAlert({
+        payment: outcome.payment,
+        marker: outcome.marker,
+        invoiceId,
+        format,
+      });
+      continue;
     }
 
     if (outcome.type === "alreadyPaid") {
@@ -1592,11 +1601,38 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
   return result;
 }
 
+/** The operator instruction for a paid invoice the app did not apply (#1033, #3642). */
+function groupSettlementMismatchMessage(
+  invoiceId: string,
+  mismatch: GroupSettlementMismatch | undefined,
+  format: ClubFormat
+): string {
+  if (mismatch?.reason === "collected") {
+    return `Group settlement invoice ${invoiceId} was paid ${formatCents(mismatch.collectedCents, format)}, but the settlement it pays is ${formatCents(mismatch.recordedCents, format)}. No bookings were settled; reconcile manually (collect or refund the difference, then settle the group).`;
+  }
+  if (
+    mismatch?.reason === "invoice_superseded" ||
+    mismatch?.reason === "intent_superseded"
+  ) {
+    return `Group settlement invoice ${invoiceId} was paid, but the settlement no longer uses that invoice. No bookings were settled; refund or credit the organiser in Xero, or apply the payment by hand.`;
+  }
+  return `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`;
+}
+
 /**
  * Match a paid Xero invoice to an Internet Banking group settlement and, when
  * found, flip every joiner child booking to PAID. This is the settlement parallel
  * to `syncInternetBankingPaymentsForPaidInvoice`: a single combined invoice
  * settles the whole ORGANISER_PAYS group at once.
+ *
+ * #3642 (`INV-PAY-105`): the invoice's cash is compared with the settlement's
+ * total under the settle lock, and a paid invoice that can no longer settle
+ * anything is never silent — one the settlement abandoned (released by the
+ * reaper, replaced, or left behind by a card payment before this shipped), and
+ * one that lands on a settlement a card payment already settled, both alert.
+ * This handler sees only PAID invoices: one that is part-paid is caught before
+ * the app would release or replace it — by the reaper, the replacement, and
+ * the VOID worker, which all read the invoice in Xero first.
  */
 export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format: ClubFormat) {
   const invoiceId = invoice.invoiceID ?? null;
@@ -1616,17 +1652,38 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       xeroInvoiceId: invoiceId,
       source: PaymentSource.INTERNET_BANKING,
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, stripePaymentIntentId: true },
   });
 
-  if (!settlement) {
-    return result;
-  }
+  // #3642: an invoice the settlement no longer points at. Its object link is
+  // kept (deactivated) when a settlement abandons it, so a payment that still
+  // lands on it is recognised here instead of matching nothing.
+  const abandonedFor = settlement
+    ? null
+    : await prisma.xeroObjectLink.findFirst({
+        where: {
+          localModel: "GroupBookingSettlement",
+          xeroObjectType: "INVOICE",
+          xeroObjectId: invoiceId,
+          role: GROUP_SETTLEMENT_INVOICE_ROLE,
+        },
+        select: { localId: true },
+      });
+  // A cancelled group's invoice is never abandoned by the reaper (#3642), but
+  // one retired before that rule shipped still reads as paid after cancel.
+  const abandonedGroupCancelled = abandonedFor
+    ? (
+        await prisma.groupBookingSettlement.findUnique({
+          where: { id: abandonedFor.localId },
+          select: { groupBooking: { select: { status: true } } },
+        })
+      )?.groupBooking.status === "CANCELLED"
+    : false;
 
-  result.matchedGroupSettlements = 1;
-  if (settlement.status === PaymentStatus.SUCCEEDED) {
+  if (!settlement && !abandonedFor) {
     return result;
   }
+  result.matchedGroupSettlements = 1;
 
   // #1435: the combined group invoice is subject to the same rule as the
   // per-payment loop above — a PAID event produced by credit-note allocation
@@ -1634,6 +1691,58 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
   // must not flip a whole group of child bookings to PAID. The settlement
   // stays PENDING for the group-settlement reaper's normal expiry handling.
   const cashEvidence = classifyXeroInvoiceCashEvidence(invoice);
+  const settlementId = settlement?.id ?? abandonedFor!.localId;
+
+  if (!settlement) {
+    // #3642: the club was paid on an invoice it had already retired. Nothing
+    // is settled from it; the operators refund or re-apply it by hand. A
+    // zero-cash PAID (the clearing of a voided or written-off invoice) is not
+    // money and is not alerted.
+    if (cashEvidence === "cash") {
+      logger.error(
+        { invoiceId, settlementId },
+        "Paid group settlement invoice was already abandoned by its settlement - operator review required"
+      );
+      await alertGroupSettlementInvoice(
+        {
+          kind: "paid_after_abandon",
+          settlementId,
+          invoiceId,
+          errorMessage: abandonedGroupCancelled
+            ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
+            : `Group settlement invoice ${invoiceId} was paid after the settlement stopped using it (the settlement lapsed or was replaced). No bookings were settled from it; refund the organiser, or apply the payment to the group's current bill by hand.`,
+        },
+        format
+      );
+    }
+    return result;
+  }
+
+  if (settlement.status === PaymentStatus.SUCCEEDED) {
+    // Settled by THIS invoice, a re-fetch of the same payment: nothing to do.
+    // Settled by a card: the Internet Banking path nulls the intent pointer,
+    // so an intent on a settled row means a card paid it (the pre-#3642 card
+    // path left the invoice and source behind). The organiser has paid twice,
+    // and before #3642 the second payment was kept without a word.
+    const settledByCard = settlement.stripePaymentIntentId !== null;
+    if (settledByCard && cashEvidence === "cash") {
+      logger.error(
+        { invoiceId, settlementId },
+        "Paid group settlement invoice landed on a settlement already paid by card - operator refund required"
+      );
+      await alertGroupSettlementInvoice(
+        {
+          kind: "paid_twice",
+          settlementId,
+          invoiceId,
+          errorMessage: `Group settlement invoice ${invoiceId} was paid, but the group had already been settled by card. The organiser has paid twice; refund one payment.`,
+        },
+        format
+      );
+    }
+    return result;
+  }
+
   if (cashEvidence !== "cash") {
     if (cashEvidence === "indeterminate") {
       // Same durable-deferral rule as the per-payment loop: hand the event
@@ -1655,8 +1764,30 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
     return result;
   }
 
+  // #3642: what the organiser actually paid. A figure that could not be read
+  // exactly is never used to settle a whole group; it goes to the operators.
+  const cash = quantifyXeroInvoiceCashCents(invoice);
+  if (!cash.complete) {
+    logger.error(
+      { invoiceId, settlementId: settlement.id, knownCents: cash.knownCents },
+      "Paid group settlement invoice cash could not be quantified exactly - operator review required"
+    );
+    await alertGroupSettlementInvoice(
+      {
+        kind: "paid_unreadable",
+        settlementId: settlement.id,
+        invoiceId,
+        errorMessage: `Group settlement invoice ${invoiceId} was paid, but the amount paid could not be read exactly (at least ${formatCents(cash.knownCents, format)}). No bookings were settled; check the payment in Xero and settle the group by hand.`,
+      },
+      format
+    );
+    return result;
+  }
+
   try {
-    const applied = await applyGroupSettlementSucceededFromInvoice(invoiceId, format);
+    const applied = await applyGroupSettlementSucceededFromInvoice(invoiceId, format, {
+      collectedCents: cash.knownCents,
+    });
     if (applied.outcome === "settled") {
       result.settledGroupSettlements = 1;
       result.settledChildBookings = applied.settledBookingIds.length;
@@ -1664,45 +1795,31 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
       applied.outcome === "amount_mismatch" ||
       applied.outcome === "cancelled"
     ) {
-      // A child booking changed while the combined invoice sat open (#1033):
-      // the bank transfer no longer matches what the children cost. Unlike
-      // Stripe there is nothing to auto-refund, so alert the operators; the
-      // settlement stays PENDING for manual reconciliation.
+      // A child booking changed while the combined invoice sat open (#1033),
+      // or the money that arrived is not the settlement's total (#3642): the
+      // bank transfer no longer matches what is owed. Unlike Stripe there is
+      // nothing to auto-refund, so alert the operators; the settlement stays
+      // PENDING for manual reconciliation.
       logger.error(
-        { invoiceId, settlementId: settlement.id },
+        { invoiceId, settlementId: settlement.id, mismatch: applied.mismatch },
         applied.outcome === "cancelled"
           ? "Paid group settlement invoice belongs to a cancelled group - operator refund required"
-          : "Paid group settlement invoice no longer matches its children - operator review required"
+          : "Paid group settlement invoice does not match what the settlement owes - operator review required"
       );
-      const settlementDetail = await prisma.groupBookingSettlement.findUnique({
-        where: { id: settlement.id },
-        select: {
-          amountCents: true,
-          groupBooking: {
-            select: {
-              organiserMember: { select: { firstName: true, lastName: true } },
-              organiserBooking: { select: { checkIn: true, checkOut: true } },
-            },
-          },
+      // #3642: behind the same per-invoice cooldown as every other arm, so a
+      // stable mismatch on a PAID invoice alerts once per window, not once per
+      // re-fetch.
+      await alertGroupSettlementInvoice(
+        {
+          kind: "paid_not_applied",
+          settlementId: settlement.id,
+          invoiceId,
+          errorMessage:
+            applied.outcome === "cancelled"
+              ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
+              : groupSettlementMismatchMessage(invoiceId, applied.mismatch, format),
         },
-      });
-      await sendAdminPaymentFailureAlert({
-        memberName: settlementDetail
-          ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
-          : "Unknown group organiser",
-        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
-        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
-        amountCents: settlementDetail?.amountCents ?? 0,
-        errorMessage:
-          applied.outcome === "cancelled"
-            ? `Group settlement invoice ${invoiceId} was paid after the organiser cancelled the group. No child bookings were settled; refund or credit the organiser in Xero.`
-            : `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`,
-        paymentIntentId: invoiceId,
-      }, format).catch((alertErr) =>
-        logger.error(
-          { err: alertErr, invoiceId, settlementId: settlement.id },
-          "Failed to send admin alert for mismatched group settlement invoice"
-        )
+        format
       );
     }
   } catch (err) {

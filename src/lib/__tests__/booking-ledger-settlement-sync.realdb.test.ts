@@ -251,11 +251,12 @@ async function resetPayment(): Promise<void> {
       await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
       expect((await lines()).map((l) => l.kind).sort()).toEqual(["CARD_CAPTURE", "CARD_REFUND"]);
 
-      // Only the refund's status changes. The transaction's own refunded figure
-      // is left exactly as production leaves it: every writer of that column
-      // takes a max including its previous value, so it never goes down. The
-      // first cut of this test hand-reset it to 0 — which no writer does — and
-      // so hid the divergence below (review of #3604).
+      // Only the refund's status changes, behind the writers' back. The
+      // transaction's own refunded figure is left as it is: since #3640 the
+      // card-refund writer subtracts a failed refund only when IT sees the
+      // transition, and nothing here routes through it. The first cut of this
+      // test hand-reset it to 0 — which no writer does — and so hid the
+      // divergence below (review of #3604).
       await prisma.paymentRefund.update({ where: { id: "race-3581-refund" }, data: { status: "failed" } });
       const mirror = await reconcilePaymentAggregates({ paymentId: PAYMENT_ID, store: prisma });
       const after = await lines();

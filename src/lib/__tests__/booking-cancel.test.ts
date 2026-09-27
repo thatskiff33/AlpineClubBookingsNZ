@@ -50,7 +50,7 @@ const mocks = vi.hoisted(() => {
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
-  cancelPaymentIntentIfCancellable: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
   processRefund: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   markPaymentIntentTransactionFailed: vi.fn(),
@@ -64,6 +64,10 @@ const mocks = vi.hoisted(() => {
   // #1491: the fold-materialization reads/writes inside the claim tx.
   txPaymentTransactionFindMany: vi.fn(),
   txPaymentTransactionUpdate: vi.fn(),
+  // #3640: the fold writes through the shared compare-and-set increment.
+  foldIntoTransactionRefundedAmount: vi.fn(),
+  // #3640 (delta review, D1): the Payment row lock the paid claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(),
   // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
   paymentTransactionFindFirst: vi.fn(),
   // #1547: the under-lock Xero-linked applied-credit aggregate in the
@@ -164,7 +168,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
-  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
+  cancelPaymentIntentIfCancellableWithResult:
+    mocks.cancelPaymentIntentIfCancellableWithResult,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -179,6 +184,8 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: mocks.PartialRefundError,
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
+  foldIntoTransactionRefundedAmount: mocks.foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
@@ -332,6 +339,9 @@ describe("cancelBooking credit refunds", () => {
     // #1491: fold materialization defaults — no captured rows to attribute to.
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.txPaymentTransactionUpdate.mockResolvedValue({});
+    mocks.foldIntoTransactionRefundedAmount.mockImplementation(
+      async ({ amountCents }: { amountCents: number }) => amountCents,
+    );
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
@@ -402,7 +412,11 @@ describe("cancelBooking credit refunds", () => {
       failed: 0,
       skipped: 0,
     });
-    mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    // #3638: Stripe confirms the cancel unless a test says otherwise.
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      paymentIntent: { status: "canceled" },
+      canceled: true,
+    });
     mocks.applyLocalRefundAllocation.mockResolvedValue(undefined);
     mocks.markPaymentIntentTransactionFailed.mockResolvedValue(undefined);
     mocks.refundPaymentTransactions.mockResolvedValue({
@@ -560,12 +574,115 @@ describe("cancelBooking credit refunds", () => {
         createdByMemberId: "member_1",
       }
     );
-    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_2");
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_2");
     expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
       paymentIntentId: "pi_2",
     });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
       limit: 1,
+    });
+  });
+
+  it("does not write FAILED over an intent Stripe would not cancel (#3638)", async () => {
+    // The card payment has just succeeded and the webhook has not landed, so
+    // the local row still says PROCESSING. It is left for the webhook's
+    // cancelled-booking late-capture handler, which records the capture and
+    // refunds it, never overwritten with a FAILED it is not.
+    const booking2 = {
+      id: "booking_2",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "CONFIRMED",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_2",
+        bookingId: "booking_2",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_2",
+        xeroInvoiceId: null,
+        additionalPaymentStatus: null,
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking2);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking2);
+    mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { status: "succeeded" },
+      canceled: false,
+    });
+
+    const result = await cancelBooking(
+      "booking_2",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      CLUB_FORMAT_TEST,
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_2");
+    expect(mocks.markPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+  });
+
+  it("still marks an intent Stripe reports as already cancelled FAILED (#3638)", async () => {
+    const booking2 = {
+      id: "booking_2",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "CONFIRMED",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_2",
+        bookingId: "booking_2",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_2",
+        xeroInvoiceId: null,
+        additionalPaymentStatus: null,
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking2);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking2);
+    mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValueOnce({
+      paymentIntent: { status: "canceled" },
+      canceled: false,
+    });
+
+    const result = await cancelBooking(
+      "booking_2",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      CLUB_FORMAT_TEST,
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_2",
     });
   });
 
@@ -865,11 +982,26 @@ describe("cancelBooking credit refunds", () => {
       expect.anything(),
       "credit"
     );
-    // The folded 3000 was attributed to the captured ledger row in tx1.
-    expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "ptx_ibpr" },
-      data: { refundedAmountCents: 3000 },
-    });
+    // The folded 3000 was attributed to the captured ledger row in tx1, as an
+    // increment through the shared compare-and-set (#3640) - never an absolute
+    // `read + bump` write a concurrent webhook refund could be erased by.
+    expect(mocks.foldIntoTransactionRefundedAmount).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentTransactionId: "ptx_ibpr", amountCents: 3000 })
+    );
+    // #3640 (delta review, D1): the Payment row is locked BEFORE the fold
+    // touches a transaction row - the one order every writer takes.
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(
+      expect.anything(),
+      "payment_ibpr"
+    );
+    expect(
+      mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.foldIntoTransactionRefundedAmount.mock.invocationCallOrder[0]);
+    expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
+      })
+    );
     // Credit path executed; no Stripe planning, no phantom card refund.
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_ibpr", amountCents: 3500 })
@@ -958,7 +1090,7 @@ describe("cancelBooking credit refunds", () => {
     // No clearing note against a settled invoice, and no Stripe cancel of a
     // captured intent.
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
-    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
     expect(mocks.markPaymentIntentTransactionFailed).not.toHaveBeenCalled();
   });
 
@@ -1015,7 +1147,7 @@ describe("cancelBooking credit refunds", () => {
     expect(result.status).toBe(200);
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
-    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
   });
 
   it("still flattens and clears a never-captured IB payment whose mirror was folded to PARTIALLY_REFUNDED (#1473)", async () => {
@@ -1147,8 +1279,8 @@ describe("cancelBooking credit refunds", () => {
     });
     // Only the outstanding additional intent is cancelled at Stripe; the
     // captured primary is left alone.
-    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
-    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_addl_extra");
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_addl_extra");
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
@@ -1187,10 +1319,11 @@ describe("cancelBooking credit refunds", () => {
     // cancel; it re-reads under lock(1) and flattens the payment to FAILED.
     mocks.txBookingFindUnique.mockResolvedValueOnce(booking3Unpaid);
     mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
-    mocks.cancelPaymentIntentIfCancellable.mockImplementationOnce(
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          releaseCancellation = () => resolve(null);
+          releaseCancellation = () =>
+            resolve({ paymentIntent: { status: "canceled" }, canceled: true });
         })
     );
 
@@ -1332,7 +1465,7 @@ describe("cancelBooking credit refunds", () => {
     // Phase 2 via cancelOutstandingPaymentIntents (which marks the tx row
     // failed without a store), after tx1 already flipped the payment-level
     // additionalPaymentStatus to FAILED.
-    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
       "pi_4_additional"
     );
     expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
@@ -1524,14 +1657,14 @@ describe("cancelBooking credit refunds", () => {
       expect(
         mocks.enqueuePaymentIntentCancellationRecovery.mock.invocationCallOrder[0]
       ).toBeLessThan(
-        mocks.cancelPaymentIntentIfCancellable.mock.invocationCallOrder[0]
+        mocks.cancelPaymentIntentIfCancellableWithResult.mock.invocationCallOrder[0]
       );
     });
 
     it("keeps the durable op even when the Phase-2 best-effort Stripe cancel fails", async () => {
       mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
       mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
-      mocks.cancelPaymentIntentIfCancellable.mockRejectedValueOnce(
+      mocks.cancelPaymentIntentIfCancellableWithResult.mockRejectedValueOnce(
         new Error("stripe unavailable")
       );
 

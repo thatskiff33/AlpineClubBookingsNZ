@@ -1610,6 +1610,8 @@ export function classifyBookingContext(
     // late capture on a booking that ALSO had a paid-path cancel is masked by
     // that cancel's artifact; the #1350 durable intent-cancellation recovery
     // and the webhook superseded-intent hook own that population.
+    // #3638's second-instrument conflict marker is excluded with #2262's two
+    // by `isManualSettlementMarkerEvent`, inside the shared rule.
     const cancellationRefundDecisionRecorded = isCancellationRefundDecisionRecorded({
       bookingId: booking.id,
       cancelledEvents: booking.events ?? [],

@@ -153,6 +153,35 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("tells the abandon VOID from the cancellation VOID by the invoice it names (#3642)", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+        settlementId: "settle-1",
+      })
+    ).toEqual({ queueType: "GROUP_SETTLEMENT_INVOICE_VOID", settlementId: "settle-1" });
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+        settlementId: "settle-1",
+        xeroInvoiceId: "inv-1",
+      })
+    ).toEqual({
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      settlementId: "settle-1",
+      xeroInvoiceId: "inv-1",
+    });
+    // Present but unreadable is refused, never read as the cancellation VOID
+    // (which would void whatever the settlement points at now).
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+        settlementId: "settle-1",
+        xeroInvoiceId: 42,
+      })
+    ).toBeNull();
+  });
+
   it("maps queued payload types to guarded sync operation claims", () => {
     expect(getQueuedOutboxExpectedOperation("BOOKING_INVOICE_UPDATE")).toEqual({
       entityType: "INVOICE",

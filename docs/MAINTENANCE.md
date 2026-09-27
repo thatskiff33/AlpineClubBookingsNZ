@@ -1586,6 +1586,32 @@ statement to the same numbers. Nothing an operator relies on depends on that:
 the run above reads typed through Prisma, and `--sql` is a convenience for
 somebody who would rather query a replica by hand.
 
+### Audit refunded totals left short by the old refund arithmetic (#3640)
+
+Before #3640 a card refund made after an account-credit settlement was lost from
+the payment's refunded total (`INV-PAY-103` now stops new cases). A payment left
+that way offers refundable headroom that is not there, so a later cancel or
+refund could pay the same money out twice.
+`scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
+stored refunded total is below its counted card refunds plus its account-credit
+settlements, with the shortfall. It is READ-ONLY and repairs nothing: whether and
+how to repair is the owner's decision, taken on this report.
+
+```bash
+DATABASE_URL=<non-prod copy> npm run payments:audit-refunded-total
+DATABASE_URL=<non-prod copy> npm run payments:audit-refunded-total -- --json
+```
+
+The expected figure is a floor, not an identity: a stored total above it is
+normal (pre-ledger card refunds and folded modification credit notes have no
+row), and only a shortfall is reported. The report keeps two sections apart:
+the part the old arithmetic can explain (at most the smaller of a payment's card
+refunds and its credit, and only with a card refund), and a shortfall with
+another cause - typically a credit that was never folded into the total, such as
+internet-banking cash that became credit on an already-cancelled booking. Only
+the first is the #3640 repair question. The arithmetic and its caveats are in
+`src/lib/refunded-total-shortfall-audit.ts`.
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and

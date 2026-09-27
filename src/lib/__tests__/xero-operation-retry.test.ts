@@ -2086,6 +2086,89 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3642: the combined group invoice's rows go back to the outbox; a failed
+  // abandon VOID used to be terminal, with no Retry and no alert.
+  it("returns a failed group settlement VOID to the outbox with its queued payload", async () => {
+    const payload = {
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      settlementId: "settle_1",
+      xeroInvoiceId: "inv_1",
+    };
+    const operation = makeOperation({
+      operationType: "UPDATE",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      requestPayload: payload,
+    });
+    expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued the group settlement invoice operation for retry.",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED" },
+      data: expect.objectContaining({ status: "PENDING", requestPayload: payload }),
+    });
+  });
+
+  it("rebuilds a failed group settlement CREATE's queued payload, which its worker overwrote", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+        requestPayload: { invoices: [{ type: "ACCREC" }] },
+      })
+    );
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED" },
+      data: expect.objectContaining({
+        status: "PENDING",
+        requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
+      }),
+    });
+  });
+
+  it("refuses to retry a group settlement operation that is not FAILED, or was already requeued", async () => {
+    const running = makeOperation({
+      status: "PARTIAL",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE",
+    });
+    expect(getXeroOperationRetryMeta(running).supported).toBe(false);
+
+    mocks.findUniqueOperation.mockResolvedValue({ ...running, status: "FAILED" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("answers 409, not a uniqueness 500, when the organiser already queued the same attempt again (#3642 D6)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+      })
+    );
+    mocks.updateManyOperation.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
   it("atomically queues applied-credit allocation for sole outbox execution", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({

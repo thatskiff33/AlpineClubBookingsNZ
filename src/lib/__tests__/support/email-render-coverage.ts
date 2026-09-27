@@ -162,6 +162,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-manual-refund-task": "adminManualRefundTaskTemplate",
   "admin-late-capture-held": "adminLateCaptureHeldTemplate",
   "admin-manual-settlement-conflict": "adminManualSettlementConflictTemplate",
+  "admin-second-instrument-settlement-conflict": "adminSecondInstrumentSettlementConflictTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",
   "admin-refund-request": "adminRefundRequestTemplate",
   "admin-xero-reconciliation-report": "adminXeroReconciliationReportTemplate",

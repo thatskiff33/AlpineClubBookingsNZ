@@ -23,15 +23,16 @@ const {
   mockCancelPaymentIntentIfCancellableWithResult,
   mockProcessRefund,
   mockReconcilePaymentAggregates,
-  mockRecordStripeRefundLedgerEntry,
+  mockRecordStripeRefundsAgainstTransaction,
   mockRefundPaymentTransactions,
-  mockSumRecordedRefundsForTransaction,
   mockSendAdminPaymentFailureAlert,
   mockCreatePaymentIntent,
   mockFindOrCreateCustomer,
   mockUpsertPaymentIntentTransaction,
   mockPaymentTransactionFindMany,
   mockAttachIntentToWaitingOps,
+  mockAttachRecoveredIntent,
+  mockSendAdminXeroSyncErrorAlert,
   mockFindWaitingSupplementaryOpForIntent,
   mockExecuteGroupSettlementRefundPlan,
   mockRecordDuplicateCaptureRefundEvent,
@@ -63,12 +64,14 @@ const {
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockProcessRefund: vi.fn(),
   mockReconcilePaymentAggregates: vi.fn().mockResolvedValue(undefined),
-  mockRecordStripeRefundLedgerEntry: vi.fn().mockResolvedValue({
-    created: true,
-    amountCents: 6000,
+  mockRecordStripeRefundsAgainstTransaction: vi.fn().mockResolvedValue({
+    createdRefundsCount: 1,
+    createdRefundAmountCents: 6000,
+    ledgerRefundedAmountCents: 6000,
+    refundedAmountCents: 6000,
+    appliedCents: 6000,
   }),
   mockRefundPaymentTransactions: vi.fn(),
-  mockSumRecordedRefundsForTransaction: vi.fn().mockResolvedValue(0),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockCreatePaymentIntent: vi.fn(),
   mockFindOrCreateCustomer: vi.fn(),
@@ -78,6 +81,9 @@ const {
   // case whose payment carries one answers it with that row.
   mockPaymentTransactionFindMany: vi.fn().mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
+  // #3641: a spy on the recovery's attach helper that still runs the real one.
+  mockAttachRecoveredIntent: vi.fn(),
+  mockSendAdminXeroSyncErrorAlert: vi.fn(),
   // #3220 fix round: the withdrawal's one exception. Null is "nothing is
   // waiting on this ask", which is the shape every other test in this file
   // exercises.
@@ -207,7 +213,33 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   findWaitingSupplementaryInvoiceOperationForPaymentIntent: (
     ...args: unknown[]
   ) => mockFindWaitingSupplementaryOpForIntent(...args),
+  // #3641: the rest of what the late-capture module imports, inert here, so
+  // the real attach helper below loads against a complete double.
+  OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES: ["PENDING", "RUNNING", "WAITING_PAYMENT"],
+  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn(),
+  lockSupplementaryInvoiceAnchor: vi.fn(),
+  releaseWaitingSupplementaryInvoiceOperations: vi.fn(),
 }));
+
+/**
+ * #3641 review round: the recovery must reach the waiting invoice through
+ * `attachRecoveredIntentToWaitingSupplementaryInvoice`, which alerts an officer
+ * when the attach fails, never through the raw attach whose failure was only
+ * logged. The spy records the call and then runs the REAL helper, so every
+ * assertion on the raw attach above still reads what the helper did.
+ */
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture");
+  return {
+    ...actual,
+    attachRecoveredIntentToWaitingSupplementaryInvoice: (
+      params: Parameters<typeof actual.attachRecoveredIntentToWaitingSupplementaryInvoice>[0],
+    ) => {
+      mockAttachRecoveredIntent(params);
+      return actual.attachRecoveredIntentToWaitingSupplementaryInvoice(params);
+    },
+  };
+});
 
 /**
  * #3181: both reached through DYNAMIC imports inside the worker, which `vi.mock`
@@ -249,12 +281,10 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   reconcilePaymentAggregates: (...args: unknown[]) =>
     mockReconcilePaymentAggregates(...args),
-  recordStripeRefundLedgerEntry: (...args: unknown[]) =>
-    mockRecordStripeRefundLedgerEntry(...args),
+  recordStripeRefundsAgainstTransaction: (...args: unknown[]) =>
+    mockRecordStripeRefundsAgainstTransaction(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
-  sumRecordedRefundsForTransaction: (...args: unknown[]) =>
-    mockSumRecordedRefundsForTransaction(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
 }));
@@ -262,6 +292,8 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) =>
     mockSendAdminPaymentFailureAlert(...args),
+  sendAdminXeroSyncErrorAlert: (...args: unknown[]) =>
+    mockSendAdminXeroSyncErrorAlert(...args),
 }));
 
 vi.mock("@/lib/booking-events", () => ({
@@ -737,8 +769,10 @@ describe("payment recovery worker", () => {
     // First attempt scenario: refund partially succeeded in Stripe and the
     // ledger entry was written, but the paymentTransaction row update never
     // committed. On retry, Stripe returns the same refund via idempotency
-    // key; the ledger total is the truth source, so refundedAmountCents
-    // should NOT be incremented by the same Stripe refund again.
+    // key. #3640: the recovery hands the refund to the one card-refund writer
+    // (whose replay and ledger-floor behaviour is proved in
+    // payment-transactions-refunds.test.ts) and writes no absolute
+    // refundedAmountCents of its own.
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
         type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
@@ -759,20 +793,20 @@ describe("payment recovery worker", () => {
       status: "succeeded",
       payment_intent: "pi_superseded",
     });
-    mockSumRecordedRefundsForTransaction.mockResolvedValue(3000);
 
     await processPaymentRecoveryOperations({ limit: 1 });
 
-    expect(mockSumRecordedRefundsForTransaction).toHaveBeenCalledWith(
-      expect.anything(),
-      "txn-1",
-    );
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "txn-1" },
-      data: expect.objectContaining({
-        refundedAmountCents: 3000,
-      }),
+    expect(mockRecordStripeRefundsAgainstTransaction).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentTransactionId: "txn-1",
+      refunds: [expect.objectContaining({ id: "re_idempotent", amount: 3000 })],
+      fallbackPaymentIntentId: "pi_superseded",
     });
+    expect(mockPaymentTransactionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
+      }),
+    );
   });
 
   /*
@@ -813,7 +847,6 @@ describe("payment recovery worker", () => {
         status: "succeeded",
         payment_intent: "pi_superseded",
       });
-      mockSumRecordedRefundsForTransaction.mockResolvedValue(6000);
     });
 
     it("reports the refund on the attempt that closes the operation", async () => {
@@ -2119,6 +2152,27 @@ describe("payment recovery worker", () => {
       });
     });
 
+    /**
+     * #3641 review round: a failed attach used to be logged and forgotten, and
+     * the invoice then waited on no intent until the age backstop retired it
+     * while the member paid. The recovery still completes (the intent exists),
+     * and an officer is told.
+     */
+    it("alerts an officer, and still completes, when the waiting invoice cannot be pointed at the recovered intent", async () => {
+      primeQueue(additionalIntentOperation());
+      mockAttachIntentToWaitingOps.mockRejectedValueOnce(new Error("database is down"));
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockSendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorType: "SUPPLEMENTARY_INVOICE_INTENT_NOT_ATTACHED",
+          errorMessage: expect.stringContaining("pi_recovered"),
+        }),
+      );
+    });
+
     it("re-creates the intent with the stored modification-scoped Stripe key", async () => {
       primeQueue(additionalIntentOperation());
 
@@ -2155,7 +2209,13 @@ describe("payment recovery worker", () => {
           }),
         }),
       );
-      // The waiting supplementary Xero op is pointed at the recovered intent.
+      // The waiting supplementary Xero op is pointed at the recovered intent,
+      // through the helper that alerts if that fails (#3641).
+      expect(mockAttachRecoveredIntent).toHaveBeenCalledWith({
+        bookingModificationId: "mod-9",
+        paymentIntentId: "pi_recovered",
+        recoveryOperationId: "recovery-additional",
+      });
       expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith({
         bookingModificationId: "mod-9",
         paymentIntentId: "pi_recovered",
@@ -3283,7 +3343,13 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
     // The waiting supplementary Xero op is pointed at the request, under the
-    // anchor the shared parser read back - never a slice of the key.
+    // anchor the shared parser read back - never a slice of the key - and
+    // through the helper that alerts if that fails (#3641).
+    expect(mockAttachRecoveredIntent).toHaveBeenCalledWith({
+      bookingModificationId: "mod-1",
+      paymentIntentId: "pi_additional_1",
+      recoveryOperationId: "recovery-review-charge",
+    });
     expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith({
       bookingModificationId: "mod-1",
       paymentIntentId: "pi_additional_1",
