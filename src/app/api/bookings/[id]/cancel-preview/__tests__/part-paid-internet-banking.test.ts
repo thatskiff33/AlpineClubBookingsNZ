@@ -124,6 +124,8 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
       creditRefundAmountCents: 7_500,
       creditRefundPercentage: 50,
       manualRefund: false,
+      // The cancel refunds internet banking as credit; the dialog offers only that.
+      refundMethodForced: "credit",
     });
     expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ id: "payment-ib", xeroInvoiceId: "inv-ib" }),

@@ -12,6 +12,7 @@ import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
 import {
   PART_PAYMENT_UNSIZABLE_REFUSAL,
   readPartPaymentAtCancel,
@@ -148,6 +149,10 @@ export async function GET(
       // tier, which is what the executed cancel uses), so preview parity holds;
       // this flag only lets the dialog say honestly what will happen.
       manualRefund: booking.payment.manuallyMarkedPaidAt !== null,
+      // The method the cancel will use whatever is chosen (an internet banking
+      // payment refunds as account credit), from the cancel path's own home,
+      // so the dialog offers only that option.
+      refundMethodForced: forcedCancelRefundMethod(booking.payment.source),
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");

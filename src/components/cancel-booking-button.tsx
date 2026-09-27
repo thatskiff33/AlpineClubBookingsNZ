@@ -37,6 +37,12 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
+  /**
+   * The refund method the cancel will use whatever is chosen — "credit" for an
+   * internet banking payment, decided in `cancel-refund-method.ts` and returned
+   * by the preview. When set, the dialog shows only that option.
+   */
+  refundMethodForced?: "credit" | null;
 }
 
 export function CancelBookingButton({
@@ -184,7 +190,7 @@ export function CancelBookingButton({
       }
       const data: CancelPreview = await res.json();
       setPreview(data);
-      setRefundMethod("card");
+      setRefundMethod(data.refundMethodForced ?? "card");
       setStep("preview");
     } catch {
       setErrorMsg("Failed to load cancellation details");
@@ -456,7 +462,20 @@ export function CancelBookingButton({
                 back to {onBehalfOfMember ? "the member" : "you"} directly.
               </p>
             )}
-            {!preview.manualRefund && hasCardRefund && (
+            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "credit" && (
+              <div className="space-y-1" data-testid="forced-credit-refund">
+                <p>
+                  <span className="font-medium text-success-11">
+                    Hold {formatCents(preview.creditRefundAmountCents, format)} as account credit
+                  </span>
+                  <span className="text-muted-foreground ml-1">({preview.creditRefundPercentage}% refund)</span>
+                </p>
+                <p className="text-muted-foreground">
+                  This booking was paid by internet banking, so any refund is held as account credit.
+                </p>
+              </div>
+            )}
+            {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">
                 <p className="font-medium text-muted-foreground">Choose refund method:</p>
                 <label className="flex items-start gap-2 cursor-pointer">

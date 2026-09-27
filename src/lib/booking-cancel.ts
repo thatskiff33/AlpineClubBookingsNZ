@@ -80,6 +80,7 @@ import {
 } from "@/lib/booking-cancel-eligibility";
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
+import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
 import {
   PART_PAYMENT_UNSIZABLE_REFUSAL,
   queueClearingNoteForUnpaidRest,
@@ -1376,9 +1377,9 @@ async function performBookingCancellation(
   // policy math, branches, events, emails, audit — sees one consistent
   // method. The cancel-preview surface returns both methods' figures, so
   // preview parity holds.
-  if (booking.payment?.source === "INTERNET_BANKING") {
-    refundMethod = "credit";
-  }
+  // The decision lives in `cancel-refund-method.ts`, which the cancel preview
+  // also reads, so the dialog offers exactly this.
+  refundMethod = forcedCancelRefundMethod(booking.payment?.source) ?? refundMethod;
 
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
   //
