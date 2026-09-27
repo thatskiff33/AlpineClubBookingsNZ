@@ -52,10 +52,11 @@ import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-cred
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
+import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
-  createXeroInvoiceForGroupSettlement,
+  voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
-} from "@/lib/xero-group-settlement-invoices";
+} from "@/lib/xero-group-settlement-invoice-voids";
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import {
   readXeroInvoiceEmailInstruction,
@@ -660,105 +661,6 @@ export async function enqueueXeroAppliedCreditAllocationOperation(
   return {
     queueOperationId: queuedOperation.id,
     message: "Applied-credit allocation queued for background processing.",
-  };
-}
-
-export async function enqueueXeroGroupSettlementInvoiceOperation(
-  settlementId: string,
-  options?: {
-    createdByMemberId?: string;
-    store?: Prisma.TransactionClient;
-  }
-) {
-  const db = options?.store ?? prisma;
-  const settlement = await db.groupBookingSettlement.findUnique({
-    where: { id: settlementId },
-    select: {
-      id: true,
-      xeroInvoiceId: true,
-    },
-  });
-
-  if (!settlement) {
-    throw new Error(`Group settlement not found: ${settlementId}`);
-  }
-
-  if (settlement.xeroInvoiceId) {
-    return {
-      queueOperationId: null,
-      message: "Xero settlement invoice already linked for this group.",
-    };
-  }
-
-  const existingLink = await db.xeroObjectLink.findFirst({
-    where: {
-      localModel: "GroupBookingSettlement",
-      localId: settlement.id,
-      xeroObjectType: "INVOICE",
-      role: "GROUP_SETTLEMENT_INVOICE",
-      active: true,
-    },
-    select: { id: true },
-  });
-
-  if (existingLink) {
-    return {
-      queueOperationId: null,
-      message: "Xero settlement invoice already linked for this group.",
-    };
-  }
-
-  const correlationKey = buildXeroIdempotencyKey(
-    "group-settlement",
-    settlementId,
-    "invoice",
-    "v1"
-  );
-
-  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
-    where: {
-      correlationKey,
-      direction: "OUTBOUND",
-      entityType: "INVOICE",
-      operationType: "CREATE",
-      localModel: "GroupBookingSettlement",
-      localId: settlement.id,
-      status: {
-        in: ["PENDING", "RUNNING"],
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
-
-  if (existingQueuedOperation) {
-    return {
-      queueOperationId: existingQueuedOperation.id,
-      message: "Xero settlement invoice is already queued for background processing.",
-    };
-  }
-
-  const queuedOperation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel: "GroupBookingSettlement",
-    localId: settlement.id,
-    status: "PENDING",
-    idempotencyKey: correlationKey,
-    correlationKey,
-    requestPayload: {
-      queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
-      settlementId,
-    },
-    createdByMemberId: options?.createdByMemberId ?? null,
-    store: options?.store,
-  });
-
-  return {
-    queueOperationId: queuedOperation.id,
-    message: "Xero settlement invoice queued for background processing.",
   };
 }
 
@@ -2916,10 +2818,19 @@ export async function processQueuedXeroOutboxOperations(options?: {
       } else if (
         payload?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
       ) {
-        await voidXeroInvoiceForCancelledGroupSettlement(
-          payload.settlementId,
-          { syncOperationId: queuedOperation.id }
-        );
+        if (payload.xeroInvoiceId) {
+          // #3642: the invoice a live group's settlement abandoned.
+          await voidXeroInvoiceForAbandonedGroupSettlement(
+            payload.settlementId,
+            payload.xeroInvoiceId,
+            { syncOperationId: queuedOperation.id }
+          );
+        } else {
+          await voidXeroInvoiceForCancelledGroupSettlement(
+            payload.settlementId,
+            { syncOperationId: queuedOperation.id }
+          );
+        }
       } else if (
         payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
       ) {

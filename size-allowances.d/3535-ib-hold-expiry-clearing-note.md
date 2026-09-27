@@ -36,15 +36,18 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   read an admin-only settlement marker as a recorded refund decision.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1610
+lines: 1689
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
   only the two dispatch arms here, beside their siblings, and the refusal of a
   recorded plan with a redacted invoice id at the two places it is read.
+  #3642 (same epic) returns a failed group-settlement invoice row (CREATE or
+  VOID) to the outbox, rebuilding the CREATE's queued payload, in the existing
+  outbox-requeue branch beside the applied-credit one.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1730
+lines: 1843
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
@@ -53,6 +56,11 @@ reason: the already-cancelled credit arm retires a still-pending
   #3638 (same epic) writes its second-instrument marker inside this settle
   transaction, beside the receipt it describes; the detection, the writer and
   the alert live in `settlement-conflicts.ts`.
+  #3642 (same epic): the paid group invoice arm hands the invoice's cash to
+  the settle and recognises a payment on an abandoned invoice (by its link,
+  with the cancelled-group wording) and a card double payment; all read the
+  invoice and cash evidence that arm already classifies. The alert lives in
+  `group-settlement-invoice-alerts.ts`.
 
 file: src/lib/redact-sensitive-json.ts
 lines: 914

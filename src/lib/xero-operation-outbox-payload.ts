@@ -187,6 +187,12 @@ interface QueuedGroupSettlementInvoiceOutboxPayload {
 interface QueuedGroupSettlementInvoiceVoidOutboxPayload {
   queueType: typeof XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE;
   settlementId: string;
+  /**
+   * #3642: present on the VOID of an invoice the settlement ABANDONED while the
+   * group stayed live (the settlement's own pointer is already cleared). Absent
+   * on the cancellation VOID, which reads the invoice off the settlement.
+   */
+  xeroInvoiceId?: string;
 }
 
 interface QueuedSubscriptionInvoiceOutboxPayload {
@@ -449,10 +455,7 @@ export function readQueuedOutboxPayload(
     };
   }
 
-  if (
-    queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE ||
-    queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
-  ) {
+  if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE) {
     const settlementId = readString(payload.settlementId);
     if (!settlementId) {
       return null;
@@ -462,6 +465,24 @@ export function readQueuedOutboxPayload(
       queueType,
       settlementId,
     };
+  }
+
+  if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE) {
+    const settlementId = readString(payload.settlementId);
+    if (!settlementId) {
+      return null;
+    }
+    // #3642: the abandon VOID names its invoice. A present-but-unreadable id is
+    // refused rather than read as the cancellation VOID, which would void
+    // whatever the settlement points at now.
+    if (payload.xeroInvoiceId === undefined) {
+      return { queueType, settlementId };
+    }
+    const xeroInvoiceId = readString(payload.xeroInvoiceId);
+    if (!xeroInvoiceId) {
+      return null;
+    }
+    return { queueType, settlementId, xeroInvoiceId };
   }
 
   if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {

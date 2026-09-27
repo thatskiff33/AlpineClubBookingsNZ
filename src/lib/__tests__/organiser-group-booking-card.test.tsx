@@ -118,8 +118,10 @@ describe("OrganiserGroupBookingCard settlement", () => {
       screen.getByRole("button", { name: /Settle by invoice \(emailed\)/ })
     );
 
-    // Confirms in place with the GROUP- reference, no Stripe form.
-    expect(await screen.findByText(/Invoice emailed/)).toBeDefined();
+    // Confirms in place with the GROUP- reference, no Stripe form. The invoice
+    // was only just asked for, so the card does not claim it was emailed (#3642).
+    expect(await screen.findByText(/Your invoice is being prepared/)).toBeDefined();
+    expect(screen.queryByText(/Invoice emailed/)).toBeNull();
     expect(screen.getByText(/GROUP-ABCD1234/)).toBeDefined();
     expect(screen.queryByTestId("payment-form")).toBeNull();
 
@@ -131,6 +133,231 @@ describe("OrganiserGroupBookingCard settlement", () => {
       JSON.parse((settleCall![1] as { body: string }).body).paymentMethod
     ).toBe("internet_banking");
   });
+
+  // #3642: the pending invoice lived only in React state, so a reload offered
+  // the Card / Internet Banking picker again over an invoice already emailed.
+  it("shows a pending Internet Banking invoice from the server on a fresh load, with no method picker", async () => {
+    const fetchMock = stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "PENDING",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: "GROUP-ABCD1234",
+            invoiceDisplay: "emailed",
+          },
+        })}
+      />
+    );
+
+    expect(await screen.findByText(/Invoice emailed/)).toBeDefined();
+    expect(screen.getByText(/GROUP-ABCD1234/)).toBeDefined();
+    // Wait for the module flag to resolve: the picker must still not appear.
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes("/api/payments/options"))
+      ).toBe(true)
+    );
+    expect(screen.queryByRole("button", { name: /Internet Banking/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Settle group total/ })).toBeNull();
+  });
+
+  it("offers the method picker again once the server says no invoice is pending", async () => {
+    stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "FAILED",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: null,
+            invoiceDisplay: null,
+          },
+        })}
+      />
+    );
+
+    expect(await screen.findByRole("button", { name: /Internet Banking/ })).toBeDefined();
+    expect(screen.queryByText(/Invoice emailed/)).toBeNull();
+  });
+
+  // #3642: a joiner who joined after the invoice went out is named, and the
+  // organiser is offered the replacement invoice rather than "pay it as sent".
+  it("names the joiners not on the outstanding invoice and offers an updated one", async () => {
+    const fetchMock = stubFetch({
+      internetBankingEnabled: true,
+      settleBody: {
+        outcome: "invoice_sent",
+        amountCents: 6500,
+        childCount: 2,
+        reference: "GROUP-ABCD1234",
+      },
+    });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{
+          ...base,
+          joiners: [
+            ...base.joiners,
+            { ...base.joiners[0], id: "j2", name: "Cam Late", status: "PAYMENT_PENDING", priceCents: 2000 },
+          ],
+          settlement: {
+            status: "PENDING",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: "GROUP-ABCD1234",
+            invoiceDisplay: "emailed",
+          },
+        }}
+      />
+    );
+
+    expect(await screen.findByText(/Not on this invoice: Cam Late/)).toBeDefined();
+    expect(screen.queryByText(/pay it as sent/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Send an updated invoice/ }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => String(url).includes("/settle") && init?.method === "POST"
+        )
+      ).toBe(true)
+    );
+    const settleCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/settle") && init?.method === "POST"
+    );
+    expect(JSON.parse((settleCall![1] as { body: string }).body).paymentMethod).toBe(
+      "internet_banking"
+    );
+  });
+
+  // #3642 D1: a first settle commits the PAYMENT_PENDING joiners it covers; the
+  // page's props still say PAYMENT_PENDING, and must not be read as "not on it".
+  it("does not call the joiners a settle just paid for 'not on this invoice'", async () => {
+    stubFetch({
+      internetBankingEnabled: true,
+      settleBody: { outcome: "invoice_sent", amountCents: 4500, childCount: 1, reference: "GROUP-ABCD1234" },
+    });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{ ...base, joiners: base.joiners.map((j) => ({ ...j, status: "PAYMENT_PENDING" })) }}
+      />
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Internet Banking/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Settle by invoice \(emailed\)/ }));
+
+    expect(await screen.findByText(/Your invoice is being prepared/)).toBeDefined();
+    expect(screen.queryByText(/Not on this invoice/)).toBeNull();
+    expect(screen.queryByText(/don't pay it/)).toBeNull();
+  });
+
+  it("tells the organiser an invoice could not be raised and that card still works (#3642 D2)", async () => {
+    stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "FAILED",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: null,
+            invoiceDisplay: null,
+            invoiceBlocked: true,
+          },
+        })}
+      />
+    );
+
+    expect(
+      (await screen.findByRole("status")).textContent
+    ).toMatch(/couldn't prepare an invoice.*pay by card/);
+  });
+
+  it("says an invoice that failed to send has not been sent, and offers to try again", async () => {
+    stubFetch({ internetBankingEnabled: true });
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "PENDING",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: "GROUP-ABCD1234",
+            invoiceDisplay: "failed",
+          },
+        })}
+      />
+    );
+
+    expect(await screen.findByText(/Your invoice hasn't been sent yet/)).toBeDefined();
+    expect(screen.queryByText(/Invoice emailed/)).toBeNull();
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeDefined();
+  });
+
+  it("never says everyone is confirmed while a joiner is still unpaid for", async () => {
+    stubFetch({ internetBankingEnabled: true });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{
+          ...base,
+          joiners: [
+            ...base.joiners.map((j) => ({ ...j, status: "PAID" })),
+            { ...base.joiners[0], id: "j2", name: "Cam Late", status: "PAYMENT_PENDING", priceCents: 2000 },
+          ],
+          settlement: {
+            status: "SUCCEEDED",
+            amountCents: 4500,
+            paidAt: "2026-07-01T00:00:00.000Z",
+            internetBankingReference: null,
+            invoiceDisplay: null,
+          },
+        }}
+      />
+    );
+
+    expect(await screen.findByText(/Not paid for yet: Cam Late/)).toBeDefined();
+    expect(screen.queryByText(/Everyone in your group is confirmed/)).toBeNull();
+  });
+
+  it("announces a settle error to assistive technology", async () => {
+    stubFetch({ internetBankingEnabled: false, settleOk: false, settleBody: { error: "Nope" } });
+
+    render(
+      <OrganiserGroupBookingCard bookingId="booking-1" canOpenGroup={false} group={group()} />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Settle group total/ }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Nope");
+  });
+
 
   // #2919 review: both of this card's message bodies were printed with only
   // {{paymentReference}} substituted, so an edited body's other merge fields
@@ -159,7 +386,7 @@ describe("OrganiserGroupBookingCard settlement", () => {
       },
     });
 
-    render(
+    const { unmount } = render(
       <OrganiserGroupBookingCard
         bookingId="booking-1"
         canOpenGroup={false}
@@ -173,9 +400,25 @@ describe("OrganiserGroupBookingCard settlement", () => {
       await screen.findByText("One invoice for Second Lodge, from Alpine Club.")
     ).toBeDefined();
 
-    fireEvent.click(screen.getByRole("button", { name: /Internet Banking/ }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /Settle by invoice \(emailed\)/ })
+    // The invoice-sent copy, once the server says the invoice was emailed
+    // (#3642: never before). The card keeps its group in state, so it is
+    // mounted afresh with the server's answer.
+    unmount();
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={group({
+          settlement: {
+            status: "PENDING",
+            amountCents: 4500,
+            paidAt: null,
+            internetBankingReference: "GROUP-ABCD1234",
+            invoiceDisplay: "emailed",
+          },
+        })}
+        lodgeName="Second Lodge"
+      />
     );
 
     expect(

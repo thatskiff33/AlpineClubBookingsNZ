@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   createXeroInvoiceForBooking: vi.fn(),
   createXeroInvoiceForGroupSettlement: vi.fn(),
   voidXeroInvoiceForCancelledGroupSettlement: vi.fn(),
+  voidXeroInvoiceForAbandonedGroupSettlement: vi.fn(),
   createXeroMembershipSubscriptionInvoice: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
@@ -163,6 +164,10 @@ vi.mock("@/lib/stripe-cash-refund-evidence", () => ({
 
 vi.mock("@/lib/xero-group-settlement-invoices", () => ({
   createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+}));
+vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
+  voidXeroInvoiceForAbandonedGroupSettlement:
+    mocks.voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement:
     mocks.voidXeroInvoiceForCancelledGroupSettlement,
 }));
@@ -242,7 +247,6 @@ import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
-  enqueueXeroGroupSettlementInvoiceOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
   enqueueXeroMembershipCancellationContactOperation,
   enqueueXeroMembershipCancellationCreditNoteOperation,
@@ -1681,63 +1685,6 @@ describe("membership cancellation Xero enqueue operations", () => {
   });
 });
 
-describe("enqueueXeroGroupSettlementInvoiceOperation", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.findFirstLink.mockResolvedValue(null);
-    mocks.findUniqueGroupSettlement.mockResolvedValue({
-      id: "settle_1",
-      xeroInvoiceId: null,
-    });
-    mocks.findFirstOperation.mockResolvedValue(null);
-    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_settle_1" });
-  });
-
-  it("creates a pending invoice sync operation against the settlement", async () => {
-    await expect(
-      enqueueXeroGroupSettlementInvoiceOperation("settle_1", {
-        createdByMemberId: "admin_1",
-      })
-    ).resolves.toEqual({
-      queueOperationId: "op_settle_1",
-      message: "Xero settlement invoice queued for background processing.",
-    });
-
-    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        direction: "OUTBOUND",
-        entityType: "INVOICE",
-        operationType: "CREATE",
-        localModel: "GroupBookingSettlement",
-        localId: "settle_1",
-        status: "PENDING",
-        idempotencyKey: "group-settlement:settle_1:invoice:v1",
-        correlationKey: "group-settlement:settle_1:invoice:v1",
-        createdByMemberId: "admin_1",
-        requestPayload: {
-          queueType: "GROUP_SETTLEMENT_INVOICE",
-          settlementId: "settle_1",
-        },
-      })
-    );
-  });
-
-  it("skips queueing when the settlement already carries an invoice", async () => {
-    mocks.findUniqueGroupSettlement.mockResolvedValue({
-      id: "settle_1",
-      xeroInvoiceId: "xinv_existing",
-    });
-
-    await expect(
-      enqueueXeroGroupSettlementInvoiceOperation("settle_1")
-    ).resolves.toEqual({
-      queueOperationId: null,
-      message: "Xero settlement invoice already linked for this group.",
-    });
-    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
-  });
-});
-
 describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2724,6 +2671,47 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 
     // No queue type slipped through to the incomplete-payload failure.
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  // #3642 (SSOT F7): one queue type, two VOIDs. A payload that names its invoice
+  // is the abandon VOID of a live group; one that does not is the cancellation
+  // VOID, which reads the invoice off the settlement. Swapping the branches
+  // would void a live group's CURRENT invoice, or refuse every abandon VOID.
+  it("routes a VOID that names its invoice to the abandon handler, and one that does not to the cancellation handler", async () => {
+    mocks.voidXeroInvoiceForAbandonedGroupSettlement.mockResolvedValue(undefined);
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        ...fixtures.GROUP_SETTLEMENT_INVOICE_VOID.op,
+        id: "op_settle_abandon_1",
+        requestPayload: {
+          queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+          settlementId: "settle_1",
+          xeroInvoiceId: "inv_abandoned",
+        },
+      },
+    ]);
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.voidXeroInvoiceForAbandonedGroupSettlement).toHaveBeenCalledWith(
+      "settle_1",
+      "inv_abandoned",
+      { syncOperationId: "op_settle_abandon_1" }
+    );
+    expect(mocks.voidXeroInvoiceForCancelledGroupSettlement).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.voidXeroInvoiceForCancelledGroupSettlement.mockResolvedValue(undefined);
+    mocks.findManyOperations.mockResolvedValue([fixtures.GROUP_SETTLEMENT_INVOICE_VOID.op]);
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.voidXeroInvoiceForCancelledGroupSettlement).toHaveBeenCalledWith(
+      "settle_1",
+      { syncOperationId: "op_settle_void_1" }
+    );
+    expect(mocks.voidXeroInvoiceForAbandonedGroupSettlement).not.toHaveBeenCalled();
   });
 
   it("routes nothing outside the constant: representative non-members hit the incomplete-payload fallthrough", async () => {
