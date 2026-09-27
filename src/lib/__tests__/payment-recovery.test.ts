@@ -23,9 +23,8 @@ const {
   mockCancelPaymentIntentIfCancellableWithResult,
   mockProcessRefund,
   mockReconcilePaymentAggregates,
-  mockRecordStripeRefundLedgerEntry,
+  mockRecordStripeRefundsAgainstTransaction,
   mockRefundPaymentTransactions,
-  mockSumRecordedRefundsForTransaction,
   mockSendAdminPaymentFailureAlert,
   mockCreatePaymentIntent,
   mockFindOrCreateCustomer,
@@ -63,12 +62,14 @@ const {
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockProcessRefund: vi.fn(),
   mockReconcilePaymentAggregates: vi.fn().mockResolvedValue(undefined),
-  mockRecordStripeRefundLedgerEntry: vi.fn().mockResolvedValue({
-    created: true,
-    amountCents: 6000,
+  mockRecordStripeRefundsAgainstTransaction: vi.fn().mockResolvedValue({
+    createdRefundsCount: 1,
+    createdRefundAmountCents: 6000,
+    ledgerRefundedAmountCents: 6000,
+    refundedAmountCents: 6000,
+    appliedCents: 6000,
   }),
   mockRefundPaymentTransactions: vi.fn(),
-  mockSumRecordedRefundsForTransaction: vi.fn().mockResolvedValue(0),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockCreatePaymentIntent: vi.fn(),
   mockFindOrCreateCustomer: vi.fn(),
@@ -228,12 +229,10 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   reconcilePaymentAggregates: (...args: unknown[]) =>
     mockReconcilePaymentAggregates(...args),
-  recordStripeRefundLedgerEntry: (...args: unknown[]) =>
-    mockRecordStripeRefundLedgerEntry(...args),
+  recordStripeRefundsAgainstTransaction: (...args: unknown[]) =>
+    mockRecordStripeRefundsAgainstTransaction(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
-  sumRecordedRefundsForTransaction: (...args: unknown[]) =>
-    mockSumRecordedRefundsForTransaction(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
 }));
@@ -716,8 +715,10 @@ describe("payment recovery worker", () => {
     // First attempt scenario: refund partially succeeded in Stripe and the
     // ledger entry was written, but the paymentTransaction row update never
     // committed. On retry, Stripe returns the same refund via idempotency
-    // key; the ledger total is the truth source, so refundedAmountCents
-    // should NOT be incremented by the same Stripe refund again.
+    // key. #3640: the recovery hands the refund to the one card-refund writer
+    // (whose replay and ledger-floor behaviour is proved in
+    // payment-transactions-refunds.test.ts) and writes no absolute
+    // refundedAmountCents of its own.
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
         type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
@@ -738,20 +739,20 @@ describe("payment recovery worker", () => {
       status: "succeeded",
       payment_intent: "pi_superseded",
     });
-    mockSumRecordedRefundsForTransaction.mockResolvedValue(3000);
 
     await processPaymentRecoveryOperations({ limit: 1 });
 
-    expect(mockSumRecordedRefundsForTransaction).toHaveBeenCalledWith(
-      expect.anything(),
-      "txn-1",
-    );
-    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "txn-1" },
-      data: expect.objectContaining({
-        refundedAmountCents: 3000,
-      }),
+    expect(mockRecordStripeRefundsAgainstTransaction).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentTransactionId: "txn-1",
+      refunds: [expect.objectContaining({ id: "re_idempotent", amount: 3000 })],
+      fallbackPaymentIntentId: "pi_superseded",
     });
+    expect(mockPaymentTransactionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
+      }),
+    );
   });
 
   /*
@@ -792,7 +793,6 @@ describe("payment recovery worker", () => {
         status: "succeeded",
         payment_intent: "pi_superseded",
       });
-      mockSumRecordedRefundsForTransaction.mockResolvedValue(6000);
     });
 
     it("reports the refund on the attempt that closes the operation", async () => {

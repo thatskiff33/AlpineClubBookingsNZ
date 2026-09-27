@@ -62,6 +62,10 @@ const mocks = vi.hoisted(() => {
   // #1491: the fold-materialization reads/writes inside the claim tx.
   txPaymentTransactionFindMany: vi.fn(),
   txPaymentTransactionUpdate: vi.fn(),
+  // #3640: the fold writes through the shared compare-and-set increment.
+  foldIntoTransactionRefundedAmount: vi.fn(),
+  // #3640 (delta review, D1): the Payment row lock the paid claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(),
   // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
   paymentTransactionFindFirst: vi.fn(),
   // #1547: the under-lock Xero-linked applied-credit aggregate in the
@@ -178,6 +182,8 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: mocks.PartialRefundError,
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
+  foldIntoTransactionRefundedAmount: mocks.foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
@@ -330,6 +336,9 @@ describe("cancelBooking credit refunds", () => {
     // #1491: fold materialization defaults — no captured rows to attribute to.
     mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
     mocks.txPaymentTransactionUpdate.mockResolvedValue({});
+    mocks.foldIntoTransactionRefundedAmount.mockImplementation(
+      async ({ amountCents }: { amountCents: number }) => amountCents,
+    );
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
@@ -970,11 +979,26 @@ describe("cancelBooking credit refunds", () => {
       expect.anything(),
       "credit"
     );
-    // The folded 3000 was attributed to the captured ledger row in tx1.
-    expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
-      where: { id: "ptx_ibpr" },
-      data: { refundedAmountCents: 3000 },
-    });
+    // The folded 3000 was attributed to the captured ledger row in tx1, as an
+    // increment through the shared compare-and-set (#3640) - never an absolute
+    // `read + bump` write a concurrent webhook refund could be erased by.
+    expect(mocks.foldIntoTransactionRefundedAmount).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentTransactionId: "ptx_ibpr", amountCents: 3000 })
+    );
+    // #3640 (delta review, D1): the Payment row is locked BEFORE the fold
+    // touches a transaction row - the one order every writer takes.
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(
+      expect.anything(),
+      "payment_ibpr"
+    );
+    expect(
+      mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.foldIntoTransactionRefundedAmount.mock.invocationCallOrder[0]);
+    expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ refundedAmountCents: expect.anything() }),
+      })
+    );
     // Credit path executed; no Stripe planning, no phantom card refund.
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_ibpr", amountCents: 3500 })

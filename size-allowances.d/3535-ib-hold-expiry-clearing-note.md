@@ -13,13 +13,17 @@ reason: the transaction-client option and the wording choice belong on the
   the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
-lines: 2543
+lines: 2547
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
   claim's follow-up would separate it from the sizing it sits beside.
   #3638 (same epic) adds its share: the card-intent cancel marks the row FAILED
   only when Stripe confirms the intent dead, through the shared predicate.
+  #3640 (same epic) adds its share: the paid-path claim takes the Payment row
+  first (`lockPaymentForRefundedTotal`) before its #1491 fold, so its row order
+  matches every other writer of the refunded total (the fold's increment and
+  the shared refundable-base helper make the rest of its lines).
 
 file: src/lib/xero-booking-repair-classify.ts
 lines: 1794

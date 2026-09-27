@@ -1255,6 +1255,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // and an ordinary rejection. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Approve, reject and release of one `DeletionRequest`".
   "src/lib/deletion-request-decision.ts": 1,
+  // #3640 (delta review, D1): `lockPaymentForRefundedTotal` takes the Payment
+  // row `FOR NO KEY UPDATE` FIRST in every writer of the transaction refund
+  // mirror - the card-refund writer, `applyLocalRefundAllocation`, and the
+  // cancel claim before its #1491 fold - so the order is Payment row -> refund
+  // rows -> transaction row everywhere. NO KEY strength so a `PaymentRefund`
+  // insert's FK check (`FOR KEY SHARE`) is not blocked. Keyed on an immutable
+  // cuid; taken after `lock(1)` where the caller holds it. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> the #3640 paragraph.
+  "src/lib/payment-transactions.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

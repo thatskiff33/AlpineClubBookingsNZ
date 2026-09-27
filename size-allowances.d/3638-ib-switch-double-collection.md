@@ -33,10 +33,9 @@ reason: the soft delete reads the same "is this intent dead" predicate as
   booking cancellation, so an intent already cancelled at Stripe has its row
   closed here too: the import and a three-line comment.
 
-file: src/lib/payment-recovery.ts
-lines: 3185
-reason: one import; the superseded-intent cancel now reads the shared
-  predicate instead of spelling the rule inline.
+payment-recovery.ts needs no allowance once #3640 composes with this change: its
+superseded-payment refund moved onto the one card-refund writer, and the file is
+shorter than its base.
 
 file: src/lib/email-message-registry.ts
 lines: 2111

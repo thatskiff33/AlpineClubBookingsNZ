@@ -57,9 +57,10 @@ export const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
 /**
  * A `PaymentRefund` row counted as money back to the member.
  *
- * One home for three readers that must agree: the per-transaction refund sum
- * behind the `Payment` mirror, the Stripe cash-refund evidence the Xero refund
- * notes are built from (#2902), and the booking ledger's refund lines (#3581).
+ * One home for the readers that must agree: the per-transaction refund sum
+ * behind the `Payment` mirror, which newly recorded refund the mirror ADDS
+ * (#3640), the Stripe cash-refund evidence the Xero refund notes are built from
+ * (#2902), and the booking ledger's refund lines (#3581).
  * The evidence module used to carry its own copy, "deliberately the same".
  *
  * OWNER DECISION, 21 Aug 2026 (#2902): a refund Stripe has accepted but not
@@ -72,4 +73,19 @@ export const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
  */
 export function isRecordedRefundStatus(status: string): boolean {
   return !EXCLUDED_LEDGER_REFUND_STATUSES.includes(status);
+}
+
+/**
+ * The least a payment's refunded total can truthfully be (#3640): what it
+ * captured, or - if less - its card refunds still counted plus the account
+ * credit its booking issued. One home for two readers that must agree: the
+ * card-refund writer's floor on a failed refund's subtraction, and the
+ * refunded-total audit's expected figure.
+ */
+export function expectedRefundedFloorCents(input: {
+  amountCents: number;
+  cardRefundCents: number;
+  accountCreditCents: number;
+}): number {
+  return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents);
 }

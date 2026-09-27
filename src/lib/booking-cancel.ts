@@ -32,8 +32,11 @@ import {
 } from "./xero-operation-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import {
   applyLocalRefundAllocation,
+  foldIntoTransactionRefundedAmount,
+  lockPaymentForRefundedTotal,
   markPaymentIntentTransactionFailed,
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -1429,6 +1432,11 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     const payment = fresh.payment;
+    // #3640: the Payment row FIRST, before the fold, the top-up write and the
+    // credit allocation touch any row - the one order every writer of the
+    // refunded total takes (`lockPaymentForRefundedTotal`), so a card refund's
+    // webhook landing now cannot deadlock against this claim.
+    await lockPaymentForRefundedTotal(tx, payment.id);
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile
@@ -1460,16 +1468,14 @@ async function performBookingCancellation(
         if (foldedCents <= 0) {
           break;
         }
-        const headroomCents = row.amountCents - row.refundedAmountCents;
-        if (headroomCents <= 0) {
-          continue;
-        }
-        const bumpCents = Math.min(headroomCents, foldedCents);
-        await tx.paymentTransaction.update({
-          where: { id: row.id },
-          data: { refundedAmountCents: row.refundedAmountCents + bumpCents },
+        // Capped at the row's headroom, as an increment through the shared
+        // compare-and-set (#3640): the charge.refunded webhook takes no lock,
+        // so a card refund it commits between this read and the write survives.
+        foldedCents -= await foldIntoTransactionRefundedAmount({
+          paymentTransactionId: row.id,
+          amountCents: foldedCents,
+          store: tx,
         });
-        foldedCents -= bumpCents;
       }
     }
 
@@ -1482,9 +1488,7 @@ async function performBookingCancellation(
     // Computed BEFORE the credit restore so the applied-credit slice can be
     // tiered off the same base/tier as the card slice (#1164 / D7).
     const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-    const refundableBaseCents =
-      Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
-      payment.changeFeeCents;
+    const refundableBaseCents = cancelRefundableBaseCents({ ...payment, finalPriceCents: fresh.finalPriceCents });
     // #3123 — THE REFUND TIER. The club's day, resolved before this
     // transaction opened (`INV-LOCK-004`); it used to be the container's,
     // projected out of `APP_TIME_ZONE`, which tiered every club behind

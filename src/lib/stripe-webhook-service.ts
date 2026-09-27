@@ -1132,7 +1132,7 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   );
 
   if (refundSync.refundDeltaCents > 0) {
-    // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
+    // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
         refundSync.paymentId,

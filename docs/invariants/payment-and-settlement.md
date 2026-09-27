@@ -393,6 +393,33 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `failed` counts as cash between those two events, bounded by the
   `refundedAmountCents` clamp and corrected by the next run.
 
+## INV-PAY-103
+
+- **A card refund ADDS to a transaction's `refundedAmountCents` exactly the
+  money it newly recorded, through one writer** (#3640). The mirror also counts
+  account-credit settlements, which leave no `PaymentRefund` row, so a
+  `max(stored, card refunds)` formula loses a card refund made after a credit
+  and lets a later cancel pay it out again. `recordStripeRefundsAgainstTransaction`
+  (`src/lib/payment-transactions.ts`) is the only card-refund writer of that
+  column — the inline refund, the `charge.refunded` sync and the
+  superseded-payment recovery. It adds a refund only when its own
+  `ON CONFLICT DO NOTHING` insert recorded it, in a counted status, made no
+  earlier than the second the ledger-writers migration finished on this install
+  (an older one is already in the mirror); it subtracts a counted refund it sees
+  move to failed or cancelled, never below the payment's account credit plus
+  its card refunds still counted (a refund the old formula never added, failing
+  later, takes nothing). Rows, mirror and aggregate commit in one transaction.
+- **Every later write of that column is one compare-and-set**, re-read and
+  retried: the writer above, #1491's fold and `applyLocalRefundAllocation`, which
+  refuses only when headroom is gone. All take the `Payment` row first
+  (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
+- The exception is group settlement (`INV-PAY-031`–`037`): it refunds child
+  payments that have no transaction rows and writes their `Payment` mirror
+  directly.
+- Pinned by `payment-transactions-refunds.test.ts` and
+  `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
+  are listed by `npm run payments:audit-refunded-total`, never repaired by code.
+
 ## INV-PAY-002
 
 - Account credit is consumed only by a booking that is actually reaching
@@ -1587,11 +1614,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   the frozen slices under the stored task-scoped prefix, Stripe answers a repeat
   with the original refund, and the ledger dedupes on refund id.
 - **`applyLocalRefundAllocation` compare-and-sets** on the `refundedAmountCents`
-  it read (#3032): it writes an ABSOLUTE value, so two writers on one
-  `PaymentTransaction` would silently OVERSTATE the refundable headroom, and a
-  review completion allocates against a LIVE booking with no lock. The guard
-  refuses loudly; the completion turns that into a 409 with its transaction
-  rolled back and its task still OPEN.
+  it read (#3032), so two writers on one row cannot OVERSTATE the headroom; a
+  review completion allocates against a LIVE booking with no lock. It retries
+  against the fresh total (#3640) and refuses only when the headroom is gone;
+  the completion turns that into a 409, rolled back, its task still OPEN.
 - **The settlement anchor is the ORIGINAL edit's `BookingModification`** (owner
   decision D-3032-1), carried on `reviewContext.bookingModificationId` and
   deliberately NOT part of the occurrence identity. `MemberCredit.sourceBookingModificationId`

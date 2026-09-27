@@ -6,6 +6,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
+import { isRootPrismaClient } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
 import {
   isNonNegativeIntegerCents,
@@ -154,22 +155,10 @@ export class EditFinancialReviewError extends ApiError {
  * modes that issue names.
  *
  * THE TYPE DOES NOT ENFORCE THIS, and an earlier version of this docblock
- * claimed it did. `Prisma.TransactionClient` is `PrismaClient` minus a deny
- * list, and in Prisma 7 that list
- * (`denylist` in `node_modules/@prisma/client/runtime/client.d.ts`) is
- * `["$connect","$disconnect","$on","$use","$extends"]`. `$transaction` is NOT in
- * it - Prisma 7 supports nested transactions - so the full client is
- * structurally assignable here and passing `prisma` compiles cleanly. Measured
- * with a compile probe, not assumed. The obvious type-level repair does not work
- * either: `Prisma.TransactionClient & { $transaction?: never }` collapses to
- * `never` and rejects BOTH clients, which the same probe showed.
- *
- * So the guarantee is enforced at RUNTIME, at the top of the function. The
- * discriminator is `$connect`, and it has to be: measured against a real
- * PostgreSQL on Prisma 7.9.1, an interactive transaction client reports
- * `typeof tx.$transaction === "function"` (nested transactions again) while
- * `$connect`, `$disconnect` and `$extends` are all `undefined` on it - they are
- * the deny list, and the deny list is exactly what tells the two apart.
+ * claimed it did: passing `prisma` compiles cleanly. So the guarantee is
+ * enforced at RUNTIME, at the top of the function, through
+ * `isRootPrismaClient` (`db-transaction.ts`), which holds the measurement of why
+ * the types cannot tell the two clients apart and why `$connect` can.
  *
  * The failure this prevents is worth the check. Given the full client,
  * `store.$executeRaw` would run `pg_advisory_xact_lock(1)` in its own implicit
@@ -256,10 +245,9 @@ export async function raiseEditFinancialReviewTask({
   store: Prisma.TransactionClient;
 }): Promise<RaiseEditFinancialReviewResult> {
   // The runtime half of the `store` contract above, and the whole of the
-  // guarantee - see the docblock for why the TYPE cannot provide it, why
-  // `$connect` rather than `$transaction` is what tells the two clients apart,
-  // and what silently breaks when a caller passes `prisma`.
-  if (typeof (store as { $connect?: unknown }).$connect === "function") {
+  // guarantee - see the docblock for what silently breaks when a caller passes
+  // `prisma`, and `isRootPrismaClient` for how the two clients are told apart.
+  if (isRootPrismaClient(store)) {
     throw new EditFinancialReviewError(
       "raiseEditFinancialReviewTask must run inside the caller's transaction: pass the transaction client, not the Prisma client.",
       500,

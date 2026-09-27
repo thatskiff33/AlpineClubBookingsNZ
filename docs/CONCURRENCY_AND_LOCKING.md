@@ -3215,9 +3215,45 @@ no lock, and while the fence keeps most concurrent edits off that booking, a
 consent-authority guest removal is exempt (owner decision D-14) and does move
 money. The write is now a compare-and-set on the exact value the slice was
 computed from, the same status-guarded-claim idiom used everywhere else here: it
-CANNOT lose the update, and a caller under `lock(1)` never sees it fire. The
-completion maps the refusal to a 409 with its transaction rolled back and its
-task still `OPEN`.
+CANNOT lose the update. The completion maps the refusal to a 409 with its
+transaction rolled back and its task still `OPEN`.
+
+**#3640 corrected two things this paragraph used to claim.** A caller under
+`lock(1)` CAN see the guard fire: the Stripe card-refund writers (the
+`charge.refunded` sync, the superseded-payment recovery) take no advisory lock,
+so a dashboard refund can move a row under booking-cancel's credit disposition.
+And a single-shot refusal there rolled a member's cancel back with a 500. So the
+allocation now goes through the one compare-and-set every write of the column
+uses (`compareAndSetRefundedAmount` in `payment-transactions.ts`): it re-reads
+and re-checks headroom on each attempt, absorbs a concurrent move that leaves
+room, and throws `RefundAllocationRacedError` only when the headroom is gone.
+
+The card-refund writer itself (`INV-PAY-103`) runs one interactive transaction
+per call through `withStoreTransaction`: the `Payment` row locked first
+(`lockPaymentForRefundedTotal`, `SELECT 1 ... FOR NO KEY UPDATE`), then
+`PaymentRefund` rows inserted with `ON CONFLICT DO NOTHING` in refund-id order,
+then the transaction row's compare-and-set, then the `Payment` aggregate and its
+booking-ledger lines. No provider call runs inside it.
+
+**One order for the refunded total: `Payment` row, then refund rows, then
+transaction rows.** Every writer that holds more than one of them takes the
+`Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
+writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
+paid-path cancel claim, right after its post-lock re-read and before the #1491
+fold. The first version of this writer took the transaction row and then the
+`Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
+`Payment` row (failing the top-up) and then the transaction row (its credit
+allocation): a deadlock, proved and closed by
+`card-refund-mirror-races.realdb.test.ts`. `NO KEY` strength, so a refund
+insert's foreign-key check (`FOR KEY SHARE`) on the same payment is not blocked.
+Writers that touch one row per autocommit statement (`markPaymentIntentTransactionFailed`
+outside a transaction, the capture webhooks) hold nothing across rows and cannot
+join a cycle.
+
+These statements were autocommit before #3640, so they now carry Prisma's
+interactive-transaction limits (2 s to start, 5 s to finish): a webhook queued
+behind a cancel claim holding the `Payment` row can time out (P2028) - loud,
+rolled back whole, and retried by Stripe.
 
 `src/lib/__tests__/edit-financial-review-races.realdb.test.ts` proves both halves
 against a real server, forcing the interleaving with a third connection rather
