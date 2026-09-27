@@ -78,6 +78,12 @@ const mocks = vi.hoisted(() => {
   // The tx client handed to the paid-path claim callback, captured so tests
   // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
   lastTx: null as unknown,
+  // #3643: the live Xero read before a part-paid internet banking cancel, and
+  // the ledger writers the claim records the part payment through.
+  readHoldPaymentEvidence: vi.fn(),
+  txPaymentFindUnique: vi.fn(),
+  reconcilePaymentAggregates: vi.fn(),
+  recordInternetBankingPaymentTransaction: vi.fn(),
   };
 });
 
@@ -180,6 +186,13 @@ vi.mock("@/lib/payment-transactions", () => ({
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
+  reconcilePaymentAggregates: mocks.reconcilePaymentAggregates,
+  recordInternetBankingPaymentTransaction:
+    mocks.recordInternetBankingPaymentTransaction,
+}));
+
+vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
+  readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
 }));
 
 vi.mock("@/lib/payment-recovery", async () => {
@@ -230,6 +243,16 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /** The club's zone, named rather than taken from a helper default (#3123). */
 const CLUB_ZONE = "Pacific/Auckland";
+
+// #3643: before every describe's own hooks — nobody has paid in Xero, so each
+// pre-#3643 case takes exactly the branch it always did.
+beforeEach(() => {
+  mocks.readHoldPaymentEvidence.mockResolvedValue({
+    kind: "unpaid",
+    readStartedAt: new Date(),
+    invoices: [],
+  });
+});
 
 describe("cancelBooking credit refunds", () => {
   beforeEach(() => {
@@ -299,6 +322,7 @@ describe("cancelBooking credit refunds", () => {
             },
             payment: {
               update: mocks.paymentUpdate,
+              findUnique: mocks.txPaymentFindUnique,
             },
             paymentTransaction: {
               findFirst: mocks.txPaymentTransactionFindFirst,
@@ -2708,6 +2732,199 @@ describe("cancelBooking credit refunds", () => {
     // never happen.
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  // #3643 (`INV-PAY-107`, orchestrator decision): an officer cancelling a
+  // part-paid internet banking booking through the normal cancel path. The
+  // cash Xero shows is recorded as captured money inside the claim, so the
+  // paid path applies the policy to it (as credit), and the clearing note is
+  // sized to what the invoices still owe.
+  describe("a part-paid internet banking booking (#3643)", () => {
+    const partPaidBooking = () => ({
+      id: "booking_ib",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "CONFIRMED",
+      finalPriceCents: 30000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_ib",
+        bookingId: "booking_ib",
+        source: "INTERNET_BANKING",
+        amountCents: 30000,
+        refundedAmountCents: 0,
+        status: "PENDING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_ib",
+        xeroInvoiceNumber: "INV-IB",
+        manuallyMarkedPaidAt: null,
+        additionalPaymentStatus: null,
+        reference: "IB-REF",
+      },
+    });
+    const PART_PAID = {
+      kind: "paid",
+      readStartedAt: new Date(),
+      invoices: [],
+      fromRecordedLinkOnly: false,
+      paidCents: 15000,
+      cashComplete: true,
+      amountDueCents: 15000,
+      paidInFull: false,
+    };
+
+    beforeEach(() => {
+      const booking = partPaidBooking();
+      mocks.bookingFindUnique.mockResolvedValue(booking);
+      mocks.txBookingFindUnique.mockResolvedValue(partPaidBooking());
+      mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+      mocks.txPaymentFindUnique.mockResolvedValue({
+        ...booking.payment,
+        transactions: [
+          {
+            id: "ptx_ib_primary",
+            kind: "PRIMARY",
+            source: "INTERNET_BANKING",
+            status: "PENDING",
+            amountCents: 30000,
+            refundedAmountCents: 0,
+          },
+        ],
+      });
+      mocks.reconcilePaymentAggregates.mockResolvedValue({
+        ...booking.payment,
+        amountCents: 15000,
+        status: "SUCCEEDED",
+      });
+      mocks.calculateRefundAmount.mockReturnValue({
+        refundAmountCents: 7500,
+        refundPercentage: 50,
+      });
+    });
+
+    it("records the part payment as captured, refunds the policy share as credit, and clears only what is owed", async () => {
+      const result = await cancelBooking(
+        "booking_ib",
+        "member_1",
+        "ADMIN",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card",
+      );
+
+      expect(result).toMatchObject({
+        status: 200,
+        data: { refundMethod: "credit", refundAmountCents: 7500 },
+      });
+      // The pending receipt row becomes the receipt, for exactly the cash Xero shows.
+      expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
+        where: { id: "ptx_ib_primary" },
+        data: expect.objectContaining({
+          amountCents: 15000,
+          status: "SUCCEEDED",
+          reason: "xero_part_payment_recognised_at_cancel",
+        }),
+      });
+      expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({
+        paymentId: "payment_ib",
+        store: mocks.lastTx,
+      });
+      // The policy is tiered off what was PAID, not the invoice total.
+      expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(15000, 30, expect.anything(), "credit");
+      expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+        "member_1",
+        7500,
+        "booking_ib",
+        undefined,
+        expect.anything(),
+      );
+      // Never the never-captured flattening, never the full-size clearing note.
+      expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: "FAILED" } }),
+      );
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+        { bookingId: "booking_ib", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        { createdByMemberId: "member_1" },
+      );
+      // The live read happened before the claim transaction opened.
+      expect(mocks.readHoldPaymentEvidence.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.prismaTransaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("refuses the cancel when Xero shows a payment it cannot size exactly", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        ...PART_PAID,
+        fromRecordedLinkOnly: true,
+        cashComplete: false,
+        amountDueCents: null,
+      });
+
+      const result = await cancelBooking(
+        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
+      );
+
+      expect(result).toMatchObject({ status: 409 });
+      expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("refuses the claim when the payment changed since the read (already captured)", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({
+        ...partPaidBooking().payment,
+        transactions: [
+          { id: "ptx_ib_primary", kind: "PRIMARY", source: "INTERNET_BANKING", status: "SUCCEEDED" },
+        ],
+      });
+
+      const result = await cancelBooking(
+        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
+      );
+
+      expect(result).toMatchObject({ status: 409 });
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+    });
+
+    it("still cancels an unpaid internet banking booking the never-captured way", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        kind: "unpaid",
+        readStartedAt: new Date(),
+        invoices: [],
+      });
+      // No captured ledger row, so the never-captured claim flattens it.
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelBooking(
+        "booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card",
+      );
+
+      expect(result).toMatchObject({ status: 200, data: { refundAmountCents: 0 } });
+      expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+        { bookingId: "booking_ib", refundAmountCents: 30000, clearsUnpaidInvoice: true },
+        { createdByMemberId: "member_1" },
+      );
+    });
+
+    it("does not read Xero for an organisation-owned booking (no member account to credit)", async () => {
+      mocks.bookingFindUnique.mockResolvedValue({
+        ...partPaidBooking(),
+        memberId: null,
+        member: null,
+        organisationId: "org_1",
+        organisation: { name: "School", email: "school@example.com" },
+      });
+
+      await cancelBooking("booking_ib", "member_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
+    });
   });
 });
 

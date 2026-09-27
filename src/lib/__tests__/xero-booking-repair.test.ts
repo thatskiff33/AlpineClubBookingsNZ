@@ -907,6 +907,39 @@ describe("runBookingXeroRepair", () => {
       })
     );
 
+    // The part payment on an edit's SUPPLEMENTARY invoice counts the same way.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [
+            makeBooking({
+              status: "CANCELLED",
+              payment: { ...makeBooking().payment, status: "FAILED" },
+              modifications: [
+                {
+                  id: "mod_1",
+                  bookingId: "booking_1",
+                  modificationType: "DATE_CHANGE",
+                  priceDiffCents: 0,
+                  changeFeeCents: 0,
+                  createdAt: new Date("2026-05-02T00:00:00Z"),
+                },
+              ],
+            }),
+          ],
+          links: [
+            partPayment({
+              id: "link_supp_payment",
+              localModel: "BookingModification",
+              localId: "mod_1",
+              role: "SUPPLEMENTARY_INVOICE_PAYMENT",
+            }),
+          ],
+        }),
+        scope: { all: true },
+      })
+    );
+
     // A reversed (DELETED) payment is not money held: the queue arm is back.
     const reversed = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
