@@ -71,7 +71,9 @@ type XeroInvoiceCashEvidence = "cash" | "none" | "indeterminate";
 //  4. A payload carrying none of these fields is "indeterminate" — the fresh
 //     getInvoice fetch behind the only caller always carries the cash
 //     fields, so this arm only guards degraded payload shapes.
-function classifyXeroInvoiceCashEvidence(
+// Also the hold-expiry job's "has anybody paid?" test (#3643, `INV-PAY-107`):
+// one home for what counts as cash on an invoice.
+export function classifyXeroInvoiceCashEvidence(
   invoice: Invoice
 ): XeroInvoiceCashEvidence {
   if (
@@ -115,7 +117,7 @@ type XeroInvoiceCashQuantification = {
 // components that did quantify: the known floor stays usable. The fresh
 // getInvoice fetch behind the only caller always carries the amount fields,
 // so incomplete results only arise from degraded payload shapes.
-function quantifyXeroInvoiceCashCents(
+export function quantifyXeroInvoiceCashCents(
   invoice: Invoice
 ): XeroInvoiceCashQuantification {
   let knownCents = 0;

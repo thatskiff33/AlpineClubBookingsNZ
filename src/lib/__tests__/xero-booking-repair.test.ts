@@ -828,6 +828,98 @@ describe("runBookingXeroRepair", () => {
     expect(shortfallBooking.actions.some((action) => action.safeToAutoApply && action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")).toBe(false);
   });
 
+  // #3643 (`INV-PAY-107`): a part payment leaves only a PAYMENT link locally.
+  // A cancelled booking whose invoice carries one is owed less than a full
+  // clearing note, so the tool neither queues nor retries one - manual review.
+  it("never auto-queues or auto-retries a full clearing note over a recorded part payment (#3643)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const partPayment = (overrides: Record<string, unknown> = {}) => ({
+      id: "link_part_payment",
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xero_payment_1",
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      role: "INVOICE_PAYMENT",
+      active: true,
+      metadata: { invoiceId: "invoice_1", amount: 50, status: "AUTHORISED" },
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+      ...overrides,
+    });
+    const expectManualReviewOnly = (report: Awaited<ReturnType<typeof runBookingXeroRepair>>) => {
+      const bookingReport = report.passes[0].bookings[0];
+      const types = bookingReport.actions.map((action) => action.type);
+      expect(types).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+      expect(types).not.toContain("REQUEUE_XERO_OPERATION");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+        "CANCELLED_BOOKING_OPEN_INVOICE"
+      );
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "MANUAL_REVIEW_REQUIRED",
+          severity: "manual_review",
+          safeToAutoApply: false,
+        })
+      );
+    };
+
+    // No clearing operation yet: without the link this is the queue arm.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({ bookings: [cancelledUnpaid()], links: [partPayment()] }),
+        scope: { all: true },
+      })
+    );
+
+    // A replayable FAILED clearing operation: without the link, the retry arm.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [cancelledUnpaid()],
+          links: [partPayment()],
+          operations: [
+            makeOperation({
+              id: "op_failed_clearing",
+              localModel: "Booking",
+              localId: "booking_1",
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              queueType: "MODIFICATION_CREDIT_NOTE",
+              status: "FAILED",
+              xeroObjectType: null,
+              xeroObjectId: null,
+              lastErrorMessage: "Xero timed out",
+              requestPayload: {
+                queueType: "MODIFICATION_CREDIT_NOTE",
+                bookingId: "booking_1",
+                refundAmountCents: 10000,
+              },
+            }),
+          ],
+        }),
+        scope: { all: true },
+      })
+    );
+
+    // A reversed (DELETED) payment is not money held: the queue arm is back.
+    const reversed = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        links: [partPayment({ metadata: { amount: 50, status: "DELETED" } })],
+      }),
+      scope: { all: true },
+    });
+    expect(reversed.passes[0].bookings[0].actions.map((action) => action.type)).toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+  });
+
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
   // cancel path's own helper — applied credit already allocated to the invoice
   // is not cleared twice, and a fully allocated invoice needs no note at all.

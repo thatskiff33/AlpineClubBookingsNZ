@@ -61,6 +61,37 @@ export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, 
   }
 }
 
+/**
+ * #3643 (`INV-PAY-107`): the roles `getDerivedInboundPaymentRole` gives a
+ * payment against a booking's OWN invoices — primary and supplementary.
+ */
+export const BOOKING_INVOICE_PAYMENT_ROLES = [
+  "INVOICE_PAYMENT",
+  "SUPPLEMENTARY_INVOICE_PAYMENT",
+] as const;
+
+/**
+ * #3643: whether a stored link records money paid against a booking's invoice.
+ * A part payment leaves nothing else locally (the booking settles only when the
+ * invoice is fully paid), so this is what the hold-expiry job and the repair
+ * tool read. A payment Xero reported as DELETED (reversed) is not money held.
+ */
+export function isRecordedBookingInvoicePayment(link: {
+  xeroObjectType: string;
+  role: string | null;
+  metadata: unknown;
+}): boolean {
+  if (link.xeroObjectType !== "PAYMENT") return false;
+  if (!(BOOKING_INVOICE_PAYMENT_ROLES as readonly string[]).includes(link.role ?? "")) {
+    return false;
+  }
+  const status =
+    link.metadata && typeof link.metadata === "object"
+      ? (link.metadata as { status?: unknown }).status
+      : null;
+  return String(status ?? "").toUpperCase() !== "DELETED";
+}
+
 export function getDerivedInboundAllocationRole(creditNoteRole: string) {
   return creditNoteRole === "MODIFICATION_CREDIT_NOTE"
     ? "MODIFICATION_CREDIT_NOTE_ALLOCATION"

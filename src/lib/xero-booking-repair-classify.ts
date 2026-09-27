@@ -58,6 +58,7 @@ import {
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
@@ -1315,6 +1316,12 @@ export function classifyBookingContext(
             operation.operationType === "CREATE" &&
             operation.status === "CANCELLED"
         );
+        // #3643: a payment the inbound sync recorded against the primary or
+        // any supplementary invoice (the only local trace of a part payment).
+        const invoicePaymentRecorded = [
+          ...paymentLinks,
+          ...[...context.modificationLinksById.values()].flat(),
+        ].some(isRecordedBookingInvoicePayment);
         if (
           blockingOperation &&
           isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
@@ -1349,6 +1356,36 @@ export function classifyBookingContext(
             safeToAutoApply: false,
             details: { paymentId: payment?.id ?? null, invoiceId: primaryInvoice.objectId },
             actionKeys: [],
+          });
+        } else if (
+          invoicePaymentRecorded &&
+          (!blockingOperation || blockingOperation.retryMeta.supported)
+        ) {
+          // #3643 (`INV-PAY-107`): Xero recorded a payment against this
+          // booking's invoices, so they owe less than a full-size clearing
+          // note. Queueing or retrying one would be refused as a shortfall at
+          // best; the part payment is money only a person can place (refund,
+          // credit, or keep), so it is manual review, never an auto-apply.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "Xero records a payment against this cancelled booking's invoice, so a full invoice-clearing credit note would over-clear it - decide the part payment (refund, credit, or keep) and clear the rest by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "A cancelled booking's invoice has a payment recorded against it, so its clearing credit note is not queued or retried automatically - review by hand.",
+            safeToAutoApply: false,
+            details: {
+              paymentId: payment?.id ?? null,
+              invoiceId: primaryInvoice.objectId,
+              clearingAmountCents,
+              operationId: blockingOperation?.operation.id ?? null,
+            },
+            actionKeys: [action.key],
           });
         } else if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
