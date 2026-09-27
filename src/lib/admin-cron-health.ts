@@ -360,6 +360,32 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #3663. Rides the 15-minute payments cycle (`payments-cron-runner`)
+        // beside payment recovery, recorded under its own name so a missing
+        // release is visible rather than hidden in a healthy recovery row.
+        jobName: "internet-banking-hold-release",
+        label: "Expired Internet Banking hold release",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // #3663. The third task of the same 15-minute payments cycle.
+        jobName: "xero-waiting-invoice-reaper",
+        label: "Stale waiting Xero invoice reaper",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-membership-refresh",
         label: "Xero membership refresh",
         schedule: "0 2 * * *",

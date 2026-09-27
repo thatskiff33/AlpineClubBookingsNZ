@@ -243,19 +243,27 @@ describe("admin cron health", () => {
     }
   });
 
-  it("tracks payment recovery every fifteen minutes with a matching freshness threshold", () => {
+  it("tracks each payments-cycle task every fifteen minutes with a matching freshness threshold", () => {
     const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
-    const paymentRecovery = definitions.find(
-      (definition) => definition.jobName === "payment-recovery"
-    );
 
-    expect(paymentRecovery).toMatchObject({
-      schedule: "*/15 * * * *",
-      expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
-      staleAfterMinutes: 60,
-    });
+    // #3663: the three tasks of the 15-minute payments cycle each record their
+    // own CronJobRun row, so each needs its own health entry.
+    for (const jobName of [
+      "payment-recovery",
+      "internet-banking-hold-release",
+      "xero-waiting-invoice-reaper",
+    ]) {
+      expect(
+        definitions.find((definition) => definition.jobName === jobName)
+      ).toMatchObject({
+        schedule: "*/15 * * * *",
+        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        staleAfterMinutes: 60,
+        recordsRuns: true,
+      });
+    }
   });
 
   it("tracks Xero outbox and stale link cleanup as CronJobRun-backed jobs", () => {
