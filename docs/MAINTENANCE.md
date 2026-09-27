@@ -1667,8 +1667,11 @@ then settles the booking), or cancel it in the app. The cancel path reads Xero
 first and, when the cash can be sized exactly, records it as the payment's
 captured internet banking money (a ledger row with reason
 `xero_part_payment_recognised_at_cancel`), tiers the cancellation policy on it
-as account credit, and queues a clearing note for what the invoices still owe.
-Cash it cannot size refuses the cancel with a 409; an organisation-owned booking
+as account credit, and queues a clearing note for what the invoices still owe,
+worded "Unpaid balance cleared - booking cancelled" rather than #3535's "booking
+not paid". The cancel preview (`/api/bookings/[id]/cancel-preview`) makes the
+same live read, so the dialog quotes the same credit. Cash it cannot size
+refuses the cancel (and the preview) with a 409; an organisation-owned booking
 is not recognised and cancels as before. The repair CLI will not queue or retry
 a full clearing note over a recorded part payment; it reports
 `MANUAL_REVIEW_REQUIRED` instead.

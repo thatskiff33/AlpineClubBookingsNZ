@@ -62,8 +62,11 @@ for the member to pay the rest (the booking is marked paid once Xero shows the
 invoice fully paid), or cancel the booking in the app. The cancellation records
 the part payment as money received, applies the club's cancellation policy to
 it and returns the refundable share as account credit, and clears only what the
-invoice still owes. If Xero shows a payment whose amount it cannot give exactly,
-the cancel is refused until Xero can be read.
+invoice still owes with a credit note reading "Unpaid balance cleared - booking
+cancelled". The cancel dialog checks Xero the same way before you confirm, so
+the credit it shows is the credit the cancellation gives. If Xero shows a
+payment whose amount it cannot give exactly, the dialog and the cancel both
+refuse until Xero can be read.
 
 If Xero shows the invoice **paid in full** but the app has not caught up, the
 email says so; the next Xero sync marks the booking paid. If the invoice

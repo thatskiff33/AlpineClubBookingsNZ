@@ -679,8 +679,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - **The normal cancel path recognises the part payment** (same decision): the
   claim records Xero's exact cash as captured internet banking money, so the
   paid path tiers the policy on it (as credit) and the clearing note is sized to
-  what the invoices still owe. Cash Xero shows but cannot size refuses the
-  cancel. Organisation-owned bookings are not recognised (#3369).
+  what the invoices still owe, worded *Unpaid balance cleared - booking
+  cancelled* ([INV-PAY-101]'s one home). The cancel preview asks the same live
+  question through the same reader, so it quotes the same figure. Cash Xero
+  shows but cannot size refuses both. Organisation-owned bookings are not
+  recognised (#3369).
 - The repair tool raises manual review, never a queued or retried full
   clearing note, over a recorded part payment.
 - Pinned by `internet-banking-payment-cron.test.ts`,

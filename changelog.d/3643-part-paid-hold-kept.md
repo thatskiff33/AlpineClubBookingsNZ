@@ -9,7 +9,8 @@
   booking is marked paid once the rest arrives. Or it can be cancelled in the
   app: cancelling now records the part payment as money received, applies the
   cancellation policy to it as account credit, and clears only what the invoice
-  still owes. A hold whose invoice cannot be read from Xero is kept, with one
+  still owes with a credit note reading "Unpaid balance cleared - booking
+  cancelled". The cancel dialog shows that same credit before you confirm. A hold whose invoice cannot be read from Xero is kept, with one
   email, until the check-in date or seven days after its deadline, then released
   with a second email. A fully unpaid hold is released exactly as before. The
   Xero repair tool no longer offers to queue or retry a full clearing credit
