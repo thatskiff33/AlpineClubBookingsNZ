@@ -23,7 +23,8 @@ import { describe, expect, it } from "vitest";
  * records what was run then, and a migration's text must never be edited.
  */
 
-const NPM_COMMAND = /(?<![\w/.@-])npm (?:run|test|ci|install|i)\b|(?<![\w-])npx\s/g;
+const NPM_COMMAND =
+  /(?<![\w/.@-])npm (?:run|test|ci|install|i|exec|start|audit)\b|(?<![\w-])npx(?:\s|$)/g;
 
 const SCOPE = [
   "AGENTS.md",
@@ -59,7 +60,15 @@ const ALLOWED: Array<{ file: string; line?: RegExp; reason: string }> = [
     reason: "names the retired Windows workaround so a reader recognises it",
   },
   {
+    file: "scripts/ci/audit-dependencies.mjs",
+    line: /`npm audit --audit-level=high`\. That command asks|moved from `npm audit` to/,
+    reason: "the #3254/#3673 history of the gate, which used to be `npm audit`",
+  },
+  {
     file: "scripts/audit/audit-writer-census-manifest.ts",
+    // Only the measurement notes themselves, which all say what was run to get
+    // a figure ("Re-measured with", "Taken from", "MEASURED", "on this tree"…).
+    line: /audit:census|npx tsx scripts\/audit\/audit-writer-census\.ts|^\/\/ `?npm run$|RE-MEASURED with `npm run$/,
     reason:
       "a dated measurement log: each note records the command that produced a figure at the time",
   },

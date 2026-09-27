@@ -93,6 +93,23 @@ on any other package or version, so a new one — or a Dependabot bump of one �
 is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
 `enableGlobalVirtualStore`. `.npmrc` exists for npm only.
 
+**Bumping a package that runs an install script.** The `allowBuilds` packages
+(`@prisma/engines`, `@sentry/cli`, `esbuild`, `prisma`, `unrs-resolver`) are
+approved at one exact version each. Dependabot groups them, and the packages
+that pull them in, into their own `install-scripts` PR, so the ordinary
+minor-and-patch group is not held up. When a bump fails the install with
+`ERR_PNPM_IGNORED_BUILDS <name>@<version>`:
+
+1. Read what that version's install script does (its `package.json`
+   `scripts.preinstall`/`install`/`postinstall`, and the file it runs).
+2. If it is acceptable, change that one line of `allowBuilds` in
+   `pnpm-workspace.yaml` to the new version and run `pnpm install`.
+3. Commit it on the Dependabot branch. Dependabot then stops rebasing that PR,
+   so merge it promptly or recreate it with `@dependabot recreate`.
+
+A new package that wants an install script is added the same way, at an exact
+version; one whose script is not needed is listed as `false`, like `core-js`.
+
 **A run never installs by itself.** `verifyDepsBeforeRun: error` makes
 `pnpm run`/`pnpm exec` stop with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` when
 `node_modules` no longer matches `package.json`, the lockfile or
@@ -101,8 +118,9 @@ non-frozen install that can rewrite `pnpm-lock.yaml`. When you see it, run
 `pnpm install` yourself (after a `main` merge, `pnpm install --frozen-lockfile`).
 Agents install only when authorised (`AGENTS.md` → "Orchestration Model").
 
-**Removing a worktree.** Use `pnpm run worktree:remove <path>`, not a bare
-`git worktree remove`: see
+**Removing a worktree.** Use `pnpm run worktree:remove <path>`, run from outside
+that worktree, not a bare `git worktree remove`, which fails half-way on pnpm's
+junctions and follows any other link it meets: see
 [`docs/agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) §3.
 
 **The strict layout.** `nodeLinker: isolated` (owner decision on #3673) means

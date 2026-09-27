@@ -113,6 +113,59 @@ describe("remove-worktree", () => {
     expect(fs.existsSync(lane)).toBe(false);
   });
 
+  /*
+    #3673 review, reproduced on git 2.53.0.windows.1: `git worktree remove`
+    FOLLOWS a junction it meets outside node_modules and empties the target. A
+    git-ignored folder is where one hides, because `git status` never shows it.
+  */
+  it("refuses a link anywhere outside node_modules, and the thing it points at survives", () => {
+    const { repo, lane, outside } = fixture();
+    fs.writeFileSync(path.join(lane, ".gitignore"), "node_modules\n.cache\n");
+    git(lane, "add", ".gitignore");
+    git(lane, "commit", "-q", "-m", "ignore cache");
+    git(repo, "merge", "-q", "--ff-only", "lane");
+    fs.mkdirSync(path.join(lane, ".cache"));
+    fs.symlinkSync(outside, path.join(lane, ".cache", "link"), process.platform === "win32" ? "junction" : "dir");
+    pnpmShapedNodeModules(lane, outside);
+
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /links outside its top-level node_modules[\s\S]*\.cache/,
+    );
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("keep\n");
+    // Refused BEFORE anything was deleted.
+    expect(fs.existsSync(path.join(lane, "node_modules", "pkg"))).toBe(true);
+    expect(git(repo, "worktree", "list")).toContain("wt-lane");
+  });
+
+  it("refuses to run from inside the target, by current directory or by INIT_CWD", () => {
+    const { repo, lane, outside } = fixture();
+    pnpmShapedNodeModules(lane, outside);
+    const sub = path.join(lane, "sub");
+    fs.mkdirSync(sub);
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main", cwd: lane })).toThrow(
+      /Run this from outside/,
+    );
+    if (process.platform === "win32") {
+      // Windows paths are case-insensitive, so a differently cased spelling of
+      // a directory inside the target is still inside it.
+      expect(() =>
+        removeWorktree({ repoDir: repo, worktree: lane, base: "main", cwd: repo, initCwd: sub.toUpperCase() }),
+      ).toThrow(/Run this from outside/);
+    }
+    expect(() =>
+      removeWorktree({ repoDir: repo, worktree: lane, base: "main", cwd: repo, initCwd: sub }),
+    ).toThrow(/Run this from outside/);
+    expect(fs.existsSync(path.join(lane, "node_modules", "pkg"))).toBe(true);
+  });
+
+  it("refuses a locked worktree before deleting anything", () => {
+    const { repo, lane, outside } = fixture();
+    pnpmShapedNodeModules(lane, outside);
+    git(repo, "worktree", "lock", lane);
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(/locked/);
+    expect(fs.existsSync(path.join(lane, "node_modules", "pkg"))).toBe(true);
+  });
+
   it("parses its arguments, tolerating a literal `--`", () => {
     expect(parseArguments(["--", "wt-x", "--base", "origin/epic/1", "--allow-unmerged"])).toEqual({
       worktree: "wt-x",

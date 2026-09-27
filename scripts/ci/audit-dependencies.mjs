@@ -650,7 +650,7 @@ function formatBackoff(delaysMs) {
  * assertable without running a process.
  */
 export function formatReport(result) {
-  const { outcome, attempt, severityCounts, advisories = [], reason } = result;
+  const { outcome, attempt, severityCounts, advisories = [], reason, scanned } = result;
   const countsLine = severityCounts
     ? SEVERITY_ORDER.map((severity) => `${severity} ${severityCounts[severity]}`)
         .reverse()
@@ -665,6 +665,7 @@ export function formatReport(result) {
           `has no ${AUDIT_LEVEL}-or-worse advisories.`,
         `  Advisory service reached on attempt ${attempt} of ${MAX_ATTEMPTS}.`,
         `  Counts: ${countsLine}.`,
+        `  Packages audited: ${scanned}.`,
       ],
     };
   }

@@ -15,6 +15,26 @@ updates:
       - dependency-name: "@types/node"
         versions: [">=25"]
     groups:
+      # #3673: packages that run install scripts (pnpm-workspace.yaml
+      # `allowBuilds`, pinned to exact versions) and the direct dependencies
+      # that bring them in. A bump of one of these fails the frozen install with
+      # ERR_PNPM_IGNORED_BUILDS until its new version is reviewed and written
+      # into `allowBuilds`, so it gets a PR of its own instead of turning the
+      # whole minor-and-patch group red. Dependabot puts a dependency in the
+      # FIRST group that matches, which is why this one comes first.
+      install-scripts:
+        patterns:
+          - "prisma"
+          - "@prisma/*"
+          - "@sentry/*"
+          - "esbuild"
+          - "tsx"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "unrs-resolver"
+          - "eslint-config-next"
+          - "eslint-import-resolver-typescript"
       npm-minor-and-patch:
         update-types:
           - minor

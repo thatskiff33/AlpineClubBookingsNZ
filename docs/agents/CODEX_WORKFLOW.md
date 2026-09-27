@@ -265,22 +265,36 @@ knows about. The helper does the removal in the order that works and refuses
 before deleting anything when a check fails:
 
 ```powershell
-pnpm run worktree:remove C:\path	o\exact-worktree                     # merged into origin/main
-pnpm run worktree:remove C:\path	o\exact-worktree --base origin/epic/1  # an epic child
-pnpm run worktree:remove C:\path	o\exact-worktree --allow-unmerged      # an abandoned lane
+pnpm run worktree:remove C:\path\to\exact-worktree                     # merged into origin/main
+pnpm run worktree:remove C:\path\to\exact-worktree --base origin/epic/1  # an epic child
+pnpm run worktree:remove C:\path\to\exact-worktree --allow-unmerged      # an abandoned lane
 ```
 
-It refuses the main checkout, a path that is not a registered worktree, a
-top-level `node_modules` that is itself a link (the legacy shape above — use the
-manual unlink), uncommitted or untracked work, and an unmerged HEAD without
-`--allow-unmerged`. Then it deletes `node_modules` with Node's `fs.rmSync`,
-which unlinks a junction instead of descending through it, and runs
-`git worktree remove` without `--force`. The junctions point into the
-worktree's own `node_modules/.pnpm` (the global virtual store stays off,
-`enableGlobalVirtualStore: false` in `pnpm-workspace.yaml`), and package files
-are hard links into the shared store, so nothing outside the worktree is
-touched. If a removal already failed half-way, `cmd /c rmdir /s /q <path>`
-followed by `git worktree prune` finishes it without following junctions.
+Run it from outside the worktree it removes (the main checkout is the usual
+place). It refuses, before deleting anything:
+
+- the main checkout, a path that is not a registered worktree, or a locked one;
+- being run from inside the target (the current directory or `INIT_CWD`);
+- a top-level `node_modules` that is itself a link (the legacy shape above, which
+  needs the manual unlink);
+- **any other symlink or junction anywhere in the worktree.** Review reproduced
+  that `git worktree remove` on Windows follows a junction it meets and empties
+  the target, including one inside a git-ignored folder such as `.cache/`, which
+  `git status` never shows. The refusal lists the links; delete the links (not
+  their targets) and run it again;
+- uncommitted or untracked work, and an unmerged HEAD without `--allow-unmerged`.
+
+Then it deletes the top-level `node_modules` with Node's `fs.rmSync`, which
+unlinks each junction instead of descending through it, and runs
+`git worktree remove` without `--force` on a tree that has no links left in it.
+What is guaranteed is exactly that: nothing is deleted before every check passes,
+`node_modules`' own links are unlinked rather than followed, and git never sees a
+link. (The junctions under `node_modules` point into that worktree's own
+`node_modules/.pnpm` because the global virtual store stays off,
+`enableGlobalVirtualStore: false`, and package files are hard links into the
+shared store, which unlinking does not change.) If a removal already failed
+half-way, check the folder for links as above, then `cmd /c rmdir /s /q <path>`
+and `git worktree prune`.
 
 ### 4. Preserve progress while lanes run
 

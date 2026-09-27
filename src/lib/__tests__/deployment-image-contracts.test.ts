@@ -873,14 +873,28 @@ describe("package manager contract (#3673)", () => {
       if (!/^\s/.test(line)) break;
       entries.push(line.trim());
     }
-    expect(entries).toEqual([
-      '"@prisma/engines@7.10.0": true',
-      '"@sentry/cli@2.58.6": true',
-      "core-js: false",
-      "esbuild@0.28.1: true",
-      "prisma@7.10.0: true",
-      "unrs-resolver@1.12.2: true",
+    // Which packages, and allowed or denied, is the contract. The exact version
+    // lives only in pnpm-workspace.yaml, so a reviewed bump is a one-line edit
+    // there (CONTRIBUTING.md, "Package manager: pnpm"). Every allowed entry must
+    // carry an exact version: a bare name would approve every future version.
+    const parsed = entries.map((entry) => {
+      const m = /^"?(@?[^@"]+)(?:@([^"]+))?"?:\s*(true|false)$/.exec(entry);
+      expect(m, `unreadable allowBuilds entry: ${entry}`).not.toBeNull();
+      return { name: m![1], version: m![2], allowed: m![3] === "true" };
+    });
+    expect(parsed.map(({ name, allowed }) => `${name}=${allowed}`)).toEqual([
+      "@prisma/engines=true",
+      "@sentry/cli=true",
+      "core-js=false",
+      "esbuild=true",
+      "prisma=true",
+      "unrs-resolver=true",
     ]);
+    for (const entry of parsed.filter((e) => e.allowed)) {
+      expect(entry.version, `${entry.name} must be pinned to an exact version`).toMatch(
+        /^\d+\.\d+\.\d+(?: \|\| \d+\.\d+\.\d+)*$/,
+      );
+    }
 
     const topLevelKeys = lines
       .map((line) => /^([A-Za-z][\w-]*):/.exec(line)?.[1])

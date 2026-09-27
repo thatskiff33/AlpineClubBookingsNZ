@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function readRepoFile(path: string): string {
@@ -405,5 +405,31 @@ describe("repository agent workflow contract", () => {
     // — nothing else notices that it stopped running on pull requests.
     expect(ci).toContain("Validate PR changelog entry");
     expect(ci).toContain("node scripts/ci/check-pr-changelog-fragment.mjs");
+  });
+
+  /*
+    #3673 review: a scripted edit turned the `\t` of `C:\path\to\...` in
+    CODEX_WORKFLOW.md into a literal TAB, so the published command named a path
+    that does not exist. Agents copy commands out of these files verbatim, so no
+    control character other than a line ending may appear in them.
+  */
+  it("keeps control characters out of the agent and contributor docs", () => {
+    const files = [
+      "AGENTS.md",
+      "CONTRIBUTING.md",
+      ...readdirSync(resolve(process.cwd(), "docs/agents"))
+        .filter((name) => name.endsWith(".md"))
+        .map((name) => `docs/agents/${name}`),
+    ];
+    expect(files).toContain("docs/agents/CODEX_WORKFLOW.md");
+    const found: string[] = [];
+    for (const file of files) {
+      readRepoFile(file)
+        .split("\n")
+        .forEach((line, index) => {
+          if (/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/.test(line)) found.push(`${file}:${index + 1}`);
+        });
+    }
+    expect(found, "control character (most likely a TAB from a mangled `\\t`) in an agent doc").toEqual([]);
   });
 });

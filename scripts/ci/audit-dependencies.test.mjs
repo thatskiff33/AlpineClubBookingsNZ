@@ -660,6 +660,8 @@ describe("formatReport", () => {
     const report = formatReport(classifyAuditRun({ exitCode: 0, stdout: CLEAN_REPORT }));
     expect(report.exitCode).toBe(0);
     expect(report.lines[0]).toContain("CLEAN");
+    // #3673 review: the verdict says how much it covered.
+    expect(report.lines).toContain("  Packages audited: 1099.");
   });
 
   it("names a vulnerability as a finding and says it is not an outage", () => {
