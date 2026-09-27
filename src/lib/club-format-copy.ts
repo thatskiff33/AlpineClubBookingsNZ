@@ -46,7 +46,7 @@ export const CLUB_FORMAT_CARD_PAYMENTS =
  * three setup surfaces show {@link clubFormatXeroBaseCurrencyMismatch} (#3633).
  */
 export const CLUB_FORMAT_PROVIDER_CURRENCIES =
-  "The club's Stripe account and its Xero organisation's base currency must both be this currency. Xero books every invoice this site sends in its base currency, and Stripe converts a charge in any other currency before paying it out, at a fee. Change them to match before saving here, not after.";
+  "The club's Stripe account and its Xero organisation's base currency must both be this currency. Xero books every invoice this site sends in its base currency, which is fixed when the Xero organisation is created, and Stripe converts a charge in any other currency before paying it out, at a fee. Check both before saving here, not after.";
 
 /**
  * The warning shown when the connected Xero organisation's base currency
