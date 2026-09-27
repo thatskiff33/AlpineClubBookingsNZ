@@ -8,6 +8,8 @@ import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { CLUB_FORMAT_SETTINGS_ID } from "@/lib/club-format";
+import { resolveStoredClubFormat } from "@/lib/club-format-env";
+import { clubChargeCurrencyCode } from "@/lib/stripe-charge-currency";
 import {
   computeMembershipTypeRateGaps,
   formatMembershipTypeRateGap,
@@ -412,6 +414,21 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   const clubIdentityName =
     clubIdentity?.name?.trim() || emailSettings?.clubName?.trim() || null;
 
+  // The club's currency row, read once for two answers: the RAW stored code
+  // (the Stripe step blocks on an unusable one, #3567) and the currency cards
+  // are actually charged in (#3633), resolved through the same fallback every
+  // reader uses. Guarded, so an unreadable row is "not stored", not a failed
+  // snapshot.
+  const clubFormatCurrencyCode = await Promise.resolve()
+    .then(() =>
+      prisma.clubFormatSettings.findUnique({
+        where: { id: CLUB_FORMAT_SETTINGS_ID },
+        select: { currencyCode: true },
+      }),
+    )
+    .then((row) => row?.currencyCode ?? null)
+    .catch(() => null);
+
   // Resolved default-lodge booking capacity (#1982): 0 means the default lodge
   // has no active beds and no capacity override, so it accepts no bookings — the
   // club-config readiness check warns on it. Guarded because a pre-seed DB has
@@ -524,17 +541,16 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
         ? null
         : (clubTimeSettings?.timeZone ?? null),
     clubTimeZoneUnreadable: clubTimeSettings === CLUB_TIME_SETTINGS_UNREADABLE,
-    // Raw, like the zone above (#3567 review); guarded, so an unreadable row is
-    // "not checked" rather than a failed snapshot.
-    clubFormatCurrencyCode: await Promise.resolve()
-      .then(() =>
-        prisma.clubFormatSettings.findUnique({
-          where: { id: CLUB_FORMAT_SETTINGS_ID },
-          select: { currencyCode: true },
-        }),
-      )
-      .then((row) => row?.currencyCode ?? null)
-      .catch(() => null),
+    // Raw, like the zone above (#3567 review).
+    clubFormatCurrencyCode,
+    // What cards are charged in, or null when none can be (#3633).
+    clubChargeCurrencyCode: clubChargeCurrencyCode(
+      resolveStoredClubFormat(
+        clubFormatCurrencyCode === null
+          ? null
+          : { currencyCode: clubFormatCurrencyCode },
+      ),
+    ),
     environmentRole,
     withheldEmail,
   };
