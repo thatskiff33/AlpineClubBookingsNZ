@@ -188,13 +188,13 @@ prepare_source() {
   export SEED_LODGE_PASSWORD="${SEED_LODGE_PASSWORD:-FireDrill-Lodge-Placeholder-1}"
 
   log "Applying migrations to ${SRC_DB}"
-  DATABASE_URL="$SRC_URL" npx prisma migrate deploy >/dev/null
+  DATABASE_URL="$SRC_URL" pnpm exec prisma migrate deploy >/dev/null
 
   log "Seeding demo data (prisma/demo-seed.ts)"
-  ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" npx tsx --conditions=react-server prisma/demo-seed.ts >/dev/null
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" pnpm exec tsx --conditions=react-server prisma/demo-seed.ts >/dev/null
 
   log "Seeding base data (prisma/seed.ts)"
-  DATABASE_URL="$SRC_URL" npx tsx --conditions=react-server prisma/seed.ts >/dev/null
+  DATABASE_URL="$SRC_URL" pnpm exec tsx --conditions=react-server prisma/seed.ts >/dev/null
 
   # Take the backup: plain pg_dump piped through gzip, matching the artifact
   # shape src/lib/backup.ts writes (pg_dump with no format flags, then gzip).
@@ -372,7 +372,7 @@ fi
 
 log "Running migrations forward on the restored database (${RES_DB})"
 export DOTENV_CONFIG_PATH=/dev/null
-DATABASE_URL="$RES_URL" npx prisma migrate deploy >/dev/null
+DATABASE_URL="$RES_URL" pnpm exec prisma migrate deploy >/dev/null
 
 run_assertions
 print_summary

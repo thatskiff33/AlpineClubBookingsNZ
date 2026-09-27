@@ -701,12 +701,14 @@ export function generateAgentContext(options: AgentContextOptions): AgentContext
 type CliOptions = Omit<AgentContextOptions, "repoRoot" | "outputRoot">;
 
 const USAGE =
-  "Usage: npm run agent:context -- -- --base <ref> --entry <tracked-path> [--entry <tracked-path> ...] [--model <PrismaModel> ...] [--depth 1|2] [--max-chars 32000]";
+  "Usage: pnpm run agent:context --base <ref> --entry <tracked-path> [--entry <tracked-path> ...] [--model <PrismaModel> ...] [--depth 1|2] [--max-chars 32000]";
 
-// PowerShell removes the first `--` before `npm` sees it, so npm then swallows
-// `--base`/`--entry` as its own config flags and the script receives bare
-// values. Documenting `-- --` fixes PowerShell, and tolerating the literal `--`
-// that a POSIX shell forwards keeps that one command correct in every shell.
+// pnpm hands every option after the script name to the script, in PowerShell
+// and in a POSIX shell alike, so no separator is needed (#3673). A literal `--`
+// is still tolerated: a POSIX shell forwards one when somebody writes
+// `pnpm run agent:context -- --base …`, and under npm, which this repository
+// used until #3673, PowerShell removed the first `--` and npm then swallowed
+// `--base`/`--entry` as its own flags — hence the old doubled `-- --` form.
 export function parseAgentContextArgs(args: string[]): CliOptions {
   const parsed: CliOptions = { base: "", entries: [], models: [] };
   for (let index = 0; index < args.length; index += 1) {
@@ -719,7 +721,7 @@ export function parseAgentContextArgs(args: string[]): CliOptions {
     if (!["--base", "--entry", "--model", "--depth", "--max-chars"].includes(flag)) {
       if (!flag.startsWith("-")) {
         throw new AgentContextError(
-          `Unexpected bare value: ${flag}. The option flags did not reach this script — the shell or npm consumed them. ${USAGE}`,
+          `Unexpected bare value: ${flag}. The option flags did not reach this script — the shell or the package manager consumed them. ${USAGE}`,
         );
       }
       throw new AgentContextError(`Unknown argument: ${flag}`);

@@ -2,9 +2,9 @@
 /**
  * File-size budget ratchet (#2687, rebuilt on the base ref by #2979).
  *
- * `npm run quality:budget`                    judge the files this change touched
- * `npm run quality:budget -- --base <ref>`    compare against a different ref
- * `npm run quality:budget -- --report`        print the whole tree's debt
+ * `pnpm run quality:budget`                    judge the files this change touched
+ * `pnpm run quality:budget --base <ref>`    compare against a different ref
+ * `pnpm run quality:budget --report`        print the whole tree's debt
  *
  * `--base` is not only a diagnostic. CI passes it on a `push` to `main`, where
  * the default of `origin/main` IS the commit being tested and would make this
@@ -34,7 +34,7 @@
  *
  * Exits 1 on any finding, and also when the base ref cannot be resolved: a gate
  * that cannot read what it is comparing against must not report a pass it has
- * not earned. `npm run pr:check` already behaves this way for the same reason.
+ * not earned. `pnpm run pr:check` already behaves this way for the same reason.
  *
  * Reads `git` and the working tree only: no network, no build, no database, no
  * provider.

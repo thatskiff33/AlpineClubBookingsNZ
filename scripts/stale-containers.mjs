@@ -2,16 +2,17 @@
 /**
  * Report agent-owned Docker debris: containers whose owning issue is closed.
  *
- *   npm run stale-containers                  # human-readable report
- *   npm run stale-containers -- -- --json     # portable in PowerShell, bash and CI
- *   node scripts/stale-containers.mjs --json  # bypasses npm entirely; always exact
+ *   pnpm run stale-containers                  # human-readable report
+ *   pnpm run stale-containers --json           # same in PowerShell, bash and CI
+ *   node scripts/stale-containers.mjs --json   # bypasses the package manager
  *
- * The doubled `--` is the form `npm run agent:context` is documented with, and
- * `parseArguments` skips a literal `--` so one line works in every shell. Do NOT
- * write `npm run stale-containers --json` with no separator: measured, npm
- * consumes `--json` as its own flag, the script receives nothing, and it prints
- * the human table and exits 0 — which a JSON consumer reads as either a parse
- * error or, worse, a padded table it half understands.
+ * pnpm hands every option after the script name to the script and prints its
+ * own `$ node …` echo line to stderr, so stdout of the second line is pure JSON
+ * in every shell (measured on pnpm 11.27.1, #3673). `parseArguments` still skips
+ * a literal `--`, which a POSIX shell forwards if somebody writes one. Under
+ * npm, which this repository used until #3673, the no-separator form was the
+ * trap: npm consumed `--json` as its own flag and the script printed the human
+ * table and exited 0, which is why a doubled `-- --json` used to be documented.
  *
  * ## Why this exists (#2794)
  *
@@ -811,8 +812,9 @@ function listContainersFromDocker() {
 
 export function parseArguments(argv) {
   // A literal `--` is skipped so one documented command works in every shell.
-  // PowerShell eats npm's separator, which is why other scripts here are
-  // invoked as `npm run x -- -- --flag`; tolerating the token means nobody has
+  // pnpm needs no separator, but a POSIX shell forwards one when somebody
+  // writes `pnpm run x -- --flag` (the form this repository documented under
+  // npm, whose separator PowerShell ate); tolerating the token means nobody has
   // to remember which shell needs how many.
   const args = argv.filter((arg) => arg !== "--");
   const unknown = args.filter((arg) => arg !== "--json");

@@ -2,9 +2,9 @@
 /**
  * Epic deploy rehearsal (#3002, mitigation 9).
  *
- *   npm run db:rehearse-epic -- --database-url postgres://user:pw@127.0.0.1:55440/postgres
- *   npm run db:rehearse-epic -- --database-url ... --base <ref> --seed-sql <file>
- *   npm run db:rehearse-epic -- --help
+ *   pnpm run db:rehearse-epic --database-url postgres://user:pw@127.0.0.1:55440/postgres
+ *   pnpm run db:rehearse-epic --database-url ... --base <ref> --seed-sql <file>
+ *   pnpm run db:rehearse-epic --help
  *
  * ## What this is for
  *
@@ -613,7 +613,7 @@ async function readEveryModelWithBaseClient(
 
 const HELP = `Epic deploy rehearsal (#3002)
 
-  npm run db:rehearse-epic -- --database-url <throwaway postgres URL> [options]
+  pnpm run db:rehearse-epic --database-url <throwaway postgres URL> [options]
 
 Applies the base ref's migrations to a throwaway PostgreSQL, applies the
 migrations THIS BRANCH adds on top, then generates a Prisma client from the BASE

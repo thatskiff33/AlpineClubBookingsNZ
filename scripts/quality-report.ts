@@ -8,13 +8,13 @@
  *
  * Budgets, classification and the whole-tree debt figure all come from
  * `scripts/lib/file-size-budget.ts`, which is the same module the blocking gate
- * uses. That is deliberate: this report and `npm run quality:budget` must never
+ * uses. That is deliberate: this report and `pnpm run quality:budget` must never
  * be able to disagree about which files are over budget (#2687).
  *
  * That figure used to be read out of a checked-in ledger. #2979 deleted the
  * ledger — a file every branch rewrote was a file every merge re-conflicted —
  * so the debt is now MEASURED FROM THE TREE each time this runs, exactly as
- * `npm run quality:budget -- --report` measures it. Nothing has to be committed
+ * `pnpm run quality:budget --report` measures it. Nothing has to be committed
  * to keep it current, and there is no longer a stored number that can be wrong.
  *
  * Exit status is always 0: this is the warn-and-inform half. The half that

@@ -11,7 +11,7 @@
  * and lychee.toml). This script is the fast local equivalent: run it before
  * pushing docs changes.
  *
- *   npm run docs:linkcheck            # check, exit non-zero on any broken link
+ *   pnpm run docs:linkcheck            # check, exit non-zero on any broken link
  *   node scripts/check-doc-links.mjs  # same
  *
  * It parses inline Markdown links `[text](target)`, reference definitions

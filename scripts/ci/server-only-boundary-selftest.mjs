@@ -44,7 +44,7 @@
  *
  * ## Running it yourself, exactly as CI does
  *
- *   npm run build && node scripts/ci/server-only-boundary-selftest.mjs
+ *   pnpm run build && node scripts/ci/server-only-boundary-selftest.mjs
  *
  * The fixture is written at start and deleted at exit. It is deliberately NOT
  * in `.gitignore`: if a run is killed mid-flight the leftover shows up in
@@ -180,7 +180,7 @@ export const SUCCESS_PREFIX =
 export function stripAnsi(text) {
   // `\u001B`, spelled as an escape rather than written as a literal ESC
   // byte: a raw control character in a tracked file fails
-  // `npm run docs:indexcheck` (#3072) and is invisible in review.
+  // `pnpm run docs:indexcheck` (#3072) and is invisible in review.
   return text.replace(/\u001B\[[0-9;]*m/g, "");
 }
 

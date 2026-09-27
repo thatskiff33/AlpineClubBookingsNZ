@@ -40,7 +40,7 @@
  *
  * FAILS LOUDLY WHEN THE BASE CANNOT BE RESOLVED, and that is deliberate rather
  * than defensive: a gate that cannot read what it is comparing against must not
- * report a pass it has not earned. `npm run pr:check` already behaves this way
+ * report a pass it has not earned. `pnpm run pr:check` already behaves this way
  * for the same reason — an unfetched `origin/main` is a failure there, not a
  * green. The remedy printed names the ref actually asked for.
  */
