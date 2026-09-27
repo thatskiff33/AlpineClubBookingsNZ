@@ -52,8 +52,11 @@ interface QuoteContext {
   message: string | null;
   expiresAt: string;
   accepted: boolean;
+  acceptedQuoteOptionId: string | null;
+  acceptedPriceCents: number | null;
   declinedAfterAcceptance: boolean;
   declineReason: string | null;
+  declinedAt: string | null;
   options: QuoteOption[];
 }
 
@@ -153,7 +156,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
         } else if (res.ok) {
           setContext(data);
           setContextLoadedAt(Date.now());
-          setSelectedOptionId(data.options?.[0]?.id ?? null);
+          setSelectedOptionId(data.acceptedQuoteOptionId ?? data.options?.[0]?.id ?? null);
           setState("ready");
         } else {
           setError(data.error || "Unable to load this quote.");
@@ -172,6 +175,10 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   const selectedOption = useMemo(
     () => context?.options.find((option) => option.id === selectedOptionId) ?? null,
     [context, selectedOptionId],
+  );
+  const acceptedOption = useMemo(
+    () => context?.options.find((option) => option.id === context.acceptedQuoteOptionId) ?? null,
+    [context],
   );
 
   const expiresInLabel = useMemo(() => {
@@ -219,7 +226,17 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
         throw new Error(data.error || "Unable to send your response.");
       }
       if (data.outcome === "accepted") {
-        setResult("Quote accepted. We have sent the next steps by email.");
+        const acceptedOptionId = data.acceptedQuoteOptionId ?? selectedOptionId;
+        setSelectedOptionId(acceptedOptionId);
+        setContext((current) => current ? {
+          ...current,
+          accepted: true,
+          acceptedQuoteOptionId: acceptedOptionId,
+          acceptedPriceCents: data.priceCents ?? current.acceptedPriceCents,
+          declinedAfterAcceptance: false,
+          declineReason: null,
+          declinedAt: null,
+        } : current);
       } else if (data.outcome === "cancelled") {
         setResult("Quote cancelled. We have let the booking team know.");
       } else if (data.outcome === "modification_requested") {
@@ -280,12 +297,15 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               <div>
                 <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : "Your quote has been accepted."}</p>
                 <p className="text-sm text-muted-foreground">{context.declinedAfterAcceptance ? context.declineReason || "Please contact the club if you would like to discuss other dates." : "The booking team will review it before confirming your stay. Your places remain held while they review it."}</p>
+                {context.declinedAfterAcceptance && context.declinedAt ? (
+                  <p className="text-sm text-muted-foreground">Declined {formatQuoteExpiry(context.declinedAt, clubTime)}</p>
+                ) : null}
               </div>
             </div>
             <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
               <p><span className="text-muted-foreground">Dates:</span> {formatStayDay(context.checkIn, format)} to {formatStayDay(context.checkOut, format)}</p>
               <p><span className="text-muted-foreground">Guests:</span> {context.guestCount}</p>
-              <p><span className="text-muted-foreground">Accepted total:</span> {selectedOption ? formatCents(selectedOption.totalCents, format) : "Recorded"}</p>
+              <p><span className="text-muted-foreground">Accepted total:</span> {acceptedOption ? formatCents(acceptedOption.totalCents, format) : context.acceptedPriceCents !== null ? formatCents(context.acceptedPriceCents, format) : "Recorded"}</p>
             </div>
           </>
         ) : (

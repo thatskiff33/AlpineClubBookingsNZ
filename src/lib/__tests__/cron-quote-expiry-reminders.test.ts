@@ -402,6 +402,28 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
   });
 
+  it("does NOT release a stale sweep candidate once acceptance owns the hold", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-accepted",
+        heldBookingId: "held-accepted",
+        heldBooking: { createdAt: wayPast() },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-accepted",
+      status: BookingRequestStatus.MODIFICATION_REQUESTED,
+      acceptedQuoteId: "quote-accepted",
+    });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.bookingRequestQuote.count).not.toHaveBeenCalled();
+  });
+
   it("keeps a manual re-hold that post-dates the lapsed quote window (#1296)", async () => {
     // An admin re-held a lingering MODIFY/QUERY request via "Hold slots" *after*
     // its original quote window had already lapsed. The fresh hold's createdAt

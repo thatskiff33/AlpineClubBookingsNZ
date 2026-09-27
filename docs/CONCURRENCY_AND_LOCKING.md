@@ -3414,6 +3414,13 @@ is `declineBookingRequest`'s, deliberately: its worst case is a request still
 pointing at a hold covering more than it needs, visible on the officer's screen
 with its own Release button, rather than a request that has silently lost beds.
 
+**#3415 update.** The `MODIFY`/`QUERY` description in the table above is
+superseded. Those responses now take `lock(1)`, re-read the quote and request,
+and claim only the loaded-version `SENT`/`QUOTE_SENT` pair with no accepted
+pointer. A stale response after acceptance returns `409` before it changes the
+request, quote, or held booking. The stale-hold cron independently refuses any
+request with an accepted quote pointer.
+
 ### Writer doing both → `lock(1)` first, then per-lodge
 
 The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests

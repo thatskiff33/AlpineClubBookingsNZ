@@ -1167,6 +1167,12 @@ quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other
 actor:
 
+**#3415 update.** `MODIFY` and `QUERY` now join the global lifecycle lock. They
+re-read and claim the loaded-version `SENT` quote and `QUOTE_SENT` request with
+no accepted pointer. A response that loses to acceptance, correction, decline,
+or cancellation returns `409` before changing either record; its held booking
+therefore remains protected for officer review.
+
 - **Primary — retire the quote atomically with the claim.** The decline flips the
   outstanding `SENT` quote to `SUPERSEDED` in the SAME transaction as the
   `DECLINED` claim (and only when the claim actually landed, so a wrong-state

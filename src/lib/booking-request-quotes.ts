@@ -1228,8 +1228,11 @@ export async function getBookingRequestQuoteContext(token: string) {
     status: quote.status,
     requestStatus: request.status,
     accepted: isAccepted,
+    acceptedQuoteOptionId: isAccepted ? request.acceptedQuoteOptionId : null,
+    acceptedPriceCents: isAccepted ? request.acceptedPriceCents : null,
     declinedAfterAcceptance: isDeclinedAfterAcceptance,
     declineReason: isDeclinedAfterAcceptance ? request.declineReason : null,
+    declinedAt: isDeclinedAfterAcceptance ? request.reviewedAt?.toISOString() ?? null : null,
     type: request.type,
     schoolName: request.schoolName,
     contactFirstName: request.contactFirstName,
@@ -1274,6 +1277,7 @@ export async function respondToBookingRequestQuote(input: {
     const acceptedOption = firstQuoteOption(parseBookingRequestQuoteOptions(loadedQuote.options), acceptedOptionId);
     return {
       outcome: "accepted" as const,
+      acceptedQuoteOptionId: acceptedOptionId,
       priceCents: acceptedOption?.totalCents ?? loadedQuote.bookingRequest.acceptedPriceCents,
       type: loadedQuote.bookingRequest.type,
     };
@@ -1305,17 +1309,30 @@ export async function respondToBookingRequestQuote(input: {
     // and touches neither the quote nor the hold.
     const cancelled = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #3415: both the quote and request must still be the exact sent pair
+      // observed by the token load. Acceptance owns the held booking once either
+      // side changes, so stale cancellation stops before every side effect.
+      const liveRequest = await tx.bookingRequest.findUnique({
+        where: { id: quote.bookingRequestId },
+        select: { version: true, status: true, heldBookingId: true, acceptedQuoteId: true },
+      });
+      const liveQuote = await tx.bookingRequestQuote.findUnique({
+        where: { id: quote.id },
+        select: { status: true },
+      });
+      if (
+        !liveRequest ||
+        liveRequest.version !== quote.bookingRequest.version ||
+        liveRequest.status !== BookingRequestStatus.QUOTE_SENT ||
+        liveRequest.acceptedQuoteId !== null ||
+        liveQuote?.status !== BookingRequestQuoteStatus.SENT
+      ) return { finalised: true as const, withdrawnMemberGuestIds: [] as string[], releasedHeldBookingId: null };
       const claimed = await tx.bookingRequest.updateMany({
         where: {
           id: quote.bookingRequestId,
-          status: {
-            notIn: [
-              BookingRequestStatus.DECLINED,
-              BookingRequestStatus.CANCELLED,
-              BookingRequestStatus.CONVERTED,
-              BookingRequestStatus.APPROVED,
-            ],
-          },
+          version: liveRequest.version,
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
         },
         data: {
           status: BookingRequestStatus.CANCELLED,
@@ -1325,23 +1342,26 @@ export async function respondToBookingRequestQuote(input: {
         },
       });
       if (claimed.count === 0) {
-        return { finalised: true as const, withdrawnMemberGuestIds: [] as string[] };
+        return { finalised: true as const, withdrawnMemberGuestIds: [] as string[], releasedHeldBookingId: null };
       }
-      await tx.bookingRequestQuote.update({
-        where: { id: quote.id },
+      const cancelledQuote = await tx.bookingRequestQuote.updateMany({
+        where: { id: quote.id, status: BookingRequestQuoteStatus.SENT },
         data: {
           status: BookingRequestQuoteStatus.CANCELLED,
           cancelledAt: respondedAt,
         },
       });
+      if (cancelledQuote.count !== 1) {
+        throw new BookingRequestQuoteError("This quote changed while it was being cancelled.", 409);
+      }
       // MG4 (#2309): who was told they were on the hold that is about to go.
       // Read BEFORE the cancellation, so this is the population as it stood
       // when the requester pressed cancel.
-      const withdrawnMemberGuestIds = quote.bookingRequest.heldBookingId
-        ? await collectNotifiedMemberGuestIds(tx, quote.bookingRequest.heldBookingId)
+      const withdrawnMemberGuestIds = liveRequest.heldBookingId
+        ? await collectNotifiedMemberGuestIds(tx, liveRequest.heldBookingId)
         : [];
-      if (quote.bookingRequest.heldBookingId) {
-        const heldBookingId = quote.bookingRequest.heldBookingId;
+      if (liveRequest.heldBookingId) {
+        const heldBookingId = liveRequest.heldBookingId;
         await tx.booking.update({
           where: { id: heldBookingId },
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
@@ -1352,12 +1372,12 @@ export async function respondToBookingRequestQuote(input: {
         // adds no new cycle — decline releases its hold in a SEPARATE self-locked
         // cancelBooking tx, outside decline's claim transaction.
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({ bookingId: heldBookingId, db: tx });
-        await tx.bookingRequest.update({
-          where: { id: quote.bookingRequestId },
+        await tx.bookingRequest.updateMany({
+          where: { id: quote.bookingRequestId, heldBookingId, status: BookingRequestStatus.CANCELLED },
           data: { heldBookingId: null, version: { increment: 1 } },
         });
       }
-      return { finalised: false as const, withdrawnMemberGuestIds };
+      return { finalised: false as const, withdrawnMemberGuestIds, releasedHeldBookingId: liveRequest.heldBookingId };
     });
     if (cancelled.finalised) {
       // A concurrent admin decline (or a prior cancel) already finalised the
@@ -1373,9 +1393,9 @@ export async function respondToBookingRequestQuote(input: {
     // they were on a booking has to be told they are not. Without this the
     // member is left holding "the club has put you on a lodge booking" for a
     // booking that no longer exists, and only finds out if they ask.
-    if (quote.bookingRequest.heldBookingId) {
+    if (cancelled.releasedHeldBookingId) {
       await notifyMemberGuestsHoldReleased({
-        bookingId: quote.bookingRequest.heldBookingId,
+        bookingId: cancelled.releasedHeldBookingId,
         targetMemberIds: cancelled.withdrawnMemberGuestIds,
         logContext: { bookingRequestId: quote.bookingRequestId, quoteId: quote.id },
       });
@@ -1401,6 +1421,30 @@ export async function respondToBookingRequestQuote(input: {
 
   if (input.action === "MODIFY" || input.action === "QUERY") {
     await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #3415: requester messages are preserved while the quote is live, but a
+      // stale response cannot replace an accepted lifecycle state or expose its
+      // hold to the modification-hold expiry sweep.
+      const liveRequest = await tx.bookingRequest.findUnique({
+        where: { id: quote.bookingRequestId },
+        select: { version: true, status: true, acceptedQuoteId: true },
+      });
+      const liveQuote = await tx.bookingRequestQuote.findUnique({
+        where: { id: quote.id },
+        select: { status: true },
+      });
+      if (
+        !liveRequest ||
+        liveRequest.version !== quote.bookingRequest.version ||
+        liveRequest.status !== BookingRequestStatus.QUOTE_SENT ||
+        liveRequest.acceptedQuoteId !== null ||
+        liveQuote?.status !== BookingRequestQuoteStatus.SENT
+      ) {
+        throw new BookingRequestQuoteError(
+          "This quote can no longer be updated because it has already been accepted or changed.",
+          409,
+        );
+      }
       // #1423 lock-ordering invariant + resurrection guard: acquire the
       // BookingRequest row lock FIRST (matching decline's claim-first order, so a
       // concurrent decline + modify/query cannot deadlock), and status-guard it.
@@ -1415,12 +1459,9 @@ export async function respondToBookingRequestQuote(input: {
       const restated = await tx.bookingRequest.updateMany({
         where: {
           id: quote.bookingRequestId,
-          status: {
-            notIn: [
-              BookingRequestStatus.DECLINED,
-              BookingRequestStatus.CANCELLED,
-            ],
-          },
+          version: liveRequest.version,
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
         },
         data: {
           status:
@@ -1465,9 +1506,7 @@ export async function respondToBookingRequestQuote(input: {
       await tx.bookingRequestQuote.updateMany({
         where: {
           id: quote.id,
-          status: {
-            in: [BookingRequestQuoteStatus.DRAFT, BookingRequestQuoteStatus.SENT],
-          },
+          status: BookingRequestQuoteStatus.SENT,
         },
         data: {
           status: BookingRequestQuoteStatus.SUPERSEDED,

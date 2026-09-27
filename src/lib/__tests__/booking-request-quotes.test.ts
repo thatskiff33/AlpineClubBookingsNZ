@@ -476,6 +476,14 @@ beforeEach(() => {
   vi.mocked(prisma.bookingRequest.findUniqueOrThrow).mockResolvedValue(
     baseRequest() as never
   );
+  // Public response actions re-read the live request under the lifecycle lock.
+  // Individual race tests replace this with the state that won the lock.
+  vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+    baseRequest({
+      status: BookingRequestStatus.QUOTE_SENT,
+      acceptedQuoteId: null,
+    }) as never,
+  );
 });
 
 function armAcceptedQuoteClaim() {
@@ -1585,6 +1593,37 @@ describe("public quote response", () => {
     );
   });
 
+  it("returns the durable accepted option and later decline time for requester confirmation", async () => {
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.ACCEPTED,
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        { id: "OPTION-1", label: "One", cateringOption: null, totalCents: 1000, pricingMode: BookingRequestPricingMode.OVERALL_TOTAL, guestBreakdown: [] },
+        { id: "OPTION-2", label: "Two", cateringOption: null, totalCents: 2500, pricingMode: BookingRequestPricingMode.OVERALL_TOTAL, guestBreakdown: [] },
+      ],
+      bookingRequest: baseRequest({
+        status: BookingRequestStatus.DECLINED,
+        acceptedQuoteId: "quote-1",
+        acceptedQuoteOptionId: "OPTION-2",
+        acceptedPriceCents: 2500,
+        reviewedAt: new Date("2026-07-02T01:30:00.000Z"),
+        declineReason: "The officer could not approve these dates.",
+      }),
+    } as never);
+
+    const context = await getBookingRequestQuoteContext("b".repeat(64));
+
+    expect(context).toMatchObject({
+      accepted: true,
+      declinedAfterAcceptance: true,
+      acceptedQuoteOptionId: "OPTION-2",
+      acceptedPriceCents: 2500,
+      declinedAt: "2026-07-02T01:30:00.000Z",
+    });
+  });
+
   it("cancels the held booking, frees its beds, and detaches heldBookingId (issue #1254)", async () => {
     const token = "c".repeat(64);
     vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
@@ -1611,6 +1650,13 @@ describe("public quote response", () => {
     vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
       count: 1,
     } as never);
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.QUOTE_SENT,
+        heldBookingId: "held-1",
+        acceptedQuoteId: null,
+      }) as never,
+    );
 
     const result = await respondToBookingRequestQuote({ token, action: "CANCEL" });
 
@@ -1626,8 +1672,9 @@ describe("public quote response", () => {
       expect.objectContaining({ bookingId: "held-1" })
     );
     // ...and the pointer is detached so a future re-hold can never reuse it.
-    expect(prisma.bookingRequest.update).toHaveBeenCalledWith(
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({ heldBookingId: "held-1" }),
         data: { heldBookingId: null, version: { increment: 1 } },
       })
     );
@@ -1964,12 +2011,7 @@ describe("public quote response", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: "quote-1",
-            status: {
-              in: [
-                BookingRequestQuoteStatus.DRAFT,
-                BookingRequestQuoteStatus.SENT,
-              ],
-            },
+            status: BookingRequestQuoteStatus.SENT,
           }),
           data: expect.objectContaining({
             status: BookingRequestQuoteStatus.SUPERSEDED,
@@ -2027,12 +2069,7 @@ describe("public quote response", () => {
         vi.mocked(prisma.bookingRequestQuote.updateMany).mock.calls[0][0]
       ).toMatchObject({
         where: {
-          status: {
-            in: [
-              BookingRequestQuoteStatus.DRAFT,
-              BookingRequestQuoteStatus.SENT,
-            ],
-          },
+          status: BookingRequestQuoteStatus.SENT,
         },
       });
     }
@@ -2072,18 +2109,77 @@ describe("public quote response", () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: "req-1",
-            status: {
-              notIn: [
-                BookingRequestStatus.DECLINED,
-                BookingRequestStatus.CANCELLED,
-              ],
-            },
+            status: BookingRequestStatus.QUOTE_SENT,
+            acceptedQuoteId: null,
           }),
         })
       );
       expect(prisma.booking.create).not.toHaveBeenCalled();
       expect(prisma.booking.update).not.toHaveBeenCalled();
     }
+  );
+  it("does not let a stale cancel release a hold after acceptance wins the lifecycle lock", async () => {
+    const token = "z".repeat(64);
+    const sentQuote = {
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [],
+      bookingRequest: baseRequest({
+        status: BookingRequestStatus.QUOTE_SENT,
+        heldBookingId: "held-1",
+        acceptedQuoteId: null,
+        version: 1,
+      }),
+    };
+    vi.mocked(prisma.bookingRequestQuote.findUnique)
+      .mockResolvedValueOnce(sentQuote as never)
+      .mockResolvedValueOnce({ status: BookingRequestQuoteStatus.ACCEPTED } as never);
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue({
+      version: 2,
+      status: BookingRequestStatus.ACCEPTED,
+      heldBookingId: "held-1",
+      acceptedQuoteId: "quote-1",
+    } as never);
+
+    await expect(respondToBookingRequestQuote({ token, action: "CANCEL" })).rejects.toMatchObject({ status: 409 });
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+    expect(prisma.bookingRequestQuote.updateMany).not.toHaveBeenCalled();
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+  });
+
+  it.each(["MODIFY", "QUERY"] as const)(
+    "does not let a stale %s overwrite acceptance after it wins the lifecycle lock",
+    async (action) => {
+      const token = "y".repeat(64);
+      const sentQuote = {
+        id: "quote-1",
+        bookingRequestId: "req-1",
+        version: 1,
+        status: BookingRequestQuoteStatus.SENT,
+        responseTokenExpiresAt: new Date(Date.now() + 60_000),
+        options: [],
+        bookingRequest: baseRequest({
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
+          version: 1,
+        }),
+      };
+      vi.mocked(prisma.bookingRequestQuote.findUnique)
+        .mockResolvedValueOnce(sentQuote as never)
+        .mockResolvedValueOnce({ status: BookingRequestQuoteStatus.ACCEPTED } as never);
+      vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue({
+        version: 2,
+        status: BookingRequestStatus.ACCEPTED,
+        acceptedQuoteId: "quote-1",
+      } as never);
+
+      await expect(respondToBookingRequestQuote({ token, action, message: "too late" })).rejects.toMatchObject({ status: 409 });
+      expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+      expect(prisma.bookingRequestQuote.updateMany).not.toHaveBeenCalled();
+    },
   );
 });
 
@@ -3149,6 +3245,13 @@ describe("respondToBookingRequestQuote CANCEL — retracting the hold's notice (
     vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
       count: 1,
     } as never);
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.QUOTE_SENT,
+        heldBookingId: "held-1",
+        acceptedQuoteId: null,
+      }) as never,
+    );
   }
 
   it("tells the member guests the hold had told, once the hold is gone", async () => {

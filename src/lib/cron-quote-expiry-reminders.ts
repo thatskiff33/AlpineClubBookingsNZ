@@ -243,7 +243,8 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
         });
         if (
           request?.heldBookingId !== heldBookingId ||
-          request.status !== BookingRequestStatus.QUOTE_SENT
+          request.status !== BookingRequestStatus.QUOTE_SENT ||
+          request.acceptedQuoteId != null
         ) return false;
         const liveQuote = await tx.bookingRequestQuote.findUnique({
           where: { id: quote.id },
@@ -420,9 +421,10 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
         // and the hold is still an unaccepted AWAITING_REVIEW row.
         const current = await tx.bookingRequest.findUnique({
           where: { id: request.id },
-          select: { heldBookingId: true, status: true },
+          select: { heldBookingId: true, status: true, acceptedQuoteId: true },
         });
         if (current?.heldBookingId !== heldBookingId) return false;
+        if (current.acceptedQuoteId != null) return false;
         if (!SWEEPABLE_HELD_STATUSES.includes(current.status as never)) {
           return false;
         }

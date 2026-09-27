@@ -1565,6 +1565,9 @@ raw neutral outside its per-file allowlist.
 
 The public quote link remains a requester confirmation after acceptance: it
 shows the accepted dates, headcount and total without offering a second action.
+The confirmation uses the recorded accepted option, including when it was the
+second quoted option, on both the immediate response and a later visit. If an
+officer declines, the same card shows the recorded decline date and reason.
 Acceptance places the request in the officer queue as **Accepted**. That card
 shows the accepted quote and offers only **Approve** or **Decline**; it does not
 reopen quote, contact, party or member-link editing. Approval creates the
