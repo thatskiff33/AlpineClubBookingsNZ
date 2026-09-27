@@ -125,8 +125,25 @@ currency.** Invoices this site sends to Xero carry no currency of their own, so
 Xero books them in the organisation's **base currency**; if that is not this
 currency, every invoice lands in the wrong one. Stripe can take a charge in a
 currency other than its payout currency, but converts it before paying out, at
-a fee. Change both to match **before** saving here. The site does not yet check
-Xero's base currency for you; that check is planned separately (#3633).
+a fee. Change both to match **before** saving here.
+
+**The site checks Xero's base currency for you (#3633).** Once Xero is
+connected, the site compares the Xero organisation's base currency with this
+currency. When they differ, a warning names both currencies and says that Xero
+books every invoice in its base currency. The warning shows in three places:
+
+- on this page, under the currency;
+- on the Xero setup page (**Admin → Xero → Setup**), at the **Connect** step
+  under the name of the connected organisation;
+- in the setup-readiness list (**Admin → Setup**), as a warning on the
+  **Operational Xero** step.
+
+It is a warning only. It blocks nothing and changes no invoice: fix it by
+changing the Xero organisation's base currency, or this currency, so the two
+match. It shows only to administrators who can read the Xero organisation's
+details, which means finance access. With the Xero module switched off, Xero
+not connected, or the base currency unreadable, no warning is shown. Stripe's
+account currency is not checked.
 
 **Currencies without two decimal places cannot be chosen.** Every amount here
 is kept in hundredths (cents). For a currency like the Japanese yen (no decimal
@@ -239,7 +256,9 @@ is older than the currency.
 | A card payment was charged in the old currency after a change | The member had already started paying before the change; the payment provider keeps the currency a payment started in | Nothing to fix on this page. Reconcile it in Stripe and Xero as a payment in the old currency |
 | A payment-recovery retry failed straight after a currency change | The retry repeated a request in a different currency, which the payment provider refuses for 24 hours | Nothing to fix unless it is urgent: after 24 hours the retry is made afresh in the new currency. To settle it sooner, finish it by hand from the payment-recovery screens |
 | "Not usable" appears under the currency, naming a currency such as JPY, and every admin page says card payments are switched off | A currency without two decimal places was recorded by hand or copied from `CURRENCY` before #3567. Amounts are shown in the server's `CURRENCY` (or `NZD`), and no card is charged | Set a currency with two decimal places on this page; card payments resume at once |
-| Xero invoices appear in the wrong currency | The Xero organisation's base currency is not the club's currency. Invoices carry no currency of their own | Change the Xero organisation's base currency to match, or talk to the club's accountant first |
+| Xero invoices appear in the wrong currency | The Xero organisation's base currency is not the club's currency. Invoices carry no currency of their own | Change the Xero organisation's base currency to match, or talk to the club's accountant first. The base-currency warning on this page names both currencies |
+| A warning says the club's currency and the Xero base currency differ | They do. Xero books every invoice in its base currency, while card payments are charged in the club's currency | Change the Xero organisation's base currency or this currency so they match. The warning goes once they do (Xero's details are re-read at most every 12 hours, or at once when Xero is reconnected) |
+| The warning is not shown to one administrator but is to another | The Xero base currency is shown only to administrators with finance access | Nothing to fix. Ask someone with finance access to check it |
 | A card was charged in a currency the club did not expect | Card payments follow this page. Before #3567 they followed the server's `CURRENCY` | Check the currency here. Changing `CURRENCY` on the server no longer affects card payments |
 | A date reads 3/14/2026 when the club writes 14/03/2026 | The language tag names the wrong country — `en-US` rather than `en-NZ` | Set the tag to the club's own country |
 | Someone changed it and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_FORMAT_UPDATED`. The entry names the administrator, and the values before and after |
