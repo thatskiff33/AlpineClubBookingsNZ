@@ -293,6 +293,7 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
         where: { id: "default" },
         create: { id: "default", xeroIntegration: true, internetBankingPayments: true },
         update: { xeroIntegration: true, internetBankingPayments: true },
+        select: { id: true },
       });
 
       await deleteFixtures();
@@ -355,6 +356,7 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
             xeroIntegration: savedModuleSettings.xeroIntegration,
             internetBankingPayments: savedModuleSettings.internetBankingPayments,
           },
+          select: { id: true },
         });
       } else {
         await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });

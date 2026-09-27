@@ -818,14 +818,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "createXeroInvoiceForGroupSettlement#2",
     tier: "GLOBAL",
     reason:
-      "After the provider call returns, the create-versus-cancel race is decided under the same fence: a cancellation that acquired it first wins and the invoice is voided, otherwise issuance won the serialisation point.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
     invariant: "INV-LOCK-001",
   },
   {
-    site: "createXeroInvoiceForGroupSettlement#3",
+    site: "bindCreatedGroupSettlementInvoice#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime is never emailed.",
+      "The post-create fence (moved out of createXeroInvoiceForGroupSettlement by #3642): after the provider call returns it decides create-versus-cancel and create-versus-release under the key the cancellation, the reaper and the settle paths take, binding the invoice with its active link or abandoning it on arrival.",
     invariant: "INV-LOCK-001",
   },
 
