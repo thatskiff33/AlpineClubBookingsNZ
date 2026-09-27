@@ -258,6 +258,33 @@ export function internetBankingHoldKeptParagraph(
 }
 
 /**
+ * #3638 — the paragraph that says what happened when Xero reported an Internet
+ * Banking invoice paid on a booking that also carries a captured card payment.
+ *
+ * Three arms, because the card money did three different things and the
+ * treasurer does something different for each: on a live booking it settled
+ * the booking (the price may have been paid twice); on a cancelled booking the
+ * cancellation settled it under the club's policy; or (#1765) it had been
+ * refunded before the booking moved to Internet Banking, and the booking was
+ * cancelled before this bank payment arrived, so nothing was paid twice but
+ * the bank money has nowhere to go. Shared between the hand-built HTML and the
+ * `{{secondInstrumentConflictNote}}` token (#2268): the flat editable body has
+ * no conditional syntax.
+ */
+export function secondInstrumentConflictOutcomeParagraph(
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund",
+): string {
+  switch (conflictKind) {
+    case "cancelledAfterCard":
+      return "This booking was paid by card and later cancelled, and Xero now reports its Internet Banking invoice paid as well. The cancellation already settled the card payment under the club's policy; the bank payment has been recorded against the booking, and nothing was credited or refunded for it automatically. Check in Xero whether it is separate money from the member, then return it or hold it as their account credit.";
+    case "cancelledAfterRefund":
+      return "This booking's earlier card payment was refunded before it moved to Internet Banking, and the booking was then cancelled. Xero now reports its Internet Banking invoice paid, so this bank payment arrived after the cancellation. Nothing was paid twice, but the bank payment has been recorded against the cancelled booking and nothing was credited or refunded for it automatically. Check in Xero that it is the member's money, then return it or hold it as their account credit.";
+    case "settled":
+      return "This booking may have been paid TWICE. A card payment had already settled it, and Xero now reports its Internet Banking invoice paid as well. The bank payment has been recorded against the booking; nothing was refunded or credited automatically. Check in Xero whether that payment is separate money from the member (then agree with them which payment to refund) or the card money matched to the invoice by hand.";
+  }
+}
+
+/**
  * #2268 — the outcome-dependent lead paragraph of the recurring split-settlement
  * alert, shared by the hand-built HTML below and the `{{settlementActionNote}}`
  * token the admin-editable body renders. The flat body used to assert that a

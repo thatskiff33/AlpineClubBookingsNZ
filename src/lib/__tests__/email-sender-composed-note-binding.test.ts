@@ -55,6 +55,7 @@ import {
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
 import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
+import { sendAdminSecondInstrumentSettlementConflictAlert } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
   sendSplitGuestPortionCancelledEmail,
@@ -392,6 +393,69 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     const released = await rendered("released-unreadable");
     expect(released).toContain("has now been released");
     expect(released).not.toContain("NOT cancelled");
+  });
+
+  it("admin-second-instrument-settlement-conflict: {{secondInstrumentConflictNote}} says what the card money already did (#3638)", async () => {
+    const alert = {
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      bookingId: "booking-9",
+      bookingStatus: "PAID",
+      conflictKind: "settled" as const,
+      invoiceAmountCents: 27000,
+      cardHeldCents: 27000,
+      cardPaymentIntentId: "pi_card",
+      xeroInvoiceNumber: "INV-9",
+      // No link, so the send-time organisation stamp is not exercised here.
+      xeroInvoiceUrl: null,
+    };
+    await sendAdminSecondInstrumentSettlementConflictAlert(alert, CLUB_FORMAT_TEST);
+
+    const liveData = capturedUnmuteableTemplateData();
+    const liveRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      liveData,
+    );
+    expect(liveRendered).toContain("This booking may have been paid TWICE");
+    expect(liveRendered).not.toContain("later cancelled");
+    expect(liveRendered).toContain("Booking: booking-9");
+    expect(liveRendered).toContain("/bookings/booking-9");
+    // Unmuteable and named for the event, never the payment-failure mail.
+    const [liveArgs] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+      { subject: string; templateName: string },
+    ];
+    expect(liveArgs.subject).toContain("may have been paid twice");
+    expect(liveArgs.templateName).toBe("admin-second-instrument-settlement-conflict");
+    expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterCard" },
+      CLUB_FORMAT_TEST,
+    );
+    const cancelledRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(cancelledRendered).toContain("paid by card and later cancelled");
+    expect(cancelledRendered).not.toContain("This booking may have been paid TWICE");
+
+    // #3638 delta D3: the #1765 arm. The card was refunded before the switch,
+    // so the mail must not claim the cancellation settled it, nor that the
+    // booking was paid twice.
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminSecondInstrumentSettlementConflictAlert(
+      { ...alert, bookingStatus: "CANCELLED", conflictKind: "cancelledAfterRefund" },
+      CLUB_FORMAT_TEST,
+    );
+    const refundRendered = renderDefaultBody(
+      "admin-second-instrument-settlement-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(refundRendered).toContain("refunded before it moved to Internet Banking");
+    expect(refundRendered).toContain("Nothing was paid twice");
+    expect(refundRendered).not.toContain("already settled the card payment");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

@@ -52,6 +52,12 @@ export interface PaymentLinkContext {
     status: string;
     amountCents: number;
     internetBankingReference?: string;
+    /**
+     * #3638: false on a booking switched to Internet Banking — no card button.
+     * Optional on the wire, read as "available" when absent, so a page served
+     * an older response keeps its card.
+     */
+    cardPaymentAvailable?: boolean;
     expiresAt: string;
   } | null;
   canRequestFreshLink: boolean;

@@ -12,4 +12,5 @@ export * from "./admin-alerts-booking";
 export * from "./admin-alerts-membership";
 export * from "./admin-alerts-finance";
 export * from "./admin-alerts-internet-banking";
+export * from "./admin-alerts-settlement";
 export * from "./admin-alerts-ops";

@@ -85,6 +85,8 @@ and a send that reaches nobody is retried on the next run.
 | An expired hold was not cancelled and an **Internet banking hold needs attention** email arrived | Xero shows part (or all) of the invoice paid, or the invoice could not be read | Follow the email: wait for the rest, or cancel the booking in the app (the part payment is credited under the policy); reconnect Xero if it could not be read |
 | Cancelling says "Xero shows a payment against this booking's invoice, but its amount could not be read exactly" | Xero is unreachable, or one of the booking's invoices could not be read, while a payment is recorded | Reconnect Xero or wait, then cancel again |
 | Members aren't offered Internet Banking at checkout | The module is off, or the booking is inside the minimum lead time | Turn the module on and check the **Minimum lead time** value |
+| An admin alert says "Booking may have been paid twice — card and Xero" | A card payment had already settled the booking, and Xero then reported its Internet Banking invoice paid too (#3638). The bank payment is recorded; nothing was refunded | Check the invoice's payment in Xero: if it is separate money from the member, agree with them which payment to refund; if it is the card money matched to the invoice by hand, correct the match in Xero |
+| The same alert says the booking was "paid by card and later cancelled" | The booking was paid by card and cancelled, and a bank transfer then arrived against its Internet Banking invoice (#3638). The cancellation already settled the card payment; the bank payment is recorded and was not credited | Check the payment in Xero; if it is the member's money, return it or add it to their account credit |
 
 ## Related links
 

@@ -13,29 +13,32 @@ reason: the transaction-client option and the wording choice belong on the
   the cancel path, the repair tool and the cron all raise.
 
 file: src/lib/booking-cancel.ts
-lines: 2560
+lines: 2576
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
-  claim's follow-up would separate it from the sizing it sits beside. #3643
-  (same integration branch, one entry per file) adds the three call sites of
-  the part-payment recognition - the read before the dispatch, the record
-  inside the paid claim, the clearing note after it - whose bodies live in
+  claim's follow-up would separate it from the sizing it sits beside.
+  #3638 (same epic) adds its share: the card-intent cancel marks the row FAILED
+  only when Stripe confirms the intent dead, through the shared predicate.
+  #3643 (same epic, one entry per file) adds the three call sites of the
+  part-payment recognition - the read before the dispatch, the record inside
+  the paid claim, the clearing note after it - whose bodies live in
   `internet-banking-part-payment-at-cancel.ts`; the calls must sit at those
   three points of the cancel's own sequence.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1824
+lines: 1831
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
   all three are decisions of that one arm, and the classifier is kept whole
   by design (its header says why). The delta review added the arm's stand-down
   for a note retired by late cash and its manual-review answer to a shortfall;
-  the predicates themselves live in `xero-clearing-allocations.ts`. #3643
-  (same integration branch, so one entry per file) adds the manual-review
-  answer to a recorded part payment, whose predicate lives in
-  `xero-inbound/object-links.ts`.
+  the predicates themselves live in `xero-clearing-allocations.ts`.
+  #3638 (same epic) adds one predicate call so the late-capture arm does not
+  read an admin-only settlement marker as a recorded refund decision.
+  #3643 (same epic) adds the manual-review answer to a recorded part payment,
+  whose predicate lives in `xero-inbound/object-links.ts`.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1610
@@ -51,8 +54,12 @@ reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
   same; the reading and the retirement themselves live in
-  `invoice-clearing-note-evidence.ts`. #3643 exports the cash rule for the
-  hold payment check and corrects its "only caller" comments.
+  `invoice-clearing-note-evidence.ts`.
+  #3638 (same epic) writes its second-instrument marker inside this settle
+  transaction, beside the receipt it describes; the detection, the writer and
+  the alert live in `settlement-conflicts.ts`.
+  #3643 exports the cash rule for the hold payment check and corrects its
+  "only caller" comments.
 
 file: src/lib/redact-sensitive-json.ts
 lines: 914

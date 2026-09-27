@@ -863,6 +863,30 @@ describe("deleteBooking — soft-delete cancels in-flight PaymentIntents (#2700)
     expect(mocks.markPaymentIntentTransactionFailed).not.toHaveBeenCalled();
   });
 
+  it("closes the local row when Stripe reports the intent was already cancelled (#3638)", async () => {
+    // The same "is it dead?" answer booking cancellation reads: an intent that
+    // is already `canceled` at Stripe can never charge, so its PROCESSING row is
+    // squared with it rather than left open.
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      paymentIntent: { id: "pi_modification", status: "canceled" },
+      canceled: false,
+    });
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeBooking({
+        status: "CANCELLED",
+        draftExpiresAt: null,
+        payment: paymentWith({ additionalPaymentIntentId: "pi_modification" }),
+      })
+    );
+
+    const result = await softDelete();
+
+    expect(result.status).toBe(200);
+    expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_modification",
+    });
+  });
+
   it("still reports the deletion as succeeded when Stripe throws", async () => {
     // The deletion is already durable. Turning it into a 500 would tell the
     // admin it failed when it did not, and a retry would answer 409.

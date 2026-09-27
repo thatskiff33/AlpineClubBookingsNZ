@@ -5,7 +5,7 @@ import {
 } from "../email-message-notes";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { type AdminAlertSendOutcome, sendToAdmins } from "./admin-alerts-shared";
-import { stampXeroOrganisation } from "./xero-org-stamp";
+import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import { renderEmailHtml } from "@/lib/email-theme";
 import {
   emailCalendarDay,

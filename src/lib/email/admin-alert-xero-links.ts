@@ -1,10 +1,15 @@
+/**
+ * Send-time Xero organisation stamping for admin-alert deep links (#2314).
+ * Its own module so every admin-alert family that links into Xero shares one
+ * copy without importing another family (the #1210 rule: sub-modules share
+ * plumbing, never each other).
+ */
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 
 /**
  * Stamp the club's Xero organisation onto an outbound deep link, at SEND time
- * (#2314, owner decision 1 Aug 2026). Shared by the finance alerts and the
- * kept internet banking hold alert (#3643), so it is its own leaf.
+ * (#2314, owner decision 1 Aug 2026).
  *
  * The URLs reaching these alerts are organisation-agnostic: some are read
  * straight off a `XeroSyncOperation` / `XeroObjectLink` row, which #2314

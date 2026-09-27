@@ -29,7 +29,7 @@ import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
-import { stampXeroOrganisation } from "./xero-org-stamp";
+import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import {
   sendToAdmins,
   sendUnmuteableAdminAlert,

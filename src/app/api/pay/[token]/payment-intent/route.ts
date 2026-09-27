@@ -71,7 +71,10 @@ export async function POST(
       );
     }
     if (err instanceof PaymentLinkError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
+      return NextResponse.json(
+        err.code ? { error: err.message, code: err.code } : { error: err.message },
+        { status: err.status },
+      );
     }
     throw err;
   }

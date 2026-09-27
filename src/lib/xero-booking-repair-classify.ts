@@ -12,6 +12,7 @@ import {
   partialClearingNoteIsIncomplete,
 } from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import type {
   BookingClassificationContext,
   BookingXeroRepairAction,
@@ -1636,8 +1637,14 @@ export function classifyBookingContext(
     // capture on a booking that ALSO had a paid-path cancel is masked by
     // that cancel's artifact; the #1350 durable intent-cancellation recovery
     // and the webhook superseded-intent hook own that population.
+    // #3638: an admin-only settlement marker (#2262's two, #3638's
+    // second-instrument conflict) is a CANCELLED event WITH a snapshot that
+    // records no refund decision, so it must not mask this finding.
     const cancellationRefundDecisionRecorded =
-      (booking.events ?? []).some((event) => event.snapshot !== null) ||
+      (booking.events ?? []).some(
+        (event) =>
+          event.snapshot !== null && !isManualSettlementMarkerEvent(event)
+      ) ||
       getCancellationCreditAmountCents(booking) > 0 ||
       context.cancellationRefundRecoveryOperations.some(
         (operation) => operation.status !== "FAILED"
