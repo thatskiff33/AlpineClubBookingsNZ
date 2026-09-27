@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { NextConfig } from "next";
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 import { ASSET_NOT_FOUND_REWRITES } from "./src/lib/asset-url-404";
 import { PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR } from "./src/lib/release-nonce-seed";
 
