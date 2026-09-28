@@ -1591,10 +1591,9 @@ truth. The public POST endpoints are:
 **Upgrading to the release that switches the payments cycle on (#3663).** Before
 it, the cron leader never released expired Internet Banking holds, so a club can
 carry a backlog. On the first 15-minute run after the upgrade, every expired
-hold that has no money paid against it (#3643) and whose stay has not started is
-released: the booking is cancelled, the member is emailed a cancellation, any
-account credit they used is restored, and the unpaid invoice is cleared with a
-credit note. A hold whose check-in is on or before the club's today is never
+hold whose stay has not started is released: the booking is cancelled, the
+member is emailed a cancellation, any account credit they used is restored, and
+the unpaid invoice is cleared with a credit note. A hold whose check-in is on or before the club's today is never
 cancelled; it is left for the treasurer, who is emailed once. Before upgrading:
 
 1. Reconcile outstanding Internet Banking payments, so a member who paid by

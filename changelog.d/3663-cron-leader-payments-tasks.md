@@ -11,8 +11,8 @@
   not be released shows as a warning. A booking whose stay has already started
   is never cancelled this way: it is left alone and the treasurer is emailed
   once to reconcile it by hand. **On the first run after upgrading, every
-  expired hold that has no money paid against it and whose stay has not
-  started is released:** the booking is cancelled, the member is emailed, any
-  account credit they used is restored and the unpaid invoice is cleared.
+  expired hold whose stay has not started is released:** the booking is
+  cancelled, the member is emailed, any account credit they used is restored
+  and the unpaid invoice is cleared.
   Before upgrading, reconcile outstanding Internet Banking payments and count
   the expired holds (see the deploy note in `DEPLOYMENT.md`).
