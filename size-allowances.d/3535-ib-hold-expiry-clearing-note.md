@@ -74,7 +74,7 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   resolved PARTIAL note still show a separate live allocation.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1743
+lines: 1695
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
@@ -86,8 +86,10 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   retry helper refuses an operation resolved in Xero, with its 409 error and
   refusal beside `XeroOperationRetryError`, which it extends, and each of the
   three retry claims loses to a resolve landing after the read, saying so
-  with the resolved error from one helper beside them; the predicate lives in
-  `xero-operation-resolution.ts`.
+  with the resolved error from one helper beside them, and applied-credit
+  rows stay retry-only through one named reading of the mark; the predicate
+  lives in `xero-operation-resolution.ts`, and the payment credit-note payload
+  reader moved out to `xero-payment-credit-note-payload.ts`.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1894
