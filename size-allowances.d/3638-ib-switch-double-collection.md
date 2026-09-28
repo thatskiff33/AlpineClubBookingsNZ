@@ -39,14 +39,17 @@ superseded-payment refund moved onto the one card-refund writer, and the file is
 shorter than its base.
 
 file: src/lib/email-message-registry.ts
-lines: 2148
+lines: 2160
 reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with
   the comment saying why it is locked. #3639 (same epic, one file one
   allowance) adds its held late-capture alert's name, required tokens and
-  trigger summary beside the hand-back task alert it mirrors. #3672 (same
-  epic) adds its share: the pay-for-yourself joiner email's trigger metadata,
-  and the started-stay treasurer alert's admin audience, required tokens,
-  trigger metadata and approved tokens (the organiser's and each joiner's
-  booking link), each in the table that holds every other template's.
+  trigger summary beside the hand-back task alert it mirrors. #3663 (same
+  epic) adds its share: the started-stay hold alert's admin-audience entry,
+  required tokens and trigger metadata, beside its siblings in the same tables.
+  #3672 (same epic) adds its share: the pay-for-yourself joiner email's
+  trigger metadata, and the started-stay treasurer alert's admin audience,
+  required tokens, trigger metadata and approved tokens (the organiser's and
+  each joiner's booking link), each in the table that holds every other
+  template's.

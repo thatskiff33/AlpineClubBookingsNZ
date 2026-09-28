@@ -66,6 +66,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // preference like its reconcile-by-hand siblings; not delivery-locked,
   // because no money moved.
   "admin-group-joiner-started-stay",
+  // #3663: an expired internet banking hold left alone because the stay has
+  // started. sendToAdmins on the adminPaymentFailure preference like its
+  // reconcile-by-hand siblings; not delivery-locked, because no money moved.
+  "admin-internet-banking-hold-started-stay",
   // B5 (#2262): the reciprocal fence's conflict alert and the cash-cancellation
   // hand-back task alert. Both ship via sendToAdmins, so admin audience, and
   // both are operator nudges rather than money movers — the conflict alert
@@ -541,6 +545,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "joinerBookingLinks",
     "organiserBookingUrl",
   ],
+  // #3663: the booking and the payments board are what the treasurer acts on.
+  "admin-internet-banking-hold-started-stay": ["bookingReference", "memberName", "reviewUrl"],
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
@@ -813,6 +819,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "A second, distinct Stripe capture arrived on an already-settled booking, so the duplicate charge was auto-refunded (inline in full, or a durable retry queued when the inline refund could not complete)",
     frequency:
       "On duplicate-capture adjudication — rare; once per distinct duplicate capture that is auto-refunded",
+  },
+  "admin-internet-banking-hold-started-stay": {
+    triggerSummary:
+      "An internet banking hold reached its deadline unpaid, but the booking's check-in had already arrived, so the booking was left alone for the treasurer to reconcile by hand",
+    frequency:
+      "At most once per payment, guarded by a cross-instance claim, from the 15-minute payments cycle",
   },
   "admin-manual-settlement-conflict": {
     triggerSummary:

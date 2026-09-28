@@ -31,6 +31,7 @@ type CronHealthStatus =
   | "stale"
   | "failed"
   | "skipped"
+  | "warning"
   | "missing"
   | "disabled"
   | "untracked"

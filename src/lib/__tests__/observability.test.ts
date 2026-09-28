@@ -82,6 +82,28 @@ vi.mock("node-cron", () => ({
   },
 }));
 
+// #3663: the three tasks of the 15-minute payments cycle, doubled so the leader
+// test below can prove the cron leader reaches every one of them through the
+// shared payments runner (which is NOT doubled).
+const paymentsCycleTasks = vi.hoisted(() => ({
+  processPaymentRecoveryOperations: vi.fn(),
+  releaseExpiredInternetBankingHolds: vi.fn(),
+  reapStaleWaitingPaymentXeroOutboxOperations: vi.fn(),
+}));
+
+vi.mock("@/lib/payment-recovery", () => ({
+  processPaymentRecoveryOperations: paymentsCycleTasks.processPaymentRecoveryOperations,
+}));
+
+vi.mock("@/lib/internet-banking-payment-cron", () => ({
+  releaseExpiredInternetBankingHolds: paymentsCycleTasks.releaseExpiredInternetBankingHolds,
+}));
+
+vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
+  reapStaleWaitingPaymentXeroOutboxOperations:
+    paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations,
+}));
+
 vi.mock("@sentry/nextjs", () => ({
   captureCheckIn: vi.fn(() => "check-in-id"),
   captureException: vi.fn(),
@@ -286,7 +308,10 @@ describe("OBS-08: Webhook logging", () => {
 // OBS-03: Cron job run recording tests
 // ============================================================================
 
-describe("OBS-03: cron job run recording", () => {
+// Each test cold-imports instrumentation.node after vi.resetModules(): 1,829 ms
+// isolated on Windows 11, past the 5,000 ms default under a loaded census chunk,
+// and a timed-out register() then leaks its jobs into the next test (#3663).
+describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
   const ENV_KEYS = [
     "NEXT_RUNTIME",
     "CRON_ENABLED",
@@ -401,6 +426,45 @@ describe("OBS-03: cron job run recording", () => {
         },
       }),
     });
+  });
+
+  it("runs recovery, hold release and the waiting-invoice reaper every 15 minutes through the shared runner (#3663)", async () => {
+    await registerCronJobs();
+    // The payments cycle is the first 15-minute job registered (the Xero
+    // 15-minute jobs follow, behind their integration flag). Picking the wrong
+    // one fails the recovery assertion below rather than passing vacuously.
+    const paymentsCycle = scheduledCronJobs.find(
+      (job) => job.expression === "*/15 * * * *"
+    );
+    expect(paymentsCycle).toBeDefined();
+    paymentsCycleTasks.processPaymentRecoveryOperations.mockResolvedValue({ found: 0 });
+    paymentsCycleTasks.releaseExpiredInternetBankingHolds.mockRejectedValue(
+      new Error("hold release unavailable")
+    );
+    paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
+      reaped: 0,
+      released: 0,
+      queueOperationIds: [],
+    });
+
+    await paymentsCycle!.callback();
+
+    expect(paymentsCycleTasks.processPaymentRecoveryOperations).toHaveBeenCalledOnce();
+    expect(paymentsCycleTasks.releaseExpiredInternetBankingHolds).toHaveBeenCalledOnce();
+    // One task failing does not stop the next.
+    expect(paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations).toHaveBeenCalledOnce();
+    const runs = vi
+      .mocked(prisma.cronJobRun.create)
+      .mock.calls.map(([arg]) => (arg as { data: { jobName: string; status: string } }).data);
+    expect(runs).toEqual([
+      expect.objectContaining({ jobName: "payment-recovery", status: "SUCCESS" }),
+      expect.objectContaining({
+        jobName: "internet-banking-hold-release",
+        status: "FAILURE",
+        error: "hold release unavailable",
+      }),
+      expect.objectContaining({ jobName: "xero-waiting-invoice-reaper", status: "SUCCESS" }),
+    ]);
   });
 
   it("records draft cleanup zero-delete successes and failures", async () => {
