@@ -57,8 +57,11 @@
  *   gone: none of the checks can run, and a folder that is only away (an
  *   unmounted drive, a moved folder) would lose its index and any commit only
  *   its HEAD holds.
- * - Anything git would protect inside `node_modules` or `.next` (a tracked
- *   file, or one the branch does not ignore), which the tool deletes itself.
+ * - Anything git would protect inside `node_modules` or `.next`, in any case
+ *   (a tracked file, or one the branch does not ignore), which the tool
+ *   deletes itself.
+ * - A link or unreadable folder in the lane's own git directory
+ *   (`.git/worktrees/<lane>`), which git deletes with the lane.
  * - Being run from inside the target (the current directory, or `INIT_CWD`,
  *   where `pnpm run` was typed).
  * - Another registered worktree inside the target, or any `.git` below its root
@@ -264,6 +267,13 @@ export function scanWorktree(target) {
   return { links, unreadable, repositories };
 }
 
+/** Run git in the lane and refuse, with git's own message, if the call fails. */
+function mustGit(runGit, target, args) {
+  const result = runGit(target, args);
+  if (result.status !== 0) refuse(`git ${args.join(" ")} failed in ${target}: ${result.stderr.trim()}.`);
+  return result;
+}
+
 function refuse(reason, list = []) {
   const detail = list.length > 0 ? `:\n  ${list.slice(0, 20).join("\n  ")}` : ".";
   throw new Error(`${reason} Nothing has been removed${detail}`);
@@ -348,8 +358,17 @@ export function preflight({
         `yourself, and run \`git worktree remove ${registered.path}\`.`;
     refuse(`git does not see ${target} as its own worktree (${answer}).${hint}`);
   }
-  const gitPaths = runGit(target, ["rev-parse", ...IN_PROGRESS.flatMap((name) => ["--git-path", name])]);
-  if (gitPaths.status !== 0) refuse(`git rev-parse failed in ${target}: ${gitPaths.stderr.trim()}.`);
+  // git deletes the lane's own git directory (.git/worktrees/<lane>) as well,
+  // so a link in it would be followed too.
+  const gitDir = mustGit(runGit, target, ["rev-parse", "--absolute-git-dir"]).stdout.trim();
+  const inGitDir = scanWorktree(gitDir);
+  if (inGitDir.links.length > 0 || inGitDir.unreadable.length > 0) {
+    refuse(`${gitDir}, the lane's git directory, contains links or unreadable folders.`, [
+      ...inGitDir.links,
+      ...inGitDir.unreadable,
+    ]);
+  }
+  const gitPaths = mustGit(runGit, target, ["rev-parse", ...IN_PROGRESS.flatMap((name) => ["--git-path", name])]);
   const inProgress = gitPaths.stdout
     .split(/\r?\n/)
     .filter(Boolean)
@@ -362,32 +381,35 @@ export function preflight({
       inProgress,
     );
   }
-  const refs = runGit(target, ["for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/"]);
-  if (refs.status !== 0 || refs.stdout.trim() !== "") {
+  const refs = mustGit(runGit, target, ["for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/"]);
+  if (refs.stdout.trim() !== "") {
     refuse(`${target} has refs of its own that removing the lane would delete.`, refs.stdout.trim().split(/\r?\n/));
   }
   // The tool deletes node_modules and .next without asking git, so anything
   // git would protect there (a tracked file, or one the branch does not ignore)
   // must not be in them.
-  const protectedHere = runGit(target, [
+  // `:(icase)`: on a case-insensitive folder the rmSync below deletes
+  // `Node_Modules` or `.NEXT` too, and git's pathspecs are case-sensitive even
+  // with core.ignorecase, so a plain pathspec would miss the work in them.
+  const protectedHere = mustGit(runGit, target, [
     "ls-files",
     "-z",
     "--cached",
     "--others",
     "--exclude-standard",
     "--",
-    ...GENERATED_ROOT_DIRS,
+    ...GENERATED_ROOT_DIRS.map((name) => `:(icase)${name}`),
   ]);
-  if (protectedHere.status !== 0 || protectedHere.stdout !== "") {
+  if (protectedHere.stdout !== "") {
     refuse(
       `${target} has tracked or unignored files in node_modules or .next, which git would protect ` +
         "and this tool would delete without asking.",
       protectedHere.stdout.split("\0").filter(Boolean),
     );
   }
-  const listed = runGit(target, ["ls-files", "-v", "-z"]);
+  const listed = mustGit(runGit, target, ["ls-files", "-v", "-z"]);
   const hidden = listed.stdout.split("\0").filter((record) => /^[a-zS] /.test(record));
-  if (listed.status !== 0 || hidden.length > 0) {
+  if (hidden.length > 0) {
     refuse(
       `${target} has files marked --skip-worktree or --assume-unchanged, whose edits git does not ` +
         "check. Clear the flags (git update-index --no-skip-worktree / --no-assume-unchanged) first.",
@@ -461,9 +483,9 @@ export function removeWorktree({
     throw new Error(
       `git did not remove ${target}: ${removed.stderr.trim()}\n` +
         (stillListed
-          ? "git deleted nothing and the lane is still registered; only its node_modules and .next " +
-            "are gone (pnpm install brings them back). Commit, stash or discard the work git names, " +
-            "then run this again."
+          ? "git deleted nothing and the lane is still registered; only its top-level node_modules " +
+            "and .next folders, in whatever case they are spelled, are gone (pnpm install brings them " +
+            "back). Commit, stash or discard the work git names, then run this again."
           : "git had already checked the lane was clean and has unregistered it, but could not " +
             "delete everything (a file held open?). What is left needs deleting by hand."),
     );

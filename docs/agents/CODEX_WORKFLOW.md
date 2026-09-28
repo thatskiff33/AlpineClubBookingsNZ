@@ -278,8 +278,10 @@ place). What it does:
 2. Deletes the lane's top-level `node_modules` and `.next` with Node's
    `fs.rmSync`, which removes a link itself rather than descending into it
    (verified on Windows for drive-letter and volume-path junctions). Before
-   that it refuses if git would protect anything in them (a tracked file, or
-   one the branch does not ignore). If one cannot be fully deleted it stops
+   that it refuses if git would protect anything in them, in whatever case
+   the folder is spelled (a tracked file, or one the branch does not ignore:
+   `git ls-files` with `:(icase)` pathspecs, since git's pathspecs are
+   case-sensitive even on a case-insensitive disk). If one cannot be fully deleted it stops
    with the lane still registered; run it again.
 3. Checks the lane again, because deleting a real `node_modules` takes about
    ten seconds: if either folder has reappeared, or the scan below now finds a
@@ -319,6 +321,8 @@ It refuses, before deleting anything:
   `\\?\Volume{…}` path or a mount point shows up. The refusal lists them;
   delete the links, not their targets, and run it again;
 - any folder it cannot read, since it could hide a link;
+- a link or unreadable folder in the lane's own git directory
+  (`.git/worktrees/<lane>`), which git deletes with the lane;
 - a `.git` that git does not accept as the lane's own (`git rev-parse
   --show-toplevel` names another tree): git searches upward, so a lane under
   `.artifacts/worktrees/` would otherwise be checked as the main checkout;

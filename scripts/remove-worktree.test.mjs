@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { main, parseArguments, removeWorktree, scanWorktree } from "./remove-worktree.mjs";
+import { main, parseArguments, preflight, removeWorktree, scanWorktree } from "./remove-worktree.mjs";
 
 // Real git repositories and real links: the whole point is how removal meets a
 // pnpm-shaped node_modules and git's own checks, which a mock cannot show.
@@ -699,10 +699,11 @@ describe("remove-worktree: round 8, the generated folders and failing git calls"
 
   // Fail closed: a git call that fails is a refusal, never a pass.
   it.each([
-    ["rev-parse --git-path", (args) => args.includes("--git-path"), /git rev-parse failed/],
-    ["for-each-ref", (args) => args[0] === "for-each-ref", /refs of its own/],
-    ["ls-files -v", (args) => args[0] === "ls-files" && args.includes("-v"), /--skip-worktree or --assume-unchanged/],
-    ["ls-files of the generated folders", (args) => args[0] === "ls-files" && args.includes("--others"), /tracked or unignored/],
+    ["rev-parse --absolute-git-dir", (args) => args.includes("--absolute-git-dir"), /git rev-parse --absolute-git-dir failed[\s\S]*simulated/],
+    ["rev-parse --git-path", (args) => args.includes("--git-path"), /git rev-parse --git-path rebase-merge[\s\S]*failed[\s\S]*simulated/],
+    ["for-each-ref", (args) => args[0] === "for-each-ref", /git for-each-ref [\s\S]*failed[\s\S]*simulated/],
+    ["ls-files -v", (args) => args[0] === "ls-files" && args.includes("-v"), /git ls-files -v -z failed[\s\S]*simulated/],
+    ["ls-files of the generated folders", (args) => args[0] === "ls-files" && args.includes("--others"), /git ls-files -z --cached[\s\S]*failed[\s\S]*simulated/],
     ["merge-base", (args) => args[0] === "merge-base", /Could not compare HEAD/],
   ])("refuses when %s fails", (_label, matches, message) => {
     const { repo, lane } = fixture();
@@ -746,3 +747,97 @@ describe("remove-worktree: round 8, the generated folders and failing git calls"
 function fold(p) {
   return process.platform === "win32" ? p.toLowerCase() : p;
 }
+
+describe("remove-worktree: round 9", () => {
+  // Review round 9 (reproduced, BLOCKER): on a case-insensitive folder the tool
+  // deletes `Node_Modules` and `.NEXT`, but git's pathspecs are case-sensitive
+  // even with core.ignorecase, so the work in them passed the check.
+  it.each([
+    ["a tracked, edited Node_Modules/patched/index.js", (lane) => {
+      fs.mkdirSync(path.join(lane, "Node_Modules", "patched"), { recursive: true });
+      fs.writeFileSync(path.join(lane, "Node_Modules", "patched", "index.js"), "original\n");
+      git(lane, "add", "-f", "Node_Modules/patched/index.js");
+      git(lane, "commit", "-q", "-m", "vendor");
+      fs.writeFileSync(path.join(lane, "Node_Modules", "patched", "index.js"), "EDITED\n");
+      return path.join(lane, "Node_Modules", "patched", "index.js");
+    }],
+    ["an unignored .NEXT/notes.md", (lane) => {
+      fs.mkdirSync(path.join(lane, ".NEXT"));
+      fs.writeFileSync(path.join(lane, ".NEXT", "notes.md"), "notes\n");
+      return path.join(lane, ".NEXT", "notes.md");
+    }],
+  ])("refuses %s, whatever the case of the folder", (_label, make) => {
+    const { repo, lane } = fixture();
+    const file = make(lane);
+    const before = fs.readFileSync(file, "utf8");
+    expect(() => remove(repo, lane, { allowUnmerged: true })).toThrow(/tracked or unignored files in node_modules/);
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+  });
+
+  // Review round 9 (reproduced): git deletes the lane's own git directory as
+  // well, and followed a junction left in it.
+  it("refuses a link inside the lane's git directory", () => {
+    const { repo, lane, outside } = fixture();
+    const admin = git(lane, "rev-parse", "--absolute-git-dir");
+    fs.symlinkSync(outside, path.join(admin, "evil"), DIR_LINK);
+    expect(() => remove(repo, lane)).toThrow(/the lane's git directory, contains links[\s\S]*evil/);
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("keep\n");
+    fs.unlinkSync(path.join(admin, "evil"));
+  });
+
+  it("refuses an unreadable folder inside the lane's git directory", () => {
+    const { repo, lane } = fixture();
+    const admin = fs.realpathSync.native(git(lane, "rev-parse", "--absolute-git-dir"));
+    fs.mkdirSync(path.join(admin, "stuck"));
+    const realReaddir = fs.readdirSync.bind(fs);
+    vi.spyOn(fs, "readdirSync").mockImplementation((dir, options) => {
+      if (path.basename(String(dir)) === "stuck") throw Object.assign(new Error("denied"), { code: "EACCES" });
+      return realReaddir(dir, options);
+    });
+    expect(() => remove(repo, lane)).toThrow(/the lane's git directory, contains links or unreadable[\s\S]*stuck \(EACCES\)/);
+    expect(listed(repo)).toBe(true);
+  });
+
+  // The re-check after the delete also stops on a new unreadable folder or a
+  // new repository, not only on a link.
+  it.each([
+    ["an unreadable folder", (lane) => {
+      fs.mkdirSync(path.join(lane, ".cache", "locked"), { recursive: true });
+      const realReaddir = fs.readdirSync.bind(fs);
+      vi.spyOn(fs, "readdirSync").mockImplementation((dir, options) => {
+        if (path.basename(String(dir)) === "locked") throw Object.assign(new Error("denied"), { code: "EACCES" });
+        return realReaddir(dir, options);
+      });
+    }, /locked \(EACCES\)/],
+    ["a new repository", (lane) => {
+      fs.mkdirSync(path.join(lane, ".cache", "clone", ".git"), { recursive: true });
+    }, /clone[\\/]\.git/],
+  ])("re-checks the lane after deleting node_modules: %s", (_label, appear, detail) => {
+    const { repo, lane, outside } = fixture();
+    ignoreInLane(repo, lane, ".cache");
+    pnpmShapedNodeModules(lane, outside);
+    const realRm = fs.rmSync.bind(fs);
+    vi.spyOn(fs, "rmSync").mockImplementation((p, options) => {
+      const result = realRm(p, options);
+      if (path.basename(String(p)) === ".next") appear(lane);
+      return result;
+    });
+    let message = "";
+    try {
+      remove(repo, lane);
+    } catch (error) {
+      message = error.message;
+    }
+    expect(message).toMatch(/changed while node_modules and \.next were being deleted/);
+    expect(message).toMatch(detail);
+    expect(listed(repo)).toBe(true);
+  });
+
+  it("refuses a missing folder by default when preflight is called directly", () => {
+    const { repo, lane } = fixture();
+    fs.rmSync(lane, { recursive: true, force: true });
+    expect(() => preflight({ repoDir: repo, worktree: lane, base: "main", allowUnmerged: false })).toThrow(
+      /folder is missing[\s\S]*--forget-missing/,
+    );
+  });
+});
