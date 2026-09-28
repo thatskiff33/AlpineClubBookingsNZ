@@ -3099,10 +3099,13 @@ local business event -> Xero outbox operation queued
 worker claims operation -> provider call -> success or retryable failure
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
+FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
+  never retried, requeued or re-minted beside (INV-INT-025)
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link
-cleanup, and exact retry exhaustion alerts.
+cleanup, and exact retry exhaustion alerts. The resolved-in-Xero arm is pinned
+by `xero-operation-retry.test.ts` and `xero-booking-repair.test.ts` (#3635).
 
 ## Cron And Recovery Lifecycle
 

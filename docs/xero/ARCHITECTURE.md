@@ -907,6 +907,22 @@ sequenceDiagram
     REP-->>CLI: pass reports + human summary
 ```
 
+**An operation resolved in Xero is done (#3635, `INV-INT-025`).** The
+operations panel's **Resolve** records that an officer fixed a failed or
+partial operation by hand in Xero. It leaves the row `FAILED`/`PARTIAL` and
+replayable, so status alone would still read it as live; every retry path
+therefore asks `isResolvedInXero` (`xero-operation-resolution.ts`). The retry
+helper refuses the row before anything else. Manual retry and requeue answer
+409, and a retry queued before the resolve is closed `CANCELLED` by the drain,
+not run. The retry claims carry `manuallyResolvedAt: null`, and the resolve
+route writes only a row still `FAILED`/`PARTIAL`, so the two cannot both win.
+In the repair tool, `getBlockingOperation` returns a discriminated result:
+`retryable`, `blocked` (live, or refused by the retry helper) or `resolved`.
+A resolved row never outranks a newer live failure. It is never dropped
+either, because then every arm would read "nothing blocking" and queue a new
+document beside the one the officer made. So each arm reports nothing for it,
+and `buildRetryAction` accepts only the `retryable` case.
+
 Scheduled hardening (cron tasks, all idempotent):
 
 - `backfill` — `backfillHistoricalXeroObjectLinks`: creates canonical
@@ -995,15 +1011,15 @@ document automatically** — that judgement stays with the operator.
    admin panel's manual retry, which execute the same mint. The script
    refuses any payment with a credit-note operation that could still
    execute — a CREATE that is queued, running, awaiting payment
-   confirmation, **or FAILED/PARTIAL while still marked replayable** (that
-   combination is exactly what manual retry and requeue accept, and the
-   credit-note retry runs while its row still reads FAILED), or a
-   queued/running REQUEUE of one — re-checked inside each transaction. To
-   clear a failed credit-note operation's block, retry it to completion or
-   **mark it non-replayable** in the admin Xero panel; a non-replayable
-   failed operation is terminally dead and does not block (and marking one
-   "resolved" alone changes neither its status nor its replayability, so
-   that by itself clears nothing). The apply transactions also re-sum
+   confirmation, **or FAILED/PARTIAL while still marked replayable and not
+   resolved in Xero** (that combination is exactly what manual retry and
+   requeue accept, and the credit-note retry runs while its row still reads
+   FAILED), or a queued/running REQUEUE of one — re-checked inside each
+   transaction. To clear a failed credit-note operation's block, retry it to
+   completion, **mark it non-replayable**, or **mark it resolved in Xero** in
+   the admin Xero panel. Either mark makes it terminally dead: since #3635
+   (`INV-INT-025`) no retry path re-runs a resolved operation, so it no longer
+   blocks. The apply transactions also re-sum
    coverage after their claims and roll back on any divergence — but not
    racing the executor at all is the cheap, certain option.
 5. **Apply, bound to the payments you reviewed** (local ledger writes only,

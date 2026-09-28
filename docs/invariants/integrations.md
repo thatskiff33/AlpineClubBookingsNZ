@@ -471,3 +471,34 @@ Rationale: [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md). Pinned by
 `xero-erased-member-contact-status-check.test.ts`,
 `member-erasure-no-xero-mutation-contract.test.ts`,
 `erased-member-contacts-panel.test.tsx`.
+
+## Xero operations resolved in Xero (#3635)
+
+### INV-INT-025
+
+An outbound Xero operation an officer marked **resolved in Xero** is done. No
+path re-runs it and none offers to (owner decision, 28 Sep 2026).
+
+- **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`) is the
+  rule; a Prisma `where` spells it `manuallyResolvedAt: null`. The mark leaves
+  the row `FAILED`/`PARTIAL` and replayable, so status alone reads it as live.
+- **The retry helper refuses it first.** `getXeroOperationRetryMeta` requires
+  `manuallyResolvedAt` in its input type, so a caller that forgot to select it
+  fails to compile. Manual retry, requeue and the queued-retry drain refuse a
+  resolved row with a 409; the drain closes that queued row `CANCELLED` as
+  skipped, not failed.
+- **A resolve and a retry cannot both win.** Every retry claim adds
+  `manuallyResolvedAt: null`; the resolve route writes only a still
+  `FAILED`/`PARTIAL`, unresolved row.
+- **The repair tool treats it as done, never as absent.**
+  `getBlockingOperation` returns `retryable`, `blocked` or `resolved`. A
+  resolved row never outranks a live one, which would hide a newer failure, and
+  is never dropped, which would mint a rival to the officer's document.
+  `buildRetryAction` accepts only `retryable`.
+- **It fences nothing.** The refund-note link repair does not wait on a
+  resolved create.
+
+Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
+`xero-operation-routes.test.ts`, `xero-booking-repair.test.ts` ("resolved in
+Xero is done on every repair retry arm"),
+`xero-refund-note-link-repair.test.ts`.

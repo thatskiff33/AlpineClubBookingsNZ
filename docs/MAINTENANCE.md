@@ -1669,6 +1669,16 @@ owe less than it (part of the booking was paid) is never retried
 automatically: resolve it by hand, then mark the failed operation **resolved**
 on the Xero operations panel and the finding stops.
 
+**"Resolved" on the Xero operations panel means done, everywhere (#3635,
+`INV-INT-025`).** Mark a failed or partial operation resolved only once you have
+made the fix in Xero yourself. From then on nothing re-runs it: the Retry and
+Requeue buttons are gone, and the server refuses a stale tab's retry with a 409.
+A retry already queued is skipped, not run. The repair tool neither retries it
+nor queues a new document beside it, and it stops blocking the Stripe
+refund-note link repair. There is no undo on the panel. If you marked one by
+mistake, fix the Xero side by hand, or queue the document afresh from the
+booking.
+
 **A part-paid hold is kept, not released (#3643, `INV-PAY-107`).** Before
 releasing a hold the job reads the booking's primary and supplementary invoices
 from Xero, outside the release transaction. Any cash keeps the hold: no cancel,
