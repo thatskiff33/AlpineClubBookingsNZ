@@ -7,65 +7,111 @@
 -- (the thread's ORCHESTRATOR DECISION 2). The owner asked for that cancel to
 -- raise a task in the hand-back queue, so the Xero repair tool's manual-review
 -- finding for the booking goes quiet once a treasurer has closed it. The task
--- carries NO amount - the app does not know it, and 0 may never mean unknown.
+-- carries NO amount to hand back - the club settles that money in Xero, and 0
+-- may never mean unknown.
 --
--- FOUR STATEMENTS, ALL ADDITIVE OR WIDENING:
+-- SEVEN STATEMENTS, ALL ADDITIVE, WIDENING, OR A NULL-SAFE RESTATEMENT:
 --
 --   1. "ManualRefundTask"."partPaymentReviewPaymentId" TEXT, nullable, no
 --      default: the booking's Payment id on a part-payment review, NULL on every
 --      other row.
---   2. A UNIQUE index on it: one review per payment, whatever its status, so a
---      replayed cancel cannot raise a second. PostgreSQL treats NULLs as
---      distinct, so every existing row (all NULL) passes.
---   3. DROP/ADD "ManualRefundTask_non_edit_review_amount_present" with one more
+--   2. "ManualRefundTask"."partPaymentReviewRecordedCents" INTEGER, nullable,
+--      no default: the cash Xero showed against the booking's one invoice at
+--      the cancel, when Xero gave it exactly; NULL when it could not. It is
+--      never an amount to hand back. The inbound Xero sync reads it so that a
+--      later PAID event hands back or credits ONLY cash beyond it, never the
+--      reviewed cash a second time; a NULL sends the whole event back to the
+--      review instead (INV-PAY-107).
+--   3. A UNIQUE index on the marker: one review per payment, whatever its
+--      status, so a replayed cancel cannot raise a second. PostgreSQL treats
+--      NULLs as distinct, so every existing row (all NULL) passes.
+--   4. DROP/ADD "ManualRefundTask_non_edit_review_amount_present" with one more
 --      arm: a row carrying the marker may have a NULL amount. STRICTLY WEAKER,
 --      and weaker only for rows no existing row can be (the column is new), so
 --      every stored row reaches the same verdict and the validating scan cannot
 --      fail.
---   4. CHECK "ManualRefundTask_part_payment_review_shape": a marked row is a
+--   5. CHECK "ManualRefundTask_part_payment_review_shape": a marked row is a
 --      CANCELLED_BOOKING_HAND_BACK with no amount, no raised amount and no
---      paymentId. With "ManualRefundTask_completed_amount_present" that makes a
---      COMPLETED review unrepresentable - it is closed only by DISMISSED, since
---      nothing in the app moves money for it. Every existing row is NULL in the
---      new column, so the validating scan cannot fail.
+--      paymentId; only a marked row may carry a recorded figure, and a recorded
+--      figure is positive. The kind test is spelled IS NOT DISTINCT FROM, as
+--      20260903010000 and 20260910010000 spell theirs: "kind" is nullable, a
+--      plain "=" is NULL for a NULL kind, and a CHECK accepts NULL. With
+--      "ManualRefundTask_completed_amount_present" it makes a COMPLETED review
+--      unrepresentable - a review is closed only by DISMISSED, since nothing in
+--      the app moves money for it. THIS CHECK IS ALSO THE OVERLAP FENCE against
+--      a direct API completion on the previous colour (below), so it must not be
+--      "simplified" away. Every existing row is NULL in both new columns, so the
+--      validating scan cannot fail.
+--   6-7. DROP/ADD #3639's "ManualRefundTask_late_capture_approval_kind"
+--      (20261013010000), restated null-safe: its "kind" = '...' had the same
+--      three-valued hole, so a marked row with a NULL kind passed it. That
+--      migration is not edited in place, because an environment may already
+--      have applied it; restating the CHECK here costs nothing more, since this
+--      migration already needs the deploy override for statement 4. Only a
+--      DELETED_BOOKING_LATE_CAPTURE row carries that marker on either colour,
+--      so the validating scan cannot fail.
 --
 -- NO NEW ENUM LABEL, AND THAT IS THE COMPATIBILITY ARGUMENT (the one
 -- 20261013010000 makes). The review reuses CANCELLED_BOOKING_HAND_BACK, which
 -- the previous app version already deserializes. Its hand-back queue lists a row
--- of that kind with no amount (as "Awaiting pricing"), keeps the confirm button
--- of its "mark paid back" dialog disabled for a non-review row with no amount,
--- and its completion door refuses a completion with no amount; so the previous
--- colour can list the review and dismiss it, and cannot close it as money moved.
--- It neither selects nor writes the new column: its inserts omit it (NULL) and
--- its reads never name it.
+-- of that kind with no amount (as "Awaiting pricing") and keeps the confirm
+-- button of its "mark paid back" dialog disabled for a non-review row with no
+-- amount, so its UI can list and dismiss the review but not close it as money
+-- moved. Its completion door is NOT the fence: posted directly with a
+-- confirmedAmountCents, it takes its final branch and writes that amount, and
+-- the shape CHECK (statement 5) refuses the write - the transaction rolls back
+-- before any money moves and the officer sees a generic error. The previous
+-- colour neither selects nor writes the new columns: its inserts omit them
+-- (NULL) and its reads never name them.
 --
--- WHY "paymentId" IS NULL ON A REVIEW. The previous colour's organisation
--- late-cash arm (the inbound Xero sync, #3369) raises its own sized hand-back
--- unless a CANCELLED_BOOKING_HAND_BACK already exists for the same booking AND
--- payment. Leaving "paymentId" NULL keeps a review from suppressing that sized
--- task on either colour; the payment is named by the marker instead.
+-- WHY "paymentId" IS NULL ON A REVIEW. The organisation late-cash arm of the
+-- inbound Xero sync (#3369) dedupes its own sized hand-back on (booking,
+-- payment, kind). The new colour's arm finds the review by its marker instead
+-- and sizes only cash beyond "partPaymentReviewRecordedCents". The previous
+-- colour's arm cannot see the review, so during the overlap it may raise a
+-- hand-back for the whole cash beside it, exactly as it does today; a
+-- "paymentId" on the review would not make that safer, only silence it.
 --
 -- NO DML OF ANY KIND, so every existing row is byte-identical afterwards and the
 -- data-migration verification gate classifies this as shape-only. No session
 -- clock is needed because there is no payload.
 --
--- LOCK IMPACT: ACCESS EXCLUSIVE on "ManualRefundTask" for a catalog-only ADD
--- COLUMN, the unique index build, the constraint DROP and the two validating
--- scans. That table holds one row per hand-settled refund task in the club's
--- history, so milliseconds. No Booking, Payment, Member, capacity, credit or
--- provider row is read or written, so INV-LOCK-001 and INV-LOCK-002 are
--- unaffected.
+-- DEPLOY: the two DROP CONSTRAINTs make the blue/green guard classify this
+-- migration as breaking, so the release carrying it runs with
+-- ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 and a reason. That override silences
+-- the breaking warning for EVERY pending migration in the same run, so the
+-- operator checks that each found_breaking line names a reviewed "yes" row in
+-- docs/BLUE_GREEN_MIGRATION_SAFETY.tsv. PostgreSQL cannot widen a CHECK in
+-- place, so there is no shape without the DROP.
 --
--- IDEMPOTENT: not wholly (ADD COLUMN, CREATE UNIQUE INDEX and the final ADD
+-- LOCK IMPACT: ACCESS EXCLUSIVE on "ManualRefundTask" for two catalog-only ADD
+-- COLUMNs, the unique index build, the two constraint DROPs and the three
+-- validating scans. That table holds one row per hand-settled refund task in
+-- the club's history, so milliseconds. No Booking, Payment, Member, capacity,
+-- credit or provider row is read or written, so INV-LOCK-001 and INV-LOCK-002
+-- are unaffected.
+--
+-- IDEMPOTENT: not wholly (ADD COLUMN, CREATE UNIQUE INDEX and the new ADD
 -- CONSTRAINT raise on replay); Prisma's migration ledger prevents one. The
--- restated CHECK is DROP ... IF EXISTS then ADD.
+-- restated CHECKs are DROP ... IF EXISTS then ADD.
 --
--- REVERSE: drop the shape CHECK, restore the 20260910010000 predicate, drop the
--- index and the column. Marked rows then read as ordinary hand-backs with no
--- amount, which the restored predicate refuses - so dismiss or delete any OPEN
--- review first. No rollback.sql is required because this is not windowed.
+-- ROLLBACK. Routing traffic back to the previous colour needs NO schema
+-- reverse: it never names the new columns, and every CHECK here accepts what
+-- it writes. A schema reverse, only if one is ever wanted, runs in this order:
+--   1. Drop "ManualRefundTask_part_payment_review_shape".
+--   2. Drop "ManualRefundTask_non_edit_review_amount_present" and re-add the
+--      20260910010000 predicate NOT VALID. A CHECK ignores status, so every
+--      review row, OPEN or DISMISSED, fails the old predicate; NOT VALID
+--      enforces it for new writes and keeps those rows. Never delete a review
+--      row: it is the treasurer's record of money settled by hand.
+--   3. Leave the null-safe "ManualRefundTask_late_capture_approval_kind" in
+--      place: it is 20261013010000's rule, stricter only for a NULL kind.
+--   4. Drop the unique index, then the two columns.
+-- No rollback.sql is required because this is not windowed.
 
 ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewPaymentId" TEXT;
+
+ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewRecordedCents" INTEGER;
 
 CREATE UNIQUE INDEX "ManualRefundTask_partPaymentReviewPaymentId_key"
   ON "ManualRefundTask"("partPaymentReviewPaymentId");
@@ -83,11 +129,28 @@ ALTER TABLE "ManualRefundTask"
 
 ALTER TABLE "ManualRefundTask"
   ADD CONSTRAINT "ManualRefundTask_part_payment_review_shape" CHECK (
-    "partPaymentReviewPaymentId" IS NULL
+    (
+      "partPaymentReviewPaymentId" IS NULL
+      AND "partPaymentReviewRecordedCents" IS NULL
+    )
     OR (
-      "kind" = 'CANCELLED_BOOKING_HAND_BACK'
+      "partPaymentReviewPaymentId" IS NOT NULL
+      AND "kind"::text IS NOT DISTINCT FROM 'CANCELLED_BOOKING_HAND_BACK'
       AND "amountCents" IS NULL
       AND "raisedAmountCents" IS NULL
       AND "paymentId" IS NULL
+      AND (
+        "partPaymentReviewRecordedCents" IS NULL
+        OR "partPaymentReviewRecordedCents" > 0
+      )
     )
+  );
+
+ALTER TABLE "ManualRefundTask"
+  DROP CONSTRAINT IF EXISTS "ManualRefundTask_late_capture_approval_kind";
+
+ALTER TABLE "ManualRefundTask"
+  ADD CONSTRAINT "ManualRefundTask_late_capture_approval_kind" CHECK (
+    "lateCaptureApprovalIntentId" IS NULL
+    OR "kind"::text IS NOT DISTINCT FROM 'DELETED_BOOKING_LATE_CAPTURE'
   );

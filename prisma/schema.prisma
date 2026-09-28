@@ -3125,6 +3125,14 @@ model ManualRefundTask {
   /// manual-review finding for the booking. The previous app version never
   /// selects or writes it.
   partPaymentReviewPaymentId String? @unique
+  /// #3643 (`INV-PAY-107`): on a part-payment review only, the cash Xero showed
+  /// against the booking's one invoice at the cancel, when Xero gave it
+  /// exactly; NULL when it could not (never 0 for unknown - a figure is
+  /// positive). It is NOT an amount to hand back. The inbound Xero sync sizes a
+  /// later PAID event's hand-back or credit as cash beyond this figure, and
+  /// sends the whole event back to the review when it is NULL
+  /// (`ManualRefundTask_part_payment_review_shape`, migration 20261014010000).
+  partPaymentReviewRecordedCents Int?
   reason              String                 @db.VarChar(500)
   status              ManualRefundTaskStatus @default(OPEN)
   completedByMemberId String?
