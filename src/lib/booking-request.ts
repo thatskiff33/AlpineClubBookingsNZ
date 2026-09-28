@@ -124,6 +124,7 @@ const DECLINABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.PRICED,
   BookingRequestStatus.QUOTED,
   BookingRequestStatus.QUOTE_SENT,
+  BookingRequestStatus.ACCEPTED,
   BookingRequestStatus.QUERY_PENDING,
   BookingRequestStatus.MODIFICATION_REQUESTED,
 ] as const;
@@ -2084,7 +2085,7 @@ export async function approveBookingRequest(input: {
     throw new BookingRequestError("Booking request not found", 404);
   }
   let request: BookingRequest = foundRequest;
-  if (request.status !== BookingRequestStatus.PRICED) {
+  if (request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) {
     throw new BookingRequestError(
       "Only priced booking requests can be approved",
       409
@@ -2244,7 +2245,7 @@ export async function approveBookingRequest(input: {
       }
       request = lockedRequest;
 
-      if (request.status !== BookingRequestStatus.PRICED || request.priceCents == null) {
+      if ((request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) || request.priceCents == null) {
         throw new BookingRequestError(
           "This booking request has already been processed",
           409
@@ -2289,7 +2290,7 @@ export async function approveBookingRequest(input: {
           // overwritten by an approval built from the older snapshot. Fences on
           // the integer version, not updatedAt (millisecond-collidable).
           version: request.version,
-          status: BookingRequestStatus.PRICED,
+          status: { in: [BookingRequestStatus.PRICED, BookingRequestStatus.ACCEPTED] },
         },
         data: {
           status: BookingRequestStatus.APPROVED,
@@ -2888,6 +2889,7 @@ export function buildBookingRequestListWhere(
           BookingRequestStatus.PRICED,
           BookingRequestStatus.QUOTED,
           BookingRequestStatus.QUOTE_SENT,
+          BookingRequestStatus.ACCEPTED,
           BookingRequestStatus.QUERY_PENDING,
           BookingRequestStatus.MODIFICATION_REQUESTED,
         ],

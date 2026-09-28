@@ -563,7 +563,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // `admin` at the site like the rate writer it undoes, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census` on the tree merged with #3029, not incremented.
-  writeSites: 489,
+  // 489 -> 488 (#3415): acceptance retains the already-held beds for officer
+  // review, so the former accept-time capacity-block/revert audit writer is gone.
+  // The accepted-quote audit writer remains classified as `booking`.
+  writeSites: 488,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -644,7 +647,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // rather than an awaited `createAuditLog` because it sits on a GET that has
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
-    logAudit: { total: 267, uncategorised: 0 },
+    // 267 -> 266 (#3415): no accept-time capacity-block/revert writer.
+    logAudit: { total: 266, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -844,7 +848,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
-    booking: 105,
+    // 105 -> 104 (#3415): the removed capacity-block/revert record was `booking`.
+    booking: 104,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

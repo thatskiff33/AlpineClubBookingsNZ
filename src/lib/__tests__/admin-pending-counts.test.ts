@@ -236,6 +236,7 @@ describe("getAdminPendingCounts", () => {
             BookingRequestStatus.PRICED,
             BookingRequestStatus.QUOTED,
             BookingRequestStatus.QUOTE_SENT,
+            BookingRequestStatus.ACCEPTED,
             BookingRequestStatus.QUERY_PENDING,
             BookingRequestStatus.MODIFICATION_REQUESTED,
           ],
