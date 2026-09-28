@@ -115,7 +115,8 @@ vi.mock("@/lib/xero-sync", () => ({
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
   sanitizeForJson: (value: unknown) => value,
   startXeroSyncOperation: async (input: Record<string, unknown>) => {
-    const { store: _store, ...rest } = input;
+    const rest = { ...input };
+    delete rest.store;
     const row = { id: h.id("op"), manuallyResolvedAt: null, ...rest } as Row;
     h.table("xeroSyncOperation").push(row);
     return row;

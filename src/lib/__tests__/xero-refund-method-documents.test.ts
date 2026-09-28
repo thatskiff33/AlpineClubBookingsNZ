@@ -272,6 +272,21 @@ describe("the cash refund note (createXeroCreditNote)", () => {
     expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
   });
 
+  it("#3635: names the kept invoice, not the pre-cancel one the cancel cleared, when the payment has both", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ id: "task_kept" }]);
+    mocks.xeroObjectLinkFindFirst.mockImplementation(async ({ where }: { where: { role?: string } }) =>
+      where.role === "KEPT_LATE_CAPTURE_INVOICE" ? { xeroObjectId: "inv_kept" } : null,
+    );
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" });
+
+    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
+      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
+      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
+  });
+
   it("#3635: still refuses a payment with neither a primary nor a kept invoice", async () => {
     mocks.paymentFindUnique.mockResolvedValue({
       ...paymentRow(PaymentSource.STRIPE),
