@@ -67,7 +67,7 @@ export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
 import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
-import { withdrawQueuedKeptLateCaptureRecord } from "@/lib/xero-kept-late-capture-invoice";
+import { settleKeptLateCaptureRecordOnApproval } from "@/lib/xero-kept-late-capture-invoice";
 import {
   finishKeptLateCaptureXeroRecord,
   planKeptLateCaptureXeroRecord,
@@ -141,7 +141,10 @@ export async function resolveManualRefundTask(
     );
   }
 
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest()); // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window
+  // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window,
+  // and (#3635) the day a kept late capture's Xero receipt is dated.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const todayAtClub = clubToday(clubZone);
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -521,12 +524,12 @@ export async function resolveManualRefundTask(
       }
     }
 
-    // #3635 (owner decision 29 Sep 2026, `INV-PAY-106`): a DISMISSED late-capture
+    // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a DISMISSED late-capture
     // approval task means the treasurer KEPT the money, and the app records it
-    // in Xero. The booking's own payment gets its booking invoice queued here,
-    // inside the claim, so it commits with the decision and a replayed
-    // dismissal (which loses the claim above) queues nothing; a change payment
-    // is released after the commit. `late-capture-kept-xero.ts` owns both.
+    // in Xero. A kept-capture invoice is queued here, inside the claim, so it
+    // commits with the decision and a replayed dismissal (which loses the claim
+    // above) queues nothing; a change payment's own invoice is released after
+    // the commit. `late-capture-kept-xero.ts` owns both.
     const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
       resolution === "dismissed" && task.lateCaptureApprovalIntentId
         ? await planKeptLateCaptureXeroRecord({
@@ -534,15 +537,16 @@ export async function resolveManualRefundTask(
             bookingId: task.bookingId,
             paymentIntentId: task.lateCaptureApprovalIntentId,
             actingMemberId,
+            clubZone,
             store: tx,
           })
         : { kind: "none" };
-    // #3635: an APPROVAL of a task kept earlier and reopened withdraws what
-    // that keep queued and has not sent, inside this same claim, so the refund
-    // path's credit note (which counts only a sent or in-flight record) is
-    // right; one already sent is credited back by that path.
+    // #3635: an APPROVAL of a task kept earlier and reopened settles what that
+    // keep queued, inside this same claim: an unsent record is withdrawn (and
+    // so needs no refund note), a raised one gets its payment recorded and is
+    // credited back by the refund note (`settleKeptLateCaptureRecordOnApproval`).
     if (resolution === "completed" && task.lateCaptureApprovalIntentId) {
-      await withdrawQueuedKeptLateCaptureRecord({
+      await settleKeptLateCaptureRecordOnApproval({
         manualRefundTaskId: task.id,
         paymentIntentId: task.lateCaptureApprovalIntentId,
         store: tx,
@@ -690,7 +694,10 @@ export async function resolveManualRefundTask(
     });
 
   // #3635: the kept late capture's Xero record, after the commit. Never throws.
-  await finishKeptLateCaptureXeroRecord(result.keptLateCaptureXeroPlan);
+  // The plan is internal bookkeeping, so it is not part of what the route
+  // hands the screen.
+  const { keptLateCaptureXeroPlan, ...closed } = result;
+  await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
 
-  return { ...result, stripeRefundId, additionalPaymentIntentId };
+  return { ...closed, stripeRefundId, additionalPaymentIntentId };
 }

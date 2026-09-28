@@ -70,8 +70,9 @@ import {
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
 import {
-  keptLateCaptureCents,
+  decideLateCapture,
   keptLateCaptureInvoiceAsked,
+  keptLateCaptureRecordRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 
 /**
@@ -1752,22 +1753,35 @@ export function classifyBookingContext(
     });
   }
 
-  // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a late capture of the
-  // booking's OWN payment that a treasurer KEPT is recorded by its own invoice
-  // for the kept cents, paid from Stripe, anchored on its approval task and
-  // queued by the dismissal. Where none was asked for (the keep predates #3635,
-  // or a reopen skipped the row), this queues it automatically: the document
-  // bills the kept cash and nothing else, so it is always the right one. A
-  // failed one is retried. One rule with the dismissal
-  // (`late-capture-kept-xero-rules.ts`).
+  // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a late capture a
+  // treasurer KEPT is recorded by its own kept-capture invoice for the GROSS
+  // capture, paid from Stripe on the capture day, anchored on its approval task
+  // and queued by the dismissal: the booking's own payment, and a change
+  // payment on a booking Xero never invoiced (`keptLateCaptureRecordRoute`).
+  // Where none was asked for (the keep predates #3635, or a reopen withdrew
+  // it), this queues it automatically - the pass re-reads the task under its
+  // row lock before queueing. A failed one is retried. The same decision as the
+  // dismissal (`decideLateCapture`, `late-capture-kept-xero-rules.ts`).
   if (booking.status === "CANCELLED" && payment) {
     for (const transaction of capturedPaymentTransactions) {
-      if (transaction.kind !== "PRIMARY" || !transaction.stripePaymentIntentId) continue;
+      if (!transaction.stripePaymentIntentId) continue;
       const kept = context.keptLateCaptures.get(transaction.stripePaymentIntentId);
       if (!kept) continue;
-      // Refunded in full since (a Stripe dashboard refund): nothing was kept.
-      const keptCents = keptLateCaptureCents(transaction);
-      if (keptCents === 0) continue;
+      if (
+        keptLateCaptureRecordRoute({
+          captureKind: transaction.kind,
+          bookingHasPrimaryInvoice: Boolean(primaryInvoice),
+        }) !== "kept-invoice"
+      ) {
+        continue;
+      }
+      const { recordCents } = decideLateCapture({
+        taskStatus: "DISMISSED",
+        bookingStatus: booking.status,
+        superseded: false,
+        capture: transaction,
+      });
+      if (recordCents === 0) continue;
       if (keptLateCaptureInvoiceAsked(kept.operations)) {
         const blockingOperation = getBlockingOperation(kept.operations, "INVOICE", "CREATE");
         if (blockingOperation && blockingOperation.retryMeta.supported) {
@@ -1796,13 +1810,14 @@ export function classifyBookingContext(
         bookingId: booking.id,
         type: "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
         description:
-          "Queue the Xero invoice, paid from the Stripe account, that records a late card payment a treasurer kept.",
+          "Queue the Xero invoice, paid from the Stripe account on the capture day, that records a late card payment a treasurer kept.",
         safeToAutoApply: true,
         payload: {
           manualRefundTaskId: kept.taskId,
           bookingId: booking.id,
           paymentIntentId: transaction.stripePaymentIntentId,
-          keptCents,
+          capturedCents: recordCents,
+          capturedAt: kept.raisedAt.toISOString(),
         },
       });
       addFinding(findings, {
@@ -1815,7 +1830,8 @@ export function classifyBookingContext(
           paymentId: payment.id,
           manualRefundTaskId: kept.taskId,
           paymentIntentId: transaction.stripePaymentIntentId,
-          keptCents,
+          captureKind: transaction.kind,
+          capturedCents: recordCents,
         },
         actionKeys: [action.key],
       });

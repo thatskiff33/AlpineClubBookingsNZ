@@ -3,6 +3,8 @@
 // the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2). Money stays in integer cents; provider
 // calls stay outside DB transactions (unchanged).
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { keptLateCaptureDocumentDate } from "@/lib/xero-kept-late-capture-invoice";
 import { editReviewChargeRequestCriteria } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
 import { PartialRefundError } from "@/lib/payment-transactions";
@@ -414,14 +416,24 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_KEPT_LATE_CAPTURE_INVOICE": {
-      // #3635: re-read nothing - the enqueue returns the task's existing row
-      // rather than queue a second one.
-      const result = await deps.enqueueXeroKeptLateCaptureInvoiceOperation({
-        manualRefundTaskId: String(action.payload.manualRefundTaskId),
-        bookingId: String(action.payload.bookingId),
-        paymentIntentId: String(action.payload.paymentIntentId),
-        keptCents: Number(action.payload.keptCents),
-      });
+      // #3635 (review F4): on a transaction of its own, where the enqueue takes
+      // the task's row lock and re-reads that the task is still DISMISSED, so a
+      // stale snapshot queues nothing for a capture since reopened or refunded,
+      // and the dismissal's own enqueue on the same task serialises with it.
+      const clubZone = await readClubTimeZoneOutsideRequest();
+      const result = await deps.prisma.$transaction((tx) =>
+        deps.enqueueXeroKeptLateCaptureInvoiceOperation({
+          manualRefundTaskId: String(action.payload.manualRefundTaskId),
+          bookingId: String(action.payload.bookingId),
+          paymentIntentId: String(action.payload.paymentIntentId),
+          capturedCents: Number(action.payload.capturedCents),
+          capturedOn: keptLateCaptureDocumentDate(
+            new Date(String(action.payload.capturedAt)),
+            clubZone,
+          ),
+          store: tx,
+        }),
+      );
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;
       return;

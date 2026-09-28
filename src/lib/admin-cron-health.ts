@@ -386,6 +386,19 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #3635. The fourth task of the same cycle: re-announces an OPEN held
+        // late-capture payment whose alert nobody has received yet.
+        jobName: "late-capture-held-alert",
+        label: "Held late payment alert",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-membership-refresh",
         label: "Xero membership refresh",
         schedule: "0 2 * * *",

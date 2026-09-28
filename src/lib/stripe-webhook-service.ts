@@ -32,6 +32,7 @@ import {
 import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
 import { holdLateCaptureForTreasurerIfRequired } from "@/lib/late-capture-refund-hold";
 import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
+import { stripeRefundNeedsXeroNoteNow } from "@/lib/late-capture-xero-receipt";
 import {
   buildLateCaptureRefundMetadata,
   buildLateCaptureRefundStripeKeyPrefix,
@@ -1140,7 +1141,10 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     "Refund processed for payment"
   );
 
-  if (refundSync.refundDeltaCents > 0) {
+  // #3635: a refund of a late capture a #3639 task owns is noted only once Xero
+  // has a receipt for that capture; one taken earlier is credited back when the
+  // receipt is recorded (`creditBackLateCaptureRefunds`).
+  if (refundSync.refundDeltaCents > 0 && (await stripeRefundNeedsXeroNoteNow(paymentIntentId))) {
     // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
@@ -1594,7 +1598,6 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // with the primary handler and the treasurer-approved refund (#3639).
   await queueLateCaptureRefundCreditNote({
     paymentId: booking.payment.id,
-    paymentXeroInvoiceId: booking.payment.xeroInvoiceId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
   });
@@ -1793,7 +1796,6 @@ async function handleCancelledBookingPaymentSucceeded(
 
   await queueLateCaptureRefundCreditNote({
     paymentId: booking.payment.id,
-    paymentXeroInvoiceId: booking.payment.xeroInvoiceId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
   });

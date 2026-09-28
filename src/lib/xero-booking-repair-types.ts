@@ -401,7 +401,10 @@ export interface BookingClassificationContext {
    * task and the Xero rows anchored on it. A kept booking payment is recorded
    * by its own invoice, anchored on that task (`late-capture-kept-xero-rules.ts`).
    */
-  keptLateCaptures: Map<string, { taskId: string; operations: XeroOperationRecord[] }>;
+  keptLateCaptures: Map<
+    string,
+    { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
+  >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm
    * raised a `CANCELLED_BOOKING_HAND_BACK` task for. Beside a retired clearing

@@ -197,11 +197,14 @@ export async function holdLateCaptureForTreasurerIfRequired(
  * so a Stripe redelivery, a cron retry or a second instance never re-sends;
  * held a day when nobody can receive it; given back when the send throws. The
  * retry is driven by the next notice for the intent, which announces again
- * from the task-already-exists branch while the task is OPEN. Never throws:
- * the task is the record, and a failed mail must not fail the webhook or the
- * cron over a nudge.
+ * from the task-already-exists branch while the task is OPEN, and by the
+ * payments cron's sweep (`reannounceHeldLateCaptures`), which re-selects every
+ * OPEN held task - so a claim held for a day really is tried again even when no
+ * Stripe notice ever comes. Never throws: the task is the record, and a failed
+ * mail must not fail the webhook or the cron over a nudge. Answers whether an
+ * admin has it (or its retry-cron copy) from this call.
  */
-async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> {
+async function announceHeldLateCapture(capture: HeldLateCapture): Promise<boolean> {
   const context = {
     bookingId: capture.bookingId,
     paymentIntentId: capture.paymentIntentId,
@@ -216,9 +219,9 @@ async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> 
         organisation: { select: { name: true, email: true } },
       },
     });
-    if (!booking) return;
+    if (!booking) return false;
     const owner = bookingOwner(booking).member;
-    await sendAdminAlertOnceEver({
+    return await sendAdminAlertOnceEver({
       key: `late-capture-held:${capture.paymentIntentId}`,
       label: "held late-capture alert",
       context,
@@ -239,7 +242,58 @@ async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> 
       { err, ...context },
       "Failed to send the held late-capture alert; the task on the payments board still records it",
     );
+    return false;
   }
+}
+
+/** How many OPEN held tasks one sweep looks at. */
+const HELD_ALERT_SWEEP_LIMIT = 50;
+
+/**
+ * #3635 (review F3): THE PAYMENTS CRON'S RE-SELECTING RUN for the held
+ * late-capture alert. Every OPEN task a #3639 hold raised is announced again
+ * through the once-ever rule: a claim already kept makes it a no-op, and one
+ * given back (the send threw) or held a day (nobody could receive it) is tried
+ * now. Oldest first, a bounded batch a run. Never throws for one task.
+ */
+export async function reannounceHeldLateCaptures(): Promise<{
+  checked: number;
+  announced: number;
+}> {
+  const tasks = await prisma.manualRefundTask.findMany({
+    where: {
+      status: ManualRefundTaskStatus.OPEN,
+      lateCaptureApprovalIntentId: { not: null },
+      paymentId: { not: null },
+    },
+    orderBy: { createdAt: "asc" },
+    take: HELD_ALERT_SWEEP_LIMIT,
+    select: {
+      bookingId: true,
+      paymentId: true,
+      amountCents: true,
+      raisedAmountCents: true,
+      lateCaptureApprovalIntentId: true,
+    },
+  });
+  let announced = 0;
+  for (const task of tasks) {
+    const paymentIntentId = task.lateCaptureApprovalIntentId!;
+    const transaction = await prisma.paymentTransaction.findUnique({
+      where: { stripePaymentIntentId: paymentIntentId },
+      select: { kind: true, amountCents: true },
+    });
+    const sent = await announceHeldLateCapture({
+      bookingId: task.bookingId,
+      paymentId: task.paymentId!,
+      paymentIntentId,
+      amountCents: task.amountCents ?? task.raisedAmountCents ?? transaction?.amountCents ?? 0,
+      captureKind:
+        transaction?.kind === PaymentTransactionKind.PRIMARY ? "primary" : "modification",
+    });
+    if (sent) announced += 1;
+  }
+  return { checked: tasks.length, announced };
 }
 
 /**

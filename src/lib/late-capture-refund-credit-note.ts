@@ -4,9 +4,9 @@
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   enqueueXeroRefundCreditNoteOperation,
-  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { hasXeroReceiptForLateCapture } from "@/lib/late-capture-xero-receipt";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { lateCaptureRefundPaymentIntentId } from "@/lib/payment-recovery-keys";
@@ -17,28 +17,24 @@ import { prisma } from "@/lib/prisma";
  * a cancelled booking, whoever issued the refund — the webhook automatically,
  * the treasurer's approval, or the recovery cron replaying that approval.
  *
- * Only when there is something to correct: the payment carries a primary Xero
- * invoice, or a race already released this intent's supplementary invoice. The
- * supplementary operation otherwise stays WAITING_PAYMENT on purpose (the stale
- * reaper retires it). The enqueue is delta-capped against the payment's
- * recorded refunds, so a replay or an already-covered state is a no-op.
+ * Only when there is something to correct: THIS capture has a Xero receipt
+ * (`hasXeroReceiptForLateCapture`, #3635 review F2) - its kept-capture invoice,
+ * or its change's released supplementary invoice. Never read from
+ * `payment.xeroInvoiceId`: for a late capture that is the pre-cancel invoice the
+ * cancel already cleared, and a note against it would take money out of the
+ * Stripe account that never went in. The enqueue is delta-capped against the
+ * payment's recorded refunds, so a replay or an already-covered state is a no-op.
  *
  * NEVER THROWS. The money has already gone back to the member when this runs,
  * and a Xero outage must not undo or replay that.
  */
 export async function queueLateCaptureRefundCreditNote(params: {
   paymentId: string;
-  paymentXeroInvoiceId: string | null;
   paymentIntentId: string;
   amountCents: number;
 }): Promise<void> {
   try {
-    const needsCorrectiveCreditNote =
-      params.paymentXeroInvoiceId !== null ||
-      (await hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
-        params.paymentIntentId,
-      ));
-    if (!needsCorrectiveCreditNote) return;
+    if (!(await hasXeroReceiptForLateCapture(params.paymentIntentId))) return;
     const queued = await enqueueXeroRefundCreditNoteOperation(
       params.paymentId,
       params.amountCents,
@@ -91,16 +87,47 @@ export async function finishApprovedLateCaptureRefund(refund: {
       manualRefundTaskId: refund.manualRefundTaskId,
     }),
   });
-  const payment = await prisma.payment.findUnique({
-    where: { id: refund.paymentId },
-    select: { xeroInvoiceId: true },
-  });
   await queueLateCaptureRefundCreditNote({
     paymentId: refund.paymentId,
-    paymentXeroInvoiceId: payment?.xeroInvoiceId ?? null,
     paymentIntentId: refund.paymentIntentId,
     amountCents: refund.amountCents,
   });
+}
+
+/**
+ * #3635 (orchestrator decision 29 Sep 2026): a kept capture's refunds, whenever
+ * they were taken, are answered by the ordinary refund credit note against its
+ * receipt. Called once the receipt exists - by the kept-capture invoice's
+ * worker after it sends, and by the keep of a change payment after its invoice
+ * is released - so a dashboard refund taken before the keep (which found no
+ * receipt then, `stripeRefundNeedsXeroNoteNow`) or an approval that landed
+ * while the invoice was sending is credited back. Sized at the capture's own
+ * refunded cents and delta-capped by the enqueue against the payment's cash
+ * refunds already covered by notes, so a refund already noted is never noted
+ * twice. Never throws.
+ */
+export async function creditBackLateCaptureRefunds(paymentIntentId: string): Promise<void> {
+  try {
+    const capture = await prisma.paymentTransaction.findFirst({
+      where: { source: "STRIPE", stripePaymentIntentId: paymentIntentId },
+      select: { paymentId: true, refundedAmountCents: true },
+    });
+    if (!capture || capture.refundedAmountCents <= 0) return;
+    if (!(await hasXeroReceiptForLateCapture(paymentIntentId))) return;
+    const queued = await enqueueXeroRefundCreditNoteOperation(
+      capture.paymentId,
+      capture.refundedAmountCents,
+      { refundMethod: "card" },
+    );
+    if (queued.queueOperationId && (await isXeroConnected())) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    }
+  } catch (err) {
+    logger.error(
+      { err, paymentIntentId },
+      "Failed to queue the Xero refund credit note for a kept late capture's refunds",
+    );
+  }
 }
 
 /**

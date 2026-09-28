@@ -4,29 +4,34 @@
  * booking, the app raises a Xero invoice for the kept amount and marks it paid
  * from the Stripe account, the same way a normal card payment is recorded."
  *
- * For the booking's OWN payment (a change payment keeps its own supplementary
- * invoice, released by the late-capture release). One invoice per kept capture,
- * ANCHORED ON THE #3639 APPROVAL TASK (`ManualRefundTask`, the one row per
- * capture), billing exactly the kept cents, with a payment of those cents from
- * the Stripe bank account. It needs no primary invoice and reads nothing the
- * booking's price says, so it records the kept cash whatever happened to the
- * booking invoice: none ever raised, one cleared by the cancellation's note,
- * account credit used, a price changed since.
+ * RECORDED EXACTLY AS A CARD RECEIPT IS (orchestrator decision 29 Sep 2026): an
+ * invoice for the GROSS captured cents, dated the club day Stripe took the
+ * money, paid from the Stripe bank account on that day. Every refund of it -
+ * from the dashboard, or on approval after a reopen - is answered by the
+ * ordinary refund credit note against this invoice; nothing is netted here, so
+ * a refund cannot be subtracted twice, and the receipt lands in the period the
+ * Stripe payout does.
  *
- * WHY IT CANNOT COUNT TWICE. The booking's own invoice (if any) and the
- * cancellation's clearing note are left exactly as they are: they describe the
- * stay the cancellation settled, and between them they already net to what the
- * cancellation decided. This invoice describes only money that arrived AFTER,
- * and is paid by exactly that money, so it adds the kept cents to income and to
- * the Stripe clearing account once. `late-capture-kept-xero.test.ts` works each
- * case through.
+ * For the booking's OWN payment, and for a change payment on a booking Xero
+ * never invoiced (`keptLateCaptureRecordRoute`). One invoice per kept capture,
+ * ANCHORED ON THE #3639 APPROVAL TASK (`ManualRefundTask`, one row per
+ * capture). It needs no primary invoice and touches neither the booking's own
+ * invoice nor the cancellation's clearing note, which between them already net
+ * to what the cancellation decided; so the capture is counted once in every
+ * case. `xero-kept-late-capture-ledger.test.ts` computes the resulting Xero
+ * ledger from the documents the code produces, case by case.
  *
- * WHY A NEW QUEUE TYPE and not a third supplementary-invoice anchor: the
- * supplementary builder is a booking CHANGE's document (itemised change lines,
- * "original invoice" reference, refuses without a primary invoice), and its
+ * WHY A NEW QUEUE TYPE and not a third supplementary-invoice anchor: that
+ * builder is a booking CHANGE's document (itemised change lines, "original
+ * invoice" reference, refuses without a primary invoice), and its
  * `ManualRefundTask` anchor already means a second ask, which the retry screen
- * replays unpaid by definition. Folding this in would change what that anchor
- * means to every reader of it.
+ * replays unpaid by definition.
+ *
+ * THE TASK ROW IS THE LOCK. The enqueue and the worker's send-time decision
+ * both take the task row `FOR UPDATE` (`lockKeptLateCaptureTask`), the row the
+ * dismissal's, reopen's and approval's status-fenced claims write, so a keep, a
+ * reopen and the worker serialise: a re-keep either finds a live row or, once
+ * the worker has withdrawn it, queues a new one.
  */
 import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
@@ -43,27 +48,30 @@ import {
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
-import { getAccountMapping, getResolvedAccountMapping } from "@/lib/xero-mappings";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { retryXeroWriteWithContactRepair } from "@/lib/xero-contacts";
 import {
   findOrCreateXeroContactForInvoicedParty,
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
+import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
+import type { ClubTimeZone } from "@/lib/club-time";
+import {
+  KEPT_LATE_CAPTURE_INVOICE_ROLE,
+  KEPT_LATE_CAPTURE_PAYMENT_ROLE,
+  decideLateCapture,
+  keptLateCaptureInvoiceAsked,
+} from "@/lib/late-capture-kept-xero-rules";
 import {
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   readQueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 
-/** The link roles this document writes, named once. */
-export const KEPT_LATE_CAPTURE_INVOICE_ROLE = "KEPT_LATE_CAPTURE_INVOICE";
-export const KEPT_LATE_CAPTURE_PAYMENT_ROLE = "KEPT_LATE_CAPTURE_PAYMENT";
-
-/** Stamped on a queued row an approval (after a reopen) cancelled unsent. */
-export const KEPT_LATE_CAPTURE_REFUNDED_ERROR_CODE = "KEPT_LATE_CAPTURE_REFUNDED";
+/** Stamped on a row withdrawn because the task stopped keeping the money. */
+export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRAWN";
 
 /** The one-line description the member and the treasurer read (`INV-CONFIG-001`: no club value). */
 export function keptLateCaptureLineDescription(bookingId: string): string {
@@ -87,35 +95,66 @@ const KEPT_INVOICE_CREATE = {
 } as const;
 
 /**
- * QUEUE IT, once per task. Run by the dismissal inside its status-fenced claim
- * (and by the repair tool), so it commits with the decision. A row for the task
- * in any state but CANCELLED is returned instead of a second one; the Xero
- * idempotency keys are the task's, so even a replay that reached Xero twice
- * would be answered with the first document.
+ * Lock the approval task's row `FOR UPDATE` inside the caller's transaction.
+ * A LOCK, NEVER A READ: the values are read back through the model under it.
+ * The claims that change the task's status write this row, so they wait for
+ * it and it waits for them; it composes with no advisory key.
+ */
+export async function lockKeptLateCaptureTask(
+  tx: Pick<Prisma.TransactionClient, "$executeRaw">,
+  taskId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT 1 FROM "ManualRefundTask" WHERE "id" = ${taskId} FOR UPDATE`;
+}
+
+/** The club day Stripe took the money: the task is raised by the capture. */
+export function keptLateCaptureDocumentDate(capturedAt: Date, zone: ClubTimeZone): string {
+  return xeroDocumentDateFromInstant(capturedAt, zone);
+}
+
+/**
+ * QUEUE IT, once per task, on the caller's transaction and under the task's
+ * row lock: the dismissal inside its status-fenced claim, the repair tool in a
+ * transaction of its own. Re-reads the task under the lock and queues nothing
+ * unless it is DISMISSED, so a stale repair snapshot cannot queue a record for
+ * a capture since reopened or refunded. Both writers hold the lock across
+ * find-and-create, so the active-correlation index can never raise inside the
+ * transaction (whose fallback re-read an aborted Postgres transaction could not
+ * run - the hazard `lockSupplementaryInvoiceAnchor` documents).
  */
 export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
   manualRefundTaskId: string;
   bookingId: string;
   paymentIntentId: string;
-  keptCents: number;
+  capturedCents: number;
+  /** The Xero date of the receipt: the club day of the capture. */
+  capturedOn: string;
   createdByMemberId?: string | null;
-  store?: Prisma.TransactionClient;
+  store: Prisma.TransactionClient;
 }): Promise<{ queueOperationId: string | null; message: string }> {
-  const db = params.store ?? prisma;
-  if (!Number.isInteger(params.keptCents) || params.keptCents <= 0) {
-    return { queueOperationId: null, message: "Nothing was kept, so no Xero invoice is needed." };
+  const db = params.store;
+  if (!Number.isInteger(params.capturedCents) || params.capturedCents <= 0) {
+    return { queueOperationId: null, message: "Nothing was captured, so no Xero invoice is needed." };
   }
-  const existing = await db.xeroSyncOperation.findFirst({
-    where: {
-      ...KEPT_INVOICE_CREATE,
-      localId: params.manualRefundTaskId,
-      status: { not: "CANCELLED" },
-    },
-    select: { id: true },
+  await lockKeptLateCaptureTask(db, params.manualRefundTaskId);
+  const task = await db.manualRefundTask.findUnique({
+    where: { id: params.manualRefundTaskId },
+    select: { status: true },
   });
-  if (existing) {
+  if (task?.status !== "DISMISSED") {
     return {
-      queueOperationId: existing.id,
+      queueOperationId: null,
+      message: "The payment is no longer kept, so no Xero invoice was queued.",
+    };
+  }
+  const existing = await db.xeroSyncOperation.findMany({
+    where: { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId },
+    select: { id: true, queueType: true, status: true },
+  });
+  const live = existing.find((row) => keptLateCaptureInvoiceAsked([row]));
+  if (live) {
+    return {
+      queueOperationId: live.id,
       message: "The Xero invoice for this kept payment is already queued or sent.",
     };
   }
@@ -131,10 +170,11 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
       bookingId: params.bookingId,
       manualRefundTaskId: params.manualRefundTaskId,
       paymentIntentId: params.paymentIntentId,
-      keptCents: params.keptCents,
+      capturedCents: params.capturedCents,
+      capturedOn: params.capturedOn,
     },
     createdByMemberId: params.createdByMemberId ?? null,
-    store: params.store,
+    store: db,
   });
   return {
     queueOperationId: operation.id,
@@ -143,32 +183,62 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
 }
 
 /**
- * WITHDRAW WHAT A KEEP QUEUED, when the task is reopened and then APPROVED
- * (refunded). Runs inside the approval's claim transaction. A row still
- * PENDING never reached Xero, so it is cancelled unsent by a status-guarded
- * write and the refund needs no credit note (the refund path's
- * `hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent` no longer
- * counts it). A row already sent, or on its way, is left to that same refund
- * path, which credits it back. The change payment's released supplementary
- * invoice for the same capture is withdrawn the same way.
+ * THE APPROVAL'S HALF, when a task kept earlier is reopened and then APPROVED
+ * (refunded). Runs inside the approval's claim, which holds the task row.
+ *  - A row that never reached Xero - PENDING, or FAILED with no invoice link -
+ *    is withdrawn, and no refund note is raised for it.
+ *  - A row whose invoice exists but whose payment was not recorded (PARTIAL)
+ *    goes back to PENDING: the cash was really taken, so its worker records
+ *    the payment whatever the task says now, and the refund note answers it.
+ *  - A RUNNING row is decided by the worker's own locked check, which runs
+ *    after this claim commits; a SUCCEEDED one is answered by the refund note.
+ * The change's released supplementary invoice for the same capture, still
+ * PENDING, is withdrawn too.
  */
-export async function withdrawQueuedKeptLateCaptureRecord(params: {
+export async function settleKeptLateCaptureRecordOnApproval(params: {
   manualRefundTaskId: string;
   paymentIntentId: string;
   store: Prisma.TransactionClient;
-}): Promise<number> {
-  const data = {
+}): Promise<void> {
+  const db = params.store;
+  const invoiceLink = await db.xeroObjectLink.count({
+    where: {
+      localModel: "ManualRefundTask",
+      localId: params.manualRefundTaskId,
+      xeroObjectType: "INVOICE",
+      role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
+      active: true,
+    },
+  });
+  const withdrawn = {
     status: "CANCELLED" as const,
     completedAt: new Date(),
-    lastErrorCode: KEPT_LATE_CAPTURE_REFUNDED_ERROR_CODE,
+    lastErrorCode: KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE,
     lastErrorMessage:
       "Withdrawn unsent: the treasurer reopened the kept payment and refunded it instead.",
   };
-  const own = await params.store.xeroSyncOperation.updateMany({
-    where: { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PENDING" },
-    data,
-  });
-  const change = await params.store.xeroSyncOperation.updateMany({
+  if (invoiceLink === 0) {
+    await db.xeroSyncOperation.updateMany({
+      where: {
+        ...KEPT_INVOICE_CREATE,
+        localId: params.manualRefundTaskId,
+        status: { in: ["PENDING", "FAILED"] },
+      },
+      data: withdrawn,
+    });
+  } else {
+    await db.xeroSyncOperation.updateMany({
+      where: { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PARTIAL" },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+  }
+  await db.xeroSyncOperation.updateMany({
     where: {
       direction: "OUTBOUND",
       entityType: "INVOICE",
@@ -177,42 +247,21 @@ export async function withdrawQueuedKeptLateCaptureRecord(params: {
       status: "PENDING",
       requestPayload: { path: ["paymentIntentId"], equals: params.paymentIntentId },
     },
-    data,
+    data: withdrawn,
   });
-  return own.count + change.count;
 }
 
 /**
- * The kept invoice for a payment, when one was sent: the refund-note path
- * accepts it in place of a primary invoice (`createXeroCreditNote`), so a refund
- * after a reopen credits back what this document recorded.
- */
-export async function findKeptLateCaptureInvoiceIdForPayment(
-  paymentId: string,
-): Promise<string | null> {
-  const tasks = await prisma.manualRefundTask.findMany({
-    where: { paymentId, lateCaptureApprovalIntentId: { not: null } },
-    select: { id: true },
-  });
-  if (tasks.length === 0) return null;
-  const link = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: "ManualRefundTask",
-      localId: { in: tasks.map((task) => task.id) },
-      xeroObjectType: "INVOICE",
-      role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
-      active: true,
-    },
-    orderBy: { createdAt: "desc" },
-    select: { xeroObjectId: true },
-  });
-  return link?.xeroObjectId ?? null;
-}
-
-/**
- * THE WORKER, from the outbox. Raises the invoice, then records its payment. A
- * retry of a row whose invoice was raised re-uses it (the task's link) and only
- * records the missing payment, so neither is ever raised twice.
+ * THE WORKER, from the outbox.
+ *  1. If the task's invoice already exists (a retry, or an approval that sent
+ *     a PARTIAL row back), only the missing Stripe payment is recorded, whatever
+ *     the task says now: the money was taken, and any refund is its own note.
+ *  2. Otherwise the send-time decision is taken under the task's row lock, and
+ *     a row whose task no longer keeps the money is withdrawn in the same
+ *     transaction, so a re-keep waiting on that lock then queues a new one.
+ *  3. The invoice and its payment are sent, both dated the capture day.
+ *  4. Any refund of the capture already taken is credited back by the ordinary
+ *     refund note, now that Xero has the receipt.
  */
 export async function createXeroKeptLateCaptureInvoice(params: {
   syncOperationId: string;
@@ -230,34 +279,44 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       `Kept late-capture invoice operation ${syncOperationId} has no readable queued payload`,
     );
   }
-  const { bookingId, manualRefundTaskId: taskId, paymentIntentId, keptCents } = queued;
+  const { bookingId, manualRefundTaskId: taskId, paymentIntentId, capturedCents, capturedOn } =
+    queued;
 
-  // The decision at the moment of sending: a task reopened (OPEN) or approved
-  // since (COMPLETED) no longer keeps the money, so nothing is raised. A later
-  // keep queues a fresh row.
-  const task = await prisma.manualRefundTask.findUnique({
-    where: { id: taskId },
-    select: { status: true },
-  });
-  if (task?.status !== "DISMISSED") {
-    await completeXeroSyncOperation(syncOperationId, {
-      status: "CANCELLED",
-      responsePayload: {
-        skipped: true,
-        reason: `The kept payment's task is ${task?.status ?? "missing"}, not kept, so no Xero invoice was raised.`,
-      },
+  const linkFor = (role: string) =>
+    prisma.xeroObjectLink.findFirst({
+      where: { localModel: "ManualRefundTask", localId: taskId, role, active: true },
+      select: { xeroObjectId: true, xeroObjectNumber: true },
     });
-    return null;
-  }
+  const invoiceLink = await linkFor(KEPT_LATE_CAPTURE_INVOICE_ROLE);
 
-  const [invoiceLink, paymentLink] = await Promise.all(
-    [KEPT_LATE_CAPTURE_INVOICE_ROLE, KEPT_LATE_CAPTURE_PAYMENT_ROLE].map((role) =>
-      prisma.xeroObjectLink.findFirst({
-        where: { localModel: "ManualRefundTask", localId: taskId, role, active: true },
-        select: { xeroObjectId: true, xeroObjectNumber: true },
-      }),
-    ),
-  );
+  if (!invoiceLink) {
+    const withdrawnReason = await prisma.$transaction(async (tx) => {
+      await lockKeptLateCaptureTask(tx, taskId);
+      const task = await tx.manualRefundTask.findUnique({
+        where: { id: taskId },
+        select: { status: true },
+      });
+      const capture = await tx.paymentTransaction.findFirst({
+        where: { source: "STRIPE", stripePaymentIntentId: paymentIntentId },
+        select: { status: true, amountCents: true },
+      });
+      const decision = decideLateCapture({
+        taskStatus: task?.status ?? null,
+        bookingStatus: "CANCELLED",
+        superseded: false,
+        capture,
+      });
+      if (decision.state === "kept" && decision.recordCents > 0) return null;
+      const reason = `The kept payment's task is ${task?.status ?? "missing"}, not kept, so no Xero invoice was raised.`;
+      await completeXeroSyncOperation(
+        syncOperationId,
+        { status: "CANCELLED", responsePayload: { skipped: true, reason } },
+        { store: tx },
+      );
+      return reason;
+    });
+    if (withdrawnReason) return null;
+  }
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -265,16 +324,13 @@ export async function createXeroKeptLateCaptureInvoice(params: {
   });
   if (!booking) throw new Error(`Booking not found: ${bookingId}`);
 
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const clubZone = await readClubTimeZoneOutsideRequest();
-  const documentDate = xeroDocumentDateForClubToday(clubZone);
-
   try {
     let invoiceId = invoiceLink?.xeroObjectId ?? null;
     let invoiceNumber = invoiceLink?.xeroObjectNumber ?? null;
     let invoiceBody: unknown = null;
 
     if (!invoiceId) {
+      const { xero, tenantId } = await getAuthenticatedXeroClient();
       const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
         repairExistingLink: params.repairExistingLink,
@@ -284,7 +340,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
         {
           description: keptLateCaptureLineDescription(bookingId),
           quantity: 1,
-          unitAmount: keptCents / 100,
+          unitAmount: capturedCents / 100,
           taxType: "OUTPUT2",
         },
         {
@@ -297,8 +353,8 @@ export async function createXeroKeptLateCaptureInvoice(params: {
         type: Invoice.TypeEnum.ACCREC,
         contact: { contactID: resolvedContactId },
         lineItems: [line],
-        date: documentDate,
-        dueDate: documentDate,
+        date: capturedOn,
+        dueDate: capturedOn,
         reference: `Kept late payment for booking ${bookingId.slice(0, 8)}`,
         status: Invoice.StatusEnum.AUTHORISED,
         lineAmountTypes: LineAmountTypes.Inclusive,
@@ -346,37 +402,24 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       invoiceBody = response.body;
     }
 
-    let paymentBody: { paymentID?: string } | null = null;
+    // The one "record a Stripe payment on an invoice" step (`INV-SSOT`), dated
+    // the capture day; it writes the task's payment link itself.
+    let paymentId: string | null = null;
     let paymentError: unknown = null;
-    if (!paymentLink) {
+    if (!(await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE))) {
       try {
-        const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-        const paymentResponse = await callXeroApi(
-          () =>
-            xero.accountingApi.createPayments(
-              tenantId,
-              {
-                payments: [
-                  {
-                    invoice: { invoiceID: invoiceId! },
-                    account: { code: stripeBankCode },
-                    amount: keptCents / 100,
-                    date: documentDate,
-                    reference: `Stripe ${paymentIntentId}`,
-                  },
-                ],
-              },
-              undefined,
-              paymentKey(taskId),
-            ),
-          {
-            operation: "createPayments",
-            resourceType: "PAYMENT",
-            workflow: "createXeroKeptLateCaptureInvoice",
-            context: `createPayments(kept late capture ${taskId})`,
-          },
-        );
-        paymentBody = paymentResponse.body.payments?.[0] ?? null;
+        paymentId = await createXeroPaymentForInvoice({
+          localModel: "ManualRefundTask",
+          localId: taskId,
+          invoiceId: invoiceId!,
+          amountCents: capturedCents,
+          idempotencyKey: paymentKey(taskId),
+          reference: `Stripe ${paymentIntentId}`,
+          role: KEPT_LATE_CAPTURE_PAYMENT_ROLE,
+          createdByMemberId: params.createdByMemberId,
+          metadata: { invoiceId, amountCents: capturedCents },
+          date: capturedOn,
+        });
       } catch (error) {
         paymentError = error;
         logger.warn(
@@ -388,37 +431,29 @@ export async function createXeroKeptLateCaptureInvoice(params: {
 
     await completeXeroSyncOperation(syncOperationId, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
-      responsePayload: { invoice: invoiceBody, payment: paymentBody, paymentError },
+      responsePayload: { invoice: invoiceBody, paymentId, paymentError },
       xeroObjectType: "INVOICE",
       xeroObjectId: invoiceId,
       xeroObjectNumber: invoiceNumber,
-      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
       extraLinks: [
         {
           localModel: "ManualRefundTask",
           localId: taskId,
           xeroObjectType: "INVOICE",
-          xeroObjectId: invoiceId,
+          xeroObjectId: invoiceId!,
           xeroObjectNumber: invoiceNumber,
-          xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+          xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
           role: KEPT_LATE_CAPTURE_INVOICE_ROLE,
-          metadata: { amountCents: keptCents, paymentIntentId },
+          metadata: { amountCents: capturedCents, paymentIntentId },
         },
-        ...(paymentBody?.paymentID
-          ? [
-              {
-                localModel: "ManualRefundTask",
-                localId: taskId,
-                xeroObjectType: "PAYMENT",
-                xeroObjectId: paymentBody.paymentID,
-                xeroObjectNumber: invoiceNumber,
-                role: KEPT_LATE_CAPTURE_PAYMENT_ROLE,
-                metadata: { invoiceId, amountCents: keptCents },
-              },
-            ]
-          : []),
       ],
     });
+
+    // Imported here, not at the top: that module reaches the outbox, which
+    // dispatches to this worker.
+    const { creditBackLateCaptureRefunds } = await import("@/lib/late-capture-refund-credit-note");
+    await creditBackLateCaptureRefunds(paymentIntentId);
     return invoiceId;
   } catch (error) {
     await failXeroSyncOperation(syncOperationId, error);

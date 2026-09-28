@@ -207,18 +207,19 @@ interface QueuedSubscriptionInvoiceOutboxPayload {
 }
 
 /**
- * #3635: exactly the kept cents, frozen when the treasurer kept them, and the
- * capture they came from. `paymentIntentId` is what makes the refund path's
- * "was an invoice for this capture released?" read
- * (`hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent`) see this
- * row, so an approval after a reopen credits it back.
+ * #3635: the GROSS captured cents and the club day Stripe took them, frozen
+ * when the treasurer kept them, so a retry sends the same receipt on the same
+ * date (orchestrator decision 29 Sep 2026). `paymentIntentId` names the
+ * capture whose refunds the refund note answers.
  */
 interface QueuedKeptLateCaptureInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE;
   bookingId: string;
   manualRefundTaskId: string;
   paymentIntentId: string;
-  keptCents: number;
+  capturedCents: number;
+  /** `YYYY-MM-DD`, the club's calendar day of the capture. */
+  capturedOn: string;
 }
 
 export type QueuedOutboxPayload =
@@ -517,18 +518,28 @@ export function readQueuedOutboxPayload(
     const bookingId = readString(payload.bookingId);
     const manualRefundTaskId = readString(payload.manualRefundTaskId);
     const paymentIntentId = readString(payload.paymentIntentId);
-    const keptCents = readNumber(payload.keptCents);
+    const capturedCents = readNumber(payload.capturedCents);
+    const capturedOn = readString(payload.capturedOn);
     if (
       !bookingId ||
       !manualRefundTaskId ||
       !paymentIntentId ||
-      keptCents === null ||
-      !Number.isInteger(keptCents) ||
-      keptCents <= 0
+      capturedCents === null ||
+      !Number.isInteger(capturedCents) ||
+      capturedCents <= 0 ||
+      !capturedOn ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(capturedOn)
     ) {
       return null;
     }
-    return { queueType, bookingId, manualRefundTaskId, paymentIntentId, keptCents };
+    return {
+      queueType,
+      bookingId,
+      manualRefundTaskId,
+      paymentIntentId,
+      capturedCents,
+      capturedOn,
+    };
   }
 
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {

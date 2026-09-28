@@ -369,12 +369,14 @@ export async function loadAuditData(
             bookingId: { in: bookingIds },
             lateCaptureApprovalIntentId: { not: null },
           },
-          // #3635: the status says which were KEPT; the id anchors their invoice.
+          // #3635: the status says which were KEPT; the id anchors their
+          // invoice; the raise time is the capture day the receipt is dated.
           select: {
             id: true,
             bookingId: true,
             lateCaptureApprovalIntentId: true,
             status: true,
+            createdAt: true,
           },
         })
       : Promise.resolve(
@@ -383,6 +385,7 @@ export async function loadAuditData(
             bookingId: string;
             lateCaptureApprovalIntentId: string | null;
             status: string;
+            createdAt: Date;
           }[],
         ),
     // #3643 F2: the organisation late-cash arm's hand-back, any status - it is
@@ -508,23 +511,25 @@ export async function loadAuditData(
   }
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
-  const keptApprovalsByBookingId = new Map<string, Map<string, string>>();
+  const keptApprovalsByBookingId = new Map<string, Map<string, { id: string; createdAt: Date }>>();
   for (const task of lateCaptureApprovalTasks) {
     if (!task.lateCaptureApprovalIntentId) continue;
     const ids = approvalIntentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
     ids.add(task.lateCaptureApprovalIntentId);
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
     if (task.status === "DISMISSED") {
-      const kept = keptApprovalsByBookingId.get(task.bookingId) ?? new Map<string, string>();
-      kept.set(task.lateCaptureApprovalIntentId, task.id);
+      const kept =
+        keptApprovalsByBookingId.get(task.bookingId) ??
+        new Map<string, { id: string; createdAt: Date }>();
+      kept.set(task.lateCaptureApprovalIntentId, { id: task.id, createdAt: task.createdAt });
       keptApprovalsByBookingId.set(task.bookingId, kept);
     }
   }
   // #3635: a kept booking payment's invoice anchors on its task, which no
   // scope above reaches, so its rows are read by the kept task ids.
-  const keptTaskIds = [...keptApprovalsByBookingId.values()].flatMap((kept) => [
-    ...kept.values(),
-  ]);
+  const keptTaskIds = [...keptApprovalsByBookingId.values()].flatMap((kept) =>
+    [...kept.values()].map((task) => task.id),
+  );
   const keptTaskOperations =
     keptTaskIds.length > 0
       ? ((await deps.prisma.xeroSyncOperation.findMany({
@@ -602,12 +607,13 @@ export async function loadAuditData(
     lateCaptureApprovalIntentIds:
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     keptLateCaptures: new Map(
-      [...(keptApprovalsByBookingId.get(booking.id) ?? new Map<string, string>())].map(
-        ([paymentIntentId, taskId]) => [
+      [...(keptApprovalsByBookingId.get(booking.id) ?? new Map<string, { id: string; createdAt: Date }>())].map(
+        ([paymentIntentId, task]) => [
           paymentIntentId,
           {
-            taskId,
-            operations: keptTaskOperations.filter((operation) => operation.localId === taskId),
+            taskId: task.id,
+            raisedAt: task.createdAt,
+            operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
           },
         ],
       ),

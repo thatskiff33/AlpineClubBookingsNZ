@@ -8,6 +8,10 @@ import type { PaymentStatus, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
+import {
+  decideLateCapture,
+  type LateCaptureRefundState,
+} from "@/lib/late-capture-kept-xero-rules";
 import { classifyEditReviewChargeCapture } from "@/lib/xero-booking-repair-payments";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import {
@@ -102,30 +106,16 @@ type CapturedTransaction = { status: PaymentStatus; amountCents: number } | null
 
 /**
  * WHAT HAPPENS TO THIS CAPTURE'S MONEY: refunded, awaiting a treasurer, or
- * kept? (#3641 review round, delta D1; three-valued since #3635.)
+ * kept? (#3641 review round, delta D1; three-valued since #3635.) This loads
+ * the facts and asks the one decision, `decideLateCapture`
+ * (`late-capture-kept-xero-rules.ts`), which the dismissal, the kept-capture
+ * worker and the repair tool ask too (`INV-SSOT`).
  *
- * A #3639 treasurer-approval task, when one owns the capture, is the answer,
- * whatever the booking's status: OPEN is `awaiting-decision` (nothing may be
- * released or retired while the treasurer decides), COMPLETED is `refunded`
- * (the approval is the refund), DISMISSED is `kept` (owner decision 29 Sep
- * 2026, #3635: the kept money is invoiced and paid from the Stripe account like
- * any card payment) unless the capture has since been refunded in full (a
- * dashboard refund, closed without refunding as the payments guide says).
- *
- * With no task, the webhook's own routing decides, exactly as before. Two
- * populations are refunded by design and their waiting invoice must retire,
- * never be sent with a receipt for money being handed back:
- *   - a CANCELLED booking's late capture, refunded by
- *     `handleCancelledBookingAdditionalPaymentSucceeded`
- *     (`isLateCaptureRefundedBookingStatus`, the webhook's own routing test);
- *   - a SUPERSEDED intent's late capture (#3403), refunded through the
- *     supersede recovery: the intent carries a CANCEL_PAYMENT_INTENT (or
- *     REFUND_SUPERSEDED_PAYMENT) recovery, which is how the webhook finds it.
- * Everything else is kept. The late-capture release and the waiting-invoice
- * reaper both ask this, so "release only a capture the club keeps" has one
- * answer (`INV-SSOT`).
+ * A DISMISSED task is kept even when the capture has since been refunded in
+ * the Stripe dashboard: the receipt is recorded gross and the refund is
+ * answered by its own refund credit note (orchestrator decision 29 Sep 2026).
+ * The superseded-intent read is taken only where it can change the answer.
  */
-export type LateCaptureRefundState = "refunded" | "awaiting-decision" | "kept";
 
 export async function lateCaptureRefundState(params: {
   paymentIntentId: string;
@@ -135,29 +125,22 @@ export async function lateCaptureRefundState(params: {
     where: { lateCaptureApprovalIntentId: params.paymentIntentId },
     select: { status: true },
   });
-  if (task) {
-    if (task.status === "OPEN") return "awaiting-decision";
-    if (task.status !== "DISMISSED") return "refunded";
-    // Closed without refunding - but the payments guide tells a treasurer who
-    // already refunded it in the Stripe dashboard to close it that way too. A
-    // capture fully refunded since is not kept money.
-    const capture = await prisma.paymentTransaction.findFirst({
-      where: { source: "STRIPE", stripePaymentIntentId: params.paymentIntentId },
-      select: { amountCents: true, refundedAmountCents: true },
-    });
-    return capture && capture.refundedAmountCents >= capture.amountCents
-      ? "refunded"
-      : "kept";
-  }
-  if (isLateCaptureRefundedBookingStatus(params.bookingStatus)) return "refunded";
-  const supersede = await prisma.paymentRecoveryOperation.findFirst({
-    where: {
-      paymentIntentId: params.paymentIntentId,
-      type: { in: ["CANCEL_PAYMENT_INTENT", "REFUND_SUPERSEDED_PAYMENT"] },
-    },
-    select: { id: true },
-  });
-  return supersede !== null ? "refunded" : "kept";
+  const superseded =
+    !task && !isLateCaptureRefundedBookingStatus(params.bookingStatus)
+      ? (await prisma.paymentRecoveryOperation.findFirst({
+          where: {
+            paymentIntentId: params.paymentIntentId,
+            type: { in: ["CANCEL_PAYMENT_INTENT", "REFUND_SUPERSEDED_PAYMENT"] },
+          },
+          select: { id: true },
+        })) !== null
+      : false;
+  return decideLateCapture({
+    taskStatus: task?.status ?? null,
+    bookingStatus: params.bookingStatus,
+    superseded,
+    capture: null,
+  }).state;
 }
 
 /**

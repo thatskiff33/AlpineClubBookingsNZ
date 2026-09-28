@@ -153,7 +153,8 @@ function keptLateCaptureInvoiceRequeuePayload(
         bookingId: queued.bookingId,
         manualRefundTaskId: queued.manualRefundTaskId,
         paymentIntentId: queued.paymentIntentId,
-        keptCents: queued.keptCents,
+        capturedCents: queued.capturedCents,
+        capturedOn: queued.capturedOn,
       }
     : null;
 }

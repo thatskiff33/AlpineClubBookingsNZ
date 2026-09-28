@@ -2999,7 +2999,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // reaching Xero.
         //
         // The un-claim must match the state the HANDLER left the row in, not the
-        // state the outbox expects. Twelve of the fifteen queue types own a
+        // state the outbox expects. Every queue type but the three named below
+        // (the kept late-capture invoice, #3635, among them) owns a
         // `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`,
         // and `failXeroSyncOperation` writes `status: FAILED` + `completedAt`
         // with no status guard — so by the time this branch runs the row is

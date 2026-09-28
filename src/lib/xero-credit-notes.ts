@@ -15,7 +15,7 @@
  * Xero credit-note IDs.
  */
 
-import { findKeptLateCaptureInvoiceIdForPayment } from "@/lib/xero-kept-late-capture-invoice";
+import { findKeptLateCaptureInvoiceIdForPayment } from "@/lib/late-capture-xero-receipt";
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -113,14 +113,14 @@ export async function createXeroCreditNote(
   });
 
   if (!payment) throw new Error(`Payment not found: ${paymentId}`);
-  // #3635 (`INV-PAY-110`): a late capture a treasurer kept and then, after a
-  // reopen, refunded was recorded on its OWN invoice, anchored on its approval
-  // task, and a booking whose payment was captured only late has no primary
-  // one. That invoice is what this note credits back. The note is unallocated
-  // either way (it settles by its own refund payment), so the id is the record
-  // of which document it answers.
+  // #3635 (`INV-PAY-110`): a kept late capture is recorded on its OWN invoice,
+  // anchored on its approval task, and its refunds are answered by this note.
+  // That invoice is named first: the payment's own is, for a late capture, the
+  // pre-cancel one the cancel already cleared, and a booking paid only late has
+  // none. The note is unallocated either way (it settles by its own refund
+  // payment), so the id records which document it answers.
   const originalInvoiceId =
-    payment.xeroInvoiceId ?? (await findKeptLateCaptureInvoiceIdForPayment(paymentId));
+    (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ?? payment.xeroInvoiceId;
   if (!originalInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
