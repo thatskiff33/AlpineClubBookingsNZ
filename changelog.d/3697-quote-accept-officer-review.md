@@ -4,3 +4,7 @@
 
   The accepted quote keeps its held places until an officer approves or declines
   it, and the Public Requests queue now highlights it for action.
+
+  The obsolete accept-time capacity-block audit record is retired because an
+  accepted quote now keeps its existing bed hold through officer review. Its
+  remaining acceptance record stays in the booking audit category.
