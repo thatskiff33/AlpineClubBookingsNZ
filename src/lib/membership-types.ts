@@ -5,6 +5,7 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
+import { isKeyResolvedRateHolder } from "@/lib/membership-type-rate-coverage";
 
 const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
@@ -13,6 +14,15 @@ export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
   "NON_MEMBER_RATE",
   "BLOCK_BOOKING",
 ] as const satisfies readonly MembershipTypeBookingBehavior[];
+
+export const MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS: Record<
+  MembershipTypeBookingBehavior,
+  string
+> = {
+  MEMBER_RATE: "Member rate",
+  NON_MEMBER_RATE: "Non-member rate",
+  BLOCK_BOOKING: "Block booking",
+};
 
 export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "REQUIRED",
@@ -131,6 +141,16 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
   subscriptionBehavior: MembershipTypeSubscriptionBehavior;
   sortOrder: number;
 }>;
+
+/** Expected booking policy for the two built-ins resolved directly by key. */
+export function canonicalKeyResolvedRateHolderBookingBehavior(type: {
+  key: string;
+}): MembershipTypeBookingBehavior | null {
+  if (!isKeyResolvedRateHolder(type)) return null;
+  const builtIn = BUILT_IN_MEMBERSHIP_TYPES.find((row) => row.key === type.key);
+  if (!builtIn) throw new Error("INV-LIFE-093: key-resolved rate holder has no built-in definition");
+  return builtIn.bookingBehavior;
+}
 
 const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
   (type) => type.key,
@@ -450,6 +470,17 @@ export function defaultMembershipTypeKeyForRole(
     return "LODGE";
   }
   return "FULL";
+}
+
+/**
+ * Existing members keep their stored role-default type when it is archived.
+ * Archiving prevents new assignments; it does not erase booking policy or an
+ * annual-billing obligation. Callers may select different columns, but both
+ * must use this unfiltered stored-row lookup (INV-SSOT-001, INV-MONEY-016).
+ * Billing deliberately has no synthetic fallback if the row is absent.
+ */
+export function storedRoleDefaultMembershipTypeWhere(keys: string[]) {
+  return { key: { in: keys } } satisfies Prisma.MembershipTypeWhereInput;
 }
 
 /**
