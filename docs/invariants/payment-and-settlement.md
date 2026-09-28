@@ -1199,9 +1199,12 @@ total at apply).
 - Who is told: a `PAYMENT_PENDING` joiner whose stay has not started
   (`bookingStayHasStarted`, the club's today) is emailed to pay, at most
   once. A started stay is not emailed; the treasurer is alerted once per
-  group, and the claim is given back if the send reaches nobody, so the
-  reaper retries it from the events.
+  group, linking each joiner's booking. The claim is kept once an admin has
+  it or a copy is queued for the email retry cron, held a day when no admin
+  can receive it, and given back only when the send throws first. The
+  reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
+  `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,
   `booking-split.test.ts`, `group-settlement.test.ts`,
   `group-bookings-route.test.ts`, `organiser-group-booking-card.test.tsx` and
   `member-group-join-panel.test.tsx`.

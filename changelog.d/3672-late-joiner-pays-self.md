@@ -13,9 +13,11 @@
   payment comes in, and the switch is recorded on their booking's history. If
   they are waiting to pay and their stay has not started, they are emailed a
   link to pay. If their stay has already started they are not emailed
-  mid-stay: the treasurer gets one email per group, linking the payments page,
-  to collect by hand or mark the booking paid. If that email reaches nobody it
-  is tried again on the next group-settlement run. The organiser is never
+  mid-stay: the treasurer gets one email per group, linking each joiner's
+  booking, to collect by hand and record it with Record manual payment under
+  Admin tools. A mail outage does not multiply that email: a copy that failed
+  is re-sent once by the usual email retry. If no admin can receive it at all,
+  it is tried again a day later. The organiser is never
   charged for them, and the organiser's group card lists them as paying for
   themselves. Groups where each person pays for themselves are unchanged.
 

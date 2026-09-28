@@ -3764,7 +3764,9 @@ rows it changed are recorded and emailed. The reaper's self-heal
 re-reads the group, settlement and organiser booking, and applies the same
 switch; a switched joiner no longer matches its scan. Emails and the
 treasurer's once-per-group alert are sent after commit; the alert pass reads
-the events and takes no lock.
+the events of stays not yet ended and takes no lock. Its `AlertCooldown` claim
+is kept once a copy is sent or queued for the email retry cron, so the two never
+both send it; the release and the one-day hold match the claimant's own stamp.
 
 An organiser's close or reopen (`setGroupBookingJoinStatus`, #3672 review)
 takes `lock(1)` too, re-reads the status under it and writes with a
