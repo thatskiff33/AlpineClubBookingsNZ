@@ -42,6 +42,7 @@ vi.mock("@/lib/manual-refund-task-reopen", () => ({
   MANUAL_PAYMENT_NOTE_MAX: 500,
 }));
 
+import { revalidatePath } from "next/cache";
 import { POST } from "../[id]/reopen/route";
 
 function request(body: unknown) {
@@ -94,6 +95,10 @@ describe("POST manual-refund-tasks/[id]/reopen (#3498 D2)", () => {
       actingMemberId: "admin-1",
       note: "  Closed by mistake.  ",
     });
+    // #3635: the booking page is /bookings/[id]; /admin/bookings/[id] does
+    // not exist, so revalidating it refreshed nothing.
+    expect(revalidatePath).toHaveBeenCalledWith("/bookings/[id]", "page");
+    expect(revalidatePath).not.toHaveBeenCalledWith("/admin/bookings/[id]", "page");
   });
 
   it("refuses an unconfirmed body, so this is never a single-click accident", async () => {

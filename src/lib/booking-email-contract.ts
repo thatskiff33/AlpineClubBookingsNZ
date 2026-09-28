@@ -88,6 +88,13 @@ export function buildBookingDetailPath(bookingId: string): string {
   return `/bookings/${encodeURIComponent(bookingId)}`;
 }
 
+/**
+ * The booking detail page's route pattern, for `revalidatePath(..., "page")`
+ * (#3635). Members and admins share this one page; there is no
+ * `/admin/bookings/[id]`, so revalidating that path refreshed nothing.
+ */
+export const BOOKING_DETAIL_ROUTE_PATTERN = "/bookings/[id]";
+
 /** Canonical absolute URL used in email HTML and editable template data. */
 export function buildBookingDetailUrl(bookingId: string): string {
   return `${getAppBaseUrl()}${buildBookingDetailPath(bookingId)}`;

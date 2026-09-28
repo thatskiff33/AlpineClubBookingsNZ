@@ -39,6 +39,7 @@ vi.mock("@/lib/manual-refund-task-resolution", () => ({
   },
 }));
 
+import { revalidatePath } from "next/cache";
 import { POST } from "../[id]/route";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
@@ -85,6 +86,10 @@ describe("a $0 completion reaches the layer that can explain it (#3195)", () => 
       expect.objectContaining({ confirmedAmountCents: 0 }),
       CLUB_FORMAT_TEST,
     );
+    // #3635: the booking page is /bookings/[id]; /admin/bookings/[id] does
+    // not exist, so revalidating it refreshed nothing.
+    expect(revalidatePath).toHaveBeenCalledWith("/bookings/[id]", "page");
+    expect(revalidatePath).not.toHaveBeenCalledWith("/admin/bookings/[id]", "page");
   });
 
   it("still refuses a negative amount, which is not a decision anybody could mean", async () => {

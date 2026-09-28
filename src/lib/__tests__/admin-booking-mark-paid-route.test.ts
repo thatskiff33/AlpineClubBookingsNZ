@@ -36,6 +36,7 @@ vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: vi.fn(),
 }));
 
+import { revalidatePath } from "next/cache";
 import { POST } from "@/app/api/admin/bookings/[id]/mark-paid/route";
 
 const params = Promise.resolve({ id: "booking-1" });
@@ -170,6 +171,10 @@ describe("POST /api/admin/bookings/[id]/mark-paid", () => {
     expect((await response.json()).message).toMatch(
       /could not be sent — check the booking's email settings/,
     );
+    // #3635: the booking page is /bookings/[id]; /admin/bookings/[id] does
+    // not exist, so revalidating it refreshed nothing.
+    expect(revalidatePath).toHaveBeenCalledWith("/bookings/[id]", "page");
+    expect(revalidatePath).not.toHaveBeenCalledWith("/admin/bookings/[id]", "page");
   });
 
   it("surfaces a domain refusal with its own status and message", async () => {

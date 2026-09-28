@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/booking-email-contract";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
@@ -213,7 +214,7 @@ export async function POST(
           },
     );
     revalidatePath("/admin/bookings");
-    revalidatePath("/admin/bookings/[id]", "page");
+    revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     revalidatePath("/admin/payments");
     return NextResponse.json({
       success: true,
