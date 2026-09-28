@@ -46,6 +46,8 @@ export type OpenManualRefundTaskRow = {
   kind: string | null;
   /** #3639: set on a late capture held for a treasurer's approval. */
   lateCaptureApprovalIntentId: string | null;
+  /** #3643: set on a part-payment review, settled in Xero rather than here. */
+  partPaymentReviewPaymentId: string | null;
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
@@ -104,6 +106,12 @@ export type OpenManualRefundTaskPayload = {
    * through Stripe, so none of the hand-back wording fits it.
    */
   awaitingLateCaptureApproval: boolean;
+  /**
+   * #3643: a payment recorded against an invoice an officer cancelled as
+   * unpaid, which the club settles in Xero. It has no amount and closes only by
+   * dismissal, so none of the hand-back wording fits it either.
+   */
+  partPaymentReview: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -171,6 +179,7 @@ export function toOpenManualRefundTaskPayload(
     raisedAmountCents: task.raisedAmountCents,
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
+    partPaymentReview: task.partPaymentReviewPaymentId !== null,
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

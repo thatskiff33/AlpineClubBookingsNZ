@@ -398,6 +398,13 @@ export interface BookingClassificationContext {
    */
   cancelledBookingHandBackPaymentIds: Set<string>;
   /**
+   * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
+   * booking whose part-payment review task a treasurer has COMPLETED or
+   * DISMISSED. The payment was settled by hand in Xero, so the cancelled-open
+   * -invoice arm reports nothing for it and never queues a clearing note.
+   */
+  closedPartPaymentReviewPaymentIds: Set<string>;
+  /**
    * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
    * money owed to the club, totalled per `BookingModification` anchor.
    *

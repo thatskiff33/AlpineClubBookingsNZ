@@ -149,6 +149,8 @@ export async function GET() {
         kind: true,
         // #3639: marks a late capture held for a treasurer's approval.
         lateCaptureApprovalIntentId: true,
+        // #3643: marks a part-payment review, settled in Xero.
+        partPaymentReviewPaymentId: true,
         raisedAmountCents: true,
         reviewContext: true,
         reason: true,

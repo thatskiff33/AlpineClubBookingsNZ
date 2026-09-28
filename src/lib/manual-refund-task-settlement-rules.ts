@@ -42,8 +42,16 @@ import type { ManualRefundTaskKind } from "@prisma/client";
  */
 export function manualRefundTaskKindAllowsSettlement(
   kind: ManualRefundTaskKind | string | null | undefined,
+  /**
+   * #3643: the task is a part-payment review (`partPaymentReviewPaymentId`
+   * set). Its kind is the ordinary hand-back one, so the kind alone cannot say
+   * it records money the club settles in Xero rather than here; a review is
+   * closed by DISMISSED only, and the database refuses a COMPLETED one
+   * (`ManualRefundTask_part_payment_review_shape`). `INV-PAY-107`.
+   */
+  partPaymentReview = false,
 ): boolean {
-  return kind !== "UNCOLLECTED_EDIT_REVIEW_SHARE";
+  return kind !== "UNCOLLECTED_EDIT_REVIEW_SHARE" && !partPaymentReview;
 }
 
 /**
@@ -62,8 +70,12 @@ export function manualRefundTaskKindAllowsSettlement(
 export function manualRefundTaskSettlementRefusal(
   kind: ManualRefundTaskKind | string | null | undefined,
   resolution: "completed" | "dismissed",
+  partPaymentReview = false,
 ): string | null {
   if (resolution !== "completed") return null;
-  if (manualRefundTaskKindAllowsSettlement(kind)) return null;
+  if (manualRefundTaskKindAllowsSettlement(kind, partPaymentReview)) return null;
+  if (partPaymentReview) {
+    return "This item records a payment the club settles in Xero, so it cannot be closed as an amount settled here - nothing about it moves money. Settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then dismiss it with a note saying what you did.";
+  }
   return "This item records money the club may not have asked for, so it cannot be closed as an amount settled here - nothing about it moves money. Check the booking's Xero invoices, bill any shortfall by hand, then close it with a note saying what you found and what you billed.";
 }

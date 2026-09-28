@@ -93,6 +93,7 @@ import {
   kickClearingNoteForUnpaidRest,
   PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   PartPaymentChangedError,
+  raisePartPaymentReviewTask,
   readPartPaymentAtCancel,
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
@@ -993,7 +994,8 @@ async function performBookingCancellation(
   // a fully paid invoice). Read live, before any transaction; recognised cash
   // routes the cancel into the paid path, where the claim records it. Money
   // the app cannot credit (DECISION 2) is an officer's cancel on the unpaid
-  // path, with no clearing note, a repair finding and a treasurer alert.
+  // path, with no clearing note, a hand-back task, a repair finding until that
+  // task is closed, and a treasurer alert.
   const partPaymentRead = await readPartPaymentAtCancel(booking);
   const manualPartPayment = partPaymentRead?.kind === "manual" ? partPaymentRead : null;
   if (manualPartPayment && sessionUserRole !== "ADMIN" && !hasBookingsEditAccess) {
@@ -1135,6 +1137,12 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
+      // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): money the app cannot
+      // credit is a hand-back task, committed with the cancel it belongs to.
+      const partPaymentReviewTaskRaised =
+        manualPartPayment && fresh.payment
+          ? await raisePartPaymentReviewTask(tx, bookingId, fresh.payment.id, manualPartPayment)
+          : false;
 
       // 100% restore — ledger truth, NO override argument (owner decision:
       // nothing was captured, so no cancellation-policy tiering).
@@ -1200,6 +1208,7 @@ async function performBookingCancellation(
         freshPaymentCaptured,
         creditRestoredCents,
         xeroAllocatedAppliedCreditCents,
+        partPaymentReviewTaskRaised,
       };
     });
 
@@ -1225,6 +1234,7 @@ async function performBookingCancellation(
       freshPaymentCaptured,
       creditRestoredCents,
       xeroAllocatedAppliedCreditCents,
+      partPaymentReviewTaskRaised,
     } = claim;
 
     if (creditRestoredCents > 0) {
@@ -1327,6 +1337,7 @@ async function performBookingCancellation(
         xeroClearingAmountCents,
         xeroAllocatedAppliedCreditCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
+        partPaymentReviewTaskRaised,
         creditRestoredCents,
         ...notifyAuditFields,
       },

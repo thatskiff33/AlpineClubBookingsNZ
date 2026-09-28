@@ -49,6 +49,8 @@ export async function recordManualRefundTaskClosureAudit({
     amountCents: number | null;
     raisedAmountCents: number | null;
     kind: ManualRefundTaskKind | null;
+    /** #3643: set on a part-payment review; absent is not one. */
+    partPaymentReviewPaymentId?: string | null;
     /** The booking OWNER, null when it is owned by an Organisation (#3369). */
     booking: { memberId: string | null };
   };
@@ -99,7 +101,9 @@ export async function recordManualRefundTaskClosureAudit({
       summary:
         resolution === "completed"
           ? completionSummary(completionSettlementShape(settlementRoute))
-          : manualRefundTaskKindAllowsSettlement(task.kind)
+          : task.partPaymentReviewPaymentId
+            ? "Part payment settled in Xero closed as dealt with, no money moved here"
+            : manualRefundTaskKindAllowsSettlement(task.kind)
             ? "Manual booking refund task dismissed"
             : "Uncollected booking amount closed as dealt with, no money moved",
       details: note,

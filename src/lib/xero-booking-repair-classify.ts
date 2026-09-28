@@ -1401,7 +1401,13 @@ export function classifyBookingContext(
         ].filter(isRecordedBookingInvoicePayment);
         const invoicePaymentRecorded =
           recordedInvoicePayments.length > 0 || partPaymentRecognised;
-        if (blockingNoteResolvedInXero) {
+        // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2
+        // cancel raised a hand-back task for the payment, and a treasurer has
+        // completed or dismissed it - settled in Xero by hand.
+        const partPaymentReviewClosed = Boolean(
+          payment && context.closedPartPaymentReviewPaymentIds.has(payment.id)
+        );
+        if (blockingNoteResolvedInXero || partPaymentReviewClosed) {
           // Nothing owed: an officer cleared the invoice by hand.
         } else if (
           blockingOperation &&

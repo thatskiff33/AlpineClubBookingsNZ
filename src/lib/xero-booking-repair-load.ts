@@ -3,6 +3,7 @@
 // xero-booking-repair.ts (#1208 item 2).
 import {
   ManualRefundTaskKind,
+  ManualRefundTaskStatus,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
   Prisma,
@@ -277,6 +278,7 @@ export async function loadAuditData(
     editReviewChargeIntentRecoveries,
     lateCaptureApprovalTasks,
     handBackTasks,
+    partPaymentReviewTasks,
     appliedCreditAllocations,
   ] = await Promise.all([
     linkScopes.length > 0
@@ -378,10 +380,29 @@ export async function loadAuditData(
           where: {
             bookingId: { in: bookingIds },
             kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+            // A part-payment review is not cash that arrived (below).
+            partPaymentReviewPaymentId: null,
           },
           select: { bookingId: true, paymentId: true },
         })
       : Promise.resolve([] as { bookingId: string; paymentId: string | null }[]),
+    // #3643 (owner decision 28 Sep 2026): the hand-back task a DECISION 2
+    // cancel raised, and whether a treasurer has closed it.
+    bookingIds.length > 0
+      ? deps.prisma.manualRefundTask.findMany({
+          where: {
+            bookingId: { in: bookingIds },
+            partPaymentReviewPaymentId: { not: null },
+          },
+          select: { bookingId: true, partPaymentReviewPaymentId: true, status: true },
+        })
+      : Promise.resolve(
+          [] as {
+            bookingId: string;
+            partPaymentReviewPaymentId: string | null;
+            status: ManualRefundTaskStatus;
+          }[],
+        ),
     // #3535: INV-PAY-017's allocation term, per booking, for the
     // cancelled-open-invoice arm's clearing-note size. The release and the
     // cancel path first run `repairLegacyAppliedCreditNoteAllocationsForBooking`,
@@ -490,6 +511,14 @@ export async function loadAuditData(
     handBackPaymentIdsByBookingId.set(task.bookingId, ids);
   }
 
+  const closedPartPaymentReviewIdsByBookingId = new Map<string, Set<string>>();
+  for (const task of partPaymentReviewTasks) {
+    if (!task.partPaymentReviewPaymentId || task.status === ManualRefundTaskStatus.OPEN) continue;
+    const ids = closedPartPaymentReviewIdsByBookingId.get(task.bookingId) ?? new Set<string>();
+    ids.add(task.partPaymentReviewPaymentId);
+    closedPartPaymentReviewIdsByBookingId.set(task.bookingId, ids);
+  }
+
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
   for (const operation of operations) {
     if (!operation.localModel || !operation.localId) {
@@ -529,6 +558,8 @@ export async function loadAuditData(
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    closedPartPaymentReviewPaymentIds:
+      closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),

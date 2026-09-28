@@ -14,12 +14,14 @@
  *    could not give the amount exactly (a recorded link while Xero is down, a
  *    figure that did not quantify, a supplementary invoice that could not be
  *    read). DECISION 2: an officer may still cancel; the cancel takes the
- *    unpaid path WITHOUT a clearing note (a full one would over-clear), the
- *    repair tool lists the booking for manual review, and the treasurer is
+ *    unpaid path WITHOUT a clearing note (a full one would over-clear), raises
+ *    a hand-back task (owner decision 28 Sep 2026), the repair tool lists the
+ *    booking for manual review until that task is closed, and the treasurer is
  *    alerted. A member's own cancel is refused, pointing them to the club.
  *  - null: nothing to recognise; the cancel proceeds as before.
  */
 import {
+  ManualRefundTaskKind,
   type Payment,
   PaymentSource,
   PaymentStatus,
@@ -46,6 +48,7 @@ import {
   recordInternetBankingPaymentTransaction,
 } from "@/lib/payment-transactions";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
+import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 export { PART_PAYMENT_RECOGNISED_REASON };
 
@@ -272,9 +275,51 @@ export async function kickClearingNoteForUnpaidRest(
 }
 
 /**
+ * The owner's 28 Sep 2026 decision on DECISION 2: the cancel raises a task in
+ * the hand-back queue, inside the unpaid claim under `pg_advisory_xact_lock(1)`,
+ * so the cancel and its task commit together. Closing the task is what quiets
+ * the repair tool's manual-review finding for the booking (`INV-PAY-107`).
+ *
+ * The task is a `CANCELLED_BOOKING_HAND_BACK` marked by
+ * `partPaymentReviewPaymentId`, with no amount and no `paymentId`: the app does
+ * not know the amount, and a `paymentId` would suppress the organisation
+ * late-cash arm's own sized hand-back, which dedupes on (booking, payment,
+ * kind). One per payment, in any status: the lookup here under the lock, and
+ * the unique marker behind it. Returns whether a task was raised.
+ */
+export async function raisePartPaymentReviewTask(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  paymentId: string,
+  manual: ManualPartPaymentAtCancel,
+): Promise<boolean> {
+  const existing = await tx.manualRefundTask.findFirst({
+    where: { partPaymentReviewPaymentId: paymentId },
+    select: { id: true },
+  });
+  if (existing) return false;
+  const why =
+    manual.why === "organisation"
+      ? "The booking belongs to an organisation, which has no member account to hold it as credit."
+      : "Xero could not give the amount paid exactly.";
+  await tx.manualRefundTask.create({
+    data: {
+      bookingId,
+      partPaymentReviewPaymentId: paymentId,
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      reason: `Booking ${bookingId} was cancelled as unpaid, but Xero records a payment against its invoice. ${why} Nothing has been refunded, credited or cleared here: settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then dismiss this item with a note saying what you did. Do not mark it paid back.`.slice(
+        0,
+        MANUAL_REFUND_TASK_REASON_MAX,
+      ),
+    },
+  });
+  return true;
+}
+
+/**
  * DECISION 2: an officer cancelled a booking with money the app cannot credit.
  * The treasurer is told once, through the hold alert's own claim-guarded
- * channel; the repair tool lists the booking for manual review.
+ * channel; the claim raised a hand-back task (above) for the repair tool.
  */
 export async function alertManualPartPaymentCancel(
   booking: ExpiredHoldView["booking"] & {
