@@ -96,6 +96,17 @@ async function getAdminAlertEmails(
     .map((admin) => admin.email);
 }
 
+/**
+ * What `sendToAdmins` did (#3643). Callers that ignore it behave as before; a
+ * caller holding a once-only claim uses it to give the claim back when nobody
+ * was reached but somebody could have been.
+ */
+export type AdminAlertSendOutcome =
+  | "sent"
+  | "skipped-by-policy"
+  | "no-recipients"
+  | "undelivered";
+
 /** Send an email to all active admins who opted into the alert category. */
 export async function sendToAdmins({
   subject,
@@ -111,14 +122,14 @@ export async function sendToAdmins({
   preferenceKey: AdminNotificationPreferenceKey;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}) {
+}): Promise<AdminAlertSendOutcome> {
   const delivery = await shouldSendAdminSystemEmail({ templateName });
   if (!delivery.send) {
     logger.info(
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
       "Skipped admin email by delivery policy",
     );
-    return;
+    return "skipped-by-policy";
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
@@ -167,6 +178,8 @@ export async function sendToAdmins({
       ),
     );
   }
+  if (outcomes.length === 0) return "no-recipients";
+  return outcomes.some((outcome) => outcome.status === "sent") ? "sent" : "undelivered";
 }
 
 /**

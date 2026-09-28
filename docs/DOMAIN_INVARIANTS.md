@@ -292,6 +292,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
 | `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
+| `INV-PAY-107` | An expired hold with money against its invoice is kept, not released |
+| `INV-PAY-108` | A part payment under review is never handed back or credited twice |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
 | `INV-PAY-106` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |

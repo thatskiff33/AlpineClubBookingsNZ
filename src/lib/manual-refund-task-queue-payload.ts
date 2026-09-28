@@ -4,6 +4,7 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -46,6 +47,11 @@ export type OpenManualRefundTaskRow = {
   kind: string | null;
   /** #3639: set on a late capture held for a treasurer's approval. */
   lateCaptureApprovalIntentId: string | null;
+  /** #3643: set on a part-payment review, settled in Xero rather than here. */
+  partPaymentReviewPaymentId: string | null;
+  /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
+  partPaymentReviewXeroPaidAt: Date | null;
+  partPaymentReviewXeroPaidCents: number | null;
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
@@ -104,6 +110,19 @@ export type OpenManualRefundTaskPayload = {
    * through Stripe, so none of the hand-back wording fits it.
    */
   awaitingLateCaptureApproval: boolean;
+  /**
+   * #3643: a payment recorded against an invoice an officer cancelled as
+   * unpaid, which the club settles in Xero. It has no amount and closes only by
+   * dismissal, so none of the hand-back wording fits it either.
+   */
+  partPaymentReview: boolean;
+  /**
+   * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
+   * Xero sync learned the invoice was reported PAID and the invoice's cash then.
+   * Nothing was credited or handed back for it; the treasurer decides. The
+   * card prints it, because this - not the best-effort email - is the record.
+   */
+  partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -171,6 +190,16 @@ export function toOpenManualRefundTaskPayload(
     raisedAmountCents: task.raisedAmountCents,
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
+    partPaymentReview: isPartPaymentReviewTask(task),
+    partPaymentReviewXeroPaid:
+      isPartPaymentReviewTask(task) &&
+      task.partPaymentReviewXeroPaidAt &&
+      task.partPaymentReviewXeroPaidCents !== null
+        ? {
+            reportedAt: task.partPaymentReviewXeroPaidAt.toISOString(),
+            cashCents: task.partPaymentReviewXeroPaidCents,
+          }
+        : null,
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

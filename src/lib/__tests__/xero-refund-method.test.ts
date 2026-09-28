@@ -22,6 +22,7 @@ import {
   refundMethodForSettlementMethod,
   refundSettlementMappingKey,
   settledModificationNoteWording,
+  UNPAID_BALANCE_CLEARING_WORDING,
   UNPAID_INVOICE_CLEARING_WORDING,
 } from "@/lib/xero-refund-method";
 
@@ -102,6 +103,26 @@ describe("the unpaid-invoice clearing wording (INV-PAY-017)", () => {
       clearsUnpaidInvoice: true,
     });
   });
+
+  // #3643 (`INV-PAY-107`): a partly paid booking's clearing note clears the
+  // unpaid BALANCE; "booking not paid" would be false on it.
+  it("says 'unpaid balance cleared' for a partly paid booking, read by the same one rule", () => {
+    expect(UNPAID_BALANCE_CLEARING_WORDING).toBe("Unpaid balance cleared - booking cancelled");
+    expect(UNPAID_BALANCE_CLEARING_WORDING).not.toMatch(/not paid|refund/i);
+    const stored = { clearsUnpaidInvoice: true, clearsUnpaidBalance: true } as const;
+    expect(readModificationNoteWording(stored)).toEqual(stored);
+    expect(settledModificationNoteWording(stored)).toEqual(stored);
+    expect(modificationNoteWording(stored)).toBe("unpaid-balance-clearing");
+    expect(
+      buildRefundDocumentDescription({ method: "unpaid-balance-clearing", bookingId: "cmabcdefgh123" }),
+    ).toBe("Unpaid balance cleared - booking cancelled - Booking cmabcdef");
+    // The balance flag means nothing without the clearing flag, and only a
+    // literal true counts.
+    expect(readModificationNoteWording({ clearsUnpaidBalance: true })).toEqual({});
+    expect(
+      readModificationNoteWording({ clearsUnpaidInvoice: true, clearsUnpaidBalance: "true" }),
+    ).toEqual({ clearsUnpaidInvoice: true });
+  });
 });
 
 describe("where the method comes from when nobody said", () => {
@@ -171,6 +192,8 @@ describe("nobody else spells the wording (INV-SSOT)", () => {
     for (const wording of [
       ...Object.values(REFUND_METHOD_WORDING),
       UNPAID_INVOICE_CLEARING_WORDING,
+      // #3643: the partly-paid booking's clearing note.
+      UNPAID_BALANCE_CLEARING_WORDING,
     ]) {
       // Any quoting counts: no lint rule pins double quotes, so a copy in
       // single quotes or a template literal is still a copy.

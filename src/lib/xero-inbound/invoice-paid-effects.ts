@@ -33,6 +33,7 @@ import { bookingHasCapacityOverride, isPaidLikeBookingStatus } from "@/lib/booki
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
+import { routeLateCashToPartPaymentReview } from "@/lib/part-payment-review-cover";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
@@ -71,10 +72,12 @@ type XeroInvoiceCashEvidence = "cash" | "none" | "indeterminate";
 //     must NOT override it (stale entries could linger there).
 //  3. The invoice's actual payment records are the fallback, ignoring
 //     DELETED (reversed) payments.
-//  4. A payload carrying none of these fields is "indeterminate" — the fresh
-//     getInvoice fetch behind the only caller always carries the cash
-//     fields, so this arm only guards degraded payload shapes.
-function classifyXeroInvoiceCashEvidence(
+//  4. A payload carrying none of these fields is "indeterminate". Both callers
+//     read a fresh getInvoice (this module's reconcile, and the hold-expiry
+//     payment check and cancel-time recognition, #3643), which always carries
+//     the cash fields, so this arm only guards degraded payload shapes; the
+//     hold-expiry check treats it as unreadable, never as unpaid.
+export function classifyXeroInvoiceCashEvidence(
   invoice: Invoice
 ): XeroInvoiceCashEvidence {
   if (
@@ -115,10 +118,12 @@ type XeroInvoiceCashQuantification = {
 // instead — an upper bound (the overpayment may be partly applied
 // elsewhere), so it also marks the result incomplete. Any present-but-
 // unreadable component marks the result incomplete without discarding the
-// components that did quantify: the known floor stays usable. The fresh
-// getInvoice fetch behind the only caller always carries the amount fields,
-// so incomplete results only arise from degraded payload shapes.
-function quantifyXeroInvoiceCashCents(
+// components that did quantify: the known floor stays usable. Both callers
+// (this module and #3643's hold payment check) quantify a fresh getInvoice,
+// which always carries the amount fields, so incomplete results only arise
+// from degraded payload shapes; #3643 refuses to record an incomplete figure
+// as captured money.
+export function quantifyXeroInvoiceCashCents(
   invoice: Invoice
 ): XeroInvoiceCashQuantification {
   let knownCents = 0;
@@ -706,6 +711,23 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             otherMintedCents,
           );
 
+        // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): while a part-payment
+        // review names this payment, open or closed, neither arm below sizes
+        // or mints anything. The event is written onto the review instead, in
+        // this transaction, and the treasurer decides the cash.
+        const reviewRouting =
+          invoiceHasCashPayment && paymentNeverSettled
+            ? await routeLateCashToPartPaymentReview(tx, {
+                paymentId: settlementPayment.id,
+                eventInvoiceId: invoiceId,
+                cashCents: invoiceCash.knownCents,
+              })
+            : ({ routed: false } as const);
+        const partPaymentReviewRouted = reviewRouting.routed;
+        const partPaymentReviewReopened = reviewRouting.routed && reviewRouting.reopened;
+        const partPaymentReviewNoted = reviewRouting.routed && reviewRouting.noted;
+        const actionableCents = partPaymentReviewRouted ? 0 : mintableCents;
+
         if (!creditMemberId) {
           // The same three conditions the member arm mints under: cash really
           // arrived, the payment never settled, and there are cents to hand
@@ -713,7 +735,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // on status, so a replay after an officer has CLOSED the task does
           // not raise a second one — a webhook may be delivered any number of
           // times, and this is money.
-          const handBackCents = mintableCents;
+          const handBackCents = actionableCents;
           const shouldHandBack =
             invoiceHasCashPayment && paymentNeverSettled && handBackCents > 0;
           const alreadyRaised = shouldHandBack
@@ -759,6 +781,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               organisationId: settlementPayment.booking.organisationId,
               handBackCents,
               taskRaised: shouldHandBack && !alreadyRaised,
+              partPaymentReviewRouted,
             },
             "Internet Banking payment on a cancelled organisation-owned booking: no member account to credit, so a manual hand-back task carries the money instead (#3369)."
           );
@@ -781,6 +804,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             // back — a replay, an allocation-cleared invoice — and stays silent
             // exactly as the member arm does in the same states.
             organisationHandBackCents: shouldHandBack ? handBackCents : 0,
+            partPaymentReviewRouted,
+            partPaymentReviewReopened,
+            partPaymentReviewNoted,
             // #3535: either note shape, not only the old refund note's field.
             clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
           };
@@ -807,7 +833,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           invoiceHasCashPayment &&
           paymentNeverSettled &&
           !existingCredit &&
-          mintableCents > 0;
+          actionableCents > 0;
 
         // A partial mint's remainder never auto-credits: a later PAID event
         // for this invoice lands here with a settled payment (or the dedup
@@ -831,6 +857,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // that quantifies to nothing), or the invoice's cash was already fully
         // minted for the other payments matched to it (#1505 aggregate cap).
         const zeroCashAnomaly =
+          !partPaymentReviewRouted &&
           invoiceHasCashPayment &&
           paymentNeverSettled &&
           !existingCredit &&
@@ -866,7 +893,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await tx.memberCredit.create({
             data: {
               memberId: creditMemberId,
-              amountCents: mintableCents,
+              amountCents: actionableCents,
               type: CreditType.CANCELLATION_REFUND,
               description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
               sourceBookingId: settlementPayment.bookingId,
@@ -899,7 +926,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await retirePendingClearingNote(tx, settlementPayment.bookingId);
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
-            mintableCents,
+            actionableCents,
             { store: tx },
           );
         }
@@ -909,7 +936,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           payment: settlementPayment,
           paymentWasPending,
           credited,
-          creditedCents: mintableCents,
+          creditedCents: actionableCents,
           creditedPartial: mintPartial,
           cashUnverified,
           aggregateCapped,
@@ -919,6 +946,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // construction — it only runs when there IS a member. Stated rather
           // than left to the union, so both arms return the same shape.
           organisationHandBackCents: 0,
+          partPaymentReviewRouted,
+          partPaymentReviewReopened,
+          partPaymentReviewNoted,
           // #3535: either note shape, not only the old refund note's field.
           clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
         };
@@ -1387,12 +1417,31 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.organisationHandBackCents,
-          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents, format)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for the full amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+          errorMessage: `Internet Banking cash of ${formatCents(outcome.organisationHandBackCents, format)} arrived for an already-cancelled booking that belongs to an ORGANISATION. An organisation has no member account, so the money is NOT held as account credit — a manual refund task has been raised on the payments board for that amount and stays open until somebody returns the money and closes it. Verify the invoice in Xero, then refund the organisation directly.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
           paymentIntentId: invoiceId,
         }, format).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about an Internet Banking payment on a cancelled organisation-owned booking"
+          )
+        );
+      } else if (outcome.partPaymentReviewRouted) {
+        // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): a part-payment review
+        // names this payment, so this event moved no money and was written
+        // onto the review. The email is best-effort; the note on the review is
+        // the record. Sent only when this event wrote the note, so a replay
+        // that found one says nothing again.
+        if (outcome.partPaymentReviewNoted) sendAdminPaymentFailureAlert({
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`.trim(),
+          checkIn: outcome.payment.booking.checkIn,
+          checkOut: outcome.payment.booking.checkOut,
+          amountCents: outcome.payment.amountCents,
+          errorMessage: `Xero reports the invoice of a cancelled booking as paid. When the booking was cancelled, a payment was already recorded against that invoice and a review was raised in the hand-back queue for the treasurer to settle it in Xero. While that review exists the app never credits or hands back cash for the invoice by itself, so nothing has been credited or handed back; the review now records that Xero reported the invoice paid, and with how much cash. ${outcome.partPaymentReviewReopened ? "The review had been closed, so it has been put back on the queue." : "The review is still open on the queue."} Check the invoice in Xero, settle any cash beyond what the review already covered, then close the review with a note saying what you did.`,
+          paymentIntentId: invoiceId,
+        }, format).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to alert admins about a paid invoice on a cancelled booking under part-payment review"
           )
         );
       } else if (outcome.zeroCashAnomaly) {

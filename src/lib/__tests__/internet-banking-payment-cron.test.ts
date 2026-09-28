@@ -27,7 +27,18 @@ const mocks = vi.hoisted(() => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
   reconcileHostingReviewForSystemCancellation: vi.fn(),
   settleHostingCoverageAfterCommit: vi.fn(),
+  // #3643: the payment-evidence seam. Default = nobody paid, so every
+  // pre-#3643 test below still exercises the release it always did.
+  readHoldPaymentEvidence: vi.fn(),
+  hasRecordedInvoicePayment: vi.fn(),
   claimAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
+  markAlertOwed: vi.fn(),
+  listOwedAlertKeys: vi.fn(),
+  settleOwedAlert: vi.fn(),
+  checkRateLimit: vi.fn(),
+  paymentFindUnique: vi.fn(),
+  sendAdminInternetBankingHoldKeptAlert: vi.fn(),
   sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
 }));
 
@@ -35,6 +46,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: {
       findMany: mocks.paymentFindMany,
+      findUnique: mocks.paymentFindUnique,
     },
     $transaction: mocks.transaction,
   },
@@ -64,12 +76,25 @@ vi.mock("@/lib/booking-events", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendBookingCancelledEmail: mocks.sendBookingCancelledEmail,
+  sendAdminInternetBankingHoldKeptAlert:
+    mocks.sendAdminInternetBankingHoldKeptAlert,
   sendAdminInternetBankingHoldStartedStayAlert: mocks.sendAdminInternetBankingHoldStartedStayAlert,
+}));
+
+vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
+  readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
+  hasRecordedInvoicePayment: mocks.hasRecordedInvoicePayment,
 }));
 
 vi.mock("@/lib/alert-cooldown", () => ({
   claimAlertCooldown: mocks.claimAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
+  markAlertOwed: mocks.markAlertOwed,
+  listOwedAlertKeys: mocks.listOwedAlertKeys,
+  settleOwedAlert: mocks.settleOwedAlert,
 }));
+
+vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit }));
 
 // #3663: the started-stay rule reads the club's day in the club's zone.
 vi.mock("@/lib/club-time-zone-runtime", () => ({
@@ -120,6 +145,24 @@ vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
 import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
 
 const NOW = new Date("2026-07-06T08:00:00Z");
+
+// #3643: runs before every describe's own beforeEach (whose clearAllMocks
+// keeps implementations), so the whole file defaults to "nobody paid".
+beforeEach(() => {
+  mocks.readHoldPaymentEvidence.mockResolvedValue({
+    kind: "unpaid",
+    readStartedAt: new Date("2026-07-06T07:59:00Z"),
+    invoices: [],
+  });
+  mocks.hasRecordedInvoicePayment.mockResolvedValue(false);
+  mocks.claimAlertCooldown.mockResolvedValue(true);
+  mocks.sendAdminInternetBankingHoldKeptAlert.mockResolvedValue("sent");
+  mocks.releaseAlertCooldown.mockResolvedValue(undefined);
+  mocks.markAlertOwed.mockResolvedValue(undefined);
+  mocks.listOwedAlertKeys.mockResolvedValue([]);
+  mocks.settleOwedAlert.mockResolvedValue(undefined);
+  mocks.checkRateLimit.mockResolvedValue({ success: true });
+});
 
 /**
  * #3535: the note a released hold enqueues — the never-captured cancel path's
@@ -853,5 +896,540 @@ describe("releaseExpiredInternetBankingHolds adult-member hosting (#3209)", () =
     expect(result.failed).toBe(1);
     expect(result.released).toBe(0);
     expect(mocks.settleHostingCoverageAfterCommit).not.toHaveBeenCalled();
+  });
+});
+
+// #3643 (`INV-PAY-107`, owner decision option A; orchestrator decision on the
+// thread for the unreadable bound): a hold whose invoice has any money against
+// it is not released; the treasurer is told once per hold per reason; an
+// unreadable invoice is kept until check-in or seven days past the deadline,
+// then released with a second alert; a payment recorded between the live read
+// and the lock still keeps the hold.
+describe("releaseExpiredInternetBankingHolds keeps a hold with money against it (#3643)", () => {
+  const READ_AT = new Date("2026-07-06T07:59:00Z");
+  const PART_PAID = {
+    kind: "paid",
+    readStartedAt: READ_AT,
+    invoices: [],
+    fromRecordedLinkOnly: false,
+    paidCents: 15000,
+    cashComplete: true,
+    amountDueCents: 15000,
+    paidInFull: false,
+  };
+  const UNREADABLE = {
+    kind: "unreadable",
+    readStartedAt: READ_AT,
+    reason: "Xero is not connected. Please connect via admin panel.",
+    notFound: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          $executeRaw: mocks.txExecuteRaw,
+          payment: {
+            findUnique: mocks.txPaymentFindUnique,
+            update: mocks.txPaymentUpdate,
+          },
+          booking: { update: mocks.txBookingUpdate },
+          memberCreditNoteAllocation: {
+            aggregate: mocks.txMemberCreditAggregate,
+          },
+          paymentTransaction: { findMany: mocks.txPaymentTransactionFindMany },
+        }),
+    );
+    mocks.paymentFindMany.mockResolvedValue([makeExpiredPayment()]);
+    mocks.txPaymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.restoreCreditFromBooking.mockResolvedValue(0);
+    mocks.txMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op_refund_note_1",
+    });
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
+    mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.recordBookingEvent.mockResolvedValue(undefined);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(undefined);
+    mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
+  });
+
+  function expectNothingReleased() {
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.processWaitlistForDates).not.toHaveBeenCalled();
+  }
+
+  it("keeps a part-paid hold, opens no transaction, and alerts the treasurer with the money", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue({
+      ...PART_PAID,
+      paidCents: 5000,
+      amountDueCents: 10000,
+    });
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 1, released: 0, skipped: 0, failed: 0 });
+    expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "pay_ib_1", xeroInvoiceId: "inv_ib_1" }),
+    );
+    expectNothingReleased();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "internet-banking-hold-kept:part-paid:pay_ib_1:2026-07-05T08:00:00.000Z",
+      }),
+    );
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "part-paid",
+        bookingId: "booking_ib_1",
+        paidCents: 5000,
+        amountOwingCents: 10000,
+        xeroInvoiceNumber: "INV-IB-001",
+        xeroInvoiceUrl: expect.stringContaining("inv_ib_1"),
+      }),
+      expect.anything(),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.internet_banking_hold_kept",
+        outcome: "blocked",
+      }),
+    );
+  });
+
+  it("says 'paid in full, sync behind' rather than 'wait for the rest' when nothing is owed", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue({
+      ...PART_PAID,
+      amountDueCents: 0,
+      paidInFull: true,
+    });
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.kept).toBe(1);
+    expectNothingReleased();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "paid-in-full", amountOwingCents: 0 }),
+      expect.anything(),
+    );
+  });
+
+  it("alerts once per hold: a later run that loses the claim sends nothing and still keeps the hold", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    mocks.claimAlertCooldown.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const first = await releaseExpiredInternetBankingHolds(NOW);
+    const second = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(first.kept).toBe(1);
+    expect(second.kept).toBe(1);
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.createAuditLog).toHaveBeenCalledTimes(1);
+    expectNothingReleased();
+  });
+
+  it("gives the claim back when the first send reached nobody, so the next run sends it", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    mocks.sendAdminInternetBankingHoldKeptAlert
+      .mockResolvedValueOnce("undelivered")
+      .mockResolvedValueOnce("sent");
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    const key = "internet-banking-hold-kept:part-paid:pay_ib_1:2026-07-05T08:00:00.000Z";
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledWith({ key });
+    // Not settled yet, so not audited yet.
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledTimes(2);
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledTimes(1);
+    expect(mocks.createAuditLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("also gives the claim back when the send throws", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockRejectedValueOnce(new Error("SES down"));
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the claim when the club's delivery rules muted the alert (nothing to retry)", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockResolvedValueOnce("skipped-by-policy");
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the paid figure as unknown when only the recorded link says money arrived", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue({
+      ...PART_PAID,
+      fromRecordedLinkOnly: true,
+      paidCents: 0,
+      cashComplete: false,
+      amountDueCents: null,
+    });
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    // D5: the app's cancel cannot credit a payment it cannot size, so the
+    // email says the officer's cancel is an unpaid one settled by hand.
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "part-paid-manual",
+        paidCents: null,
+        amountOwingCents: null,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("releases a fully unpaid hold exactly as before", async () => {
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 0, released: 1 });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(15000),
+      expect.anything(),
+    );
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).not.toHaveBeenCalled();
+    expect(mocks.claimAlertCooldown).not.toHaveBeenCalled();
+  });
+
+  it("re-checks only links recorded since the live read started", async () => {
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.hasRecordedInvoicePayment).toHaveBeenCalledWith(
+      { paymentId: "pay_ib_1", bookingId: "booking_ib_1", since: READ_AT },
+      expect.anything(),
+    );
+  });
+
+  it("does not ask Xero or alert about a booking the release would skip anyway", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    const notConfirmed = makeExpiredPayment({
+      booking: { ...makeExpiredPayment().booking, status: "CANCELLED" },
+    });
+    mocks.paymentFindMany.mockResolvedValue([notConfirmed]);
+    mocks.txPaymentFindUnique.mockResolvedValue(notConfirmed);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 0, skipped: 1, released: 0 });
+    expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).not.toHaveBeenCalled();
+  });
+
+  it("releases a hold with no issued invoice (nothing to pay against) as before", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue({ kind: "no-invoice", readStartedAt: READ_AT });
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 0, released: 1 });
+  });
+
+  it("keeps a hold whose invoice cannot be read and alerts once, inside the bound", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.kept).toBe(1);
+    expectNothingReleased();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: "internet-banking-hold-kept:unreadable:pay_ib_1:2026-07-05T08:00:00.000Z",
+      }),
+    );
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "unreadable",
+        paidCents: null,
+        amountOwingCents: null,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("releases an unreadable hold seven days past its deadline, with the second alert", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+    // Deadline 5 July 08:00Z; seven days on is 12 July 08:00Z. Check-in stays
+    // later (20 July), so only the seven-day arm can fire.
+    const later = new Date("2026-07-12T08:00:00Z");
+
+    const result = await releaseExpiredInternetBankingHolds(later);
+
+    expect(result).toMatchObject({ kept: 0, released: 1 });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      clearingNote(15000),
+      expect.anything(),
+    );
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "released-unreadable" }),
+      expect.anything(),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "booking.internet_banking_hold_released_unreadable" }),
+    );
+  });
+
+  it("still keeps an unreadable hold one minute inside the seven days", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+
+    const result = await releaseExpiredInternetBankingHolds(new Date("2026-07-12T07:59:00Z"));
+
+    expect(result).toMatchObject({ kept: 1, released: 0 });
+    expectNothingReleased();
+  });
+
+  // Composed with #3663 (INV-PAY-016): the unreadable-invoice bound's
+  // check-in arm hands the hold to the started-stay rule rather than
+  // releasing it. A stay that has started is never cancelled; it is left for
+  // reconciliation by hand, with #3663's one alert.
+  it("leaves an unreadable hold alone once the club's check-in day arrives, for the started-stay rule", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+    // 08:00Z on 6 July is 20:00 on 6 July in Auckland: check-in day has arrived.
+    const atCheckIn = makeExpiredPayment({
+      booking: { ...makeExpiredPayment().booking, checkIn: new Date("2026-07-06") },
+    });
+    mocks.paymentFindMany.mockResolvedValue([atCheckIn]);
+    mocks.txPaymentFindUnique.mockResolvedValue(atCheckIn);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 0, released: 0, skippedStarted: 1 });
+    // The release transaction opens, reads the stay under lock(1), and writes nothing.
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "released-unreadable" }),
+      expect.anything(),
+    );
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).toHaveBeenCalledTimes(1);
+  });
+
+  // And a part-paid hold whose stay has started is still KEPT by #3643, with
+  // the part-paid alert: the money path answers before the release is tried.
+  it("keeps a part-paid hold whose stay has started, with the part-paid alert, not the started-stay one", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+    const started = makeExpiredPayment({
+      booking: { ...makeExpiredPayment().booking, checkIn: new Date("2026-07-06") },
+    });
+    mocks.paymentFindMany.mockResolvedValue([started]);
+    mocks.txPaymentFindUnique.mockResolvedValue(started);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 1, released: 0, skippedStarted: 0 });
+    expectNothingReleased();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "part-paid" }),
+      expect.anything(),
+    );
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
+  });
+
+  it("never releases a part-paid hold at the bound", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+
+    const result = await releaseExpiredInternetBankingHolds(new Date("2026-07-30T08:00:00Z"));
+
+    expect(result).toMatchObject({ kept: 1, released: 0 });
+    expectNothingReleased();
+  });
+
+  it("still keeps the hold when a payment is recorded between the read and the lock", async () => {
+    mocks.hasRecordedInvoicePayment.mockResolvedValue(true);
+    mocks.readHoldPaymentEvidence
+      .mockResolvedValueOnce({ kind: "unpaid", readStartedAt: READ_AT, invoices: [] })
+      .mockResolvedValueOnce(PART_PAID);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ kept: 1, released: 0, skipped: 0 });
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "part-paid" }),
+      expect.anything(),
+    );
+  });
+
+  it("reads at most the per-run cap of holds and leaves the rest for a later run", async () => {
+    const holds = Array.from({ length: 25 }, (_, i) =>
+      makeExpiredPayment({
+        id: `pay_${i}`,
+        bookingId: `booking_${i}`,
+        booking: { ...makeExpiredPayment().booking, id: `booking_${i}` },
+      }),
+    );
+    mocks.paymentFindMany.mockResolvedValue(holds);
+    mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledTimes(20);
+    expect(result).toMatchObject({ scanned: 25, kept: 20, deferred: 5 });
+
+    // The next 15-minute run reads a different window of them.
+    mocks.readHoldPaymentEvidence.mockClear();
+    await releaseExpiredInternetBankingHolds(new Date(NOW.getTime() + 15 * 60 * 1000));
+    const secondRunIds = mocks.readHoldPaymentEvidence.mock.calls.map(
+      ([hold]) => (hold as { id: string }).id,
+    );
+    expect(secondRunIds).toContain("pay_24");
+  });
+});
+
+describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", () => {
+  const READ_AT = new Date("2026-07-06T07:59:00Z");
+  const UNREADABLE = {
+    kind: "unreadable",
+    readStartedAt: READ_AT,
+    reason: "Xero is not connected.",
+    notFound: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          $executeRaw: mocks.txExecuteRaw,
+          payment: { findUnique: mocks.txPaymentFindUnique, update: mocks.txPaymentUpdate },
+          booking: { update: mocks.txBookingUpdate },
+          memberCreditNoteAllocation: { aggregate: mocks.txMemberCreditAggregate },
+          paymentTransaction: { findMany: mocks.txPaymentTransactionFindMany },
+        }),
+    );
+    mocks.paymentFindMany.mockResolvedValue([makeExpiredPayment()]);
+    mocks.txPaymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.restoreCreditFromBooking.mockResolvedValue(0);
+    mocks.txMemberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({ queueOperationId: "op_1" });
+    mocks.findUnconvergedAppliedCreditDeallocation.mockResolvedValue(null);
+    mocks.repairLegacyAppliedCreditNoteAllocationsForBooking.mockResolvedValue(0);
+    mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.recordBookingEvent.mockResolvedValue(undefined);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(undefined);
+    mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
+  });
+
+  it("D4: a released-unreadable alert that reached nobody is audited anyway and marked owed, never given back", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockResolvedValue("undelivered");
+
+    const result = await releaseExpiredInternetBankingHolds(new Date("2026-07-12T08:00:00Z"));
+
+    expect(result.released).toBe(1);
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.markAlertOwed).toHaveBeenCalledWith({
+      key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
+    });
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.internet_banking_hold_released_unreadable",
+        details: expect.stringContaining('"alertDelivery":"undelivered"'),
+      }),
+    );
+  });
+
+  it("D4: the next run delivers the owed alert and settles it", async () => {
+    mocks.paymentFindMany.mockResolvedValue([]);
+    const key = "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1";
+    mocks.listOwedAlertKeys.mockResolvedValue([key]);
+    mocks.paymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockResolvedValue("sent");
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "released-unreadable", bookingId: "booking_ib_1" }),
+      expect.anything(),
+    );
+    expect(mocks.settleOwedAlert).toHaveBeenCalledWith({ key });
+  });
+
+  it("D4: an owed alert still undelivered stays owed", async () => {
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.listOwedAlertKeys.mockResolvedValue([
+      "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
+    ]);
+    mocks.paymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockResolvedValue("undelivered");
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
+  });
+
+  it("D5: an organisation's part-paid hold is worded as settled by hand", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue({
+      kind: "paid",
+      readStartedAt: READ_AT,
+      invoices: [],
+      fromRecordedLinkOnly: false,
+      paidCents: 5000,
+      cashComplete: true,
+      amountDueCents: 10000,
+      paidInFull: false,
+    });
+    const org = makeExpiredPayment({
+      booking: {
+        ...makeExpiredPayment().booking,
+        memberId: null,
+        member: null,
+        organisationId: "org_1",
+        organisation: { name: "School", email: "school@example.com" },
+      },
+    });
+    mocks.paymentFindMany.mockResolvedValue([org]);
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.sendAdminInternetBankingHoldKeptAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "part-paid-manual", memberName: "School" }),
+      expect.anything(),
+    );
+  });
+
+  it("D9: with the day's read budget spent, a hold is left for later, neither read nor released", async () => {
+    mocks.checkRateLimit.mockResolvedValue({ success: false });
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ deferred: 1, released: 0, kept: 0 });
+    expect(mocks.readHoldPaymentEvidence).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ib-hold-xero-reads" }),
+      "club",
+    );
   });
 });

@@ -263,7 +263,12 @@ export function nightPricesRecordedMessage(count: number): string {
  */
 export function dismissalMessage(
   kind: ManualRefundTaskKind | string | null | undefined,
+  /** #3643: a part-payment review, settled in Xero rather than here. Required. */
+  partPaymentReview: boolean,
 ): string {
-  if (manualRefundTaskKindAllowsSettlement(kind)) return "Refund task dismissed.";
+  if (partPaymentReview) {
+    return "Item closed. It moved no money here — your note is the record of how the payment was settled in Xero.";
+  }
+  if (manualRefundTaskKindAllowsSettlement(kind, false)) return "Refund task dismissed.";
   return "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.";
 }

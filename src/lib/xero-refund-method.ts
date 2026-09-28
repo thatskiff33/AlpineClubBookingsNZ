@@ -51,8 +51,20 @@ export function describeRefundMethod(method: RefundMethod): string {
  */
 export const UNPAID_INVOICE_CLEARING_WORDING = "Invoice cleared - booking not paid";
 
+/**
+ * #3643 (`INV-PAY-107`): the same clearing note on a booking that WAS partly
+ * paid — cancelled after the cancel path recorded the part payment Xero showed,
+ * so the note clears only the unpaid rest. "Booking not paid" would be false on
+ * it. A caller asks with `clearsUnpaidBalance: true` beside
+ * `clearsUnpaidInvoice: true`; every clearing behaviour keys off the latter.
+ */
+export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking cancelled";
+
 /** What a credit document's wording is chosen from: how money went back, or that none was owed back. */
-export type CreditDocumentWording = RefundMethod | "unpaid-invoice-clearing";
+export type CreditDocumentWording =
+  | RefundMethod
+  | "unpaid-invoice-clearing"
+  | "unpaid-balance-clearing";
 
 /**
  * What the invoice-applied modification credit note is told to say, from its
@@ -61,19 +73,28 @@ export type CreditDocumentWording = RefundMethod | "unpaid-invoice-clearing";
  * Never both — a clearing note has no refund method to name.
  */
 export type ModificationNoteWording =
-  | { refundMethod?: RefundMethod; clearsUnpaidInvoice?: undefined }
-  | { clearsUnpaidInvoice: true; refundMethod?: undefined };
+  | { refundMethod?: RefundMethod; clearsUnpaidInvoice?: undefined; clearsUnpaidBalance?: undefined }
+  | { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true; refundMethod?: undefined };
 
 /**
- * The ONE reading of the two fields, from a typed caller, a stored payload or a
+ * The ONE reading of the fields, from a typed caller, a stored payload or a
  * repair action alike: `clearsUnpaidInvoice` counts only when it is literally
- * `true`, and then no refund method is carried; otherwise the refund method if
- * it is one of the three. Spread the result wherever the choice is passed on.
+ * `true`, and then no refund method is carried — only whether the note clears
+ * the unpaid balance of a partly paid booking (`clearsUnpaidBalance`, also
+ * literally `true`, #3643); otherwise the refund method if it is one of the
+ * three. Spread the result wherever the choice is passed on.
  */
 export function readModificationNoteWording(
-  raw: { clearsUnpaidInvoice?: unknown; refundMethod?: unknown } | null | undefined,
+  raw:
+    | { clearsUnpaidInvoice?: unknown; clearsUnpaidBalance?: unknown; refundMethod?: unknown }
+    | null
+    | undefined,
 ): ModificationNoteWording {
-  if (raw?.clearsUnpaidInvoice === true) return { clearsUnpaidInvoice: true };
+  if (raw?.clearsUnpaidInvoice === true) {
+    return raw.clearsUnpaidBalance === true
+      ? { clearsUnpaidInvoice: true, clearsUnpaidBalance: true }
+      : { clearsUnpaidInvoice: true };
+  }
   const refundMethod = parseRefundMethod(raw?.refundMethod);
   return refundMethod ? { refundMethod } : {};
 }
@@ -84,7 +105,7 @@ export function readModificationNoteWording(
  */
 export function settledModificationNoteWording(
   choice: ModificationNoteWording,
-): { clearsUnpaidInvoice: true } | { refundMethod: RefundMethod } {
+): { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true } | { refundMethod: RefundMethod } {
   const read = readModificationNoteWording(choice);
   return read.clearsUnpaidInvoice ? read : { refundMethod: read.refundMethod ?? "card" };
 }
@@ -92,13 +113,14 @@ export function settledModificationNoteWording(
 /** The wording a modification note carries. */
 export function modificationNoteWording(choice: ModificationNoteWording): CreditDocumentWording {
   const settled = settledModificationNoteWording(choice);
-  return "clearsUnpaidInvoice" in settled ? "unpaid-invoice-clearing" : settled.refundMethod;
+  if (!("clearsUnpaidInvoice" in settled)) return settled.refundMethod;
+  return settled.clearsUnpaidBalance ? "unpaid-balance-clearing" : "unpaid-invoice-clearing";
 }
 
 function describeCreditDocumentWording(wording: CreditDocumentWording): string {
-  return wording === "unpaid-invoice-clearing"
-    ? UNPAID_INVOICE_CLEARING_WORDING
-    : describeRefundMethod(wording);
+  if (wording === "unpaid-invoice-clearing") return UNPAID_INVOICE_CLEARING_WORDING;
+  if (wording === "unpaid-balance-clearing") return UNPAID_BALANCE_CLEARING_WORDING;
+  return describeRefundMethod(wording);
 }
 
 export function isRefundMethod(value: unknown): value is RefundMethod {

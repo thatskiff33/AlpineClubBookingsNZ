@@ -45,3 +45,66 @@ export async function claimAlertCooldown({
     throw error;
   }
 }
+
+/**
+ * Give a claimed window back (#3643). For a caller whose window is "once, ever"
+ * and whose send can fail: a claim kept after an undelivered send would make
+ * the one notification disappear for good, so the caller releases it and the
+ * next run tries again.
+ */
+export async function releaseAlertCooldown({
+  key,
+  store = prisma,
+}: {
+  key: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.deleteMany({ where: { key } });
+}
+
+/**
+ * An alert that could not be delivered and whose subject no run will select
+ * again (#3643: a hold already released). The marker is the durable "owed";
+ * the next run drains it (`listOwedAlertKeys`) and settles it once delivered.
+ * The key is its own namespace, beside the window key the send claimed.
+ */
+export async function markAlertOwed({
+  key,
+  now = new Date(),
+  store = prisma,
+}: {
+  key: string;
+  now?: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  try {
+    await store.alertCooldown.create({ data: { key, lastAlertedAt: now } });
+  } catch (error) {
+    if (!isPrismaUniqueConstraintError(error)) throw error;
+  }
+}
+
+export async function listOwedAlertKeys({
+  prefix,
+  store = prisma,
+}: {
+  prefix: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<string[]> {
+  const rows = await store.alertCooldown.findMany({
+    where: { key: { startsWith: prefix } },
+    select: { key: true },
+    take: 50,
+  });
+  return rows.map((row) => row.key);
+}
+
+export async function settleOwedAlert({
+  key,
+  store = prisma,
+}: {
+  key: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.deleteMany({ where: { key } });
+}

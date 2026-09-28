@@ -5,7 +5,6 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
-import { createAuditLog } from "@/lib/audit";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -40,11 +39,33 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
+import {
+  hasRecordedInvoicePayment,
+  readHoldPaymentEvidence,
+} from "@/lib/internet-banking-hold-payment-evidence";
+import {
+  alertExpiredHold,
+  decideExpiredHold,
+  drainOwedHoldAlerts,
+  selectHoldsToRead,
+  takeHoldReadBudget,
+  writeInternetBankingHoldAudit,
+} from "@/lib/internet-banking-hold-kept";
 import type { ClubFormat } from "@/lib/club-format";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
   released: number;
+  /**
+   * #3643 (`INV-PAY-107`): expired holds NOT released because Xero shows money
+   * against the invoice, or could not be read. Their beds stay held.
+   */
+  kept: number;
+  /**
+   * #3643: expired holds not read this run because the per-run Xero read cap
+   * was spent; a later run reaches them (`selectHoldsToRead`).
+   */
+  deferred: number;
   skipped: number;
   /** Expired holds left alone because the stay has started (#3663, INV-PAY-016). */
   skippedStarted: number;
@@ -62,6 +83,7 @@ const STARTED_STAY_ALERT_WINDOW_MS = 36_500 * 86_400_000;
 function releaseOneHold(
   paymentId: string,
   now: Date,
+  linksSince: Date,
   clubTodayDateOnly: Date,
   format: ClubFormat,
 ) {
@@ -123,6 +145,28 @@ function releaseOneHold(
         return {
           type: "skipped" as const,
           reason: "applied-credit-deallocation" as const,
+        };
+      }
+
+      // #3643 (`INV-PAY-107`): the re-check, before any write. The live Xero
+      // read ran before this transaction and found nothing; a part payment the
+      // inbound reconcile recorded SINCE the read started leaves a new PAYMENT
+      // link (a full payment flips the payment off PENDING, which the guard
+      // set above already refuses). Links older than the read are not
+      // counted: the clean read already overruled them. This NARROWS the race
+      // rather than closing it: the inbound link write takes no booking lock,
+      // so a link committed after this read is missed. The backstop is the
+      // clearing-note builder, which refuses a note the invoice cannot absorb,
+      // and the repair tool, which then reports it for manual review.
+      if (
+        await hasRecordedInvoicePayment(
+          { paymentId: fresh.id, bookingId: fresh.bookingId, since: linksSince },
+          tx,
+        )
+      ) {
+        return {
+          type: "skipped" as const,
+          reason: "payment-recorded" as const,
         };
       }
 
@@ -313,18 +357,8 @@ function releaseOneHold(
   );
 }
 
-export async function releaseExpiredInternetBankingHolds(
-  now = new Date(),
-): Promise<InternetBankingHoldReleaseResult> {
-  // The club's format (#3565), resolved once, before any transaction or
-  // lock below — never per amount and never inside a transaction.
-  const format = await clubFormatValues();
-  // The club's calendar day at `now`, as the `@db.Date` encoding `checkIn`
-  // uses (INV-DATE-019), resolved once and outside every transaction.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
-  );
-  const candidates = await prisma.payment.findMany({
+function findExpiredHoldCandidates(now: Date) {
+  return prisma.payment.findMany({
     where: {
       source: PaymentSource.INTERNET_BANKING,
       status: PaymentStatus.PENDING,
@@ -344,24 +378,71 @@ export async function releaseExpiredInternetBankingHolds(
     },
     orderBy: { internetBankingHoldUntil: "asc" },
   });
+}
+
+export async function releaseExpiredInternetBankingHolds(
+  now = new Date(),
+): Promise<InternetBankingHoldReleaseResult> {
+  // The club's format (#3565), resolved once, before any transaction or
+  // lock below — never per amount and never inside a transaction.
+  const format = await clubFormatValues();
+  const candidates = await findExpiredHoldCandidates(now);
 
   const result: InternetBankingHoldReleaseResult = {
     scanned: candidates.length,
     released: 0,
+    kept: 0,
+    deferred: 0,
     skipped: 0,
     skippedStarted: 0,
     failed: 0,
     bookingIds: [],
     paymentIds: [],
   };
+  // The club's day, for the unreadable-invoice bound (check-in has arrived).
+  // Resolved once, outside every transaction, like the format above.
+  const clubToday = dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
+  );
+
+  // #3643: only a booking the release could act on is asked about — one no
+  // longer CONFIRMED is skipped by the transaction's guard set, and an alert
+  // about it would be false — and at most the per-run read cap of those.
+  const actionable = candidates.filter(
+    (candidate) => candidate.booking.status === BookingStatus.CONFIRMED,
+  );
+  const toRead = new Set(selectHoldsToRead(actionable, now));
+  // #3643 (D4): alerts an earlier run could not deliver for holds it released.
+  await drainOwedHoldAlerts(format);
+  result.deferred = actionable.length - toRead.size;
 
   for (const candidate of candidates) {
+    const confirmed = candidate.booking.status === BookingStatus.CONFIRMED;
+    if (confirmed && !toRead.has(candidate)) continue;
+    // #3643 (D9): the club-wide daily budget of live hold reads.
+    if (confirmed && !(await takeHoldReadBudget())) {
+      result.deferred += 1;
+      continue;
+    }
+    // #3643 (`INV-PAY-107`): has anybody paid? Read live from Xero BEFORE the
+    // release transaction — a provider call never runs inside it.
+    const evidence = confirmed ? await readHoldPaymentEvidence(candidate) : null;
+    const decision = evidence
+      ? decideExpiredHold(candidate, evidence, { now, clubToday })
+      : { action: "release" as const };
+    if (evidence && decision.action === "keep") {
+      result.kept += 1;
+      await alertExpiredHold(candidate, evidence, decision.reason, format);
+      continue;
+    }
+
     let transition: Awaited<ReturnType<typeof releaseOneHold>>;
     try {
       transition = await releaseOneHold(
         candidate.id,
         now,
-        clubTodayDateOnly,
+        evidence?.readStartedAt ?? now,
+        clubToday,
         format,
       );
     } catch (err) {
@@ -377,6 +458,18 @@ export async function releaseExpiredInternetBankingHolds(
     }
 
     if (transition.type === "skipped") {
+      if (transition.reason === "payment-recorded") {
+        // The race: a part payment was recorded between the read and the
+        // lock. Kept, and the treasurer told from a fresh read (the next run
+        // decides again if that read disagrees).
+        result.kept += 1;
+        const reread = await readHoldPaymentEvidence(candidate);
+        const again = decideExpiredHold(candidate, reread, { now, clubToday });
+        if (again.action === "keep") {
+          await alertExpiredHold(candidate, reread, again.reason, format);
+        }
+        continue;
+      }
       result.skipped += 1;
       continue;
     }
@@ -391,6 +484,11 @@ export async function releaseExpiredInternetBankingHolds(
     result.released += 1;
     result.bookingIds.push(payment.bookingId);
     result.paymentIds.push(payment.id);
+
+    // #3643: released at the unreadable-invoice bound — the second alert.
+    if (evidence && decision.action === "release-at-bound") {
+      await alertExpiredHold(candidate, evidence, "released-unreadable", format);
+    }
 
     await recordBookingEvent({
       bookingId: payment.bookingId,
@@ -409,34 +507,24 @@ export async function releaseExpiredInternetBankingHolds(
       },
     });
 
-    createAuditLog({
+    writeInternetBankingHoldAudit({
       action: "booking.internet_banking_hold_expired",
-      targetId: payment.bookingId,
+      bookingId: payment.bookingId,
       subjectMemberId: bookingOwner(payment.booking).memberId,
-      entityType: "Booking",
-      entityId: payment.bookingId,
-      category: "payment",
-      severity: "important",
       outcome: "success",
       summary: "Expired Internet Banking hold released",
-      details: JSON.stringify({
+      details: {
         paymentId: payment.id,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
         amountCents: payment.amountCents,
-      }),
+      },
       metadata: {
         paymentId: payment.id,
-        paymentSource: PaymentSource.INTERNET_BANKING,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
         amountCents: payment.amountCents,
         creditRestoredCents,
       },
-    }).catch((err) =>
-      logger.error(
-        { err, bookingId: payment.bookingId, paymentId: payment.id },
-        "Failed to audit expired Internet Banking hold release",
-      ),
-    );
+    });
 
     // The credit note is already durably enqueued (inside the transaction
     // above); the kick is best-effort — the outbox cron sweeps the row anyway.

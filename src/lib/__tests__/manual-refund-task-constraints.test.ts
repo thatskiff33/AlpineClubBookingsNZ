@@ -88,6 +88,15 @@ const WITHHELD_SHARE_MIGRATION =
  */
 const LATE_CAPTURE_APPROVAL_MIGRATION =
   "prisma/migrations/20261013010000_add_late_capture_refund_approval/migration.sql";
+/**
+ * #3643 (owner decision 28 Sep 2026): the part-payment review marker
+ * `partPaymentReviewPaymentId` - a nullable column, its unique index (one review
+ * per payment), a widened `ManualRefundTask_non_edit_review_amount_present`
+ * (a marked row may carry no amount) and the shape CHECK (a marked row is an
+ * amountless, paymentless CANCELLED_BOOKING_HAND_BACK). No new kind label.
+ */
+const PART_PAYMENT_REVIEW_MIGRATION =
+  "prisma/migrations/20261014010000_add_unsized_part_payment_review_task/migration.sql";
 
 /**
  * The foundation migration also constrains `BookingGuest` and
@@ -164,6 +173,7 @@ async function withManualRefundTaskSchema(
       OCCURRENCE_KEY_MIGRATION,
       WITHHELD_SHARE_MIGRATION,
       LATE_CAPTURE_APPROVAL_MIGRATION,
+      PART_PAYMENT_REVIEW_MIGRATION,
     ]) {
       for (const statement of await manualRefundTaskStatements(migrationPath)) {
         await client.query(statement);
@@ -408,7 +418,7 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
 
   it("allows one treasurer-approval marker per late capture, and only on the #2700 late-capture kind (#3639)", async () => {
     await withManualRefundTaskSchema(async (client) => {
-      const approval = (id: string, kind: string, intent: string) =>
+      const approval = (id: string, kind: string | null, intent: string) =>
         client.query(
           `INSERT INTO "ManualRefundTask"
              ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
@@ -429,9 +439,105 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         code: "23514",
         constraint: "ManualRefundTask_late_capture_approval_kind",
       });
+      // #3643 (migration review F1): nor on a row with NO kind. "kind" is
+      // nullable, and #3639's plain "=" was NULL there, which a CHECK accepts;
+      // 20261014010000 restates it IS NOT DISTINCT FROM.
+      await expect(approval("late-no-kind", null, "pi_null")).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_late_capture_approval_kind",
+      });
       // And every unmarked row is untouched: many NULLs, any kind.
       await insert(client, { id: "legacy-a", kind: "DELETED_BOOKING_LATE_CAPTURE" });
       await insert(client, { id: "legacy-b", kind: "DELETED_BOOKING_LATE_CAPTURE" });
+    });
+  });
+
+  it("allows one amountless part-payment review per payment, only as a paymentless hand-back that cannot complete (#3643)", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      const review = (
+        id: string,
+        overrides: {
+          kind?: string | null;
+          amountCents?: number | null;
+          paymentId?: string | null;
+          status?: string;
+          marker?: string | null;
+          xeroPaidAt?: string | null;
+          xeroPaidCents?: number | null;
+        } = {},
+      ) =>
+        client.query(
+          `INSERT INTO "ManualRefundTask"
+             ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
+              "kind", "partPaymentReviewPaymentId", "partPaymentReviewXeroPaidAt",
+              "partPaymentReviewXeroPaidCents", "reason", "status")
+           VALUES ($1, 'booking-1', $2, $3, NULL,
+                   $4::"ManualRefundTaskKind", $5, $6::timestamp(3), $7, 'settle in Xero',
+                   $8::"ManualRefundTaskStatus")`,
+          [
+            id,
+            overrides.paymentId ?? null,
+            overrides.amountCents ?? null,
+            // `in`, not `??`: a NULL kind is a case under test (migration review F1).
+            "kind" in overrides ? overrides.kind : "CANCELLED_BOOKING_HAND_BACK",
+            "marker" in overrides ? overrides.marker : "payment-1",
+            overrides.xeroPaidAt ?? null,
+            overrides.xeroPaidCents ?? null,
+            overrides.status ?? "OPEN",
+          ],
+        );
+      // The amountless review the widened amount CHECK now accepts.
+      await review("review-first");
+      // The duplicate fence: a second review of the same payment.
+      await expect(review("review-second")).rejects.toMatchObject({ code: "23505" });
+      // The shape: any other kind, an amount, or a paymentId is refused.
+      for (const [id, overrides] of [
+        ["review-wrong-kind", { kind: "DELETED_BOOKING_LATE_CAPTURE", marker: "payment-2" }],
+        ["review-with-amount", { amountCents: 5000, marker: "payment-3" }],
+        ["review-with-payment", { paymentId: "payment-4", marker: "payment-4" }],
+        // A NULL kind: a plain "=" would be NULL here, which a CHECK accepts.
+        ["review-no-kind", { kind: null, marker: "payment-7" }],
+        // The sync's Xero-paid note (INV-PAY-108): both halves together, never
+        // negative cents, and only on a marked row.
+        ["review-paid-at-only", { xeroPaidAt: "2026-07-01T00:00:00Z", marker: "payment-8" }],
+        ["review-paid-cents-only", { xeroPaidCents: 5000, marker: "payment-10" }],
+        [
+          "review-paid-negative",
+          { xeroPaidAt: "2026-07-01T00:00:00Z", xeroPaidCents: -1, marker: "payment-11" },
+        ],
+        [
+          "unmarked-with-paid",
+          {
+            marker: null,
+            amountCents: 5000,
+            xeroPaidAt: "2026-07-01T00:00:00Z",
+            xeroPaidCents: 5000,
+          },
+        ],
+      ] as const) {
+        await expect(review(id, overrides)).rejects.toMatchObject({
+          code: "23514",
+          constraint: "ManualRefundTask_part_payment_review_shape",
+        });
+      }
+      // And it can never be COMPLETED: that needs an amount the shape forbids.
+      await expect(
+        review("review-completed", { status: "COMPLETED", marker: "payment-5" }),
+      ).rejects.toMatchObject({ code: "23514" });
+      await review("review-dismissed", { status: "DISMISSED", marker: "payment-6" });
+      // A review the sync has noted Xero-paid, including a zero-cash read.
+      await review("review-noted", {
+        xeroPaidAt: "2026-07-01T00:00:00Z",
+        xeroPaidCents: 0,
+        marker: "payment-9",
+      });
+      // The widening is for marked rows only: an unmarked hand-back still needs an amount.
+      await expect(
+        insert(client, { id: "legacy-no-amount", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, raisedAmountCents: null }),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_non_edit_review_amount_present",
+      });
     });
   });
 

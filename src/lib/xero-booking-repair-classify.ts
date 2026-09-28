@@ -17,6 +17,7 @@ import type {
   BookingXeroRepairAction,
   BookingXeroRepairBookingSummary,
   MutableFinding,
+  XeroOperationRecord,
 } from "./xero-booking-repair-types";
 import {
   getCapturedRepairTransactions,
@@ -61,11 +62,29 @@ import {
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
+import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
+import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
+
+/**
+ * #3643: a booking's invoice-clearing credit note create that still stands -
+ * not retired (CANCELLED) and not marked resolved in Xero by an officer (the
+ * operations resolve route). The one home of "the officer's mark means the
+ * clearing was done by hand"; the cancelled-open-invoice arm asks it both
+ * for a recognised part payment's rest and for a refused or failed note.
+ */
+function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolean {
+  return (
+    operation.entityType === "CREDIT_NOTE" &&
+    operation.operationType === "CREATE" &&
+    operation.status !== "CANCELLED" &&
+    !operation.manuallyResolvedAt
+  );
+}
 
 export function classifyBookingContext(
   context: BookingClassificationContext
@@ -1286,16 +1305,22 @@ export function classifyBookingContext(
 
   // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
   // was released retires the pending clearing note (`retirePendingClearingNote`
-  // cancels its queued MODIFICATION_CREDIT_NOTE create) and settles the payment,
-  // so the arm below skips the booking - but the operator is still told why no
-  // note exists. The ONE home of this finding (#3535's copy inside the arm was
-  // removed at the sync, delta D2).
-  if (
+  // cancels its queued MODIFICATION_CREDIT_NOTE create), so the arm below skips
+  // the booking - but the operator is still told why no note exists. The ONE
+  // home of this finding (#3535's copy inside the arm was removed at the sync,
+  // delta D2). The evidence that cash arrived is either arm's own write: the
+  // member arm settles the payment and records its account-credit note; the
+  // organisation arm settles nothing and raises a hand-back task instead
+  // (#3643 F2, the population #3535's in-arm copy used to catch). The row is
+  // the one `retirePendingClearingNote` writes: a CANCELLED create stamped with
+  // the clearing note's queue type.
+  const cashRetiredClearingNote = Boolean(
     booking.status === "CANCELLED" &&
     payment &&
     primaryInvoice &&
     (hasCapturedRepairPayment(payment) ||
-      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations)) &&
+      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) ||
+      context.cancelledBookingHandBackPaymentIds.has(payment.id)) &&
     bookingOperations.some(
       (operation) =>
         operation.entityType === "CREDIT_NOTE" &&
@@ -1303,7 +1328,8 @@ export function classifyBookingContext(
         operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE &&
         operation.status === "CANCELLED"
     )
-  ) {
+  );
+  if (cashRetiredClearingNote && payment && primaryInvoice) {
     addFinding(findings, {
       code: "MANUAL_REVIEW_REQUIRED",
       severity: "info",
@@ -1315,13 +1341,30 @@ export function classifyBookingContext(
     });
   }
 
+  // #3643 delta D2: the cancel path recorded Xero's part payment as the
+  // payment's receipt (a SUCCEEDED internet banking row) and, in the same
+  // transaction, queued a clearing note for the unpaid rest - only when Xero
+  // showed a rest owed. While that note is outstanding the booking enters the
+  // arm below, where it is only ever manual review, never a full-size queue or
+  // retry (`INV-PAY-107`). F1: no rest note (paid in full at the cancel), or
+  // one an officer marked resolved in Xero (the rest cleared by hand), means
+  // nothing is owed, and the ordinary skips apply.
+  const partPaymentRecognised = (payment?.transactions ?? []).some(
+    (transaction) => transaction.reason === PART_PAYMENT_RECOGNISED_REASON
+  );
+  const recognisedRestOwed =
+    partPaymentRecognised && bookingOperations.some(isOutstandingClearingNoteCreate);
+
   // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
-  // and `paymentNoteAnswersInvoice` are the two things it asks first.
+  // and `paymentNoteAnswersInvoice` are the two things it asks first - except
+  // for #3643's recognised part payment whose rest is still owed, above.
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    !hasCapturedRepairPayment(payment) &&
-    !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) &&
+    !cashRetiredClearingNote &&
+    (recognisedRestOwed ||
+      (!hasCapturedRepairPayment(payment) &&
+        !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations))) &&
     primaryInvoice
   ) {
     const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
@@ -1344,7 +1387,37 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (
+        // #3643: a payment the inbound sync recorded against the primary or
+        // any supplementary invoice (the only local trace of a part payment).
+        // The officer's "resolved in Xero" mark on the refused or failed note
+        // (#3643): the clearing was done by hand, so nothing is reported,
+        // retried or re-queued - the same rule as `recognisedRestOwed` above.
+        const blockingNoteResolvedInXero = Boolean(
+          blockingOperation && !isOutstandingClearingNoteCreate(blockingOperation.operation)
+        );
+        const recordedInvoicePayments = [
+          ...paymentLinks,
+          ...[...context.modificationLinksById.values()].flat(),
+        ].filter(isRecordedBookingInvoicePayment);
+        // #3643 (`INV-PAY-108`, task-queue review F2): an OPEN part-payment review is the
+        // cancel's own durable proof that money was recorded against the
+        // invoice, even with no local PAYMENT link.
+        const openPartPaymentReview = Boolean(
+          payment && context.openPartPaymentReviewPaymentIds.has(payment.id)
+        );
+        const invoicePaymentRecorded =
+          recordedInvoicePayments.length > 0 ||
+          partPaymentRecognised ||
+          openPartPaymentReview;
+        // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2
+        // cancel raised a hand-back task for the payment, and a treasurer has
+        // dismissed it (the only way a review closes) - settled in Xero by hand.
+        const partPaymentReviewClosed = Boolean(
+          payment && context.closedPartPaymentReviewPaymentIds.has(payment.id)
+        );
+        if (blockingNoteResolvedInXero || partPaymentReviewClosed) {
+          // Nothing owed: an officer cleared the invoice by hand.
+        } else if (
           blockingOperation &&
           isClearingAllocationShortfall(blockingOperation.operation.lastErrorMessage)
         ) {
@@ -1366,6 +1439,41 @@ export function classifyBookingContext(
             details: {
               operationId: blockingOperation.operation.id,
               operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [action.key],
+          });
+        } else if (
+          invoicePaymentRecorded &&
+          (!blockingOperation || blockingOperation.retryMeta.supported)
+        ) {
+          // #3643 (`INV-PAY-107`): Xero recorded a payment against this
+          // booking's invoices, so they owe less than a full-size clearing
+          // note. Queueing or retrying one would be refused as a shortfall at
+          // best; the part payment is money only a person can place (refund,
+          // credit, or keep), so it is manual review, never an auto-apply.
+          const action = addAction(
+            actionMap,
+            buildManualReviewAction(
+              booking.id,
+              "Xero records a payment against this cancelled booking's invoice, so a full invoice-clearing credit note would over-clear it - decide the part payment (refund, credit, or keep) and clear the rest by hand."
+            )
+          );
+          addFinding(findings, {
+            code: "MANUAL_REVIEW_REQUIRED",
+            severity: "manual_review",
+            summary:
+              "A cancelled booking's invoice has a payment recorded against it, so its clearing credit note is not queued or retried automatically - review by hand.",
+            safeToAutoApply: false,
+            details: {
+              paymentId: payment?.id ?? null,
+              invoiceId: primaryInvoice.objectId,
+              clearingAmountCents,
+              operationId: blockingOperation?.operation.id ?? null,
+              // DECISION 2 on #3643: name the payment a person has to place.
+              recordedPayments: recordedInvoicePayments.map((link) => ({
+                xeroPaymentId: link.xeroObjectId,
+                metadata: link.metadata,
+              })),
             },
             actionKeys: [action.key],
           });
@@ -1464,6 +1572,30 @@ export function classifyBookingContext(
           )
             ? getXeroOperationRetryMeta(partialNoteOperation)
             : null;
+        // The note's own amount, as its create recorded it (#3643): the cancel
+        // wrote a recognised booking's rest - Xero's amount due at the read -
+        // as the note's `refundAmountCents`, so the allocation reads back that
+        // same figure rather than the full clearing amount. A stored figure
+        // outside (0, clearingAmountCents] is ignored, as the modification arm
+        // does; without one only an unrecognised (full-size) note falls back.
+        const storedNoteAmount = recoverStoredXeroAmountCents({
+          links: bookingLinks,
+          operations: bookingOperations,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_CREDIT_NOTE",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          objectId: cancellationCreditNote.objectId,
+          payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+        });
+        const allocationAmountCents =
+          storedNoteAmount &&
+          storedNoteAmount.amountCents > 0 &&
+          storedNoteAmount.amountCents <= clearingAmountCents
+            ? storedNoteAmount.amountCents
+            : partPaymentRecognised
+              ? null
+              : clearingAmountCents;
         const allocation = resolveObjectFromCandidates({
           links: bookingLinks,
           operations: bookingOperations,
@@ -1513,6 +1645,26 @@ export function classifyBookingContext(
               },
               actionKeys: [action.key],
             });
+          } else if (allocationAmountCents === null) {
+            // #3643: a recognised booking's note covers only the rest, and no
+            // stored figure says how much - a full-size allocation would
+            // over-clear, so a person allocates it.
+            const action = addAction(
+              actionMap,
+              buildManualReviewAction(
+                booking.id,
+                "The unpaid-rest clearing credit note exists but is not allocated, and its amount is not recorded - allocate it to the invoice by hand."
+              )
+            );
+            addFinding(findings, {
+              code: "MANUAL_REVIEW_REQUIRED",
+              severity: "manual_review",
+              summary:
+                "A part-paid cancelled booking's clearing credit note is not allocated and its amount is not recorded - allocate it by hand.",
+              safeToAutoApply: false,
+              details: { bookingId: booking.id, creditNoteId: cancellationCreditNote.objectId },
+              actionKeys: [action.key],
+            });
           } else {
             const action = addAction(actionMap, {
               key: `queue:cancelled-allocation:${booking.id}:${cancellationCreditNote.objectId}`,
@@ -1526,7 +1678,7 @@ export function classifyBookingContext(
                 localId: booking.id,
                 creditNoteId: cancellationCreditNote.objectId,
                 invoiceId: primaryInvoice.objectId,
-                amountCents: clearingAmountCents,
+                amountCents: allocationAmountCents,
                 role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
               },
             });
@@ -1540,7 +1692,7 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 creditNoteId: cancellationCreditNote.objectId,
                 invoiceId: primaryInvoice.objectId,
-                amountCents: clearingAmountCents,
+                amountCents: allocationAmountCents,
               },
               actionKeys: [action.key],
             });

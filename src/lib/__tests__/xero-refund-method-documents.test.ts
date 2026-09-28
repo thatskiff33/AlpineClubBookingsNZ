@@ -468,6 +468,34 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
       }),
     );
   });
+
+  // #3643 (`INV-PAY-107`): the cancel path recorded a part payment, so the note
+  // clears only the unpaid rest and must not say the booking was not paid. The
+  // same allocation, no payment, and the choice recorded for a replay.
+  it("words a partly paid booking's note as clearing the unpaid balance", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+      clearsUnpaidBalance: true,
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.[0]?.description).toBe(
+      "Unpaid balance cleared - booking cancelled - Booking cmbookin",
+    );
+    expect(note.reference).toBe("Unpaid balance cleared - booking cancelled - Booking cmbookin");
+    expect(`${note.reference}`).not.toMatch(/not paid/i);
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload).toEqual(
+      expect.objectContaining({ clearsUnpaidInvoice: true, clearsUnpaidBalance: true }),
+    );
+  });
 });
 
 /**

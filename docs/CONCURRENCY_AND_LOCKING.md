@@ -1382,7 +1382,18 @@ Never-captured cancellation and Internet-Banking hold expiry acquire global
 booking lock(1) first and the per-member credit-ledger lock second. While
 holding both, they query for any non-complete applied-credit deallocation
 before their first write. If one exists they defer the whole transition; a
-later retry computes the clearing amount from provider-converged slices. The
+later retry computes the clearing amount from provider-converged slices. Hold
+expiry also re-reads the booking's invoice-payment links recorded since its
+live Xero read, under both locks before its first write, and keeps the hold if
+one exists (`INV-PAY-107`, #3643). The inbound link write takes no booking
+lock, so this narrows the race rather than serialising it; the clearing-note
+builder's shortfall refusal is the backstop. The live read runs before the
+transaction, never inside it. The paid cancel path's claim may now also record
+a part payment Xero showed (read before the claim) as the payment's captured
+row and queue the unpaid rest's clearing-note outbox row, under the same
+lock(1) and lodge lock it already holds; it first re-checks, the same narrowing
+way, for payment links recorded since its read, and throws to roll back on any
+change. No lock is added. The
 paid/captured cancel (refund) path does not take the credit-ledger lock or this
 fence: it restores credit from the payment mirror (mirror-based and capped) and
 never sizes clearing from slices. Legacy inbound rows missing
@@ -3252,7 +3263,8 @@ transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
 paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold. The first version of this writer took the transaction row and then the
+fold (earlier still when #3643's part-payment recognition writes the receipt:
+`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by

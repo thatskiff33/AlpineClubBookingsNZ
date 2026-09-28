@@ -9,6 +9,7 @@ import {
   bookingPaymentDueNote,
   checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
+  internetBankingHoldKeptParagraph,
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCaptureHandBackConflictSubjectLabel,
@@ -74,6 +75,11 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // notification preference at send time, like their siblings.
   "admin-manual-settlement-conflict",
   "admin-manual-refund-task",
+  // #3643: an expired internet banking hold kept because money may be paid
+  // against its invoice. sendToAdmins on the adminPaymentFailure preference like
+  // its reconcile-by-hand siblings; not delivery-locked, because no money moved
+  // and the booking is still visibly held.
+  "admin-internet-banking-hold-kept",
   // #3639 (delta D7): a late capture held for a treasurer's approval. Same
   // channel and preference as the hand-back task alert: a nudge for a durable
   // task, moving no money, so not delivery-locked.
@@ -539,6 +545,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
   "admin-manual-refund-task": ["memberName", "reviewUrl"],
+  // #3643: {{holdKeptNote}} is the instruction - part-paid, paid in full,
+  // unreadable and released-while-unreadable need different next steps.
+  "admin-internet-banking-hold-kept": ["memberName", "reviewUrl", "holdKeptNote"],
   "admin-late-capture-held": ["memberName", "bookingId", "amount", "reviewUrl"],
   // #3638: {{secondInstrumentConflictNote}} is the sentence that differs
   // between a live booking and a cancelled one — what the card money already
@@ -819,6 +828,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Xero reported a booking's invoice PAID for a booking this system had already recorded as settled in cash or by an off-Xero bank transfer, so the club may be holding the same money twice",
     frequency:
       "On the inbound reciprocal fence firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
+  },
+  "admin-internet-banking-hold-kept": {
+    triggerSummary:
+      "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable at check-in or seven days after the deadline, released",
+    frequency:
+      "At most once per hold for each reason - part-paid, paid in full but not yet synced, unreadable, and released while still unreadable - guarded by a cross-instance claim that is given back when the email could not be delivered",
   },
   "admin-late-capture-held": {
     triggerSummary:
@@ -1396,6 +1411,9 @@ export function sampleValue(token: string): string {
   // That is deliberately the arm an operator is likelier to receive - the fence
   // fires whenever the hand-completion had already committed - and the
   // refund-went-out-anyway arm is the sender's other branch.
+  if (token === "holdKeptNote") {
+    return internetBankingHoldKeptParagraph("part-paid");
+  }
   if (token === "handBackConflictNote") {
     return lateCaptureHandBackConflictOutcomeParagraph(false);
   }
@@ -1929,6 +1947,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // sender supplies the finished sentence rather than the facts behind it.
   "lateCaptureLeadNote",
   "handBackConflictNote",
+  // #3643: why an expired internet banking hold was kept, not released.
+  "holdKeptNote",
   // #3638: the second-instrument alert's live-versus-cancelled sentence.
   "secondInstrumentConflictNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and

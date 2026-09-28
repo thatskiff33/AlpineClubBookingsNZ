@@ -91,6 +91,7 @@ import {
   adminXeroRepeatedFailureTemplate,
   adminXeroSyncErrorTemplate,
 } from "@/lib/email-templates/admin-finance";
+import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import {
   adminAccountDeletionRequestedTemplate,
   adminFamilyGroupRequestTemplate,
@@ -712,6 +713,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminLateCaptureHandBackConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", bookingId: "bookingId-6", bookingDeleted: true, captureKind: "primary", handBackAmountCents: 107, refundSent: true, reviewUrl: "reviewUrl-8" }, CLUB_FORMAT_TEST) },
   { id: "adminManualSettlementConflictTemplate:minimal", fn: "adminManualSettlementConflictTemplate", render: () =>
     adminManualSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", bookingStatus: "bookingStatus-6", xeroInvoiceNumber: "xeroInvoiceNumber-7", xeroInvoiceUrl: "xeroInvoiceUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldKeptTemplate:minimal", fn: "adminInternetBankingHoldKeptTemplate", render: () =>
+    adminInternetBankingHoldKeptTemplate({ reason: "unreadable", memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), holdUntil: new Date("2026-03-05T00:00:00.000Z"), paidCents: null, amountOwingCents: null, xeroInvoiceNumber: null, xeroInvoiceUrl: null, reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldKeptTemplate:full", fn: "adminInternetBankingHoldKeptTemplate", render: () =>
+    adminInternetBankingHoldKeptTemplate({ reason: "part-paid", memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), holdUntil: new Date("2026-03-05T00:00:00.000Z"), paidCents: 106, amountOwingCents: 107, xeroInvoiceNumber: "xeroInvoiceNumber-8", xeroInvoiceUrl: "xeroInvoiceUrl-9", reviewUrl: "reviewUrl-10" }, CLUB_FORMAT_TEST) },
   { id: "adminSecondInstrumentSettlementConflictTemplate:minimal", fn: "adminSecondInstrumentSettlementConflictTemplate", render: () =>
     adminSecondInstrumentSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", bookingStatus: "bookingStatus-5", conflictKind: "settled", invoiceAmountCents: 106, cardHeldCents: 107, cardPaymentIntentId: null, xeroInvoiceNumber: null, xeroInvoiceUrl: null, bookingUrl: "bookingUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
   { id: "adminSecondInstrumentSettlementConflictTemplate:full", fn: "adminSecondInstrumentSettlementConflictTemplate", render: () =>

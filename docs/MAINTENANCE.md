@@ -1643,7 +1643,7 @@ A hold whose invoice received the member's cash after the release is **not** an
 under-clear and is listed apart as "paid in cash after release, note retired".
 The late payment retired the pending note and credited the member, so a credit
 note now would credit an invoice the member paid: take no action on those rows
-(a part payment is #3643's to decide).
+(a part payment is kept, not released — see below).
 
 ```bash
 DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing
@@ -1666,7 +1666,69 @@ repair CLI). A FAILED note replays its recorded amount and wording and plans
 its allocations again from what the invoices owe now; only a PARTIAL note
 replays its recorded allocation plan. A note that failed because the invoices
 owe less than it (part of the booking was paid) is never retried
-automatically: resolve it by hand.
+automatically: resolve it by hand, then mark the failed operation **resolved**
+on the Xero operations panel and the finding stops.
+
+**A part-paid hold is kept, not released (#3643, `INV-PAY-107`).** Before
+releasing a hold the job reads the booking's primary and supplementary invoices
+from Xero, outside the release transaction. Any cash keeps the hold: no cancel,
+no clearing note, no member email, and one **Internet banking hold needs
+attention** admin email per hold (booking reference, invoice link, amount paid
+and owing) with a `booking.internet_banking_hold_kept` audit entry. A clean read
+wins over the inbound sync's `PAYMENT` links (roles `INVOICE_PAYMENT` /
+`SUPPLEMENTARY_INVOICE_PAYMENT`); they count only when Xero cannot answer. The
+release transaction re-checks only links recorded after the read started, which
+narrows the window but cannot close it (the inbound link write takes no booking
+lock); a payment slipping through leaves the clearing note refused as a
+shortfall and the repair CLI's manual-review item.
+
+An invoice the job cannot read (Xero disconnected, down, a 404, or a payload
+without payment fields) keeps the hold with one email, until the club's
+check-in date or seven days past the deadline, whichever comes first. Then the
+hold is released with a second email and a
+`booking.internet_banking_hold_released_unreadable` audit entry; the clearing
+note it queues is created only once the builder can read the invoices and they
+owe it. An email that reached nobody is retried on the next run: for a kept
+hold its claim is given back; for a released one it is marked owed (an
+`AlertCooldown` row keyed `internet-banking-hold-alert-owed:`) and the next run
+delivers it, and the release's audit entry is written either way. At most 20
+holds are read per run, rotating, and 400 a day club-wide (the
+`ib-hold-xero-reads` limiter); the result counts `kept` and `deferred`.
+
+To resolve a kept hold: wait for the member to pay the rest (the inbound sync
+then settles the booking), or cancel it in the app. The cancel path reads Xero
+first and, when the cash can be sized exactly, records it as the payment's
+captured internet banking money (a ledger row with reason
+`xero_part_payment_recognised_at_cancel`), tiers the cancellation policy on it
+as account credit, and queues, in the same transaction, a clearing note for what
+the invoices still owe, worded "Unpaid balance cleared - booking cancelled"
+rather than #3535's "booking not paid". Under its lock the claim refuses (409;
+cancel again) if a payment was recorded after its read. The cancel preview
+(`/api/bookings/[id]/cancel-preview`) makes the same read, rate-limited per user
+and cached for a minute per booking, so the dialog quotes the same credit.
+
+Money the app cannot credit — an organisation's booking, or a payment Xero
+cannot size (only a recorded link while Xero is down, a figure that did not add
+up, a supplementary invoice that could not be read) — follows DECISION 2 on
+#3643: the hold stays kept; an officer may cancel, which takes the unpaid path
+with no clearing note and sends the treasurer a "cancelled as unpaid" email
+(audit `booking.internet_banking_cancelled_payment_recorded`); a member is told
+to contact the club. The same cancel raises one item in the hand-back queue
+(**Money to settle** on the admin payments page) with no amount — a
+`CANCELLED_BOOKING_HAND_BACK` task marked by `partPaymentReviewPaymentId`
+(migration `20261014010000`). Settle the payment in Xero, clear what the invoice
+still owes, then close the item with a note; it cannot be marked paid back,
+because nothing in the app moves money for it. Once it is closed the repair CLI
+stops reporting the booking; putting the item back on the queue re-arms the
+finding. The repair CLI never queues or retries a full clearing note
+over a recorded or recognised part payment, including a recognised booking whose
+unpaid-rest note failed; it reports `MANUAL_REVIEW_REQUIRED`, naming the
+recorded payment, until the hand-back item above is closed. A recognised booking is only reported while that rest note is
+outstanding: once you have cleared the rest by hand in Xero, mark the failed
+operation **resolved** on the Xero operations panel and the finding stops. A
+booking paid in full before its cancel has no rest note and is never reported.
+A rest note that was created but not allocated is allocated for its own amount,
+never the booking's full clearing amount.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either

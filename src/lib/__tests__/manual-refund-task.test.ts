@@ -3261,3 +3261,69 @@ describe("#3639 - a #2700 hand-back asks what already happened to its capture", 
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the part-payment review a
+ * DECISION 2 cancel raises. Its kind is the ordinary hand-back one, so only the
+ * marker says it records money the club settles in Xero - and the door has to
+ * read the marker, or a completion would reach the hand-back allocation path.
+ */
+describe("#3643 - a part-payment review is dismiss-only", () => {
+  function reviewTask() {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-review",
+      bookingId: "booking-1",
+      paymentId: null,
+      amountCents: null,
+      raisedAmountCents: null,
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      lateCaptureApprovalIntentId: null,
+      partPaymentReviewPaymentId: "payment-1",
+      status: ManualRefundTaskStatus.OPEN,
+      booking: { memberId: null, status: "CANCELLED", payment: null },
+    });
+  }
+
+  it("refuses a COMPLETED close before the claim, even with an amount posted", async () => {
+    reviewTask();
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-review",
+        resolution: "completed",
+        note: "refunded the school",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 5000,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST)
+    ).rejects.toThrow(/settles in Xero/);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("dismisses it with a note, moving nothing and saying so in the audit", async () => {
+    reviewTask();
+
+    const result = await resolveManualRefundTask({
+      taskId: "task-review",
+      resolution: "dismissed",
+      note: "Refunded $50 to the school by bank transfer; cleared the rest in Xero",
+      actingMemberId: "admin-1",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    expect(result.partPaymentReview).toBe(true);
+    const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0] as {
+      data: { status: string };
+    };
+    expect(claim.data.status).toBe(ManualRefundTaskStatus.DISMISSED);
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: "Part payment settled in Xero closed as dealt with, no money moved here",
+      }),
+      expect.anything(),
+    );
+  });
+});

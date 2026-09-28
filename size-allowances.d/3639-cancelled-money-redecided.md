@@ -17,11 +17,16 @@ reason: the approval's refund debt has to be persisted through the module's
   Re-measured at the #3635 main sync, composed with main's #3567 and #3589 changes.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2080
+lines: 2132
 reason: the finance queue has to say, on the row and in the dialog, that this
   item refunds the card through Stripe or keeps the money; every sentence is a
   per-kind branch of the existing copy functions, which is where each other
-  kind's wording already lives.
+  kind's wording already lives. #3643 (same epic, one file one allowance) adds
+  its part-payment review the same way: a marker predicate, its paragraph, and
+  one branch in each copy function, beside the late-capture ones. Its
+  decision-3 round adds the review row's one optional payload field and the
+  line that renders the sync's Xero-paid note; the line itself lives in
+  `part-payment-review-xero-paid-line.tsx`.
 
 file: src/lib/config-transfer/categories/club-settings.ts
 lines: 1173
