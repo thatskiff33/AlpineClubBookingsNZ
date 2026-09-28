@@ -98,6 +98,11 @@ interface ManualRefundTask {
   awaitingLateCaptureApproval?: boolean;
   /** #3643: a part payment the club settles in Xero. Optional, as above. */
   partPaymentReview?: boolean;
+  /**
+   * #3643 (`INV-PAY-109`): Xero reported the review's invoice paid after the
+   * cancel, and the invoice's cash then. Optional, as above.
+   */
+  partPaymentReviewXeroPaid?: { reportedAt: string; cashCents: number } | null;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -699,6 +704,30 @@ interface AutoRefundedNotice {
  * text instead, which is what a Full Admin needs to look the booking up and what a
  * finance operator needs to quote it to somebody who can.
  */
+/**
+ * #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the inbound Xero sync's note
+ * on a part-payment review. While a review exists the app credits and hands
+ * back nothing for the invoice, so this line is how the treasurer learns there
+ * may be more to settle - the email is best-effort, this is the record.
+ */
+function PartPaymentReviewXeroPaidLine({
+  xeroPaid,
+}: {
+  xeroPaid: { reportedAt: string; cashCents: number };
+}) {
+  const format = useClubFormat();
+  const clubTime = useClubTime();
+  return (
+    <p className="text-xs font-medium text-foreground">
+      Xero reported this invoice paid on{" "}
+      {clubTime.instantDate(new Date(xeroPaid.reportedAt))}, with{" "}
+      {formatCents(xeroPaid.cashCents, format)} of cash recorded against it.
+      Nothing was credited or handed back automatically: settle any cash beyond
+      the part payment in Xero, then close this item.
+    </p>
+  );
+}
+
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
   const format = useClubFormat();
   /**
@@ -1624,6 +1653,11 @@ export function ManualRefundTaskQueue() {
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {isPartPaymentReview(task) && task.partPaymentReviewXeroPaid ? (
+                        <PartPaymentReviewXeroPaidLine
+                          xeroPaid={task.partPaymentReviewXeroPaid}
+                        />
+                      ) : null}
                       {/*
                         #3213: what to DO, on the row, in the order an officer
                         does it. The standing paragraph says why nothing was

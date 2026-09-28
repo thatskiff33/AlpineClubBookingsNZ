@@ -1,6 +1,6 @@
 /**
- * #3643 (`INV-PAY-109`, task-queue review F1): what a later PAID invoice event
- * may still do for a payment whose cancel raised a part-payment review.
+ * #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3 on the thread): a later PAID
+ * invoice event for a payment whose cancel raised a part-payment review.
  *
  * The review is the treasurer's instruction to settle, in Xero, the cash
  * recorded against the invoice when the booking was cancelled as unpaid. When
@@ -8,49 +8,54 @@
  * a credit note, as the review tells them to, or because more cash arrived -
  * the inbound sync's late-cash arms would otherwise size a hand-back (an
  * organisation's booking) or mint account credit (a member's) from the
- * invoice's WHOLE cash, which includes the reviewed part payment. That hands
- * the same money back twice: once by the treasurer in Xero, once here.
+ * invoice's whole cash, which includes the reviewed part payment: the same
+ * money handed back twice.
  *
- * So both arms ask this module first, and the answer is one of:
- *  - `none`: no review names this payment; the arm runs as it always has.
- *  - `beyond`: the review recorded the cash it covers exactly, and this event's
- *    cash is exact too, so the arm may act on the cash BEYOND the reviewed
- *    figure and nothing else (`beyondCents`, which may be zero).
- *  - `route`: either figure is unknown, so the arm moves no money at all and
- *    the event goes to the review: a dismissed review is put back on the queue
- *    (`reopened`), an open one already is.
+ * Sizing "only the cash beyond the review" was tried and rejected: it assumes
+ * the reviewed payment is still on the invoice, and the review tells the
+ * treasurer to refund it or apply it, which usually takes it off. So while a
+ * review exists, OPEN or DISMISSED, both arms size nothing and mint nothing.
+ * This module writes the fact onto the review instead, in the arm's own
+ * transaction: when the sync learned the invoice was paid, and the invoice's
+ * cash in cents. A DISMISSED review is put back on the queue; an OPEN one stays
+ * open. The email the caller sends is best-effort; this note is the record.
+ *
+ * ONCE PER REVIEW. The note is written only while it is empty, under
+ * `pg_advisory_xact_lock(1)` (held by the arm, and taken by the officer's
+ * reopen too), with the emptiness in the status-fenced `updateMany`'s `where`,
+ * so a replayed or re-polled event adds nothing. In practice the arm is not
+ * even reached again: its first run flips the payment to SUCCEEDED.
  *
  * The review is found by its marker (`partPaymentReviewPaymentId`), never by
  * `paymentId`, which a review leaves NULL on purpose (migration
- * 20261014010000). Called inside the arm's transaction, under
- * `pg_advisory_xact_lock(1)`, which is also the lock the officer's reopen takes
- * (`manual-refund-task-reopen.ts`), so the reopen here serialises with it.
+ * 20261014010000).
  */
 import { ManualRefundTaskStatus, type Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 
-export type PartPaymentReviewCover =
-  | { kind: "none" }
-  | { kind: "beyond"; taskId: string; reviewedCents: number; beyondCents: number }
-  | { kind: "route"; taskId: string; reopened: boolean };
+export type PartPaymentReviewRouting =
+  | { routed: false }
+  | {
+      routed: true;
+      taskId: string;
+      /** A DISMISSED review was put back on the queue by this event. */
+      reopened: boolean;
+      /** This event wrote the note; false on a replay that found one. */
+      noted: boolean;
+    };
 
-export async function readPartPaymentReviewCover(
+export async function routeLateCashToPartPaymentReview(
   tx: Prisma.TransactionClient,
   input: {
     paymentId: string;
-    bookingId: string;
-    /** The invoice the review's figure was read from: the payment's own. */
-    paymentInvoiceId: string | null;
-    /** The invoice this PAID event is for. */
+    /** The invoice this PAID event is for, for the audit entry. */
     eventInvoiceId: string;
-    /** This event's cash, as the arm quantified it. */
-    cash: { knownCents: number; complete: boolean };
-    /** What the arm would otherwise act on (its face- and aggregate-capped figure). */
-    mintableCents: number;
+    /** The invoice's cash at this read, as the arm quantified it. */
+    cashCents: number;
   },
-): Promise<PartPaymentReviewCover> {
+): Promise<PartPaymentReviewRouting> {
   const review = await tx.manualRefundTask.findUnique({
     where: { partPaymentReviewPaymentId: input.paymentId },
     select: {
@@ -60,64 +65,56 @@ export async function readPartPaymentReviewCover(
       amountCents: true,
       raisedAmountCents: true,
       status: true,
-      partPaymentReviewRecordedCents: true,
       completedAt: true,
       completedByMemberId: true,
       note: true,
+      partPaymentReviewXeroPaidAt: true,
       booking: { select: { memberId: true } },
     },
   });
-  if (!review) return { kind: "none" };
-
-  const reviewedCents = review.partPaymentReviewRecordedCents;
-  if (
-    reviewedCents !== null &&
-    input.cash.complete &&
-    input.paymentInvoiceId === input.eventInvoiceId
-  ) {
-    const newCashCents = Math.max(0, input.cash.knownCents - reviewedCents);
-    return {
-      kind: "beyond",
-      taskId: review.id,
-      reviewedCents,
-      beyondCents: Math.min(input.mintableCents, newCashCents),
-    };
+  if (!review) return { routed: false };
+  if (review.partPaymentReviewXeroPaidAt !== null) {
+    return { routed: true, taskId: review.id, reopened: false, noted: false };
   }
 
-  // Unsizable: the whole event is the review's. A dismissed review is put back
-  // on the queue, status-fenced as the officer's reopen is; the dismissing
-  // officer's note is left as they wrote it, and the audit entry says why.
-  if (review.status !== ManualRefundTaskStatus.DISMISSED) {
-    return { kind: "route", taskId: review.id, reopened: false };
-  }
+  const note = {
+    partPaymentReviewXeroPaidAt: new Date(),
+    partPaymentReviewXeroPaidCents: input.cashCents,
+  };
+  const reopen = review.status === ManualRefundTaskStatus.DISMISSED;
+  // The dismissing officer's own note is left as they wrote it; the reopen's
+  // reason goes in the audit entry, as on the officer's reopen.
   const claimed = await tx.manualRefundTask.updateMany({
-    where: { id: review.id, status: ManualRefundTaskStatus.DISMISSED },
-    data: { status: ManualRefundTaskStatus.OPEN, completedAt: null, completedByMemberId: null },
+    where: {
+      id: review.id,
+      status: review.status,
+      partPaymentReviewXeroPaidAt: null,
+    },
+    data: reopen
+      ? {
+          ...note,
+          status: ManualRefundTaskStatus.OPEN,
+          completedAt: null,
+          completedByMemberId: null,
+        }
+      : note,
   });
-  if (claimed.count > 0) {
+  const noted = claimed.count > 0;
+  if (noted && reopen) {
     await recordManualRefundTaskReopenAudit({
       task: review,
       subjectMemberId: bookingOwner(review.booking).memberId,
       actingMemberId: null,
       summary: "Part-payment review put back on the queue: Xero reported the invoice paid",
       details:
-        "Xero reported this cancelled booking's invoice as paid, and the amount the review covers is not known exactly, so nothing was credited or handed back automatically.",
+        "Xero reported this cancelled booking's invoice as paid while a part-payment review existed, so nothing was credited or handed back automatically; the review carries the date and the invoice's cash.",
       extraMetadata: {
         partPaymentReviewPaymentId: input.paymentId,
         xeroInvoiceId: input.eventInvoiceId,
+        xeroPaidCents: input.cashCents,
       },
       store: tx,
     });
   }
-  return { kind: "route", taskId: review.id, reopened: claimed.count > 0 };
-}
-
-/** The cents an arm may act on under a cover: all of it, the new cash, or none. */
-export function coveredActionableCents(
-  cover: PartPaymentReviewCover,
-  mintableCents: number,
-): number {
-  if (cover.kind === "none") return mintableCents;
-  if (cover.kind === "beyond") return cover.beyondCents;
-  return 0;
+  return { routed: true, taskId: review.id, reopened: noted && reopen, noted };
 }
