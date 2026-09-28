@@ -371,6 +371,9 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
     quoteReminderLeadDays:
       record?.quoteReminderLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders:
+      record?.assignSchoolTeachersAsHutLeaders ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays:
       record?.attendeeConfirmationLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationLeadDays,
@@ -489,6 +492,7 @@ export async function updateBookingRequestSettings(input: {
   showPricingToNonMembers: boolean;
   quoteResponseTtlDays: number;
   quoteReminderLeadDays: number;
+  assignSchoolTeachersAsHutLeaders: boolean;
   attendeeConfirmationLeadDays: number;
   attendeeConfirmationReminderDays: number;
   adminMemberId: string;
@@ -500,6 +504,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -508,6 +513,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -527,6 +533,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
     },
   });
 
@@ -548,6 +555,7 @@ export async function updateBookingRequestSettings(input: {
     showPricingToNonMembers: settings.showPricingToNonMembers,
     quoteResponseTtlDays: settings.quoteResponseTtlDays,
     quoteReminderLeadDays: settings.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders: settings.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays: settings.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays: settings.attendeeConfirmationReminderDays,
   };

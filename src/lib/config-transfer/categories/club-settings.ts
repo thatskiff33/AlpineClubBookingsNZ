@@ -456,6 +456,7 @@ export const SINGLETONS: SingletonSpec[] = [
     delegate: "bookingRequestSettings",
     fields: [
       "showPricingToNonMembers", "quoteResponseTtlDays", "quoteReminderLeadDays",
+      "assignSchoolTeachersAsHutLeaders",
       "attendeeConfirmationLeadDays", "attendeeConfirmationReminderDays",
     ],
     // All non-null (@default); a present null fails the dry-run (#2200). Int
@@ -468,6 +469,7 @@ export const SINGLETONS: SingletonSpec[] = [
       showPricingToNonMembers: { required: true },
       quoteResponseTtlDays: { required: true, min: 1, max: 60 },
       quoteReminderLeadDays: { required: true, min: 0, max: 30 },
+      assignSchoolTeachersAsHutLeaders: { required: true },
       attendeeConfirmationLeadDays: { required: true, min: 0, max: 90 },
       attendeeConfirmationReminderDays: { required: true, min: 1, max: 30 },
     },

@@ -1391,7 +1391,12 @@ The non-login records these flows create are classified by `Member.role`, not
 counted as paying members: school groups (the school contact and each teacher)
 get role `SCHOOL`, and general public booking-request contacts get `NON_MEMBER`.
 Both non-member roles grant no access, are excluded from member rosters, and never
-owe a membership subscription (see Member roles in `docs/ARCHITECTURE.md`).
+owe a membership subscription (see Member roles in `docs/ARCHITECTURE.md`). At
+school conversion the booking-policy setting **Assign school teachers as hut
+leaders** is sampled once: it is off by default, so teachers remain named guests
+and school contact people but receive no assignment or PIN email. When enabled,
+the conversion also creates their lodge-scoped hut-leader assignments and sends
+the post-commit PIN emails.
 
 After conversion (or while a hold booking exists), the resulting booking keeps
 the negotiated flat price and the standard edit endpoints refuse it — editing

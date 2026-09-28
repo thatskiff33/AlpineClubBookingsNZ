@@ -2645,6 +2645,9 @@ model BookingRequestSettings {
   showPricingToNonMembers          Boolean  @default(false)
   quoteResponseTtlDays             Int      @default(14)
   quoteReminderLeadDays            Int      @default(3)
+  // Club policy for school-request approval. Existing installations retain
+  // their teacher contacts but do not create hut-leader PIN assignments.
+  assignSchoolTeachersAsHutLeaders Boolean  @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                          String?

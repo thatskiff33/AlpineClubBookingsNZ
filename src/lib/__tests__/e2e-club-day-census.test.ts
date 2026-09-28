@@ -182,6 +182,25 @@ describe("no second way to ask what day it is (#3221)", () => {
     const fixtures = source("prisma/e2e-fixtures.ts");
     expect(fixtures).toContain('const NZ_TIME_ZONE = "Pacific/Auckland"');
     expect(fixtures).toMatch(/timeZone: NZ_TIME_ZONE/);
-    expect(fixtures).toContain("export const E2E_TODAY_NZ = todayDateOnlyNz();");
+    expect(fixtures).toContain("export const E2E_TODAY_NZ = fixtureDate ?? todayDateOnlyNz();");
+  });
+
+  it("carries the captured fixture day from stack prepare into stack run (#3702)", () => {
+    // The boundary test covers date behavior. This guard covers the separate
+    // shell processes that pass the date between the seed and Playwright.
+    const stack = source("scripts/e2e-stack.sh");
+    const prepare = stack.split("prepare() {")[1]?.split("\nrun() {")[0];
+    const run = stack.split("run() {")[1]?.split("\ncase ")[0];
+
+    expect(stack).toContain(
+      'FIXTURE_DATE_FILE=".artifacts/e2e-fixture-date-${COMPOSE_PROJECT}"',
+    );
+    expect(prepare).toContain(
+      'E2E_FIXTURE_TODAY_NZ="$(npx --no-install tsx scripts/e2e-fixture-today.ts)"',
+    );
+    expect(prepare).toContain('export E2E_FIXTURE_TODAY_NZ');
+    expect(prepare).toContain('printf \'%s\\n\' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"');
+    expect(run).toContain('IFS= read -r E2E_FIXTURE_TODAY_NZ < "$FIXTURE_DATE_FILE"');
+    expect(run).toContain('export E2E_FIXTURE_TODAY_NZ');
   });
 });
