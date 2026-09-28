@@ -17,7 +17,9 @@
   booking, to collect by hand and record it with Record manual payment under
   Admin tools. A mail outage does not multiply that email: a copy that failed
   is re-sent once by the usual email retry. If no admin can receive it at all,
-  it is tried again a day later. The organiser is never
+  it is tried again a day later. The treasurer's email about an overdue
+  Internet Banking hold on a stay that has started (#3663) follows the same
+  rule. The organiser is never
   charged for them, and the organiser's group card lists them as paying for
   themselves. Groups where each person pays for themselves are unchanged.
 
