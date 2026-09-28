@@ -74,9 +74,9 @@ import {
   isGroupSettlementBoundToInvoice,
 } from "@/lib/group-settlement-invoice-binding";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
+import { clubTodayForStartedStay } from "@/lib/club-today-for-started-stay";
 import {
   alertStartedStayJoinersOnce,
-  clubTodayForStartedStay,
   NO_PAYER_SWITCH,
   notifyJoinersReleasedToMemberPays,
   releaseUnpaidJoinersToMemberPaysInTx,

@@ -38,16 +38,8 @@ import {
   isPaidLikeBookingStatus,
 } from "@/lib/booking-status";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
-import {
-  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-  ALERT_ONCE_EVER_WINDOW_MS,
-  claimAlertCooldown,
-  deferAlertCooldown,
-  releaseAlertCooldown,
-} from "@/lib/alert-cooldown";
-import { adminAlertIsDeliveredOrQueued } from "@/lib/email/admin-alert-send-result";
-import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { clubTodayForStartedStay } from "@/lib/club-today-for-started-stay";
 import {
   sendAdminGroupJoinerStartedStayAlert,
   sendGroupJoinPaySelfEmail,
@@ -77,16 +69,6 @@ export function organiserPaysForNewJoiner(group: {
   return (
     group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS &&
     !organiserHasPaidSettlement(group.settlement)
-  );
-}
-
-/**
- * The club's today in the `@db.Date` encoding check-ins are stored in, for
- * `bookingStayHasStarted`. Read outside every transaction (`INV-LOCK-004`).
- */
-export async function clubTodayForStartedStay(now: Date = new Date()): Promise<Date> {
-  return dateOnlyInstantOf(
-    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest())
   );
 }
 
@@ -211,17 +193,11 @@ function startedStayAlertKey(groupBookingId: string): string {
 
 /**
  * Tell the treasurer ONCE per group that joiners its paid bill did not cover
- * were switched to paying for themselves mid-stay, without an email. Claim
- * first, send after, outside any transaction. What happens to the claim
- * depends on what the send did (`sendToAdmins`' result):
- * - an admin was sent it, or has a FAILED copy the email retry cron will
- *   re-send: the claim is kept for good, so an outage never multiplies it;
- * - nobody could receive it (the template switched off, nobody opted in,
- *   every recipient suppressed): the claim is held for a day, then the
- *   group-settlement cycle tries again (`alertStartedStayPayerSwitches`);
- * - the send threw before reaching anyone: the claim is given back, so the
- *   next cycle retries.
- * Never throws; returns whether the claim was kept.
+ * were switched to paying for themselves mid-stay, without an email. The
+ * claim's keep, one-day hold or give-back follows the send's result
+ * (`sendAdminAlertOnceEver`); a held or given-back claim is retried by the
+ * group-settlement cycle (`alertStartedStayPayerSwitches`). Never throws;
+ * returns whether the claim was kept.
  */
 export async function alertStartedStayJoinersOnce(
   group: {
@@ -232,71 +208,36 @@ export async function alertStartedStayJoinersOnce(
   },
   bookingIds: string[]
 ): Promise<boolean> {
-  const key = startedStayAlertKey(group.groupBookingId);
-  const claimedAt = new Date();
-  let claimed = false;
-  try {
-    claimed = await claimAlertCooldown({
-      key,
-      windowMs: ALERT_ONCE_EVER_WINDOW_MS,
-      now: claimedAt,
-    });
-    if (!claimed) return false;
-    const joiners = await prisma.booking.findMany({
-      where: { id: { in: bookingIds } },
-      select: {
-        id: true,
-        memberId: true,
-        member: { select: { email: true, firstName: true, lastName: true } },
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-      },
-    });
-    logger.warn(
-      { groupBookingId: group.groupBookingId, bookingIds },
-      "Paid group joiners switched to paying for themselves mid-stay; alerting the treasurer"
-    );
-    const result = await sendAdminGroupJoinerStartedStayAlert({
-      organiserName: `${group.organiser.firstName} ${group.organiser.lastName}`.trim(),
-      organiserBookingId: group.organiserBookingId,
-      checkIn: group.checkIn,
-      joiners: joiners.map((b) => {
-        const member = bookingOwner(b).member;
-        return { name: `${member.firstName} ${member.lastName ?? ""}`.trim(), bookingId: b.id };
-      }),
-    });
-    if (adminAlertIsDeliveredOrQueued(result)) return true;
-    logger.error(
-      { groupBookingId: group.groupBookingId, result },
-      "No admin can receive the mid-stay group joiner alert; it will be retried in a day"
-    );
-    await deferAlertCooldown({
-      key,
-      claimedAt,
-      windowMs: ALERT_ONCE_EVER_WINDOW_MS,
-      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-    }).catch((err) =>
-      logger.error(
-        { err, groupBookingId: group.groupBookingId },
-        "Failed to defer the mid-stay group joiner alert claim"
-      )
-    );
-    return false;
-  } catch (err) {
-    logger.error(
-      { err, groupBookingId: group.groupBookingId },
-      "Failed to alert on paid group joiners whose stay has started; it will be retried"
-    );
-  }
-  if (claimed) {
-    await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-      logger.error(
-        { err, groupBookingId: group.groupBookingId },
-        "Failed to release the mid-stay group joiner alert claim"
-      )
-    );
-  }
-  return false;
+  return sendAdminAlertOnceEver({
+    key: startedStayAlertKey(group.groupBookingId),
+    label: "mid-stay group joiner alert",
+    context: { groupBookingId: group.groupBookingId },
+    send: async () => {
+      const joiners = await prisma.booking.findMany({
+        where: { id: { in: bookingIds } },
+        select: {
+          id: true,
+          memberId: true,
+          member: { select: { email: true, firstName: true, lastName: true } },
+          // #3369: the owner may be an Organisation; bookingOwner() reads both.
+          organisation: { select: { name: true, email: true } },
+        },
+      });
+      logger.warn(
+        { groupBookingId: group.groupBookingId, bookingIds },
+        "Paid group joiners switched to paying for themselves mid-stay; alerting the treasurer"
+      );
+      return sendAdminGroupJoinerStartedStayAlert({
+        organiserName: `${group.organiser.firstName} ${group.organiser.lastName}`.trim(),
+        organiserBookingId: group.organiserBookingId,
+        checkIn: group.checkIn,
+        joiners: joiners.map((b) => {
+          const member = bookingOwner(b).member;
+          return { name: `${member.firstName} ${member.lastName ?? ""}`.trim(), bookingId: b.id };
+        }),
+      });
+    },
+  });
 }
 
 /**
