@@ -241,6 +241,8 @@ describe("settleKeptLateCaptureRecordOnApproval", () => {
       localId: "task_kept",
       queueType: "KEPT_LATE_CAPTURE_INVOICE",
       status: { in: ["PENDING", "FAILED"] },
+      // `INV-INT-025`: a row resolved in Xero was recorded by hand and stands.
+      manuallyResolvedAt: null,
     });
     expect(own.data).toMatchObject({
       status: "CANCELLED",
@@ -260,6 +262,8 @@ describe("settleKeptLateCaptureRecordOnApproval", () => {
     expect(own.where).toMatchObject({
       localId: "task_kept",
       status: "PARTIAL",
+      // Never a row resolved in Xero: resolved is done, and never re-run.
+      manuallyResolvedAt: null,
     });
     expect(own.data).toMatchObject({ status: "PENDING" });
     expect(

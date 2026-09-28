@@ -192,6 +192,8 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
  *    the payment whatever the task says now, and the refund note answers it.
  *  - A RUNNING row is decided by the worker's own locked check, which runs
  *    after this claim commits; a SUCCEEDED one is answered by the refund note.
+ *  - A row an officer resolved in Xero is left as it is: recorded by hand,
+ *    never re-run, and answered by the refund note (`INV-INT-025`).
  * The change's released supplementary invoice for the same capture, still
  * PENDING, is withdrawn too.
  */
@@ -218,6 +220,9 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
         ...KEPT_INVOICE_CREATE,
         localId: params.manualRefundTaskId,
         status: { in: ["PENDING", "FAILED"] },
+        // `INV-INT-025`: a row an officer resolved in Xero was recorded by
+        // hand; it stands, and the refund note answers it.
+        manuallyResolvedAt: null,
       },
       data: {
         status: "CANCELLED",
@@ -228,7 +233,13 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
     });
   } else {
     await db.xeroSyncOperation.updateMany({
-      where: { ...KEPT_INVOICE_CREATE, localId: params.manualRefundTaskId, status: "PARTIAL" },
+      // Never a row resolved in Xero: resolved is done, and never re-run.
+      where: {
+        ...KEPT_INVOICE_CREATE,
+        localId: params.manualRefundTaskId,
+        status: "PARTIAL",
+        manuallyResolvedAt: null,
+      },
       data: {
         status: "PENDING",
         startedAt: null,

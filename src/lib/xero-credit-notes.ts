@@ -16,6 +16,10 @@
  */
 
 import { findKeptLateCaptureInvoiceIdForPayment } from "@/lib/late-capture-xero-receipt";
+import {
+  readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -31,7 +35,6 @@ import {
   sanitizeForJson,
   startXeroSyncOperation,
   upsertXeroObjectLink,
-  sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
 import {
   callXeroApi,
@@ -172,7 +175,16 @@ export async function createXeroCreditNote(
       },
     });
 
-    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
+    // #3635 (`INV-INT-025`): the same coverage the enqueue capped against -
+    // links plus the notes an officer raised by hand in Xero - so a note
+    // resolved after this one was queued is not credited a second time here.
+    const resolvedCoverage = await readResolvedRefundCreditNoteCoverage(paymentId);
+    if (resolvedCoverage.unreadableOperationIds.length > 0) {
+      throw new Error(
+        `Refusing to create a Xero refund credit note for payment ${paymentId}: a note resolved by hand in Xero on this payment has no readable amount (#3635). Raise this refund's credit note in Xero by hand.`
+      );
+    }
+    const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolvedCoverage);
     const evidence = await resolveStripeCashRefundEvidence({
       id: payment.id,
       bookingId: payment.bookingId,

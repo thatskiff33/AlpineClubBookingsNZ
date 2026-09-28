@@ -824,6 +824,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   take it `FOR UPDATE`; a withdrawal commits with the check. A raised
   invoice always gets its payment. An approval withdraws an unsent row.
 - **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+- **Resolved in Xero** (`INV-INT-025`): one an officer recorded by hand is the
+  capture's receipt; an approval neither withdraws nor re-sends it.
 - Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case),
   `xero-kept-late-capture-invoice.test.ts` and `late-capture-kept-xero.test.ts`.
 

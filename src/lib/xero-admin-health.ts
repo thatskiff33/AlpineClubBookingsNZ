@@ -7,10 +7,10 @@ import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
-import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
   readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import {
   STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
@@ -309,9 +309,8 @@ export async function readRefundCreditNoteGap(payment: {
   if (evidence.cashRefundCents <= 0) {
     return { cashRefundCents: 0, coveredCents: 0, resolvedInXeroCents: 0, uncoveredCents: 0 };
   }
-  const linkedCents = await sumCoveredRefundCreditNoteCents(payment.id);
   const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
-  const coveredCents = linkedCents + resolved.coveredCents;
+  const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved);
   return {
     cashRefundCents: evidence.cashRefundCents,
     coveredCents,

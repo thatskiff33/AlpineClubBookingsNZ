@@ -1,7 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { KEPT_LATE_CAPTURE_INVOICE_ROLE } from "@/lib/late-capture-kept-xero-rules";
-import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+  XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
 
 type ReceiptStore = Pick<
   Prisma.TransactionClient,
@@ -20,7 +23,8 @@ type ReceiptStore = Pick<
  * has already cleared with its own note. The capture's own rows are:
  *  - its kept-capture invoice, once Xero has it (the task's active link; a
  *    queued or sending one is not yet a receipt, and its worker credits back
- *    any refund once it has sent - `createXeroKeptLateCaptureInvoice`);
+ *    any refund once it has sent - `createXeroKeptLateCaptureInvoice`), or
+ *    one an officer recorded by hand and resolved in Xero (`INV-INT-025`);
  *  - its change's supplementary invoice released for this intent (queued,
  *    sending or sent), the rule `hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent`
  *    applied before #3635.
@@ -44,6 +48,21 @@ export async function hasXeroReceiptForLateCapture(
       },
     });
     if (kept > 0) return true;
+    // `INV-INT-025`: an officer who resolved the kept invoice's failed row
+    // recorded the receipt by hand in Xero, so a refund of it needs its note.
+    const resolvedByHand = await store.xeroSyncOperation.count({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "ManualRefundTask",
+        localId: task.id,
+        queueType: XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+        status: { not: "CANCELLED" },
+        manuallyResolvedAt: { not: null },
+      },
+    });
+    if (resolvedByHand > 0) return true;
   }
   const released = await store.xeroSyncOperation.count({
     where: {

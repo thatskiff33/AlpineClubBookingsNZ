@@ -486,7 +486,8 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
-  recorded amount, so later refunds still get notes. No booking invoice is
+  recorded amount, so later refunds still get notes; one sum
+  (`sumRefundCreditNoteCoverageCents`) caps the enqueue, the send and the gap. No booking invoice is
   queued while the latest create is resolved; only single-booking force-sync
   overrides, and audits it. The outbox cancels, before any Xero call, a copy
   queued before a sibling was resolved.

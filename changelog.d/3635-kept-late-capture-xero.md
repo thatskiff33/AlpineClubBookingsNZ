@@ -19,7 +19,9 @@
   invoice, which used to show money leaving the Stripe account that never came
   in. Reopening a kept one and then refunding it withdraws an invoice not yet
   sent, or credits back one already sent. The Xero repair tool records any kept
-  payment Xero is missing.
+  payment Xero is missing. If an officer records a kept payment by hand in Xero
+  and marks it resolved, the app treats it as done: it is never sent again, and
+  a later refund of it still gets its refund credit note.
 
   The email telling admins a late payment is held for approval is now tried
   again a day later by the payments cron if nobody could receive it, while the

@@ -57,8 +57,29 @@ describe("hasXeroReceiptForLateCapture", () => {
     });
   });
 
+  it("is yes once an officer recorded the kept invoice by hand and resolved it in Xero (#3635, INV-INT-025)", async () => {
+    mocks.operationCount.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.queueType === "KEPT_LATE_CAPTURE_INVOICE" &&
+      (args.where.manuallyResolvedAt as { not: null } | undefined)?.not === null
+        ? 1
+        : 0,
+    );
+    await expect(hasXeroReceiptForLateCapture("pi_late")).resolves.toBe(true);
+    expect(mocks.operationCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        status: { not: "CANCELLED" },
+        manuallyResolvedAt: { not: null },
+      }),
+    });
+  });
+
   it("is yes for the change's supplementary invoice released for this intent, never for a waiting or withdrawn one", async () => {
-    mocks.operationCount.mockResolvedValue(1);
+    mocks.operationCount.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.queueType === "SUPPLEMENTARY_INVOICE" ? 1 : 0,
+    );
     await expect(hasXeroReceiptForLateCapture("pi_late")).resolves.toBe(true);
     expect(mocks.operationCount).toHaveBeenCalledWith({
       where: expect.objectContaining({

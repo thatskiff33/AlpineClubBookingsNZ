@@ -21,7 +21,6 @@ import {
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
-  sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
@@ -54,6 +53,7 @@ import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
   readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
@@ -867,9 +867,11 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // so capping the note to `cashRefundCents - coveredCents` yields this
     // delta while replays of an already-covered state — and account-credit
     // cancellations, whose cash evidence is zero — cap at zero.
-    const coveredCents =
-      (await sumCoveredRefundCreditNoteCents(paymentId, db)) +
-      resolvedCoverage.coveredCents;
+    const coveredCents = await sumRefundCreditNoteCoverageCents(
+      paymentId,
+      resolvedCoverage,
+      db
+    );
     const evidence = await resolveStripeCashRefundEvidence(payment, db);
     noteAmountCents = Math.max(
       0,

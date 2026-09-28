@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
   readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
+  // The real composition, over the two mocked halves.
+  sumRefundCreditNoteCoverageCents: async (
+    paymentId: string,
+    resolved: { coveredCents: number },
+  ) => (await mocks.sumCovered(paymentId)) + resolved.coveredCents,
   findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
 }));
 

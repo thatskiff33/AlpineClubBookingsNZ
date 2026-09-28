@@ -3744,6 +3744,32 @@ describe("runBookingXeroRepair", () => {
       ).toBeDefined();
     });
 
+    // #3635 composition (`INV-INT-025`): an officer recorded the kept payment by
+    // hand in Xero and resolved the failed row. Done: never re-run, never queued
+    // again, and still reported at info level.
+    it("gives the info finding for a kept invoice resolved in Xero, and neither retries nor re-queues it", async () => {
+      for (const status of ["FAILED", "PARTIAL"]) {
+        const resolved = {
+          ...keptOperation(status),
+          manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+          manuallyResolvedReason: "Invoice raised by hand in Xero",
+        };
+        const { bookingReport } = await run(keptBooking(), "DISMISSED", [resolved]);
+        expect(keptFinding(bookingReport)).toBeUndefined();
+        expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+        expect(
+          bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE"),
+        ).toBeUndefined();
+        expect(
+          bookingReport.findings.find((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER"),
+        ).toMatchObject({
+          severity: "info",
+          safeToAutoApply: false,
+          details: expect.objectContaining({ operationId: "op_kept_invoice", paymentIntentId: "pi_kept" }),
+        });
+      }
+    });
+
     it("applies it on a transaction of its own, where the enqueue re-reads the task under its lock", async () => {
       const booking = keptBooking();
       const deps = createDependencies({

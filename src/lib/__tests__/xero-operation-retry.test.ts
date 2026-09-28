@@ -2218,7 +2218,7 @@ describe("retryXeroSyncOperation", () => {
         message: "Queued the kept-payment Xero invoice for retry.",
       });
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
         data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
       });
     }
@@ -2234,6 +2234,47 @@ describe("retryXeroSyncOperation", () => {
         }),
       ).supported,
     ).toBe(false);
+  });
+
+  // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
+  // recorded by hand in Xero is never re-run - refused on read, and a resolve
+  // landing between the read and the requeue makes the claim lose.
+  it("never re-runs a kept late-capture invoice resolved in Xero", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    const kept = makeOperation({
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+    });
+    const resolved = { ...kept, manuallyResolvedAt: RESOLVED_AT };
+    expect(getXeroOperationRetryMeta(resolved)).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(resolved);
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+
+    mocks.findUniqueOperation
+      .mockReset()
+      .mockResolvedValueOnce(kept)
+      .mockResolvedValueOnce({ ...resolved });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
   });
 
   // #3642: the combined group invoice's rows go back to the outbox; a failed
