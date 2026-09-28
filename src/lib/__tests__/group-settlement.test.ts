@@ -175,6 +175,10 @@ import {
 import { GroupBookingError } from "@/lib/group-booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import {
+  PAYMENT_PROCESSING_CODE,
+  PAYMENT_PROCESSING_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 
 const ORGANISER = "organiser-1";
 const ORG_BOOKING = "org-booking-1";
@@ -811,6 +815,49 @@ describe("createGroupSettlementIntent", () => {
       expect.objectContaining({ amountCents: 9000 })
     );
     expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_aud");
+  });
+
+  /*
+    #3635: the double charge. An old-currency intent Stripe is still PROCESSING
+    cannot be cancelled, so the fresh intent the currency path mints beside it
+    would charge the group twice. Refused as both card doors refuse it - before
+    any bed is claimed, any lock taken or any intent minted.
+  */
+  it("refuses, and mints nothing, while a same-total intent in another currency is still processing (#3635)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_aud",
+          amountCents: 9000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "processing",
+      client_secret: "cs_aud",
+      currency: "aud",
+      amount: 9000,
+    });
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toBeInstanceOf(GroupBookingError);
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      code: PAYMENT_PROCESSING_CODE,
+      message: PAYMENT_PROCESSING_MESSAGE,
+    });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("refuses a card settlement in a currency without two decimal places before committing children (#3567)", async () => {

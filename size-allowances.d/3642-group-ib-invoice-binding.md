@@ -16,7 +16,7 @@ arm it guards. The growth of `xero-inbound/invoice-paid-effects.ts` and
 file across the epic).
 
 file: src/lib/group-settlement.ts
-lines: 1555
+lines: 1582
 reason: the bound-invoice checks run inside the lock(1) transactions whose
   re-read they depend on — the child-commit, the Internet Banking settle (which
   retires the old invoice and asks for the next attempt), the card attach and
@@ -24,6 +24,8 @@ reason: the bound-invoice checks run inside the lock(1) transactions whose
   from the transaction that makes it safe; the rule itself already lives in
   group-settlement-invoice-replacement.ts.
   Re-measured at the #3635 main sync, composed with main's #3567 currency refusal.
+  The #3635 sync fix adds the old-currency `processing` refusal the two card
+  doors already make, so a group cannot be charged twice.
 
 file: src/lib/cron-group-settlement-reaper.ts
 lines: 980

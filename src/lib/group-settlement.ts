@@ -82,7 +82,11 @@ import {
 } from "@/lib/group-settlement-invoice-replacement";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
-import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
+import {
+  PAYMENT_PROCESSING_CODE,
+  PAYMENT_PROCESSING_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
@@ -198,6 +202,24 @@ async function loadSettleableChildren(
  * outstanding PaymentIntent for the same total is returned rather than charged
  * twice.
  */
+/**
+ * #3635: a settlement intent minted in the club's PREVIOUS currency that Stripe
+ * is still `processing` (a bank debit, say) is never superseded - its cancel
+ * fails, and the fresh intent minted beside it would charge the group twice.
+ * The organiser is told to wait, exactly as both single-booking card doors
+ * answer (`create-payment-intent`, `payment-link-intent`).
+ */
+function refuseProcessingOldCurrencyIntent(
+  intent: { status: string; currency: string },
+  format: ClubFormat,
+): void {
+  if (staleIntentAction(intent) === "in_flight" && intentCurrencyDiffers(intent, format)) {
+    throw new GroupBookingError(PAYMENT_PROCESSING_MESSAGE, 409, {
+      code: PAYMENT_PROCESSING_CODE,
+    });
+  }
+}
+
 export async function createGroupSettlementIntent(
   rawCode: string,
   sessionUserId: string,
@@ -274,6 +296,8 @@ export async function createGroupSettlementIntent(
         childCount: children.length,
       };
     }
+    // Before any bed is claimed, any lock taken or any intent minted (#3635).
+    refuseProcessingOldCurrencyIntent(existingIntent, format);
   }
 
   // Lock, re-read and claim before deriving provider amount. Repricing writers
@@ -326,6 +350,9 @@ export async function createGroupSettlementIntent(
         childCount: committedChildren.length,
       };
     }
+    // #3635: the same refusal for an intent first read here (the pre-lock read
+    // is skipped when the total moved in between), so no second intent is minted.
+    refuseProcessingOldCurrencyIntent(existing, format);
     // #3567: an intent in another currency is not reused; a fresh one is minted
     // below and this one voided once superseded.
     if (existing.client_secret && existing.status !== "canceled" && !intentCurrencyDiffers(existing, format)) {
