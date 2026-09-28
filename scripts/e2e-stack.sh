@@ -19,6 +19,11 @@ cd "$(dirname "$0")/.."
 
 ENV_FILE="${E2E_ENV_FILE:-.env.staging}"
 COMPOSE_PROJECT="${E2E_COMPOSE_PROJECT:-tacbookings-staging}"
+if [[ ! "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+  echo "Invalid E2E_COMPOSE_PROJECT: expected a Docker Compose project name." >&2
+  exit 1
+fi
+FIXTURE_DATE_FILE=".artifacts/e2e-fixture-date-${COMPOSE_PROJECT}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing $ENV_FILE — copy .env.staging.example and adjust (see docs/E2E_PLAYWRIGHT.md)." >&2
@@ -65,6 +70,15 @@ compose() {
 }
 
 prepare() {
+  # `prepare` and `run` are separate CI steps/processes. Capture one club day
+  # before any seed and persist it for Playwright, so club midnight cannot move
+  # a Monday-aligned fixture to a different week between them (#3702).
+  unset E2E_FIXTURE_TODAY_NZ
+  E2E_FIXTURE_TODAY_NZ="$(pnpm exec tsx scripts/e2e-fixture-today.ts)"
+  export E2E_FIXTURE_TODAY_NZ
+  mkdir -p .artifacts
+  printf '%s\n' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"
+
   echo "==> Starting staging postgres (host port ${STAGING_POSTGRES_PORT})"
   compose up -d --wait postgres
 
@@ -111,6 +125,12 @@ prepare() {
 }
 
 run() {
+  if [[ ! -f "$FIXTURE_DATE_FILE" ]]; then
+    echo "Missing $FIXTURE_DATE_FILE - run prepare before run." >&2
+    exit 1
+  fi
+  IFS= read -r E2E_FIXTURE_TODAY_NZ < "$FIXTURE_DATE_FILE"
+  export E2E_FIXTURE_TODAY_NZ
   # A normal run starts from fresh browser/TOTP state. A small number of
   # ordered, same-stack evidence runs intentionally need the second command to
   # reuse the TOTP secrets created by the first command while preserving the
@@ -137,6 +157,7 @@ case "${1:-}" in
     ;;
   down)
     compose down -v
+    rm -f "$FIXTURE_DATE_FILE"
     ;;
   *)
     echo "Usage: $0 {prepare|run|test|down} [playwright args]" >&2

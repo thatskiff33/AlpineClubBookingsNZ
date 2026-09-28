@@ -655,6 +655,13 @@ check the others.
   subscription derivation — the Life exemption is the `LIFE` membership type
   (subscriptionBehavior `NOT_REQUIRED`).
 
+- **Archived stored role-default types govern unassigned members (#3685).**
+  Booking and billing resolve the stored row by role-default key regardless of
+  active status. Billing uses its `subscriptionBehavior` and effective fee. A
+  legacy family holder's `PER_MEMBER` basis can lift suppression. Explicit
+  season assignments take precedence. Missing rows, or missing fees when
+  billing is required, produce exceptions; booking's synthetic fallback cannot bill.
+
 ## INV-MONEY-017
 
 - **Paid-up semantics (one meaning, three facts).** A member counts as paid-up

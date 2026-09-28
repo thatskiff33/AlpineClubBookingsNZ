@@ -56,6 +56,7 @@ export const SETUP_STEP_IDS = [
   "membership-cancellation",
   "age-tiers",
   "seasons-rates",
+  "key-rate-holders",
   "stripe",
   "email-ses",
   "sentry",
@@ -149,6 +150,9 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // `INV-LIFE-093`: already archived key-resolved types, or types with a
+  // changed booking rule, require an officer's explicit repair.
+  keyResolvedRateHolderWarnings?: string[];
   // Public {{hut-fees}} embed readiness (#2129). The embed renders one nightly
   // -rate column per publicly-listed active membership type that carries rates
   // for the season (identically-priced types share one collapsed column). This
@@ -1632,6 +1636,30 @@ function buildSeasonRateCheck(
   );
 }
 
+function buildKeyRateHolderCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const warnings = db?.keyResolvedRateHolderWarnings ?? [];
+  return applyProgress(
+    {
+      id: "key-rate-holders",
+      title: "Built-in Membership Types",
+      description: "Full and Non-Member must remain active with their built-in booking rules.",
+      status: !db || warnings.length > 0 ? "warning" : "complete",
+      required: true,
+      message: !db
+        ? "Database membership types were not checked."
+        : warnings.length > 0
+          ? "A built-in membership type needs repair. Open Membership Types to reactivate it or restore its booking behavior."
+          : "Full and Non-Member membership types are ready.",
+      details: db ? warnings : ["Check membership types after connecting the database."],
+      href: "/admin/membership-types",
+    },
+    progress,
+  );
+}
+
 /**
  * Stripe readiness, DB-only (#2082). Credentials are captured in-app (encrypted
  * store) — no STRIPE_* env vars are read for operation. Any legacy Stripe env
@@ -2123,6 +2151,7 @@ export function buildSetupReadiness(
       buildMembershipCancellationCheck(input.database, progress),
       buildAgeTierCheck(club, input.database, progress),
       buildSeasonRateCheck(input.database, progress),
+      buildKeyRateHolderCheck(input.database, progress),
     ],
     integrations: [
       buildStripeCheck(env, input.database, progress),

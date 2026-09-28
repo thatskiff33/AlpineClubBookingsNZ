@@ -41,6 +41,10 @@ enough — every sub-page is captured and detailed where it lives.
 2. Work through the **checklist categories**. A check can be marked done or
    skipped, and provider checks offer a **test** button (Stripe, SMTP, Sentry,
    Xero) that pings the live service and reports the result.
+   **Built-in Membership Types** warns if Full or Non-Member was archived or its
+   booking behavior changed before the guard existed. Follow its link to
+   [Membership Types](membership-types.md), reactivate the type, and restore the
+   expected booking behavior if prompted.
 3. Use the **hub cards** to open a configuration area: Initial Setup, Finance,
    Booking Rules, Operational Integrations, Membership & Members, Cancellation,
    or Email Messages / Notifications.

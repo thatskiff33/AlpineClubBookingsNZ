@@ -75,11 +75,13 @@
     // ownership is about which project lists a file as a root.
     "e2e/**",
     "playwright.config.ts",
-    // #2693: the Vitest config and its two setup files are the test project's
-    // roots (they exist only to run under Vitest), not the app's.
+    // #2693: the Vitest config and its setup files are the test project's
+    // roots (they exist only to run under Vitest), not the app's. #3671 added
+    // the global setup, which is one of them for the same reason.
     "vitest.config.mts",
     "vitest.setup.ts",
     "vitest.clock-setup.ts",
+    "vitest.global-setup.ts",
     // #2686: Semgrep rule fixtures. They are deliberately-broken sample code
     // whose only reader is Semgrep's own `--test` runner — they import modules
     // that do not resolve from that directory and they exist to be reported.
