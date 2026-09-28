@@ -808,26 +808,29 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **A kept late capture is recorded as a card receipt** (owner and
   orchestrator decisions 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
-  an invoice for the GROSS capture, dated the capture day, paid from
-  `stripeBankAccount` that day. Keeping is dismissing the #3639 task; one pure
-  `decideLateCapture` (`late-capture-kept-xero-rules.ts`) answers for the
-  reaper, release, dismissal, worker and repair tool.
+  an invoice for the GROSS capture, paid from `stripeBankAccount`, both dated
+  the club day of the Stripe charge (`stripe-capture-date.ts`), stored on the
+  row before the send. Keeping is dismissing the #3639 task; one pure
+  `decideLateCapture` (`late-capture-kept-xero-rules.ts`) answers everywhere.
 - **Which document**: a change payment on an invoiced booking keeps its
-  supplementary invoice; anything else gets a `KEPT_LATE_CAPTURE_INVOICE`
-  anchored on and keyed by the task, touching neither the booking's invoice
-  nor its clearing note.
-- **Refunds** are the ordinary refund note, naming the kept invoice. It is
-  owed only once the capture has its own Xero receipt
-  (`hasXeroReceiptForLateCapture`), never because `payment.xeroInvoiceId`
-  exists; the worker credits back a refund taken before its receipt.
+  supplementary invoice, also charge-dated; anything else gets a
+  `KEPT_LATE_CAPTURE_INVOICE` anchored on the task, touching neither the
+  booking's invoice nor its clearing note.
+- **Refunds** are the ordinary refund note, owed only once the APP recorded
+  the capture's receipt (`readLateCaptureXeroReceipt`), never because
+  `payment.xeroInvoiceId` exists. Noted per capture (`noteLateCaptureRefunds`),
+  naming its receipt, dated the refund's day. Refunds of a capture without one
+  are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
+  self-heal never raises them.
 - **The task row is the lock**: the enqueue and the worker's send-time check
-  take it `FOR UPDATE`; a withdrawal commits with the check. A raised
-  invoice always gets its payment. An approval withdraws an unsent row.
+  take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
+  task's status, by the repair tool too. An approval withdraws an unsent row.
 - **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
-- **Resolved in Xero** (`INV-INT-025`): one an officer recorded by hand is the
-  capture's receipt; an approval neither withdraws nor re-sends it.
-- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case),
-  `xero-kept-late-capture-invoice.test.ts` and `late-capture-kept-xero.test.ts`.
+- **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
+  its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
+  and the self-heal a day on), `xero-kept-late-capture-invoice.test.ts` and
+  `refund-note-eligible-cash.test.ts`.
 
 ## INV-PAY-019
 

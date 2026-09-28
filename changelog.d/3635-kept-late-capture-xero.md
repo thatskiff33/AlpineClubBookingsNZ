@@ -21,7 +21,14 @@
   sent, or credits back one already sent. The Xero repair tool records any kept
   payment Xero is missing. If an officer records a kept payment by hand in Xero
   and marks it resolved, the app treats it as done: it is never sent again, and
-  a later refund of it still gets its refund credit note.
+  the repair tool reminds the officer to record any refund of it by hand too.
+
+  A refund of a late payment Xero never received no longer comes back a day
+  later from the nightly check for missing refund notes, which used to raise it
+  against the booking's cleared invoice. Refund notes for a late payment are
+  worked out per payment, so one is never raised twice, and carry the day the
+  refund left Stripe; the kept payment's invoice is dated the day Stripe took
+  the money, read from Stripe.
 
   The email telling admins a late payment is held for approval is now tried
   again a day later by the payments cron if nobody could receive it, while the

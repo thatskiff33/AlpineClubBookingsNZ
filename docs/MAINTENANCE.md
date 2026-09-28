@@ -1357,7 +1357,12 @@ payment, and for a change payment on a booking Xero never invoiced,
 `QUEUE_KEPT_LATE_CAPTURE_INVOICE` action is always safe to auto-apply: the
 invoice bills the gross capture, dated the capture day, touches nothing of the
 booking's own, and the pass re-reads the task under its row lock before it
-queues. A failed or partial one is offered for retry instead.
+queues. A failed or partial one is offered for retry instead, and a partial
+one (invoice raised, Stripe payment not recorded) is offered even after the
+task was reopened and approved. When an officer recorded the kept invoice by
+hand and resolved it in Xero, the app raises no refund note for it, so a refund
+of that capture raises the report-only
+`KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
 ### Backfill cancel-flattened payment statuses (#1473 / #1506)
 
