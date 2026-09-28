@@ -1,5 +1,5 @@
 /**
- * #3643 (`INV-PAY-107`, task-queue review F1): what a later PAID invoice event
+ * #3643 (`INV-PAY-108`, task-queue review F1): what a later PAID invoice event
  * may still do for a payment whose cancel raised a part-payment review.
  *
  * The review is the treasurer's instruction to settle, in Xero, the cash

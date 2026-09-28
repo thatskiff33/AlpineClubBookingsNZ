@@ -408,7 +408,7 @@ export interface BookingClassificationContext {
    */
   closedPartPaymentReviewPaymentIds: Set<string>;
   /**
-   * #3643 (`INV-PAY-107`): the payments on this booking with an OPEN
+   * #3643 (`INV-PAY-108`): the payments on this booking with an OPEN
    * part-payment review. Counted as a recorded invoice payment even when the
    * local PAYMENT link is absent (an over/prepayment allocation, or a link the
    * inbound sync has not written yet), so the cancelled-open-invoice arm never

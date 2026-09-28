@@ -715,7 +715,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             otherMintedCents,
           );
 
-        // #3643 (`INV-PAY-107`, task-queue review F1): a part-payment review
+        // #3643 (`INV-PAY-108`, task-queue review F1): a part-payment review
         // covers the cash recorded when the booking was cancelled, and the
         // treasurer settles that in Xero. Both arms below act only on cash
         // beyond it, or on nothing when either figure is unknown.
@@ -1429,7 +1429,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           )
         );
       } else if (outcome.partPaymentReviewRouted) {
-        // #3643 (`INV-PAY-107`): the cancel raised a part-payment review whose
+        // #3643 (`INV-PAY-108`): the cancel raised a part-payment review whose
         // figure is not known exactly, so this event moved no money and was
         // sent to the review instead. Never silent: cash moved in Xero.
         sendAdminPaymentFailureAlert({

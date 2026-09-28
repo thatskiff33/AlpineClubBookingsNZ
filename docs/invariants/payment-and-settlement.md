@@ -715,6 +715,23 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
   and `xero-booking-repair.test.ts`.
 
+## INV-PAY-108
+
+- **A part payment under review is never handed back twice** (#3643, the
+  task-queue review of the owner's 28 September 2026 decision). The review task
+  [INV-PAY-107]'s cancel raises records, in
+  `partPaymentReviewRecordedCents`, the cash Xero showed on the booking's one
+  invoice when it gave it exactly, and NULL otherwise.
+- When Xero later reports that invoice PAID, the inbound sync's late-cash arms
+  (an organisation's hand-back, a member's account credit) find the task by
+  its marker, never by `paymentId`, and act only on cash beyond that figure.
+  When either figure is unknown they move nothing, reopen a dismissed task and
+  email the club (`part-payment-review-cover.ts`).
+- An OPEN task counts as a recorded payment for the Xero repair tool, with or
+  without a local `PAYMENT` link, so it never offers the full clearing note.
+- Pinned by `xero-inbound-reconciliation.test.ts`, `booking-cancel.test.ts`,
+  `xero-booking-repair.test.ts` and `manual-refund-task-constraints.test.ts`.
+
 ## INV-PAY-018
 
 - Cancelling a booking never rewrites captured-payment truth (#1473). "Captured"

@@ -189,6 +189,13 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
+The card holds several kinds of row and says which is which: a cash hand-back
+(above), a part payment settled in Xero (next), a booking change to price
+("Decide a booking change the system would not price"), an amount the club may
+not have asked for ("Check an amount the club may not have asked for"), and a
+late card payment held for approval. Each kind's explaining paragraph appears
+only when a row of that kind is waiting, and none of them speaks for the others.
+
 ### Settle a part payment an officer cancelled as unpaid
 
 When an officer cancels an internet banking booking while Xero shows a payment
@@ -204,11 +211,11 @@ settle**, with its own paragraph explaining it
    no **Mark paid back** on this row, because nothing in the app moves money for
    it. Closing it also stops the Xero repair tool listing the booking for review.
 
-The card holds three kinds of row and says which is which. The paragraph about
-cash and bank transfers only appears when there is a cash hand-back waiting; the
-one below only appears when there is a booking change to price; and the third,
-described under "Check an amount the club may not have asked for", only appears
-when there is one of those. None of them speaks for the others.
+If Xero later reports the invoice paid — because you cleared the rest, or more
+money arrived — the app never hands back or credits the part payment this row
+covers a second time. It acts only on money beyond it, and where it cannot tell
+how much the row covered, it moves nothing, puts the row back on the queue and
+emails the club.
 
 ### Decide a booking change the system would not price
 
