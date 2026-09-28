@@ -13,10 +13,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the ones still in force, so a day out shows a visitor a period the club has
  * finished with — or hides the one it is in.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` — the container's zone, and the only thing
- * `getTodayDateOnly()` ever read — is pinned to `Pacific/Auckland`, which is the
- * answer the replaced helper would have given AND the value this codebase falls
- * back to, so it is the one zone a wrong fix could still pass under. The
+ * DISCRIMINATION. `Pacific/Auckland` — the container's zone by default, which
+ * is what `getTodayDateOnly()` used to read (the environment constant once
+ * pinned to it here was deleted in #3567) — is the answer the replaced helper
+ * would have given AND the value this codebase falls back to, so it is the one zone a wrong fix could still pass under. The
  * persisted club zone is `America/Denver`, behind Greenwich, which is the side
  * the defect shows on. Under the frozen clock (`2026-07-01T00:00:00.000Z`) it is
  * 1 July in Auckland and 30 June in Denver, so the two never agree and no
@@ -34,12 +34,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Inlined literals: `vi.mock` factories hoist above every const in this file.
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 const PERSISTED_ZONE = "America/Denver";
@@ -79,7 +73,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import {
   loadPublicAnnualFees,
@@ -142,7 +135,6 @@ describe("public content loaders take today from the club, not the container (#3
   it("PREMISE: the persisted zone and the environment's give different days", () => {
     // The ANSWERS have to differ, not merely the identifiers — two zones with
     // different names and the same offset would make every case below vacuous.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

@@ -2,16 +2,21 @@
  * The environment's club currency and locale, as a SEED ONLY (stage 1 of
  * programme #3205, #3563). INV-CONFIG-006.
  *
- * `CURRENCY` / `NEXT_PUBLIC_CURRENCY` and `LOCALE` / `NEXT_PUBLIC_LOCALE` were
- * the club's currency and locale before this change, so they are what an
- * existing deployment's "current effective" values mean, and they are the only
- * thing a first boot after the upgrade can copy from. That is the whole of their
- * remaining role: `resolveClubFormat` consults the seed only when nothing is
- * persisted, and the boot backfill persists it once so that stops being true.
- * The `APP_CURRENCY`, `APP_STRIPE_CURRENCY` and `APP_LOCALE` constants in
- * `src/config/operational.ts` still derive from the same variables; since #3566
- * nothing outside that file reads the first and last, and #3567 retires them
- * (and decides where the charge currency, `APP_STRIPE_CURRENCY`, comes from).
+ * `CURRENCY` and `LOCALE` were the club's currency and locale before this
+ * change, so they are what an existing deployment's "current effective" values
+ * mean, and they are the only thing a first boot after the upgrade can copy
+ * from. That is the whole of their remaining role: `resolveClubFormat` consults
+ * the seed only when nothing is persisted, and the boot backfill persists it
+ * once so that stops being true. Since #3567 nothing else reads them: the old
+ * environment constants are gone, and card charges take the club's stored
+ * currency (`stripeChargeCurrency` in `stripe.ts`).
+ *
+ * `NEXT_PUBLIC_CURRENCY` / `NEXT_PUBLIC_LOCALE` ARE NOT READ AT ALL since #3567
+ * (owner decision D5). Next inlines `NEXT_PUBLIC_*` at build time, the published
+ * image sets neither, and Docker Compose never passed them, so they only ever
+ * reached a runtime outside Compose. An install that set ONLY the public form
+ * would now seed NZD / en-NZ at its first boot, so the boot backfill WARNS when
+ * one is set and its plain twin is not ({@link ignoredPublicClubFormatVariables}).
  *
  * WHY THIS IS ITS OWN MODULE rather than sitting beside the validators, and it
  * is the reason `club-time-zone-env.ts` records for `TZ`, transferred without a
@@ -19,10 +24,9 @@
  * because the admin panel needs its currency list and its length limits — which
  * puts everything in it on the CLIENT bundle graph. A `process.env` read there
  * is a latent second authority of exactly the kind this invariant forbids: Next
- * inlines only `NEXT_PUBLIC_*`, so in a browser the same function would return
- * the BUILD-TIME `NEXT_PUBLIC_CURRENCY`, which can differ from the running
- * server's — and in the published image it is not set at all, which is the
- * defect programme #3205 exists to fix rather than one to re-create here.
+ * inlines only `NEXT_PUBLIC_*`, so in a browser the same function would answer
+ * from the BUILD rather than from the running server, which is the defect
+ * programme #3205 exists to fix rather than one to re-create here.
  *
  * This module IS marked `server-only`, so the production build refuses it in a
  * browser bundle at any depth, and it is named in BOTH leaf lists as well —
@@ -45,9 +49,9 @@ import "server-only";
 import {
   CLUB_CURRENCY_FALLBACK,
   CLUB_LOCALE_FALLBACK,
-  normaliseClubCurrencyCode,
   normaliseClubLocale,
   resolveClubFormat,
+  usableClubCurrencyCode,
   type ClubFormat,
   type ClubFormatCandidate,
 } from "@/lib/club-format";
@@ -61,18 +65,36 @@ import {
  * environment read that never happened.
  */
 export function readEnvironmentClubCurrencySeed(): string | null {
-  return (
-    process.env.CURRENCY?.trim() ||
-    process.env.NEXT_PUBLIC_CURRENCY?.trim() ||
-    null
-  );
+  return process.env.CURRENCY?.trim() || null;
 }
 
 /** The raw locale seed, or `null`. See {@link readEnvironmentClubCurrencySeed}. */
 export function readEnvironmentClubLocaleSeed(): string | null {
-  return (
-    process.env.LOCALE?.trim() || process.env.NEXT_PUBLIC_LOCALE?.trim() || null
-  );
+  return process.env.LOCALE?.trim() || null;
+}
+
+export type IgnoredPublicClubFormatVariable = {
+  variable: "NEXT_PUBLIC_CURRENCY" | "NEXT_PUBLIC_LOCALE";
+  use: "CURRENCY" | "LOCALE";
+  value: string;
+};
+
+/**
+ * The retired `NEXT_PUBLIC_` twins that are SET while their plain variable is
+ * not: the one configuration whose outcome #3567's D5 changes, because the value
+ * set is no longer read. Pure, for the boot backfill to warn with.
+ */
+export function ignoredPublicClubFormatVariables(): IgnoredPublicClubFormatVariable[] {
+  const ignored: IgnoredPublicClubFormatVariable[] = [];
+  const currency = process.env.NEXT_PUBLIC_CURRENCY?.trim();
+  if (currency && !process.env.CURRENCY?.trim()) {
+    ignored.push({ variable: "NEXT_PUBLIC_CURRENCY", use: "CURRENCY", value: currency });
+  }
+  const locale = process.env.NEXT_PUBLIC_LOCALE?.trim();
+  if (locale && !process.env.LOCALE?.trim()) {
+    ignored.push({ variable: "NEXT_PUBLIC_LOCALE", use: "LOCALE", value: locale });
+  }
+  return ignored;
 }
 
 /**
@@ -110,7 +132,10 @@ function classify(
 }
 
 export function classifyEnvironmentClubCurrencySeed(): EnvironmentClubFormatField {
-  return classify(readEnvironmentClubCurrencySeed(), normaliseClubCurrencyCode);
+  // `usable`, not bare shape (#3567 review): a seed of `JPY` is set and cannot
+  // be used, so the backfill records the default and WARNS rather than storing
+  // a currency no card could be charged in.
+  return classify(readEnvironmentClubCurrencySeed(), usableClubCurrencyCode);
 }
 
 export function classifyEnvironmentClubLocaleSeed(): EnvironmentClubFormatField {

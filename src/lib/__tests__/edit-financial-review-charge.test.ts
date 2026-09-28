@@ -68,6 +68,11 @@ const mocks = vi.hoisted(() => ({
   supersedeRead: vi.fn(),
   enqueueCancel: vi.fn(),
   cancelNow: vi.fn(),
+  // #3567: the raise first asks Stripe whether the intent is in another
+  // currency. #3635: the re-issue behind that question runs for REAL
+  // (`INV-OPS-015`); this is its one provider read.
+  getPaymentIntent: vi.fn(),
+  paymentUpdate: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -77,6 +82,10 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
 }));
 vi.mock("@/lib/booking-ledger-hand-back", () => ({
   postHandBackLedgerLine: vi.fn().mockResolvedValue(undefined),
+}));
+// #3635: the same, for the settlement lines the re-issue's real reconcile posts.
+vi.mock("@/lib/booking-ledger-settlement-sync", () => ({
+  syncBookingLedgerSettlements: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -94,6 +103,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a),
+      // The re-issue's real `reconcilePaymentAggregates` writes the mirror (#3635).
+      update: (...a: unknown[]) => mocks.paymentUpdate(...a),
     },
     xeroObjectLink: {
       findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
@@ -128,7 +139,7 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: (...a: unknown[]) => mocks.createPaymentIntent(...a),
   findOrCreateCustomer: (...a: unknown[]) => mocks.findOrCreateCustomer(...a),
   processRefund: vi.fn(),
-  getPaymentIntent: vi.fn(),
+  getPaymentIntent: (...a: unknown[]) => mocks.getPaymentIntent(...a),
   cancelPaymentIntentIfCancellable: vi.fn(),
   cancelPaymentIntentIfCancellableWithResult: vi.fn(),
   listRefundsForCharge: vi.fn(),
@@ -478,6 +489,14 @@ beforeEach(() => {
     return { id: `pi_additional_${minted}`, client_secret: `cs_${minted}` };
   });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_1" });
+  // An existing request's intent, in the club's own currency, unpaid: the raise
+  // asks Stripe and is told nothing changed, so it raises the same intent.
+  mocks.getPaymentIntent.mockResolvedValue({
+    id: "pi_additional_1",
+    currency: "nzd",
+    status: "requires_payment_method",
+    customer: "cus_1",
+  });
   // The real minter chains `.catch` onto its own recovery enqueue.
   mocks.enqueueAdditionalPaymentIntentRecovery.mockResolvedValue({ id: "recovery-1" });
   // No other change's ask is live unless a case says so.
@@ -945,7 +964,8 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
   beforeEach(() => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(secondShareTask());
-    // The first share's request, still unpaid.
+    // The first share's request is still unpaid, in the club's own currency (the
+    // file-level `getPaymentIntent` answer).
     mocks.paymentTransactionFindFirst.mockResolvedValue(chargeRequestRow());
     // Both shares are settled by the time the second's post-commit sync reads.
     mocks.manualRefundTaskFindMany.mockResolvedValue([
@@ -971,6 +991,111 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.supersedeRead).not.toHaveBeenCalled();
     expect(mocks.enqueueCancel).not.toHaveBeenCalled();
+  });
+
+  it("re-issues the raised ask in the club's currency when the request was minted in another (#3567)", async () => {
+    // The first share's intent was minted in AUD; the club now charges in NZD.
+    // Raising it would ask for more in AUD, so it is re-issued, never raised.
+    // #3635: the re-issue runs for REAL (`INV-OPS-015`), so what is asserted is
+    // the intent and ADDITIONAL row it minted and the ask it retired — not the
+    // figure this suite handed a stub.
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_additional_1",
+      currency: "aud",
+      status: "requires_payment_method",
+      customer: "cus_1",
+    });
+    mocks.createPaymentIntent.mockResolvedValue({
+      id: "pi_reissued",
+      client_secret: "cs_reissued",
+      currency: "nzd",
+    });
+    // The first share's request is the live ask the re-issue retires.
+    mocks.supersedeRead.mockResolvedValue([
+      { id: "ptx-additional-1", stripePaymentIntentId: "pi_additional_1", amountCents: 20000 },
+    ]);
+    // The ledger the re-issue's real reconcile reads back: the booking's captured
+    // card payment, the old request, and every ADDITIONAL row the re-issue has
+    // written by then — so the mirror it writes follows what was minted.
+    const ledgerRow = (row: Record<string, unknown>, minute: number) => ({
+      source: PaymentSource.STRIPE,
+      refundedAmountCents: 0,
+      withdrawnAt: null,
+      paymentMethodId: null,
+      createdAt: new Date(Date.UTC(2026, 6, 1, 0, minute)),
+      ...row,
+    });
+    mocks.paymentFindUnique.mockImplementation(async () => ({
+      id: "payment-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 15000,
+      refundedAmountCents: 0,
+      source: PaymentSource.STRIPE,
+      stripeCustomerId: "cus_1",
+      stripePaymentIntentId: "pi_primary",
+      transactions: [
+        ledgerRow({ kind: PaymentTransactionKind.PRIMARY, stripePaymentIntentId: "pi_primary", amountCents: 15000, status: PaymentStatus.SUCCEEDED }, 0),
+        ledgerRow({ kind: PaymentTransactionKind.ADDITIONAL, stripePaymentIntentId: "pi_additional_1", amountCents: 20000, status: PaymentStatus.PENDING }, 1),
+        ...mocks.upsertPaymentIntentTransaction.mock.calls.map(([row], index) =>
+          ledgerRow({
+            kind: (row as { kind: string }).kind,
+            stripePaymentIntentId: (row as { paymentIntentId: string }).paymentIntentId,
+            amountCents: (row as { amountCents: number }).amountCents,
+            status: (row as { status: string }).status,
+          }, 2 + index),
+        ),
+      ],
+    }));
+
+    const result = await settleSecondShare();
+
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_additional_1");
+    // Shares plus whatever the first mint carried: $230 on a NEW intent, under a
+    // key discriminated by the intent it replaces and the new currency.
+    const reissued = mint();
+    expect(reissued.amountCents).toBe(23000);
+    expect(reissued.idempotencyKey).toBe(
+      stripeIdempotencyKeyForAskAmount("pi_additional_1_reissue_nzd", 23000),
+    );
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ format: CLUB_FORMAT_TEST, customerId: "cus_1" }),
+    );
+    // The re-issued ADDITIONAL row carries the same request reason, so the next
+    // share finds it, and the whole ask with nothing carried in.
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        kind: PaymentTransactionKind.ADDITIONAL,
+        paymentIntentId: "pi_reissued",
+        amountCents: 23000,
+        carriedAskCents: 0,
+        status: PaymentStatus.PENDING,
+        reason: buildEditFinancialReviewChargeReason("mod-1"),
+      }),
+    );
+    // …and the old-currency request is retired through the durable cancel.
+    expect(mocks.enqueueCancel).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      paymentTransactionId: "ptx-additional-1",
+      paymentIntentId: "pi_additional_1",
+      amountCents: 20000,
+    });
+    // The payment now points its outstanding ask at the NEW intent, for the sum:
+    // what the member's pay door and the next share's sizing read back.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "payment-1" },
+        data: expect.objectContaining({
+          additionalPaymentIntentId: "pi_reissued",
+          additionalAmountCents: 23000,
+          additionalPaymentStatus: "PENDING",
+        }),
+      }),
+    );
+    expect(result.additionalPaymentIntentId).toBe("pi_reissued");
   });
 
   it("the payment's outstanding additional is rewritten to the total, on the same row", async () => {

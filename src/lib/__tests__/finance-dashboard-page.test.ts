@@ -2,26 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 /*
-  `APP_TIME_ZONE` IS PINNED BEHIND GREENWICH, AND THE CLUB'S PERSISTED ZONE IS
-  NOT IT (#3123).
+  THE CLUB'S PERSISTED ZONE ANSWERS (#3123).
 
   Two of this page model's temporal questions used to be answered by the
   container: `generatedOn` went through `formatNZDateTime`, and the reporting
-  month came from `getTodayDateOnly()`. Both read `APP_TIME_ZONE`. Pinning it to
-  `America/Denver` while the persisted zone below is `Pacific/Auckland` makes the
-  two disagree about the frozen instant (2026-07-01T00:00:00.000Z is 1 July in
-  Auckland and 30 June in Denver), so `currentMonth: "2026-07"` and the season
-  windows further down are now assertions about the CLUB's day rather than the
-  host's. Deliberately not `Pacific/Auckland` here: that is exactly what
-  `APP_TIME_ZONE` falls back to, so a suite agreeing with it could not tell the
-  persisted zone from the environment's.
+  month came from `getTodayDateOnly()`. Both read the environment zone, which
+  this file used to pin to `America/Denver` with a `@/config/operational` mock.
+  #3567 deleted that module and nothing reads the environment's zone any more,
+  so the pin is gone. The persisted zone below is `Pacific/Auckland`, and the
+  club-zone block at the end persists `America/Denver` to show the answer
+  follows the persisted zone (2026-07-01T00:00:00.000Z is 1 July in Auckland and
+  30 June in Denver).
 */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const {
   mockBuildFinanceMonthlyPnlSummary,
@@ -62,7 +54,7 @@ const {
   `getClubTimeZone` is fail-soft in three places — no delegate, a throwing query,
   no row — and every one of them degrades SILENTLY to the environment. A prisma
   mock without it therefore passes for exactly the reason the club-zone cases in
-  this file exist to rule out: they would measure `APP_TIME_ZONE` and report it
+  this file exist to rule out: they would measure the environment and report it
   as the club's answer.
 */
 vi.mock("@/lib/prisma", () => ({
@@ -136,7 +128,7 @@ import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
 import type { FinanceDashboardView } from "@/lib/finance-dashboard-ranges";
 import { buildXeroReportsUrl } from "@/lib/xero-links";
 
-/** The club's persisted zone. Held apart from `APP_TIME_ZONE` above. */
+/** The club's persisted zone. */
 const CLUB_ZONE = "Pacific/Auckland";
 
 function persistClubZone(timeZone: string) {
@@ -1304,9 +1296,7 @@ describe("finance dashboard page model", () => {
 
     Under the frozen clock (2026-07-01T00:00:00.000Z) Auckland reads 1 July and
     Denver reads 30 June, so the two never agree and nothing here can pass by
-    coincidence. This block shares the file's `APP_TIME_ZONE = America/Denver` pin,
-    which is what makes the default cases above assertions about the club rather
-    than the container.
+    coincidence.
   */
   describe("the finance page's dates come from the persisted club zone (#3123)", () => {
     beforeEach(() => {
@@ -1315,7 +1305,7 @@ describe("finance dashboard page model", () => {
 
     it("stamps generatedOn with the club's day, not the container's", async () => {
       // BEFORE the migration this read "1 Jul 2026, 6:00 pm" — Denver's clock
-      // through APP_TIME_ZONE — no matter what the club had configured.
+      // through the environment zone — no matter what the club had configured.
       persistClubZone("America/Denver");
       const model = await buildFinanceDashboardPageModel({
         member: financeManager(),

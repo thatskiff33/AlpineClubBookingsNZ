@@ -30,6 +30,11 @@ export default defineConfig({
       "./vitest.async-local-storage-setup.ts",
       "./vitest.setup.ts",
     ],
+    // Runs ONCE per run in the main process, not per test file, so it has no
+    // place in the setupFiles order above and cannot disturb it. It sweeps the
+    // scratch folders Vitest leaks into the system temp directory (#3671); the
+    // leak and the guards are explained in `scripts/lib/vitest-temp-sweep.ts`.
+    globalSetup: ["./vitest.global-setup.ts"],
     // Never descend into agent git worktrees (.claude/worktrees/*): they hold
     // stale snapshots of the repo whose test files would otherwise be collected
     // and run against the main source via the "@" alias. e2e/ holds Playwright

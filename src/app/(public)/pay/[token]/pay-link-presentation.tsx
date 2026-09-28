@@ -257,3 +257,21 @@ export function FinancialReviewNotice({ note }: { note: string }) {
     </div>
   );
 }
+
+/**
+ * #3638 (`INV-PAY-102`): shown in place of the card button once the booking has
+ * switched to Internet Banking, because the card door would refuse the attempt.
+ */
+export function CardPaymentUnavailableNotice() {
+  return (
+    <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+      This booking is being paid by internet banking, so it can&apos;t be paid by
+      card here. Use the bank-transfer details below.
+    </p>
+  );
+}
+
+/** The bank-transfer box's heading: an alternative to the card, or the only way. */
+export function internetBankingHeading(link: { cardPaymentAvailable?: boolean }): string {
+  return link.cardPaymentAvailable !== false ? "Or pay by internet banking" : "Pay by internet banking";
+}

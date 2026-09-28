@@ -28,8 +28,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ## Why these fixtures and not tidier ones
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the shipped default and the
- * reader's own fallback — and every persisted zone below is something else. That
+ * The environment's zone is `Pacific/Auckland` here — the shipped default and the
+ * reader's own fallback (the environment constant that used to be pinned to it
+ * was deleted in #3567) — and every persisted zone below is something else. That
  * is deliberate and it is the only arrangement that discriminates: the club-zone
  * reader is fail-soft on a missing delegate, on a throwing query and on an absent
  * row, and each of those degrades silently to the environment. A suite that
@@ -40,13 +41,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * and every assertion here would be measuring the environment while claiming to
  * measure the club.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
 const { mockClubTimeSettingsFindUnique, mockIsEffectiveModuleEnabled } =
   vi.hoisted(() => ({
     mockClubTimeSettingsFindUnique: vi.fn(),
@@ -153,7 +147,7 @@ describe("the deadline a member is given comes from the CLUB's zone (#3123)", ()
 
   it("follows the club when the club moves, rather than the container", async () => {
     // The same request, the same environment, a different persisted setting. If
-    // anything here were still reading `APP_TIME_ZONE` the two runs would agree.
+    // anything here were still reading the environment's zone the two runs would agree.
     const denver = await loadMemberGuestAddPolicy();
 
     mockClubTimeSettingsFindUnique.mockResolvedValue({

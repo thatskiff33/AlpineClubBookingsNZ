@@ -9,15 +9,17 @@
  *
  * ## Why the container zone is moved, and why it is `America/Denver`
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
- * read ONCE at module load, so it is set before the graph is imported and the
+ * The environment's zone is `process.env.TZ || NEXT_PUBLIC_TZ ||
+ * "Pacific/Auckland"` (the `APP_TIME_ZONE` constant that held it was deleted in
+ * #3567; `ENVIRONMENT_CLUB_ZONE` is the test helper that names it now), read
+ * ONCE at module load, so it is set before the graph is imported and the
  * modules are re-imported after. `NEXT_PUBLIC_TZ` rather than `TZ`, so the
  * HOST's own clock stays wherever the runner put it — the same choice, for the
  * same reason, as `email-date-kind-override-zone.test.ts`, which this suite
  * follows in shape.
  *
  * Denver is BEHIND Greenwich, which is the side on which the defect shows: on
- * this repository's own machine `APP_TIME_ZONE` is `Pacific/Auckland`, and
+ * this repository's own machine the environment's zone is `Pacific/Auckland`, and
  * Auckland's projection of a UTC-midnight stored day is that same day, so a
  * suite that left the container alone would watch the old code be right by
  * coincidence and call it a pass.
@@ -68,7 +70,9 @@ vi.mock("@/lib/logger", () => ({
 
 vi.resetModules();
 
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 const { __resetEmailClubTimeZoneForTests, primeEmailClubTimeZone } =
   await import("@/lib/email-templates-club-time");
 const { composeGuestNightsLabel, composeMemberGuestConsentOutcome } =
@@ -131,7 +135,7 @@ beforeEach(() => {
 describe("the premise every assertion below rests on", () => {
   it("the container really is pinned behind Greenwich", () => {
     // A premise failure here is a FAILURE and never a skip (#2870).
-    expect(APP_TIME_ZONE).toBe(CONTAINER_ZONE);
+    expect(ENVIRONMENT_CLUB_ZONE).toBe(CONTAINER_ZONE);
   });
 
   it("the three readings of the fixtures really do disagree", () => {

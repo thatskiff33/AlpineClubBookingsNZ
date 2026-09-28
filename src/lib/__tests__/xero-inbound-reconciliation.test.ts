@@ -5556,6 +5556,7 @@ describe("processStoredXeroInboundEvents", () => {
       "bk234567890",
       "inv_booking_1",
       expect.anything(),
+      CLUB_FORMAT_TEST,
       {
         providerTarget: {
           xeroCreditNoteId: "cn_credit_delete_alloc",
@@ -5703,6 +5704,7 @@ describe("processStoredXeroInboundEvents", () => {
       "bk234567890",
       "inv_booking_1",
       expect.anything(),
+      CLUB_FORMAT_TEST,
       {
         providerTarget: {
           xeroCreditNoteId: "cn_credit_clamp",

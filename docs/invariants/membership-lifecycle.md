@@ -703,6 +703,15 @@ future bookings are not automatically repriced by a type change, and raw
 subscription, payment, and Xero history must remain intact even when the
 effective subscription status is `NOT_REQUIRED`.
 
+## INV-LIFE-093
+
+`FULL` and `NON_MEMBER` are resolved by key during booking, even when archived.
+Neither may be archived or have its booking behavior changed away from its
+built-in value. An already archived row may be reactivated, and an already
+changed booking behavior may be restored to that built-in value. Setup readiness
+warns until an officer repairs either condition; deployment does not silently
+rewrite existing rows. Other membership types keep their normal editing rules.
+
 ## INV-LIFE-020
 
 When the global two-factor module is enabled, password login is not sufficient

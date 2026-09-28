@@ -5,7 +5,7 @@
  * ## Why a second file rather than more cases in the first one
  *
  * `admin-family-group-ui-helpers.test.ts` and `admin-member-detail-helpers.test.ts`
- * run under the shipped configuration, where `APP_TIME_ZONE` resolves to
+ * run under the shipped configuration, where the environment's zone resolved to
  * `Pacific/Auckland`. That zone cannot see the defect these helpers exist to
  * close. A `@db.Date` column holds a calendar day encoded as UTC midnight;
  * projecting that into a zone AHEAD of Greenwich lands on club midday, the SAME
@@ -13,19 +13,18 @@
  * Projecting it into a zone BEHIND Greenwich lands on the previous evening and
  * names the day before.
  *
- * `member-age-west-of-utc.test.ts` is the precedent and the reasoning is
- * identical: the config module is mocked to `America/Denver` FOR THIS FILE ONLY,
- * which is what makes the assertions below discriminating on every host —
- * including CI, which sets no `TZ` at all and therefore resolves UTC, where a
- * dropped projection and a correct decode are indistinguishable.
+ * `member-age-west-of-utc.test.ts` is the precedent. This file used to mock the
+ * environment constant `APP_TIME_ZONE` to `America/Denver`; that constant was
+ * deleted in #3567 and nothing reads the environment's zone any more, so the
+ * mock is gone.
  *
  * ## What each mutant does here
  *
- * Both helpers are correct today by taking no zone whatsoever, so the mock is
- * INVISIBLE to the shipped implementation and bites only a regression:
+ * Both helpers are correct today by taking no zone whatsoever:
  *
  * - reverting either helper to `formatNZDate` / `formatMemberDateNz`, which read
- *   `APP_TIME_ZONE`, moves every assertion below back one day;
+ *   `APP_TIME_ZONE` (since deleted), moved every assertion below back one day
+ *   in a Denver deployment;
  * - passing the value through the club's bound zone — the CT-4 shape of the same
  *   mistake — does the same for any club west of Greenwich.
  *
@@ -44,14 +43,8 @@
  */
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { formatFamilyGroupCalendarDay } from "@/lib/admin-family-group-ui-helpers";
 import {

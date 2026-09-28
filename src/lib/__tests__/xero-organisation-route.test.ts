@@ -23,11 +23,12 @@ describe("GET /api/admin/xero/organisation", () => {
     mocks.getXeroConnectedOrganisation.mockReset();
   });
 
-  it("returns the name, year-end month, and short code", async () => {
+  it("returns the name, year-end month, short code and base currency", async () => {
     mocks.getXeroConnectedOrganisation.mockResolvedValue({
       name: "Alpine Club",
       financialYearEndMonth: 3,
       shortCode: "!aBc12",
+      baseCurrency: "NZD",
       readFailure: null,
     });
 
@@ -40,6 +41,8 @@ describe("GET /api/admin/xero/organisation", () => {
       name: "Alpine Club",
       financialYearEndMonth: 3,
       shortCode: "!aBc12",
+      // #3633: the wizard's base-currency warning reads it from here.
+      baseCurrency: "NZD",
       readFailure: null,
     });
     // No forced refresh, so the 12-hour in-process cache still serves the read.
