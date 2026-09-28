@@ -158,6 +158,45 @@ function keptLateCaptureInvoiceRequeuePayload(
     : null;
 }
 
+/**
+ * Return an outbox row to PENDING with its queued payload, status-guarded, so
+ * the outbox claim stays the one execution authority. A lost guard, or the
+ * active-correlation-key index refusing a second live row (the caller's own
+ * flow already queued this attempt again), is a 409.
+ */
+async function requeueOutboxRowForRetry(
+  operationId: string,
+  requestPayload: Record<string, unknown>,
+  fromStatuses: Array<"FAILED" | "PARTIAL">,
+  label: string,
+): Promise<void> {
+  const queued = await prisma.xeroSyncOperation
+    .updateMany({
+      where: {
+        id: operationId,
+        status: fromStatuses.length === 1 ? fromStatuses[0] : { in: fromStatuses },
+      },
+      data: {
+        status: "PENDING",
+        requestPayload: requestPayload as Prisma.InputJsonValue,
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    })
+    .catch((error: unknown) => {
+      if (isPrismaUniqueConstraintError(error)) return { count: 0 };
+      throw error;
+    });
+  if (queued.count !== 1) {
+    throw new XeroOperationRetryError(
+      `This ${label} operation was already queued or claimed by another retry.`,
+      409,
+    );
+  }
+}
+
 export interface XeroOperationRetryMeta {
   supported: boolean;
   reason: string | null;
@@ -1140,59 +1179,27 @@ export async function retryXeroSyncOperation(
     };
   }
 
+  // #3635: the kept late capture's invoice and #3642's group invoice rows go
+  // back to the outbox the same way, through one requeue.
   const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
   if (keptLateCapturePayload) {
-    const queued = await prisma.xeroSyncOperation
-      .updateMany({
-        where: { id: operation.id, status: { in: ["FAILED", "PARTIAL"] } },
-        data: {
-          status: "PENDING",
-          requestPayload: keptLateCapturePayload as Prisma.InputJsonValue,
-          startedAt: null,
-          completedAt: null,
-          lastErrorCode: null,
-          lastErrorMessage: null,
-        },
-      })
-      .catch((error: unknown) => {
-        if (isPrismaUniqueConstraintError(error)) return { count: 0 };
-        throw error;
-      });
-    if (queued.count !== 1) {
-      throw new XeroOperationRetryError(
-        "This kept-payment invoice operation was already queued or claimed by another retry.",
-        409,
-      );
-    }
+    await requeueOutboxRowForRetry(
+      operation.id,
+      keptLateCapturePayload,
+      ["FAILED", "PARTIAL"],
+      "kept-payment invoice",
+    );
     return { message: "Queued the kept-payment Xero invoice for retry." };
   }
 
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
   if (groupSettlementPayload) {
-    const queued = await prisma.xeroSyncOperation
-      .updateMany({
-        where: { id: operation.id, status: "FAILED" },
-        data: {
-          status: "PENDING",
-          requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
-          startedAt: null,
-          completedAt: null,
-          lastErrorCode: null,
-          lastErrorMessage: null,
-        },
-      })
-      .catch((error: unknown) => {
-        // The organiser's own settle already queued this attempt again: the
-        // active-correlation-key index refuses a second live row for it.
-        if (isPrismaUniqueConstraintError(error)) return { count: 0 };
-        throw error;
-      });
-    if (queued.count !== 1) {
-      throw new XeroOperationRetryError(
-        "This group settlement invoice operation was already queued or claimed by another retry.",
-        409,
-      );
-    }
+    await requeueOutboxRowForRetry(
+      operation.id,
+      groupSettlementPayload,
+      ["FAILED"],
+      "group settlement invoice",
+    );
     return { message: "Queued the group settlement invoice operation for retry." };
   }
 

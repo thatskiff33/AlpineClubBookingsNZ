@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2074
+lines: 2064
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -63,12 +63,12 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   decision adds one predicate: a closed DECISION 2 hand-back task ends that
   arm's finding, read from the loader's context. #3635 (same epic, owner
   decision 29 Sep 2026) adds the kept-late-capture arm beside the late-capture
-  arm it follows: a treasurer-kept booking payment with no booking invoice
-  asked for is reported, queued only under the rule the dismissal uses, which
-  lives in `late-capture-kept-xero-rules.ts`.
+  arm it follows: a treasurer-kept booking payment with no kept-payment
+  invoice asked for is queued, and a failed one retried, under the rule the
+  dismissal uses, which lives in `late-capture-kept-xero-rules.ts`.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1689
+lines: 1768
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
@@ -76,7 +76,9 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
   #3642 (same epic) returns a failed group-settlement invoice row (CREATE or
   VOID) to the outbox, rebuilding the CREATE's queued payload, in the existing
-  outbox-requeue branch beside the applied-credit one.
+  outbox-requeue branch beside the applied-credit one. #3635 (same epic) adds
+  the kept late-capture invoice's retry beside it: its meta and payload
+  reader, with the two requeues now one status-guarded helper.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1894
