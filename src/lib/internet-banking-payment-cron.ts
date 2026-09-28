@@ -34,6 +34,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
+import type { ClubFormat } from "@/lib/club-format";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
@@ -44,7 +45,7 @@ export interface InternetBankingHoldReleaseResult {
   paymentIds: string[];
 }
 
-function releaseOneHold(paymentId: string, now: Date) {
+function releaseOneHold(paymentId: string, now: Date, format: ClubFormat) {
   return prisma.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -192,6 +193,7 @@ function releaseOneHold(paymentId: string, now: Date) {
             fresh.bookingId,
             fresh.xeroInvoiceId,
             tx,
+            format,
           );
           // Read Xero-allocated applied credit while both global lock(1) and
           // the per-member credit-ledger lock remain held, matching cancel.
@@ -322,7 +324,7 @@ export async function releaseExpiredInternetBankingHolds(
   for (const candidate of candidates) {
     let transition: Awaited<ReturnType<typeof releaseOneHold>>;
     try {
-      transition = await releaseOneHold(candidate.id, now);
+      transition = await releaseOneHold(candidate.id, now, format);
     } catch (err) {
       // One poisoned candidate must not starve the rest of the queue: its
       // transaction rolled back whole (hold NOT released, so the next run

@@ -660,19 +660,17 @@ derivation).
 - **Where the zone those formatters pin comes from is a different invariant.**
   Since CT-1 (#2989) it is the persisted `ClubTimeSettings.timeZone`, read
   through `getClubTimeZone()` — `INV-CONFIG-002` in
-  [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
-  the transitional constant `src/lib/date-only.ts` and the module-level
-  formatters still read; do not conclude from it that the environment is the
-  club's civil-time authority. Naming the environment's zone is `INV-DATE-029`.
+  [`product-configuration.md`](product-configuration.md). The environment is
+  not the club's civil-time authority; #3567 deleted the transitional
+  `APP_TIME_ZONE`. Naming the environment's zone is `INV-DATE-029`.
 
 ### INV-DATE-029
 
 - **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
   the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
   `APP_TIME_ZONE` import — is a lint error under `src/**` outside a named
-  nine-file ratchet, of which two are structural (the config module that defines
-  it and CT-1's seed reader) and seven are measured callers each carrying the
-  issue that blocks them. What a selector cannot express is counted instead:
+  ratchet that began at nine files and since #3567 holds one, CT-1's seed
+  reader. What a selector cannot express is counted instead:
   `club-time-escape-hatch-census.test.ts` counts the call sites that still let a
   zone-defaulting `@/lib/date-only` helper take the environment's answer. Every
   ceiling there is TIGHT — equal to the live count, with no deliberate slack — so

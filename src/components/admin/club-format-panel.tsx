@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,11 +25,16 @@ import {
 } from "@/lib/club-format";
 import {
   CLUB_FORMAT_AI_RATE_CLEARED,
-  CLUB_FORMAT_CARD_PAYMENTS,
   CLUB_FORMAT_NOTHING_REWRITTEN,
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
+  clubFormatXeroBaseCurrencyMismatch,
 } from "@/lib/club-format-copy";
+import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
+import {
+  ClubFormatCurrencyChange,
+  type ClubFormatInFlightCardPayments,
+} from "@/components/admin/club-format-currency-change";
 
 /**
  * The club currency and locale maintenance panel (stage 1 of programme #3205,
@@ -76,11 +83,21 @@ import {
  * them types it and it is accepted.
  *
  * WHAT THIS SCREEN MAY CLAIM. Since #3565 (money) and #3566 (dates, emails,
- * AI spend, sorting) the setting reaches everything the site writes except the
- * report charts' English axis labels, and the card-payment currency stays the
- * server's (#3567). The consequences list renders that from
+ * AI spend, sorting) the setting reaches everything the site writes except a
+ * few English labels the guide lists, and since #3567 card payments are charged
+ * in it too — so a CURRENCY change carries a second, counted confirmation
+ * (`ClubFormatCurrencyChange`). The consequences list renders that from
  * `@/lib/club-format-copy`, the one home the page blurb and the contextual help
  * share, so the next stage that moves a caveat moves it once.
+ *
+ * THE XERO BASE-CURRENCY WARNING (#3633) is decided here, not by the page,
+ * because it must follow the currency the panel is SHOWING: after a save the
+ * panel's state moves to the new currency without a page reload, and a warning
+ * computed once on the server would go on describing the old one. The page
+ * hands down only the base currency, already `null` for a viewer who may not
+ * read the Xero organisation; the comparison is `xeroBaseCurrencyMismatch` and
+ * the sentence `clubFormatXeroBaseCurrencyMismatch`, the ones the Xero setup
+ * wizard and the setup-readiness list use. A warning only: nothing is blocked.
  */
 
 type ClubFormatFieldSource =
@@ -162,7 +179,9 @@ function describeSource(
       `Something is recorded that this app cannot use — ` +
       `"${printableStoredValue(unusableStored)}" — so it is falling back to ` +
       `${inForce}. Restarting will not repair it. Set the club's ${noun} again ` +
-      `below.`
+      `below.` +
+      // #3567: an unusable stored CURRENCY also switches card payments off.
+      (noun === "currency" ? " Until then no card payment can be taken." : "")
     );
   }
   return SOURCE_EXPLANATION[source];
@@ -189,8 +208,18 @@ function matchesFilter(code: string, filter: string): boolean {
   return code.toLowerCase().includes(needle);
 }
 
-export function ClubFormatPanel() {
+export function ClubFormatPanel({
+  xeroBaseCurrency,
+}: {
+  /**
+   * The connected Xero organisation's base currency, resolved on the server,
+   * or `null` when it is unknown or this viewer may not read it (#3633).
+   * Required, so a caller cannot forget the warning by leaving it out.
+   */
+  xeroBaseCurrency: string | null;
+}) {
   const formatChangedAt = useChangedAtFormatter();
+  const router = useRouter();
   const [state, setState] = useState<ClubFormatState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -198,6 +227,8 @@ export function ClubFormatPanel() {
   const [localeChoice, setLocaleChoice] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
+  const [currencyAcknowledged, setCurrencyAcknowledged] = useState(false);
+  const [inFlight, setInFlight] = useState<ClubFormatInFlightCardPayments>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forbiddenSave, setForbiddenSave] = useState(false);
@@ -248,8 +279,12 @@ export function ClubFormatPanel() {
     void fetch("/api/admin/club-format")
       .then(async (response) => {
         if (!response.ok) throw new Error("load failed");
-        const payload = (await response.json()) as { state: ClubFormatState };
+        const payload = (await response.json()) as {
+          state: ClubFormatState;
+          inFlight?: ClubFormatInFlightCardPayments;
+        };
         setState(payload.state);
+        setInFlight(payload.inFlight ?? null);
       })
       .catch(() => setLoadFailed(true));
   }
@@ -285,6 +320,16 @@ export function ClubFormatPanel() {
     );
   }
 
+  /*
+    The club side is the currency cards are CHARGED in, the same answer the
+    setup list and the Xero wizard compare against (#3633 review). A stored
+    currency that is not usable charges no card at all (the Stripe step already
+    says so), so it gives no base-currency warning: `null` is "unknown".
+  */
+  const currencyMismatch = xeroBaseCurrencyMismatch(
+    xeroBaseCurrency,
+    state.currencySource === "persisted-unusable" ? null : state.currencyCode,
+  );
   const chosenCurrency = currencyChoice ?? state.currencyCode;
   const chosenLocale = localeChoice ?? state.locale;
   /*
@@ -305,6 +350,9 @@ export function ClubFormatPanel() {
     chosenCurrency === state.currencyCode &&
     chosenLocale === state.locale &&
     !nothingUsableRecorded;
+  // Card charges follow the currency (#3567), so changing it needs its own tick.
+  const currencyChanges = chosenCurrency !== state.currencyCode;
+  const readyToSave = acknowledged && (!currencyChanges || currencyAcknowledged);
   /*
     The chosen code is ALWAYS offered, even when the filter excludes it and even
     when this runtime's `supportedValuesOf` does not list it — ICU's currency
@@ -324,6 +372,7 @@ export function ClubFormatPanel() {
     setLocaleChoice(state?.locale ?? null);
     setFilter("");
     setAcknowledged(false);
+    setCurrencyAcknowledged(false);
     setError(null);
     setForbiddenSave(false);
     setEditing(true);
@@ -335,12 +384,13 @@ export function ClubFormatPanel() {
     setLocaleChoice(null);
     setFilter("");
     setAcknowledged(false);
+    setCurrencyAcknowledged(false);
     setError(null);
     setForbiddenSave(false);
   }
 
   async function save() {
-    if (canEdit !== true || !acknowledged || unchanged) return;
+    if (canEdit !== true || !readyToSave || unchanged) return;
     setSaving(true);
     setError(null);
     setForbiddenSave(false);
@@ -352,6 +402,7 @@ export function ClubFormatPanel() {
           currencyCode: chosenCurrency,
           locale: chosenLocale,
           confirmed: true,
+          currencyChangeConfirmed: currencyChanges && currencyAcknowledged,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -375,6 +426,15 @@ export function ClubFormatPanel() {
       }
       setState(payload.state);
       cancelEditing();
+      /*
+        #3633 review: the club's currency also reaches the browser through
+        `ClubFormatProvider`, mounted by the (admin) layout from a server read.
+        Without a refresh that context keeps the OLD currency for the rest of
+        this in-app session, so the Xero setup wizard's base-currency warning,
+        and every amount on other admin screens, would go on using it until a
+        full reload. Refreshing re-renders the server tree with the new value.
+      */
+      router.refresh();
     } catch {
       setError("Could not save the club's currency and locale.");
     } finally {
@@ -406,6 +466,26 @@ export function ClubFormatPanel() {
                 "currency",
               )}`}
             </p>
+            {/* Permanently mounted once the values have loaded, and only its
+                content swaps (the live-region rule in docs/ARCHITECTURE.md, and the
+                wizard's own base-currency box): a save that brings the warning in,
+                or clears it, is then announced. */}
+            <div role="status" data-testid="club-format-xero-base-currency-region">
+              {currencyMismatch ? (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
+                  data-testid="club-format-xero-base-currency-warning"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  <span>
+                    {clubFormatXeroBaseCurrencyMismatch(
+                      currencyMismatch.xeroBaseCurrency,
+                      currencyMismatch.clubCurrencyCode,
+                    )}
+                  </span>
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">
@@ -516,7 +596,6 @@ export function ClubFormatPanel() {
                 <li>{CLUB_FORMAT_AI_RATE_CLEARED}</li>
                 <li>{CLUB_FORMAT_NOTHING_REWRITTEN}</li>
                 <li>{CLUB_FORMAT_SERVER_SETTINGS}</li>
-                <li>{CLUB_FORMAT_CARD_PAYMENTS}</li>
               </ul>
               <div className="flex items-start gap-2">
                 <Checkbox
@@ -527,12 +606,21 @@ export function ClubFormatPanel() {
                 <Label htmlFor={acknowledgeId} className="text-sm font-normal">
                   I understand that this records the club&apos;s currency and
                   number format, that no amount already recorded is changed or
-                  re-converted, that amounts are still written from the
-                  server&apos;s settings for now, and that the server settings
-                  stop deciding this one once this is saved.
+                  re-converted, and that the server settings stop deciding
+                  either once this is saved.
                 </Label>
               </div>
             </div>
+
+            {currencyChanges ? (
+              <ClubFormatCurrencyChange
+                fromCurrency={state.currencyCode}
+                toCurrency={chosenCurrency}
+                inFlight={inFlight}
+                acknowledged={currencyAcknowledged}
+                onAcknowledgedChange={setCurrencyAcknowledged}
+              />
+            ) : null}
 
             {unchanged ? (
               <p className="text-sm text-muted-foreground">
@@ -560,7 +648,7 @@ export function ClubFormatPanel() {
                 describeReason={false}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={() => void save()}
-                disabled={!acknowledged || unchanged || saving}
+                disabled={!readyToSave || unchanged || saving}
               >
                 {saving ? "Saving…" : "Save currency and format"}
               </ViewOnlyActionButton>

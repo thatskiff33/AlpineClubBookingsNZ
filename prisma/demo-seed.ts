@@ -35,6 +35,7 @@ import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { redeemPromoCode } from "../src/lib/promo";
 import { getClubFormat } from "../src/lib/club-format-settings";
+import { stripeChargeCurrency } from "../src/lib/stripe-charge-currency";
 import {
   DEMO_BOOKING_WINDOWS,
   DUAL_HAT_ADMIN,
@@ -268,6 +269,9 @@ async function main() {
   // `getClubFormat()` falls back to the environment and then the defaults when
   // the row is not persisted yet, which on a fresh database it is not.
   const format = await getClubFormat();
+  // A refund row records the currency Stripe refunded in; the demo's charges
+  // were taken in the club's currency, and the column has no default (#3567).
+  const demoRefundCurrency = stripeChargeCurrency(format);
   await assertDemoSeedSafety();
   await cleanup();
   console.log("Building demo data...");
@@ -678,7 +682,7 @@ async function main() {
   const bBumped = await makeBooking(frank, "BUMPED", W.frankBumped.checkIn, W.frankBumped.checkOut);
   await addGuest(bBumped.id, { firstName: "Frank", lastName: "Foster", ageTier: "ADULT", isMember: true, memberId: frank.id }, W.frankBumped.checkIn, W.frankBumped.checkOut, NIGHTLY);
   const bumpedPayment = await prisma.payment.create({ data: { bookingId: bBumped.id, amountCents: bBumped.finalPriceCents, source: "STRIPE", status: "REFUNDED", refundedAmountCents: bBumped.finalPriceCents, stripePaymentIntentId: "pi_demo_bumped" } });
-  await prisma.paymentRefund.create({ data: { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, status: "succeeded", reason: "Bumped by capacity", stripeCreatedAt: d(relDateOnly(-30)) } });
+  await prisma.paymentRefund.create({ data: { paymentId: bumpedPayment.id, stripeRefundId: "re_demo_bumped", amountCents: bBumped.finalPriceCents, currency: demoRefundCurrency, status: "succeeded", reason: "Bumped by capacity", stripeCreatedAt: d(relDateOnly(-30)) } });
   await prisma.paymentRecoveryOperation.create({ data: { type: "REFUND_SUPERSEDED_PAYMENT", status: "PROCESSING", bookingId: bBumped.id, paymentId: bumpedPayment.id, paymentIntentId: "pi_demo_bumped", amountCents: bBumped.finalPriceCents, idempotencyKey: "demo-recovery-bump-1", attempts: 1 } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "BUMPED", actorMemberId: admin.id, reason: "Capacity reached" } });
   await prisma.bookingEvent.create({ data: { bookingId: bBumped.id, type: "REFUNDED", amountCents: bBumped.finalPriceCents } });
@@ -687,7 +691,7 @@ async function main() {
   const bCancelled = await makeBooking(grace, "CANCELLED", W.graceCancelled.checkIn, W.graceCancelled.checkOut);
   await addGuest(bCancelled.id, { firstName: "Grace", lastName: "Green", ageTier: "ADULT", isMember: true, memberId: grace.id }, W.graceCancelled.checkIn, W.graceCancelled.checkOut, NIGHTLY);
   const cancelledPayment = await prisma.payment.create({ data: { bookingId: bCancelled.id, amountCents: bCancelled.finalPriceCents, source: "STRIPE", status: "PARTIALLY_REFUNDED", refundedAmountCents: Math.round(bCancelled.finalPriceCents / 2), stripePaymentIntentId: "pi_demo_cancelled" } });
-  await prisma.paymentRefund.create({ data: { paymentId: cancelledPayment.id, stripeRefundId: "re_demo_cancelled", amountCents: Math.round(bCancelled.finalPriceCents / 2), status: "succeeded", reason: "50% cancellation refund" } });
+  await prisma.paymentRefund.create({ data: { paymentId: cancelledPayment.id, stripeRefundId: "re_demo_cancelled", amountCents: Math.round(bCancelled.finalPriceCents / 2), currency: demoRefundCurrency, status: "succeeded", reason: "50% cancellation refund" } });
   const cancellationCredit = await prisma.memberCredit.create({ data: { memberId: grace.id, amountCents: Math.round(bCancelled.finalPriceCents / 2), type: "CANCELLATION_REFUND", description: "50% credit from cancelled booking", sourceBookingId: bCancelled.id } });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CANCELLED", actorMemberId: grace.id, reason: "Change of plans" } });
   await prisma.bookingEvent.create({ data: { bookingId: bCancelled.id, type: "CREDITED", amountCents: cancellationCredit.amountCents } });

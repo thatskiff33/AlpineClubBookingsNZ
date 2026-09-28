@@ -29,23 +29,21 @@ import { afterAll, describe, expect, it, vi } from "vitest";
  *
  * ## Why these assertions can fail, when the obvious version cannot
  *
- * Rendering a lodge night under the default configuration proves nothing:
- * `APP_TIME_ZONE` resolves to `Pacific/Auckland` here (and on CI, where `TZ` is
- * unset), which is exactly the zone whose accident hid the defect. So
- * `@/config/operational` is STUBBED to a behind-UTC club for the whole file.
- * With that stub in place:
+ * Rendering a lodge night under `Pacific/Auckland` proves nothing: that is
+ * exactly the zone whose accident hid the defect. This file used to stub the
+ * environment zone constant to a behind-UTC club; #3567 deleted the constant and
+ * nothing reads the environment's zone any more, so that stub went with it.
  *
  * - the code as written pins `UTC` and renders the stored day — these pass;
- * - the code as it was pins the configured zone and renders the day before —
- *   every assertion below goes red.
+ * - the code as it was pinned the configured zone and rendered the day before.
  *
- * Measured: flipping any one of the surviving local formatters back to
- * `APP_TIME_ZONE` fails this file. That is the mutant it exists to kill.
+ * Measured while the stub existed: flipping any one of the surviving local
+ * formatters back to `APP_TIME_ZONE` failed this file.
  *
- * ## The HOST is moved too, and that is a second, different mutant
+ * ## The HOST is moved, and that is a second, different mutant
  *
- * Stubbing `APP_TIME_ZONE` catches a formatter pinned to the CONFIGURED zone. It
- * cannot catch a formatter pinned to no zone at all — one that dropped its
+ * The old stub caught a formatter pinned to the CONFIGURED zone. It could not
+ * catch a formatter pinned to no zone at all — one that dropped its
  * `timeZone: "UTC"` and so renders in whatever zone the runtime resolves, the
  * `Intl.DateTimeFormat().resolvedOptions().timeZone` read `INV-CONFIG-002`
  * forbids. MEASURED, and this is why the line below exists: with `TZ` unset the
@@ -68,8 +66,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
  *
  * ## The premise, asserted rather than assumed
  *
- * Stubbing the module is only useful if the stub is what the code reads, and if
- * the stubbed zone really would move the day. Both are checked out loud below,
+ * Moving the host is only useful if the move took, and if the zone really would
+ * move the day. Both are checked out loud below,
  * against the raw `Intl` reading rather than against anything this repository
  * wrote, so a runtime that disagreed could not leave the file quietly green.
  *
@@ -87,15 +85,12 @@ import { afterAll, describe, expect, it, vi } from "vitest";
  */
 
 /**
- * TWO PLACES BEHIND UTC, WHICH IS WHERE THIS DEFECT SHOWS — the configured club
- * and, separately, the MACHINE, moved before anything in this file is imported.
- *
- * They are two DIFFERENT zones on purpose. If the host were pinned to the same
- * `America/Denver` as the stub, then a `vi.mock` that quietly stopped applying
- * would leave `APP_TIME_ZONE` resolving `process.env.TZ` — Denver — and the
- * premise guard demanding Denver would go on passing while proving nothing. With
- * the two apart, a dropped stub answers `America/New_York` and fails loudly.
- * Both are behind Greenwich, so either one moves the calendar day.
+ * TWO PLACES BEHIND UTC, WHICH IS WHERE THIS DEFECT SHOWS — a behind-UTC club
+ * zone, which the premise uses to show such a club's day moves, and the
+ * MACHINE, moved before anything in this file is imported. (They were kept
+ * apart so a dropped environment-zone stub would fail loudly; that stub went
+ * with the constant in #3567.) Both are behind Greenwich, so either one moves
+ * the calendar day.
  *
  * The locale is left exactly as the application ships it, because the expected
  * strings below are `en-NZ` house shapes.
@@ -121,15 +116,9 @@ const { BEHIND_UTC_CLUB, BEHIND_UTC_HOST, originalHostTimeZone } = vi.hoisted(
   },
 );
 
-vi.mock("@/config/operational", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  APP_TIME_ZONE: BEHIND_UTC_CLUB,
-}));
-
 import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { bindClubFormat } from "@/lib/club-format-bound";
 import { KioskWeekView } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
-import { APP_TIME_ZONE } from "@/config/operational";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import {
@@ -160,15 +149,13 @@ const WEEK_DAYS: KioskWeekDaySummary[] = [
 ];
 
 describe("calendar dates on the member and public surfaces (CT-4, #2870)", () => {
-  it("the stub is live, the host has moved, and both would move the day", () => {
+  it("the host has moved, and it and a behind-UTC club would both move the day", () => {
     /*
-      THREE PREMISES, EVERY ONE OF WHICH A LATER EDIT COULD SILENTLY BREAK.
+      TWO PREMISES, EITHER OF WHICH A LATER EDIT COULD SILENTLY BREAK. (A third,
+      that an environment-zone stub reached the code, went with the constant in
+      #3567.)
 
-      First: the module stub reached the code. A `vi.mock` that stopped applying
-      would leave `APP_TIME_ZONE` at `Pacific/Auckland` and every assertion
-      below would pass on the broken code too.
-
-      Second: the HOST really is where the hoisted block put it, and it is
+      First: the HOST really is where the hoisted block put it, and it is
       somewhere else again. Deleting that assignment — or restoring the zone
       with `delete process.env.TZ`, which Node does not honour (#2485) — would
       put the runtime back on UTC, where a formatter with no zone pin at all is
@@ -176,16 +163,14 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
       rather than from `process.env`, because it is the RESOLVED zone that
       decides what an unpinned formatter renders.
 
-      Third: BOTH of those zones genuinely read a UTC-midnight encoding as the
+      Second: BOTH of those zones genuinely read a UTC-midnight encoding as the
       previous day, so either mutant moves the answer. That is checked against
       `Intl` directly rather than through any helper in this repository, so it
       is a statement about the runtime rather than about the code under test.
     */
-    expect(APP_TIME_ZONE).toBe(BEHIND_UTC_CLUB);
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
       BEHIND_UTC_HOST,
     );
-    expect(APP_TIME_ZONE).not.toBe(BEHIND_UTC_HOST);
 
     const encoded = new Date(`${WEEK_START}T00:00:00.000Z`);
     const readIn = (zone: string) =>
@@ -268,12 +253,11 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
       to a `CalendarDate` and format it with no zone. This token renders the SAME
       value — `window.start`, a date-only lodge night — and went on pushing it
       through `APP_TIME_ZONE`. One lobby wall, two days, one line apart: under
-      the stub above the header read "Thu, 16 Apr" and a template carrying this
-      token read "Wednesday, 15 April".
+      the old behind-UTC stub the header read "Thu, 16 Apr" and a template
+      carrying this token read "Wednesday, 15 April".
 
-      MUTATION-VERIFIED: pin `displayDateToken`'s formatter back to
-      `APP_TIME_ZONE` (or drop the pin altogether, which the moved host catches)
-      and this goes red with "Wednesday, 15 April".
+      MUTATION-VERIFIED: drop `displayDateToken`'s `UTC` pin, which the moved
+      host catches, and this goes red with "Wednesday, 15 April".
     */
     const state = {
       window: { start: "2026-04-16" },
@@ -294,7 +278,7 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
       `bookings/[id]/page.tsx` now decodes its stay line as the calendar days it
       holds, while these two labels — rendered a few lines below it, from
       `@db.Date` values of the same kind — still projected through
-      `APP_TIME_ZONE`. Under the stub above the stay line read "8 August 2026"
+      `APP_TIME_ZONE`. Under the old behind-UTC stub the stay line read "8 August 2026"
       and the consent card beside it listed the guest's nights as
       "Fri 7 Aug, Sat 8 Aug".
 

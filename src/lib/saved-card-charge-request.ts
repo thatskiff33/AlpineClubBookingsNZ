@@ -15,7 +15,6 @@
 import { PaymentStatus } from "@prisma/client";
 import type Stripe from "stripe";
 
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import {
@@ -27,6 +26,7 @@ import {
   isStripeResourceMissingError,
   readStripeErrorFields,
 } from "./stripe-errors";
+import { isLocalChargeRefusal } from "./stripe-charge-currency";
 import type { PaymentStore } from "./payment-transactions";
 import {
   buildSavedCardChargeMetadata,
@@ -59,6 +59,17 @@ import type { ClubFormat } from "@/lib/club-format";
  * so there is one place that knows where a Stripe error keeps its type
  * (`INV-SSOT-001`). An `idempotency_error` is definite here (this attempt is
  * over) and `retry` there (the card is fine) — both are right.
+ *
+ * EXCEPT ON A REPLAY WITH NO INTENT (#3567 review, a double charge). That row's
+ * first POST may have executed — its response was lost, which is why the row
+ * carries no intent — and the replay re-sends the SAME key. If the club's
+ * currency changed in between, the body differs and Stripe answers
+ * `idempotency_error` WITHOUT saying whether the first request charged. Marking
+ * the row FAILED there would let the next attempt mint a fresh key and charge a
+ * second time. So on that row the refusal is AMBIGUOUS: the row stays pending,
+ * and once its key is past the replay window the claim refuses with
+ * `attempt_key_expired` and hands it to a person, as for any unanswered attempt.
+ * `definiteChargeFailure` below is the whole decision.
  */
 const DEFINITE_STRIPE_ERROR_TYPES: ReadonlySet<string> = new Set([
   "card_error",
@@ -70,6 +81,29 @@ const DEFINITE_STRIPE_ERROR_TYPES: ReadonlySet<string> = new Set([
 export function isDefiniteSavedCardChargeFailure(err: unknown): boolean {
   const apiType = readStripeErrorFields(err).apiType;
   return apiType !== null && DEFINITE_STRIPE_ERROR_TYPES.has(apiType);
+}
+
+/**
+ * Whether a throw from the CHARGE (POST) ends this attempt. A refusal this
+ * product made before calling Stripe — a currency without two decimal places,
+ * an amount under the minimum — is definite on a FRESH attempt: nothing was
+ * sent. On a replay neither it nor an `idempotency_error` is (see above).
+ */
+export function definiteChargeFailure(
+  err: unknown,
+  attempt: Pick<SavedCardChargeAttempt, "kind">,
+): boolean {
+  // A replay re-sends a key whose first POST may have executed. Neither Stripe's
+  // idempotency_error nor a refusal made here before calling Stripe says whether
+  // that first POST charged, so on a replay both leave the row pending (#3567
+  // re-review): marking it FAILED would erase the only record of a possible
+  // charge and let the next attempt charge again.
+  if (attempt.kind === "replay") {
+    if (isLocalChargeRefusal(err)) return false;
+    if (readStripeErrorFields(err).apiType === "idempotency_error") return false;
+  }
+  if (isLocalChargeRefusal(err)) return true;
+  return isDefiniteSavedCardChargeFailure(err);
 }
 
 /**
@@ -271,7 +305,6 @@ export async function chargeSavedCardAttempt(params: {
     return await chargePaymentMethod({
       format,
       amountCents,
-      currency: APP_STRIPE_CURRENCY,
       customerId: card.stripeCustomerId,
       paymentMethodId: card.stripePaymentMethodId,
       metadata: buildSavedCardChargeMetadata(bookingId, memberId),
@@ -282,7 +315,7 @@ export async function chargeSavedCardAttempt(params: {
     const retrieving = retrievingIntentId !== null;
     const definite = retrieving
       ? isStripeResourceMissingError(err)
-      : isDefiniteSavedCardChargeFailure(err);
+      : definiteChargeFailure(err, attempt);
     if (definite) {
       try {
         const { ended } = await failSavedCardChargeAttempt(attempt.attemptRowId);

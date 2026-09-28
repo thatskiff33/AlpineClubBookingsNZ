@@ -7,7 +7,7 @@
  * `admin/payments/page.tsx` seeds its default "last updated" range from
  * `clubTime.today()` — the club's PERSISTED timezone. The two functions that
  * turn those two `yyyy-MM-dd` box values into instants closed the window at
- * midnight and 23:59:59.999 in `APP_TIME_ZONE`, which is the deployment's `TZ`
+ * midnight and 23:59:59.999 in `APP_TIME_ZONE`, which was the deployment's `TZ`
  * seed and NOT the club's setting.
  *
  * For a club six hours behind an Auckland-defaulted build, every payment updated
@@ -19,19 +19,12 @@
  *
  * ## How this suite can see it, on every host
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
- * so a contributor or CI image running with `TZ=America/Denver` would make the
- * "wrong" zone and the "right" zone the same zone and every assertion below
- * would pass whether or not the fix were present. The config module is therefore
- * MOCKED to a literal `Pacific/Auckland`: the rival is then pinned rather than
- * inherited, and the club's persisted `America/Denver` diverges from it on any
- * machine.
- *
- * That is the trade the club-zone chooser's docblock describes — pinning the
- * rival cannot notice that a genuine behind-UTC *deployment* breaks, but the
- * graph here is a service rather than a rendered component, so the mock touches
- * nothing else. `chooseDivergentClubZone` is the right tool where a component
- * renders; this is the right tool here.
+ * The rival is the literal `Pacific/Auckland` — the shipped default — rather
+ * than whatever the host's `TZ` says, so the club's persisted `America/Denver`
+ * diverges from it on any machine. This file used to pin the environment
+ * constant `APP_TIME_ZONE` to that literal with a module mock; the constant was
+ * deleted in #3567 and nothing reads the environment's zone any more, so the
+ * mock is gone.
  *
  * ## The observable
  *
@@ -43,12 +36,6 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
@@ -77,7 +64,7 @@ import {
 
 /** The club's own setting, six hours behind the pinned environment. */
 const CLUB_ZONE = "America/Denver";
-/** What `APP_TIME_ZONE` is pinned to above — the wrong answer, made a literal. */
+/** The environment's default zone — the wrong answer, made a literal. */
 const ENVIRONMENT_ZONE = "Pacific/Auckland";
 
 /**
@@ -209,7 +196,7 @@ describe("the activity window closes on the club's PERSISTED day", () => {
       body.total,
       "INV-CONFIG-002: 20:00 UTC is 14:00 on 15 April in the club's zone and " +
         "08:00 on the 16th in the environment's. Closing the window with " +
-        "APP_TIME_ZONE drops this row from the officer's default view while the " +
+        "the environment's zone drops this row from the officer's default view while the " +
         "date box still reads 15 April.",
     ).toBe(1);
     expect(body.data.map((payment) => payment.id)).toEqual([
@@ -244,7 +231,7 @@ describe("the activity window closes on the club's PERSISTED day", () => {
       body.total,
       "INV-CONFIG-002: 02:00 UTC on 16 April is still 20:00 on the 15th in the " +
         "club's zone, so a window opening on 16 April must not contain it. " +
-        "Opening on APP_TIME_ZONE's day admits it.",
+        "Opening on the environment's day admits it.",
     ).toBe(0);
   });
 

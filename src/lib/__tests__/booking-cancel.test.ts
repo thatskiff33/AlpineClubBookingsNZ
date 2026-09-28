@@ -2826,7 +2826,7 @@ describe("cancelBooking credit refunds", () => {
       );
       expect(
         mocks.repairLegacyAppliedCreditNoteAllocationsForBooking
-      ).toHaveBeenCalledWith("bk_ib2", "inv_ib2", mocks.lastTx);
+      ).toHaveBeenCalledWith("bk_ib2", "inv_ib2", mocks.lastTx, CLUB_FORMAT_TEST);
       expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith(
         "member_1",
         mocks.lastTx,

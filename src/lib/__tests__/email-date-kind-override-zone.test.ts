@@ -38,11 +38,11 @@
  * This is the part a single configuration cannot do, and it is why the earlier
  * shape of this test would have passed while half the defect survived.
  *
- * The container is pinned BEHIND Greenwich (`APP_TIME_ZONE` = `America/Denver`,
+ * The container is pinned BEHIND Greenwich (environment zone `America/Denver`,
  * set before the graph is imported). That is what makes the retired
  * environment-zone reading of a stored day a DIFFERENT DAY, so a revert on the
  * `templateData` side is visible at all. On this repository's own machine
- * `APP_TIME_ZONE` is `Pacific/Auckland`, and Auckland's projection of a
+ * the environment zone is `Pacific/Auckland`, and Auckland's projection of a
  * UTC-midnight day is that same day — so a suite that left the container alone
  * would have watched the old code produce the right answer by coincidence and
  * called it a pass.
@@ -95,7 +95,8 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
  * The container's zone, chosen BEHIND Greenwich so the retired environment-zone
  * reading of a stored calendar day lands on a different day.
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`
+ * The environment zone is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`
+ * (`ENVIRONMENT_CLUB_ZONE`, which replaced the config constant #3567 deleted)
  * and is read ONCE at module load, so this must be set before the graph is
  * imported and the modules must be re-imported after it. `TZ` is deleted rather
  * than set: it would also move the HOST's own clock, and the point here is to
@@ -178,12 +179,14 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// The graph, re-imported so `APP_TIME_ZONE` reads the container zone above
+// The graph, re-imported so the environment zone reads the container zone above
 // ---------------------------------------------------------------------------
 
 vi.resetModules();
 
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
 const { EMAIL_AUDIT_DEFAULTS } = await import(
   "@/lib/email-message-audit-defaults"
@@ -496,14 +499,14 @@ async function render(sender: Sender, { override }: { override: boolean }) {
 
 describe("email dates render by kind, on both rendering paths", () => {
   it("has the premise it needs: the container's zone is behind Greenwich and is NOT the club's", () => {
-    // Without this the suite silently stops discriminating. `APP_TIME_ZONE`
+    // Without this the suite silently stops discriminating. The environment zone
     // defaults to Pacific/Auckland on this repository's own machine, and
     // Auckland's projection of a UTC-midnight day IS that day — so the retired
     // code would produce the right answer and every case below would pass while
     // measuring nothing.
     expect(
-      APP_TIME_ZONE,
-      "NEXT_PUBLIC_TZ was set before the graph was imported, so APP_TIME_ZONE should be the container zone. If a TZ in the environment is winning, this is an environment problem and not the behaviour under test.",
+      ENVIRONMENT_CLUB_ZONE,
+      "NEXT_PUBLIC_TZ was set before the graph was imported, so the environment zone should be the container zone. If a TZ in the environment is winning, this is an environment problem and not the behaviour under test.",
     ).toBe(CONTAINER_ZONE);
 
     // The container really does read a stored night as the previous day, which

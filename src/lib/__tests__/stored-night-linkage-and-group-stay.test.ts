@@ -16,23 +16,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * as data, which is the only shape available to a pure predicate called from
  * inside write paths.
  *
- * DISCRIMINATION. `APP_TIME_ZONE` is `America/Denver` — behind Greenwich, and
- * not this codebase's own fallback. Both subjects are pure, so no persisted row
- * is involved here.
+ * DISCRIMINATION. The projection is measured under `America/Denver` — behind
+ * Greenwich, and not this codebase's own fallback. (The environment constant
+ * this file used to pin to Denver was deleted in #3567; nothing reads the
+ * environment's zone any more.) Both subjects are pure, so no persisted row is
+ * involved here.
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const { mockUpdateMany, mockFindMany } = vi.hoisted(() => ({
   mockUpdateMany: vi.fn(),
   mockFindMany: vi.fn(),
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { hasGroupStayFullyEnded } from "@/lib/group-booking";
 
@@ -50,8 +45,7 @@ beforeEach(() => {
 });
 
 describe("PREMISE", () => {
-  it("runs behind Greenwich, where the projection loses a day", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
+  it("behind Greenwich, the projection loses a day", () => {
     expect(
       new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(
         storedNight("2026-08-01"),

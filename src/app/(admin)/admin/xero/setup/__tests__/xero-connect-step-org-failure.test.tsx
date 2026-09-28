@@ -46,6 +46,8 @@ function makeContext(
     connected: true,
     needsReentry: false,
     orgName: null,
+    orgBaseCurrency: null,
+    clubChargeCurrencyCode: "NZD",
     orgError: null,
     orgErrorAt: null,
     orgErrorAttempts: 0,
@@ -568,5 +570,86 @@ describe("ConnectStep: focus survives a successful retry (#2394)", () => {
     );
 
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+// #3633: the connect step warns when the connected organisation's base currency
+// differs from the club's, because Xero books every invoice in its base
+// currency while card payments are charged in the club's. The club side is
+// the server-resolved charge currency on the wizard context (#3633 review).
+describe("ConnectStep — Xero base currency (#3633)", () => {
+  const warning = () => screen.queryByTestId("xero-base-currency-warning");
+
+  it("warns, naming both currencies, when they differ", () => {
+    render(
+      <ConnectStep
+        context={makeContext({ orgName: "Alpine Club", orgBaseCurrency: "AUD" })}
+        helpers={makeHelpers()}
+      />,
+    );
+    expect(warning()?.textContent).toBe(
+      "The club's currency is NZD but its Xero organisation's base currency is AUD, and Xero books every invoice this site sends in its base currency, so card payments are charged in NZD while their Xero invoices are in AUD.",
+    );
+    // A warning, not a failure: the organisation is still confirmed.
+    expect(screen.getByText(/Check this is/)).toBeTruthy();
+  });
+
+  it.each([
+    ["the currencies match", { orgBaseCurrency: "NZD" }],
+    ["they match in another case", { orgBaseCurrency: "nzd" }],
+    ["the base currency is unknown", { orgBaseCurrency: null }],
+    ["Xero is not connected", { connected: false, orgBaseCurrency: "AUD" }],
+  ] as const)("says nothing when %s", (_label, overrides) => {
+    render(
+      <ConnectStep
+        context={makeContext({ orgName: "Alpine Club", ...overrides })}
+        helpers={makeHelpers()}
+      />,
+    );
+    expect(warning()).toBeNull();
+  });
+
+  it("compares with the club's charge currency from the server, not a default", () => {
+    const { unmount } = render(
+      <ConnectStep
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "CHF",
+          clubChargeCurrencyCode: "CHF",
+        })}
+        helpers={makeHelpers()}
+      />,
+    );
+    // The provider says NZD; the server-resolved charge currency says CHF.
+    expect(warning()).toBeNull();
+    unmount();
+
+    render(
+      <ConnectStep
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "NZD",
+          clubChargeCurrencyCode: "CHF",
+        })}
+        helpers={makeHelpers()}
+      />,
+    );
+    expect(warning()?.textContent).toMatch(
+      /^The club's currency is CHF but its Xero organisation's base currency is NZD/,
+    );
+  });
+
+  it("says nothing when no card can be charged (a stored currency that is not usable)", () => {
+    render(
+      <ConnectStep
+        context={makeContext({
+          orgName: "Alpine Club",
+          orgBaseCurrency: "AUD",
+          clubChargeCurrencyCode: null,
+        })}
+        helpers={makeHelpers()}
+      />,
+    );
+    expect(warning()).toBeNull();
   });
 });

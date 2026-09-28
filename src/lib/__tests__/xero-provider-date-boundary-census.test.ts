@@ -19,11 +19,12 @@ import { stripCommentsAndStrings } from "./support/strip-comments";
  *    `Member.joinedDate` a day early.
  *
  * 2. **A scheduled job's civil time is the club's, not the container's.**
- *    `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
+ *    The environment's zone is `process.env.TZ || NEXT_PUBLIC_TZ ||
+ *    "Pacific/Auckland"` (once the `APP_TIME_ZONE` constant, deleted in #3567),
  *    so a deployment moved to another region moved every job with it.
  *
  * 3. **An outbound Xero document date is derived at the boundary.**
- *    `formatDateOnlyForTimeZone(new Date())` reads the ENVIRONMENT's zone; every
+ *    `formatDateOnlyForTimeZone(new Date())` read the ENVIRONMENT's zone; every
  *    Xero document date now goes through `xeroDocumentDate*`, which takes the
  *    persisted club zone explicitly.
  *
@@ -520,13 +521,13 @@ describe("rule 1: a Xero payload date is classified at the boundary", () => {
 });
 
 describe("rule 2: a scheduled job runs on the club's civil time", () => {
-  it.each(SCHEDULED_JOB_MODULES)("%s does not read APP_TIME_ZONE", (relativePath) => {
+  it.each(SCHEDULED_JOB_MODULES)("%s does not read the environment's zone", (relativePath) => {
     const code = stripCommentsAndStrings(
       readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
     );
     expect(
-      code.includes("APP_TIME_ZONE"),
-      `${relativePath} reads APP_TIME_ZONE, which is the CONTAINER's zone ` +
+      /\benv\s*\.\s*(?:NEXT_PUBLIC_)?TZ\b/.test(code),
+      `${relativePath} reads the environment's zone, which is the CONTAINER's ` +
         "(`process.env.TZ || NEXT_PUBLIC_TZ || \"Pacific/Auckland\"`). A cron " +
         "expression is a club-local scheduled time, so the zone must come from " +
         "the persisted club setting (CT-5, #2869; INV-CONFIG-002).",
@@ -577,8 +578,8 @@ describe("rule 3: an outbound Xero document date is derived at the boundary", ()
 
     expect(
       offenders,
-      "`formatDateOnlyForTimeZone` defaults to APP_TIME_ZONE — the container's " +
-        "zone. A Xero document date is derived through " +
+      "`formatDateOnlyForTimeZone` is the legacy helper that used to default to " +
+        "the container's zone. A Xero document date is derived through " +
         "`xeroDocumentDateForClubToday` / `xeroDocumentDateFromInstant` / " +
         "`xeroDocumentDateFromDateOnlyColumn`, which take the persisted club " +
         "zone explicitly (CT-5, #2869).\n" +

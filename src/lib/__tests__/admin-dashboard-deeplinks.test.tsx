@@ -45,7 +45,7 @@ import {
   UPCOMING_CHECK_IN_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
@@ -161,7 +161,7 @@ describe("admin dashboard deep links", () => {
     });
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
-    const todayKey = formatDateOnly(getTodayDateOnly(APP_TIME_ZONE));
+    const todayKey = formatDateOnly(getTodayDateOnly(ENVIRONMENT_CLUB_ZONE));
 
     expect(html).toContain("Unpaid Finished Stays");
     expect(html).toContain(
@@ -176,7 +176,7 @@ describe("admin dashboard deep links", () => {
         where: {
           deletedAt: null,
           status: "PAYMENT_PENDING",
-          checkOut: { lte: getTodayDateOnly(APP_TIME_ZONE) },
+          checkOut: { lte: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE) },
         },
       },
     ]);
@@ -219,7 +219,7 @@ describe("admin dashboard deep links", () => {
       {
         where: {
           deletedAt: null,
-          checkOut: { lte: getTodayDateOnly(APP_TIME_ZONE) },
+          checkOut: { lte: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE) },
           status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
           payment: {
             is: {
@@ -254,7 +254,7 @@ describe("admin dashboard deep links", () => {
 
     await AdminDashboardPage();
 
-    const today = getTodayDateOnly(APP_TIME_ZONE);
+    const today = getTodayDateOnly(ENVIRONMENT_CLUB_ZONE);
     const to = addDaysDateOnly(today, 7);
 
     // Bookings card count matches the list it links to (/admin/bookings?
@@ -396,7 +396,7 @@ describe("admin dashboard deep links", () => {
 
     const clubToday = new Date(`${chosen.today}T00:00:00.000Z`);
     const clubPlus7 = new Date(clubToday.getTime() + 7 * 86_400_000);
-    const environmentToday = new Date(`${todayIn(APP_TIME_ZONE)}T00:00:00.000Z`);
+    const environmentToday = new Date(`${todayIn(ENVIRONMENT_CLUB_ZONE)}T00:00:00.000Z`);
 
     // The seven-day window: the upcoming-check-ins count is the cheapest place
     // to read both bounds off one call.
@@ -418,7 +418,7 @@ describe("admin dashboard deep links", () => {
       asserted here because it is the one officer card on this page that has its
       own fallback. Since #3123 that fallback is `clubTodayDateOnlyInstant()`
       rather than `getTodayDateOnly()`, so omitting the argument would no longer
-      answer from `APP_TIME_ZONE` — it would take a SECOND, independent reading
+      answer from the environment's zone — it would take a SECOND, independent reading
       of the club's day. That is still two "today"s on one dashboard: a request
       crossing club midnight between the two reads leaves the coverage card
       counting a night the roster and bed-allocation cards beside it have already

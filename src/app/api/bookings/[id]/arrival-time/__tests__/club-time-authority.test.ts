@@ -20,9 +20,10 @@ import { NextRequest } from "next/server";
  *
  * ## How this file discriminates, stated plainly
  *
- * `APP_TIME_ZONE` — the container's `TZ`, and the only thing the replaced
- * helpers ever read — is pinned to `America/Denver`, BEHIND UTC, because that is
- * the side of Greenwich where both defects are visible. The persisted club zone
+ * `ENVIRONMENT_ZONE` models the container's `TZ` — the only thing the replaced
+ * helpers ever read — as `America/Denver`, BEHIND UTC, because that is the side
+ * of Greenwich where both defects are visible. (It used to be pinned with a mock
+ * of the environment constant; #3567 deleted the constant, so the pin went.) The persisted club zone
  * is then varied per test. Under the frozen clock (`2026-07-01T00:00:00.000Z`)
  * the club's day is 1 July in Auckland and 30 June in Denver, so the two never
  * agree and no assertion here can pass by coincidence.
@@ -32,27 +33,17 @@ import { NextRequest } from "next/server";
  *  1. a stay starting on the club's own day is editable → kills "read the stored
  *     check-in through a zone", which moves it to 30 June and locks the editor a
  *     day early;
- *  2. a stay that started yesterday is locked → kills "take today from
- *     `APP_TIME_ZONE`", which would call 30 June today and leave it open;
+ *  2. a stay that started yesterday is locked → kills "take today from the
+ *     environment's zone", which would call 30 June today and leave it open;
  *  3. the SAME booking flips from locked to editable when only the persisted
  *     zone changes → kills "ignore the persisted value" in every form,
  *     including a hard-coded `Pacific/Auckland`.
  *
- * Nothing here depends on the host's own `TZ`: `APP_TIME_ZONE` is mocked, and
- * the environment seed inside `getClubTimeZone` is never reached because a
+ * Nothing here depends on the host's own `TZ`: every zone is named explicitly,
+ * and the environment seed inside `getClubTimeZone` is never reached because a
  * persisted row is always supplied. The assertions hold with `TZ` unset (CI) and
  * with it set to anything.
  */
-
-// Spelled out literally inside the factory because `vi.mock` is hoisted above
-// every const in this file; the exported constant below is what the assertions
-// compare against, and the premise test pins the two to the same string.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 const ENVIRONMENT_ZONE = "America/Denver";
 
@@ -96,7 +87,6 @@ vi.mock("@/lib/audit", () => ({
 
 import { clubToday } from "@/lib/club-time";
 import { requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
 
 const OWNER = {
   user: { id: "owner-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
@@ -156,7 +146,6 @@ describe("the arrival-time date gate runs on club time (CT-4, #2870)", () => {
       so a guard written that way passes while every assertion below goes
       vacuous. What has to differ is the ANSWER.
     */
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(todayIn("Pacific/Auckland")).toBe("2026-07-01");
     expect(todayIn(ENVIRONMENT_ZONE)).toBe("2026-06-30");
     expect(todayIn(ENVIRONMENT_ZONE)).not.toBe(todayIn("Pacific/Auckland"));
@@ -176,7 +165,7 @@ describe("the arrival-time date gate runs on club time (CT-4, #2870)", () => {
   });
 
   it("locks a stay that started on the club's yesterday", async () => {
-    // MUTANT KILLED: taking "today" from APP_TIME_ZONE. Denver's 30 June would
+    // MUTANT KILLED: taking "today" from the environment's zone. Denver's 30 June would
     // make this booking's check-in today rather than yesterday, and the gate
     // would let it through — the complement that stops the case above being
     // satisfied by a route that simply never refuses.

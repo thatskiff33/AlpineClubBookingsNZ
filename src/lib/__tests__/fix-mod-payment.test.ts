@@ -262,6 +262,25 @@ vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
     mockQueueSupersededPrimaryIntentCancellations(...args),
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (the
+// file-level beforeEach) is the house fixture, so every other case reads the
+// format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+// #3567: PARTIAL, so `intentCurrencyDiffers` stays real (it is the rule under
+// test) and only the re-issue, whose own steps are unit-tested in
+// `additional-intent-currency.test.ts`, is replaced.
+const mockReissueAdditionalIntentInClubCurrency = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/additional-intent-currency", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/additional-intent-currency")),
+  reissueAdditionalIntentInClubCurrency: (...a: unknown[]) =>
+    mockReissueAdditionalIntentInClubCurrency(...a),
+}));
+
 // Chore cleanup mock
 vi.mock("@/lib/chore-cleanup", () => ({
   cleanupChoreAssignmentsForDateChange: vi.fn().mockResolvedValue({ choreWarnings: [] }),
@@ -280,6 +299,8 @@ import {
   hostingMemberRow,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -580,6 +601,7 @@ beforeEach(() => {
   vi.setSystemTime(FIXED_NOW);
   mockPaymentTransactionFindMany.mockResolvedValue([]);
   mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({ id: "op_cancel" });
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   mockQueueSupersededPrimaryIntentCancellations.mockResolvedValue([]);
   mockUpsertPaymentIntentTransaction.mockResolvedValue({});
   mockRefundPaymentTransactions.mockResolvedValue({
@@ -678,7 +700,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
-      client_secret: "pi_additional_secret_xxx",
+      client_secret: "pi_additional_secret_xxx", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -752,7 +774,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_add2",
-      client_secret: "secret_2",
+      client_secret: "secret_2", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -782,7 +804,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 2000, fromTierRefundPct: 50, toTierRefundPct: 100 }); // $20 change fee
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_fee",
-      client_secret: "fee_secret",
+      client_secret: "fee_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1262,7 +1284,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1378,7 +1400,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1457,7 +1479,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -1528,7 +1550,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     } as any));
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_guest_extra",
-      client_secret: "guest_extra_secret",
+      client_secret: "guest_extra_secret", currency: "nzd",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
@@ -2017,7 +2039,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_additional",
       amount: 3650,
-      client_secret: "pi_additional_secret_xyz",
+      client_secret: "pi_additional_secret_xyz", currency: "nzd",
     } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
@@ -2084,7 +2106,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       additionalPaymentRow({ booking: { status: "PAYMENT_PENDING" } })
     );
     mockedGetPaymentIntent.mockResolvedValue({
-      client_secret: "pi_additional_secret_xyz",
+      client_secret: "pi_additional_secret_xyz", currency: "nzd",
     } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
@@ -2132,6 +2154,149 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(409);
     expect((await res.json()).clientSecret).toBeUndefined();
+  });
+
+  /*
+    #3567 re-review: the old-currency intent is superseded only while unpaid. A
+    member who has paid (a 3DS return, a refresh before the webhook) must not
+    have the paid intent cancelled — its processor would refund it — nor be
+    asked to pay again.
+  */
+  it.each([
+    // #3641's pay door answers these before the currency check: money Stripe
+    // has taken (or is taking) is refused a second form, a cancelled intent is
+    // closed. Either way the paid intent is never superseded.
+    ["succeeded", 409, /already been made/],
+    ["processing", 409, /already been made/],
+    ["canceled", 404, /No pending additional payment/],
+  ])("does NOT re-issue an old-currency intent that is %s: answers %s", async (status, code, message) => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow({ stripeCustomerId: "cus_1" }));
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      status,
+      client_secret: "pi_additional_secret_aud", currency: "aud",
+    } as any);
+
+    const res = await GET(new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret"), {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(res.status).toBe(code);
+    expect(((await res.json()) as { error: string }).error).toMatch(message);
+    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+  });
+
+  it.each(["requires_confirmation", "requires_action"])(
+    "re-issues an old-currency intent that is still %s (unpaid) (#3567 re-review)",
+    async (status) => {
+      mockedAuth.mockResolvedValue(makeSession() as any);
+      mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow({ stripeCustomerId: "cus_1" }));
+      mockedGetPaymentIntent.mockResolvedValue({
+        id: "pi_additional",
+        amount: 3000,
+        status,
+        client_secret: "pi_additional_secret_aud", currency: "aud",
+      } as any);
+      mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
+      mockReissueAdditionalIntentInClubCurrency.mockResolvedValue({
+        id: "pi_reissued",
+        amount: 3000,
+        client_secret: "pi_reissued_secret_nzd", currency: "nzd",
+      });
+
+      const res = await GET(new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret"), {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockReissueAdditionalIntentInClubCurrency).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("re-issues an ask minted in another currency and returns the NEW intent's secret, never the old one (#3567)", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(
+      additionalPaymentRow({ stripeCustomerId: "cus_1" })
+    );
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      status: "requires_payment_method",
+      client_secret: "pi_additional_secret_aud", currency: "aud",
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      carriedAskCents: 1000,
+      reason: "edit_financial_review_charge",
+      status: "PENDING",
+      createdAt: new Date(),
+    });
+    mockReissueAdditionalIntentInClubCurrency.mockResolvedValue({
+      id: "pi_reissued",
+      amount: 3000,
+      client_secret: "pi_reissued_secret_nzd", currency: "nzd",
+    });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toEqual({
+      clientSecret: "pi_reissued_secret_nzd",
+      amountCents: 3000,
+      paymentIntentId: "pi_reissued",
+    });
+    expect(mockReissueAdditionalIntentInClubCurrency).toHaveBeenCalledTimes(1);
+    const [call] = mockReissueAdditionalIntentInClubCurrency.mock.calls[0];
+    expect(call).toMatchObject({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "bk1",
+      paymentId: "p1",
+      staleIntentId: "pi_additional",
+      reason: "edit_financial_review_charge",
+      customerId: "cus_1",
+    });
+    // The ask is restated unchanged: the same total, the same carried part.
+    expect(call.ask.amountCents).toBe(3000);
+    expect(call.ask.carriedCents).toBe(1000);
+  });
+
+  it("does not re-issue an intent already in the club's currency (#3567)", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      client_secret: "pi_additional_secret_nzd", currency: " NZD ",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ clientSecret: "pi_additional_secret_nzd" });
+    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+  });
+
+  it("refuses with a 409 in a club currency without two decimal places before reading the payment (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE });
+    expect(mockPaymentFindUnique).not.toHaveBeenCalled();
+    expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
+    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
   });
 
   it("returns 403 for a different member trying to access", async () => {
@@ -2356,7 +2521,7 @@ describe("#3166 modify-dates parks rather than repricing an unreadable night", (
     } as any);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
-      client_secret: "pi_additional_secret_xxx",
+      client_secret: "pi_additional_secret_xxx", currency: "nzd",
     } as any);
 
     const res = await moveTheDates();

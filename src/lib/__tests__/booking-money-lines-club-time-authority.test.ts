@@ -12,14 +12,14 @@
  *
  * ## What was actually wrong, and what this suite measures
  *
- * `formatNZDate` projected the stored UTC-midnight encoding through
- * `APP_TIME_ZONE`. For a club behind Greenwich that names the PREVIOUS night —
- * so the member reading "your dates changed" was shown the wrong ones. The
- * container is therefore pinned to `America/Denver` before the graph is
- * imported: on this repository's own machine `APP_TIME_ZONE` is
- * `Pacific/Auckland`, whose projection of a UTC-midnight day is that same day,
- * and a suite that left it alone would watch the old code be right by
- * coincidence.
+ * `formatNZDate` projected the stored UTC-midnight encoding through the
+ * environment zone (`APP_TIME_ZONE`, deleted in #3567). For a club behind
+ * Greenwich that names the PREVIOUS night — so the member reading "your dates
+ * changed" was shown the wrong ones. The container is therefore pinned to
+ * `America/Denver` before the graph is imported: on this repository's own
+ * machine the environment zone is `Pacific/Auckland`, whose projection of a
+ * UTC-midnight day is that same day, and a suite that left it alone would
+ * watch the old code be right by coincidence.
  *
  * The club's PERSISTED zone is varied across `Pacific/Auckland` (east, where the
  * projection would agree anyway — the current-adopter regression case) and
@@ -56,7 +56,9 @@ vi.mock("@/lib/logger", () => ({
 
 vi.resetModules();
 
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 const { __resetEmailClubTimeZoneForTests, primeEmailClubTimeZone } =
   await import("@/lib/email-templates-club-time");
 const { bookingModificationSummaryRows } = await import(
@@ -118,7 +120,7 @@ beforeEach(() => {
 
 describe("the premise these assertions rest on", () => {
   it("the container really is pinned behind Greenwich", () => {
-    expect(APP_TIME_ZONE).toBe(CONTAINER_ZONE);
+    expect(ENVIRONMENT_CLUB_ZONE).toBe(CONTAINER_ZONE);
   });
 
   it("the stored night and its projections really do disagree", () => {

@@ -35,6 +35,7 @@ const SERVER_CONFIG: XeroWizardServerConfig = {
   legacyEnvVars: [],
   webhookDeliveryUrl: "https://club.example.test/api/webhooks/xero",
   webhooksVerifiable: true,
+  clubChargeCurrencyCode: "NZD",
 };
 
 type RouteReply = { ok: boolean; status?: number; body: unknown } | Error;
@@ -525,5 +526,74 @@ describe("useXeroWizardContext: the post-OAuth marker is consumed once (#2394)",
       ),
     );
     expect(second.orgUrls).toEqual(["/api/admin/xero/organisation"]);
+  });
+});
+
+// #3633: the base currency rides on the same organisation response as the name,
+// and is kept on the same terms: a failed re-check keeps the last one read, a
+// successful read replaces it (null included).
+describe("useXeroWizardContext: organisation base currency (#3633)", () => {
+  const orgWith = (
+    baseCurrency: unknown,
+    readFailure: Record<string, unknown> | null = null,
+  ): RouteReply => ({
+    ok: true,
+    body: {
+      name: "Alpine Sports Club",
+      financialYearEndMonth: 3,
+      shortCode: "!abc12",
+      baseCurrency,
+      readFailure,
+    },
+  });
+
+  it("carries the base currency off the organisation read, with no extra call", async () => {
+    const { orgUrls } = stubFetch({ orgReplies: [orgWith("AUD")] });
+    const { result } = renderHook(() => useXeroWizardContext(SERVER_CONFIG));
+
+    await waitFor(() =>
+      expect(result.current.context.orgBaseCurrency).toBe("AUD"),
+    );
+    expect(orgUrls).toEqual(["/api/admin/xero/organisation"]);
+  });
+
+  it("treats a missing or non-string base currency as unknown", async () => {
+    stubFetch({ orgReplies: [orgWith(42)] });
+    const { result } = renderHook(() => useXeroWizardContext(SERVER_CONFIG));
+
+    await waitFor(() =>
+      expect(result.current.context.orgName).toBe("Alpine Sports Club"),
+    );
+    expect(result.current.context.orgBaseCurrency).toBeNull();
+  });
+
+  it("keeps the last base currency through a failed re-check, and a success replaces it", async () => {
+    stubFetch({
+      orgReplies: [
+        orgWith("AUD"),
+        orgWith(null, { kind: "unavailable", rateLimit: null, retryAfterSeconds: null }),
+        orgWith(null),
+      ],
+    });
+    const { result } = renderHook(() => useXeroWizardContext(SERVER_CONFIG));
+    await waitFor(() =>
+      expect(result.current.context.orgBaseCurrency).toBe("AUD"),
+    );
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.context.orgError).not.toBeNull());
+    expect(result.current.context.orgBaseCurrency).toBe("AUD");
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.context.orgError).toBeNull());
+    expect(result.current.context.orgBaseCurrency).toBeNull();
+  });
+
+  it("has no base currency while Xero is disconnected", async () => {
+    stubFetch({ connected: false, orgReplies: [orgWith("AUD")] });
+    const { result } = renderHook(() => useXeroWizardContext(SERVER_CONFIG));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.context.orgBaseCurrency).toBeNull();
   });
 });
