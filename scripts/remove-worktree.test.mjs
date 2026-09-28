@@ -211,8 +211,15 @@ function volumeJunction(linkPath, target) {
   const volume = volumeGuidPath(target);
   if (!volume) return false;
   const spelled = volume + target.slice(3);
-  const made = spawnSync("cmd", ["/c", "mklink", "/J", linkPath, spelled], { encoding: "utf8" });
-  return made.status === 0 && fs.existsSync(linkPath);
+  // Node writes the junction itself, with no shell in between (CodeQL
+  // js/shell-command-injection-from-environment): `cmd /c mklink /J` made the
+  // same reparse point, but through cmd, which re-parses the paths it is given.
+  try {
+    fs.symlinkSync(spelled, linkPath, "junction");
+  } catch {
+    return false;
+  }
+  return fs.existsSync(linkPath);
 }
 
 describe("remove-worktree: links Node does not flag, unreadable folders, and git never deleting", () => {
@@ -225,7 +232,7 @@ describe("remove-worktree: links Node does not flag, unreadable folders, and git
       ignoreInLane(repo, lane, ".cache");
       fs.mkdirSync(path.join(lane, ".cache"));
       const link = path.join(lane, ".cache", "vol");
-      // mklink /J needs no admin rights; if it still cannot be created there is
+      // A junction needs no admin rights; if it still cannot be created there is
       // nothing to test, and the test says so rather than passing silently.
       expect(volumeJunction(link, outside), "could not create a volume-path junction").toBe(true);
       expect(fs.lstatSync(link).isSymbolicLink()).toBe(false); // the premise
