@@ -76,6 +76,36 @@ export function isRecordedRefundStatus(status: string): boolean {
 }
 
 /**
+ * #3639: HOW MUCH OF ONE CAPTURE HAS GONE BACK, and how much Stripe still holds
+ * - one home for every late-capture reader that must not refund, approve or
+ * record a hand-back twice (the webhook's verdict, the treasurer's approval,
+ * the #2700 hand-back and its raise).
+ *
+ * `refundedAmountCents` is load-bearing, not `status`:
+ * `markPaymentIntentTransactionSucceeded` rewrites a refunded row's status to
+ * SUCCEEDED (a browser confirm finishing after the webhook refunded) but never
+ * touches the refunded total, so a status-only test reads a refunded capture as
+ * untouched. A refunded status still counts, for a row whose total was never
+ * written (the refund arrived before the ledger knew the capture).
+ */
+export function captureRefundState(row: {
+  status: PaymentStatus;
+  amountCents: number;
+  refundedAmountCents: number;
+}): { anyRefunded: boolean; heldCents: number } {
+  return {
+    anyRefunded:
+      row.refundedAmountCents > 0 ||
+      row.status === PaymentStatus.REFUNDED ||
+      row.status === PaymentStatus.PARTIALLY_REFUNDED,
+    heldCents:
+      row.status === PaymentStatus.REFUNDED
+        ? 0
+        : Math.max(row.amountCents - row.refundedAmountCents, 0),
+  };
+}
+
+/**
  * The least a payment's refunded total can truthfully be (#3640): what it
  * captured, or - if less - its card refunds still counted plus the account
  * credit its booking issued. One home for two readers that must agree: the

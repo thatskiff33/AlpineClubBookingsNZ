@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { LateCaptureRefundSetting } from "@/components/admin/booking-policies/late-capture-refund-setting"
 import { Label } from "@/components/ui/label"
 import { CancellationRulesEditor } from "./cancellation-rules-editor"
 import { PolicyPreview } from "./policy-preview"
@@ -75,6 +76,7 @@ interface CancellationDraft {
   waitlistOrder: WaitlistCrossLodgeOrder
   /** #3232 D2: charge the change fee on BOTH bookings of a linked move. */
   linkedMoveBothFees: boolean
+  lateCaptureNeedsApproval: boolean // #3639: hold a late capture for a treasurer
   /**
    * Whether this partition actually has persisted rules, as reported by the GET
    * (#2142). A partition with no rows yet gets `FALLBACK_RULES` seeded into
@@ -122,12 +124,14 @@ const CANCELLATION_DEFAULTS: CancellationDraft = {
   waitlistOrder: "OWN_LODGE_FIRST",
   // Charging both is the club's default answer; waiving is the exception.
   linkedMoveBothFees: true,
+  lateCaptureNeedsApproval: DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
 }
 
 function toDraft(
   data: {
     rules?: PolicyRule[]
     linkedMoveChargesBothChangeFees?: boolean
+    lateCaptureRefundNeedsApproval?: boolean
     nonMemberHoldEnabled?: boolean
     nonMemberHoldDays?: number
     waitlistCrossLodgeOrder?: string
@@ -150,6 +154,9 @@ function toDraft(
     linkedMoveBothFees:
       data.linkedMoveChargesBothChangeFees ??
       DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+    lateCaptureNeedsApproval:
+      data.lateCaptureRefundNeedsApproval ??
+      DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
     configured: fetchedRules.length > 0,
@@ -175,6 +182,7 @@ export function DefaultCancellationPolicySection() {
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
+  const canEditFinance = useAdminAreaEditAccess("finance") // #3639: the late-capture choice
 
   // Mirrors `scopeLodgeId` for the async callbacks below, which need to know
   // the CURRENT scope at the moment they resolve rather than the one they
@@ -210,7 +218,7 @@ export function DefaultCancellationPolicySection() {
       }
       return toDraft(data, scope)
     },
-    save: async (draft) => {
+    save: async (draft, savedSnapshot) => {
       if (!policyScopeReady) {
         throw new Error("Choose an available policy scope before saving")
       }
@@ -231,6 +239,11 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
                 linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
+                // #3639 delta D3: only from someone who may change it, with the loaded value.
+                ...(canEditFinance === true ? {
+                  lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
+                  lateCaptureRefundNeedsApprovalLoaded: savedSnapshot?.lateCaptureNeedsApproval ?? draft.lateCaptureNeedsApproval,
+                } : {}),
               }),
         }),
       })
@@ -272,6 +285,7 @@ export function DefaultCancellationPolicySection() {
         draft.holdDays !== saved.holdDays ||
         draft.waitlistOrder !== saved.waitlistOrder ||
         draft.linkedMoveBothFees !== saved.linkedMoveBothFees ||
+        draft.lateCaptureNeedsApproval !== saved.lateCaptureNeedsApproval ||
         !cancellationRuleSetsEqual(draft.rules, saved.rules)
       )
     },
@@ -591,6 +605,12 @@ export function DefaultCancellationPolicySection() {
                       </p>
                     </div>
                   </div>
+                  <LateCaptureRefundSetting
+                    needsApproval={draft.lateCaptureNeedsApproval}
+                    editing={editing}
+                    canChange={canEditFinance}
+                    onChange={(v) => section.setDraft({ lateCaptureNeedsApproval: v })}
+                  />
                 </div>
               ) : null}
 

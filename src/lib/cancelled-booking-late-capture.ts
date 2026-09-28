@@ -1,4 +1,8 @@
-import { ManualRefundTaskStatus } from "@prisma/client";
+import {
+  ManualRefundTaskStatus,
+  PaymentRecoveryOperationType,
+  PaymentStatus,
+} from "@prisma/client";
 import { logAudit } from "@/lib/audit";
 import {
   recordAutomaticCancelledBookingRefundTask,
@@ -11,6 +15,18 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  classifyCaptureOnCancelledBooking,
+  isLateCaptureHandlerWrite,
+  type CancellationRefundDecisionEvidence,
+  type CancelledBookingCaptureVerdict,
+} from "@/lib/cancellation-settled-money";
+import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import {
+  captureRefundState,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
 
 /**
  * The shared epilogue of BOTH late-capture handlers on a cancelled booking
@@ -45,7 +61,12 @@ import type { ClubFormat } from "@/lib/club-format";
  * #1350 decision to make it stay in the handlers and are untouched —
  * `INV-ADDPAY-037` records that the refund is not gated. The one exception, #2774's
  * hand-back fence, is not a gate on that policy: it withholds a second copy of a
- * refund the member has already had by hand. The
+ * refund the member has already had by hand. Nor is #3639's
+ * `classifyNoticeOnCancelledBooking`: it recognises money the cancellation had
+ * already decided, or a capture already handed back, neither of which the
+ * member is still owed by this path. The only gate on a genuine late capture is
+ * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-106`), which
+ * lives in `late-capture-refund-hold.ts`. The
  * `booking.payment.refunded_after_cancellation` audit entry also stays in each
  * handler: it carries handler-specific detail, and moving it would renumber census
  * ordinals for no gain.
@@ -58,6 +79,200 @@ import type { ClubFormat } from "@/lib/club-format";
  * and `announceAutomaticLateCaptureRefund` is fire-and-forget, in that order,
  * because WHICH alert goes out depends on what the record writer found.
  */
+
+/**
+ * #3639: what a success notice for a CANCELLED booking is —
+ * `classifyCaptureOnCancelledBooking` is the rule (`INV-PAY-106`); this reads
+ * what it needs, for BOTH late-capture handlers.
+ *
+ * THE ROW IS READ AGAIN rather than taken from the webhook dispatch, which read
+ * it BEFORE it saw the booking cancelled: a settlement and a cancel committing
+ * between those two reads would leave a stale "not captured" row in hand. Read
+ * after the booking is known `CANCELLED`, it carries every capture recorded
+ * before the cancel (a later settlement refuses a cancelled booking).
+ *
+ * THE EVIDENCE is read only when the row captured, so an ordinary late capture
+ * (its row still PENDING or FAILED) costs one query. It is the #1491 artefacts
+ * for this booking — its `CANCELLED` events, the credits it is the source of,
+ * and its booking-cancel refund recovery operation by exact key, the same three
+ * the repair tool loads in bulk (`xero-booking-repair-load.ts`) — plus whether
+ * a `CANCEL_PAYMENT_INTENT` recovery exists for THIS intent — the cancel's
+ * claim, or any superseded-intent writer (they share its key), recording that
+ * the intent must not capture.
+ *
+ * NOTHING IS CAUGHT, like the #2774 fence read: a read that cannot answer
+ * answers neither way. Guessing "late" would refund money a cancellation kept,
+ * and guessing "settled" would keep a genuine late capture, so the webhook
+ * answers 500 and Stripe redelivers.
+ */
+async function classifyNoticeOnCancelledBooking(params: {
+  bookingId: string;
+  paymentIntentId: string;
+}): Promise<{
+  verdict: CancelledBookingCaptureVerdict;
+  transactionStatus: PaymentStatus | null;
+  /** What Stripe still holds of the capture, when it has been part refunded. */
+  heldCents: number | null;
+}> {
+  const captureRow = await findPaymentTransactionByIntentId({
+    paymentIntentId: params.paymentIntentId,
+  });
+  if (!captureRow || !isCapturedTransactionStatus(captureRow.status)) {
+    return {
+      verdict: "late_capture",
+      transactionStatus: captureRow?.status ?? null,
+      heldCents: null,
+    };
+  }
+  const handlerWrite = isLateCaptureHandlerWrite(captureRow.reason);
+  const [evidence, cancelIntentOperation] = await Promise.all([
+    loadCancellationRefundDecisionEvidence(params.bookingId),
+    handlerWrite
+      ? Promise.resolve(null)
+      : prisma.paymentRecoveryOperation.findFirst({
+          where: {
+            type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
+            paymentIntentId: params.paymentIntentId,
+          },
+          select: { id: true },
+        }),
+  ]);
+  return {
+    verdict: classifyCaptureOnCancelledBooking(
+      {
+        status: captureRow.status,
+        amountCents: captureRow.amountCents,
+        refundedAmountCents: captureRow.refundedAmountCents,
+        capturedAfterCancellation: handlerWrite || cancelIntentOperation !== null,
+      },
+      evidence
+    ),
+    transactionStatus: captureRow.status,
+    heldCents: captureRefundState(captureRow).heldCents,
+  };
+}
+
+/**
+ * #3639: the admin-visible record of a notice acknowledged WITHOUT a refund.
+ *
+ * An audit entry, like its #2774 sibling `booking.payment.late_capture_refund_withheld`:
+ * the audit log is where this family's permanent records already live (the
+ * finance card names `booking.payment.refunded_after_cancellation` as the record
+ * beyond its window), so an officer who sees a Stripe success notice and wonders
+ * why no refund followed finds the answer beside those entries — never only in a
+ * server log. `outcome: "blocked"` because a guard declined the automatic refund,
+ * and `refundSent: false` is spelled out in the row.
+ *
+ * NO ManualRefundTask and NO alert. Nothing was refunded, so a row on the
+ * "Refunded automatically" card would state a money movement that did not
+ * happen, and nobody has to act — with one exception, raised to `important`: a
+ * PARTIALLY refunded late capture still holds part of the member's money, which
+ * this path will not return. The repair tool's late-capture finding surfaces it
+ * for an operator (it never auto-applies).
+ */
+function reportAcknowledgedLateNotice(params: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  captureKind: CancelledBookingLateCaptureKind;
+  verdict: Exclude<CancelledBookingCaptureVerdict, "late_capture">;
+  transactionStatus: PaymentStatus | null;
+  heldCents: number | null;
+}): void {
+  const partRemains =
+    params.verdict === "already_refunded" && (params.heldCents ?? 0) > 0;
+  logAudit({
+    action: "booking.payment.late_notice_acknowledged",
+    category: "payment",
+    severity: partRemains ? "important" : "info",
+    outcome: "blocked",
+    entityType: "Booking",
+    entityId: params.bookingId,
+    targetId: params.bookingId,
+    details: JSON.stringify({
+      paymentIntentId: params.paymentIntentId,
+      capturedAmountCents: params.amountCents,
+      captureKind: params.captureKind,
+      verdict: params.verdict,
+      transactionStatus: params.transactionStatus,
+      refundSent: false,
+    }),
+  });
+  logger.info(
+    {
+      bookingId: params.bookingId,
+      paymentId: params.paymentId,
+      paymentIntentId: params.paymentIntentId,
+      captureKind: params.captureKind,
+      verdict: params.verdict,
+      transactionStatus: params.transactionStatus,
+    },
+    "Stripe success notice on a cancelled booking acknowledged without refunding: the cancellation had already settled the money, or it was already refunded (#3639)"
+  );
+}
+
+/**
+ * #3639 — the entry point BOTH late-capture handlers call before they touch
+ * anything: `true` when the notice was acknowledged (the cancellation already
+ * settled the money, or it was already refunded) and the handler must return
+ * without writing, refunding or alerting; `false` for a genuine late capture,
+ * which the handler refunds exactly as before. Awaited, so the audit write is
+ * queued before the webhook answers.
+ */
+export async function acknowledgeSettledLateNotice(params: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntent: { id: string; amount: number };
+  captureKind: CancelledBookingLateCaptureKind;
+}): Promise<boolean> {
+  const notice = await classifyNoticeOnCancelledBooking({
+    bookingId: params.bookingId,
+    paymentIntentId: params.paymentIntent.id,
+  });
+  if (notice.verdict === "late_capture") return false;
+  reportAcknowledgedLateNotice({
+    bookingId: params.bookingId,
+    paymentId: params.paymentId,
+    paymentIntentId: params.paymentIntent.id,
+    amountCents: params.paymentIntent.amount,
+    captureKind: params.captureKind,
+    verdict: notice.verdict,
+    transactionStatus: notice.transactionStatus,
+    heldCents: notice.heldCents,
+  });
+  return true;
+}
+
+async function loadCancellationRefundDecisionEvidence(
+  bookingId: string
+): Promise<CancellationRefundDecisionEvidence> {
+  const [cancelledEvents, creditsFromCancellation, recoveryOperation] =
+    await Promise.all([
+      prisma.bookingEvent.findMany({
+        where: { bookingId, type: "CANCELLED" },
+        select: { type: true, snapshot: true },
+      }),
+      prisma.memberCredit.findMany({
+        where: { sourceBookingId: bookingId },
+        select: { type: true, description: true, amountCents: true },
+      }),
+      prisma.paymentRecoveryOperation.findUnique({
+        where: {
+          idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+        },
+        select: { status: true },
+      }),
+    ]);
+  return {
+    bookingId,
+    cancelledEvents,
+    creditsFromCancellation,
+    cancellationRefundRecoveryOperations: recoveryOperation
+      ? [recoveryOperation]
+      : [],
+  };
+}
 
 /**
  * Everything the record, the audit rows and the alert all need about one late

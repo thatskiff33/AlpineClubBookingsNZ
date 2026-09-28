@@ -294,6 +294,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
+| `INV-PAY-106` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
 | `INV-PAY-021` | An unpaid confirmation defers to the invoice and promises nothing about it |
 | `INV-PAY-022` | Unpaid confirmation with applied credit states the netting, from the ledger |
@@ -314,6 +315,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
 
 ## Member-Guest Consent
 

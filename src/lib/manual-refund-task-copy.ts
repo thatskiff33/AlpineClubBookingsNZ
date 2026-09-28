@@ -105,6 +105,8 @@ export function completionSettlementShape(
   settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null,
 ): CompletionSettlementShape {
   if (settlementRoute?.kind === "stripe-refund") return "card-refund";
+  // #3639: an approved late-capture refund goes back to the card, too.
+  if (settlementRoute?.kind === "late-capture-refund") return "card-refund";
   if (settlementRoute?.kind === "account-credit") return "account-credit";
   if (settlementRoute?.kind === "additional-charge") {
     return settlementRoute.collectVia === "invoice"

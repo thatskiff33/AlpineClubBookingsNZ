@@ -59,6 +59,7 @@ import {
   defaultRefundMethodForPaymentSource,
 } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
@@ -606,7 +607,7 @@ async function backfillCancellationCreditXeroNote(params: {
       // already-cancelled booking, #1357).
       description: {
         in: [
-          `Cancellation refund for booking ${bookingLabel}`,
+          cancellationCreditDescription(params.bookingId),
           `Internet Banking payment credit for booking ${bookingLabel}`,
           `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
         ],

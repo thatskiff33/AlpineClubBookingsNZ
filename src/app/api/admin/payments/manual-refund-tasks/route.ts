@@ -147,6 +147,8 @@ export async function GET() {
           decision D3's evidence — projected below, never sent raw.
         */
         kind: true,
+        // #3639: marks a late capture held for a treasurer's approval.
+        lateCaptureApprovalIntentId: true,
         raisedAmountCents: true,
         reviewContext: true,
         reason: true,

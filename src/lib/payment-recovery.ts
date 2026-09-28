@@ -44,6 +44,8 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
+import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
+import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -476,7 +478,10 @@ import {
   buildDuplicateCaptureRefundStripeKeyPrefix,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
+  buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
+  buildLateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
+  isLateCaptureRefundStripeKeyPrefix,
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
@@ -564,6 +569,37 @@ export async function markEditFinancialReviewRefundRecoverySucceeded({
       processingStartedAt: null,
       succeededAt: new Date(),
     },
+  });
+}
+
+/** #3639: a treasurer-approved late-capture refund's debt, as the edit-review one above; replayed under the webhook's own prefix. */
+export async function enqueueLateCaptureApprovalRefundRecovery({
+  bookingId,
+  paymentId,
+  paymentIntentId,
+  amountCents,
+  allocationPlan,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  allocationPlan: RefundAllocationSlice[];
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey:
+      buildLateCaptureApprovalRefundRecoveryIdempotencyKey(paymentIntentId),
+    stripeKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(
+      bookingId,
+      paymentIntentId,
+    ),
+    allocationPlan,
+    store,
   });
 }
 
@@ -1736,6 +1772,19 @@ async function handoffSucceededSupersededIntentToRefund({
     paymentMethodId,
   });
 
+  // #3639: on a CANCELLED booking this capture is a late capture, so it follows
+  // the club's setting like every other - held for a treasurer, no refund.
+  if (
+    await holdSupersededLateCaptureIfRequired({
+      ...operation,
+      paymentTransactionId: operation.paymentTransactionId,
+      amountCents,
+    })
+  ) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   await enqueueSupersededPaymentRefundRecovery({
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
@@ -2135,6 +2184,30 @@ async function processBookingModificationRefundOperation(
           duplicateCapturePrefix.length,
         ),
         settledPaymentIntentId: null,
+      });
+    }
+    return;
+  }
+
+  // #3639: a replayed treasurer-approved late-capture refund writes the record
+  // and queues the Xero correction its inline attempt would have - only on the
+  // replay that actually moves the operation to SUCCEEDED (delta D6), so an
+  // inline success whose close was lost is not recorded twice.
+  if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
+    const transition = await prisma.paymentRecoveryOperation.updateMany({
+      where: { id: operation.id, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: new Date(),
+      },
+    });
+    if (transition.count > 0) {
+      await finishApprovedLateCaptureRefundAfterReplay({
+        ...operation,
+        amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
       });
     }
     return;

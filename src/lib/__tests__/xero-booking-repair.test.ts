@@ -204,6 +204,8 @@ function createDependencies(state: {
   // the webhook's release finds no operation to release because none exists
   // yet.
   onSupplementaryInvoiceEnqueue?: () => void;
+  // #3639 review F3: treasurer-approval tasks, by the capture they own.
+  lateCaptureApprovalTasks?: { bookingId: string; lateCaptureApprovalIntentId: string }[];
   // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
   // allocation term). Empty for every pre-existing test.
   allocatedAppliedCreditByBookingId?: Record<string, number>;
@@ -273,9 +275,11 @@ function createDependencies(state: {
     async ({
       paymentId,
       amountCents,
+      allocation,
     }: {
       paymentId: string;
       amountCents: number;
+      allocation?: { paymentTransactionId: string; amountCents: number }[];
     }) => {
       const booking = state.bookings.find((item) => item.payment?.id === paymentId);
       if (!booking?.payment) {
@@ -300,16 +304,28 @@ function createDependencies(state: {
             new Date(left.createdAt).getTime()
         );
 
-      for (const transaction of refundableTransactions) {
+      // #3639 delta D1: an explicit allocation is executed slice by slice, as
+      // the real helper does; only without one is it derived newest-first.
+      const plan = allocation
+        ? allocation.map((slice) => ({
+            transaction: (booking.payment.transactions ?? []).find(
+              (t: any) => t.id === slice.paymentTransactionId
+            ),
+            cap: slice.amountCents,
+          }))
+        : refundableTransactions.map((transaction: any) => ({ transaction, cap: Infinity }));
+      for (const { transaction, cap } of plan) {
         if (remainingAmountCents <= 0) {
           break;
         }
+        if (!transaction) throw new Error("allocation names an unknown transaction");
 
         const refundableAmountCents =
           transaction.amountCents - transaction.refundedAmountCents;
         const refundAmountForTransaction = Math.min(
           remainingAmountCents,
-          refundableAmountCents
+          refundableAmountCents,
+          cap
         );
 
         transaction.refundedAmountCents += refundAmountForTransaction;
@@ -387,7 +403,11 @@ function createDependencies(state: {
       },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
-        findMany: vi.fn().mockResolvedValue(state.editReviewChargeShares ?? []),
+        findMany: vi.fn().mockImplementation(async ({ where }: any) =>
+          where?.lateCaptureApprovalIntentId
+            ? (state.lateCaptureApprovalTasks ?? [])
+            : (state.editReviewChargeShares ?? []),
+        ),
       },
       // #3187 fix round: the FRESH read the apply step takes after queueing a
       // supplementary invoice parked on a PaymentIntent. It answers from the
@@ -531,6 +551,266 @@ describe("runBookingXeroRepair", () => {
     expect(bookingReport.actions.map((action) => action.type)).toContain(
       "QUEUE_MODIFICATION_CREDIT_NOTE"
     );
+  });
+
+  /**
+   * #3639: the cancelled-open-invoice arm clears an invoice NOBODY PAID, with a
+   * full-price credit note it marks safe to auto-apply. Before it does, it asks
+   * what the cancellation already settled: whether money was captured from ANY
+   * source, and whether the cancellation already answered the invoice with a
+   * credit note on the PAYMENT. The first test above is the control: a genuinely
+   * never-paid cancelled booking is still repaired.
+   */
+  describe("cancelled-open-invoice arm asks what the cancellation settled (#3639)", () => {
+    function internetBankingTransaction(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "txn_ib_primary",
+        paymentId: "payment_1",
+        kind: "PRIMARY",
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        paymentMethodId: null,
+        reason: null,
+        withdrawnAt: null,
+        createdAt: new Date("2026-05-01T00:00:00Z"),
+        updatedAt: new Date("2026-05-01T00:00:00Z"),
+        ...overrides,
+      };
+    }
+
+    function cancelledInternetBankingBooking(
+      paymentOverrides: Record<string, unknown>
+    ) {
+      return makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          stripePaymentIntentId: null,
+          stripePaymentMethodId: null,
+          stripeCustomerId: null,
+          ...paymentOverrides,
+        },
+      });
+    }
+
+    async function clearingWork(booking: any, extra: Record<string, unknown> = {}) {
+      const deps = createDependencies({ bookings: [booking], ...extra });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+      });
+      const bookingReport = report.passes[0].bookings[0];
+      return {
+        actions: bookingReport.actions.filter(
+          (action) =>
+            action.type === "QUEUE_MODIFICATION_CREDIT_NOTE" ||
+            action.key.startsWith("queue:cancelled-allocation:")
+        ),
+        findings: bookingReport.findings.filter((finding) =>
+          finding.summary.includes("cancelled before payment succeeded")
+        ),
+      };
+    }
+
+    it("raises no clearing note for a cancelled booking paid by internet banking", async () => {
+      // Paid by bank transfer, then cancelled on the credit path: half came back
+      // as account credit. No Stripe capture exists, which used to read as
+      // "never paid" and queue a full clearing note against the paid invoice.
+      const booking = cancelledInternetBankingBooking({
+        status: "PARTIALLY_REFUNDED",
+        refundedAmountCents: 5000,
+        transactions: [
+          internetBankingTransaction({
+            status: "PARTIALLY_REFUNDED",
+            refundedAmountCents: 5000,
+          }),
+        ],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("reads the ledger too, so a captured bank-transfer row under a flattened aggregate still counts as paid", async () => {
+      // The pre-#1473 cancel flattened captured aggregates to FAILED
+      // (`INV-PAY-018`); the ledger row still says the money arrived.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction()],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note when a refund note on the payment already answered the invoice — an internet-banking hold released before #3535", async () => {
+      // Never paid: the hold expired and the release answered the unpaid invoice
+      // with a refund credit note recorded against the PAYMENT. Applying the
+      // repair would clear the same invoice a second time.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        xeroRefundCreditNoteId: "cn_hold_release",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note when an account-credit note is linked on the payment", async () => {
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking, {
+        links: [
+          {
+            id: "link_account_credit_note",
+            localModel: "Payment",
+            localId: "payment_1",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_account_credit",
+            xeroObjectNumber: "CN-ACCOUNT",
+            xeroObjectUrl: null,
+            role: "ACCOUNT_CREDIT_NOTE",
+            active: true,
+            metadata: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      });
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("raises no clearing note while the payment's own credit-note operation is still queued", async () => {
+      // The note has not reached Xero yet, but it will when the worker runs; a
+      // second clearing note queued now would land beside it.
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking, {
+        operations: [
+          makeOperation({
+            id: "operation_payment_refund_note",
+            localModel: "Payment",
+            localId: "payment_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PENDING",
+            xeroObjectType: null,
+            xeroObjectId: null,
+            completedAt: null,
+          }),
+        ],
+      });
+
+      expect(actions).toEqual([]);
+      expect(findings).toEqual([]);
+    });
+
+    it("tells the operator a clearing note was retired because cash arrived, rather than saying nothing (#3639 review F6, composing with #3535)", async () => {
+      // #3535's late-cash arm settles the payment and CANCELS the clearing
+      // note's queued create. This arm skips the booking (money was captured),
+      // so the reason no note exists has to be reported here.
+      const booking = cancelledInternetBankingBooking({
+        status: "SUCCEEDED",
+        transactions: [internetBankingTransaction()],
+      });
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [
+          makeOperation({
+            id: "operation_clearing_retired",
+            localModel: "Booking",
+            localId: booking.id,
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            status: "CANCELLED",
+            xeroObjectType: null,
+            xeroObjectId: null,
+            completedAt: null,
+          }),
+        ],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+      });
+
+      const findings = report.passes[0].bookings[0].findings;
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          code: "MANUAL_REVIEW_REQUIRED",
+          severity: "info",
+          summary: expect.stringContaining("Cash arrived for this booking after its hold was released"),
+          actions: [],
+        }),
+      );
+      expect(
+        report.passes[0].bookings[0].actions.some(
+          (a) => a.type === "QUEUE_MODIFICATION_CREDIT_NOTE",
+        ),
+      ).toBe(false);
+
+      // Only the RETIRED CLEARING note says that: a cancelled create of any
+      // other credit note on the booking is not evidence cash arrived.
+      const otherNote = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [booking],
+          operations: [
+            makeOperation({
+              id: "operation_other_note",
+              localModel: "Booking",
+              localId: booking.id,
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              queueType: "REFUND_CREDIT_NOTE",
+              status: "CANCELLED",
+              xeroObjectType: null,
+              xeroObjectId: null,
+              completedAt: null,
+            }),
+          ],
+        }),
+        scope: { all: true },
+      });
+      expect(
+        otherNote.passes[0].bookings[0].findings.some((f) =>
+          f.summary.startsWith("Cash arrived"),
+        ),
+      ).toBe(false);
+    });
+
+    it("still repairs a never-paid cancelled internet-banking booking with nothing on its payment", async () => {
+      const booking = cancelledInternetBankingBooking({
+        status: "FAILED",
+        transactions: [internetBankingTransaction({ status: "FAILED" })],
+      });
+
+      const { actions, findings } = await clearingWork(booking);
+
+      expect(actions.map((action) => action.type)).toEqual([
+        "QUEUE_MODIFICATION_CREDIT_NOTE",
+      ]);
+      expect(findings).toHaveLength(1);
+    });
   });
 
   // #3535 (`INV-PAY-017`): the note that clears a cancelled booking's unpaid
@@ -774,6 +1054,13 @@ describe("runBookingXeroRepair", () => {
         status: "CANCELLED",
         payment: { ...makeBooking().payment, status: "FAILED" },
       });
+    // #3639 delta D2: the late-cash arm that retires the note also SETTLES the
+    // payment, so the retired case is a captured payment, as in production.
+    const cancelledPaidLate = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "SUCCEEDED" },
+      });
     const clearingOp = (overrides: Record<string, unknown>) =>
       makeOperation({
         localModel: "Booking",
@@ -789,7 +1076,7 @@ describe("runBookingXeroRepair", () => {
 
     const retired = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
-        bookings: [cancelledUnpaid()],
+        bookings: [cancelledPaidLate()],
         operations: [clearingOp({ id: "op_retired", status: "CANCELLED" })],
       }),
       scope: { all: true },
@@ -802,8 +1089,16 @@ describe("runBookingXeroRepair", () => {
       "CANCELLED_BOOKING_OPEN_INVOICE"
     );
     expect(retiredBooking.findings).toContainEqual(
-      expect.objectContaining({ severity: "info", safeToAutoApply: false })
+      expect.objectContaining({
+        severity: "info",
+        safeToAutoApply: false,
+        summary: expect.stringContaining("Cash arrived for this booking after its hold was released"),
+      })
     );
+    // One home for the sentence (delta D2): it appears once.
+    expect(
+      retiredBooking.findings.filter((f) => f.summary.startsWith("Cash arrived")),
+    ).toHaveLength(1);
 
     const shortfall = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: createDependencies({
@@ -2633,6 +2928,64 @@ describe("runBookingXeroRepair", () => {
     expect(lateCaptureFinding?.safeToAutoApply).toBe(false);
   });
 
+  it("offers no refund of a late capture a treasurer-approval task owns, open or kept (#3639 review F3)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            source: "STRIPE",
+            stripePaymentIntentId: "pi_held",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: "pm_123",
+            reason: "cancelled_booking_late_capture",
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    // The loader asks for every approval task on the booking, any status: an
+    // OPEN one is waiting for a treasurer, a DISMISSED one was kept.
+    const deps = createDependencies({
+      bookings: [booking],
+      lateCaptureApprovalTasks: [
+        { bookingId: booking.id, lateCaptureApprovalIntentId: "pi_held" },
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((f) => f.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    expect(
+      bookingReport.actions.some((a) => a.type === "AUTO_REFUND_LATE_CAPTURED_PAYMENT")
+    ).toBe(false);
+
+    // CONTROL: the same booking with no approval task still reports it.
+    const control = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({ bookings: [booking] }),
+      scope: { all: true },
+    });
+    expect(control.passes[0].bookings[0].findings.map((f) => f.code)).toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+  });
+
   it("raises no late-capture finding when the cancel recorded a credit-path refund decision (#1491)", async () => {
     // Tiered credit-method cancel: 50% of the captured value went back as a
     // cancellation credit; the remainder is the deliberate policy penalty.
@@ -2842,6 +3195,7 @@ describe("runBookingXeroRepair", () => {
           type: "CANCELLED",
           snapshot: {
             policySummary: "Cancelled 2 day(s) before check-in: no refund was due.",
+            refundMethod: "card",
             refundPercentage: 0,
             settledAmountCents: 0,
             retainedAmountCents: 10000,
@@ -3068,6 +3422,11 @@ describe("runBookingXeroRepair", () => {
       format: CLUB_FORMAT_TEST,
       paymentId: "payment_1",
       amountCents: 13000,
+      // #3639 delta D1: pinned, newest first, to the captures it names.
+      allocation: [
+        { paymentTransactionId: "txn_additional", amountCents: 3000 },
+        { paymentTransactionId: "txn_primary", amountCents: 10000 },
+      ],
       reason: "requested_by_customer",
       metadata: {
         bookingId: "booking_1",
@@ -3077,6 +3436,78 @@ describe("runBookingXeroRepair", () => {
     });
     expect(booking.payment.status).toBe("REFUNDED");
     expect(report.summary.bookingsWithFindings).toBe(0);
+  });
+
+  it("never refunds a HELD capture's money through the partial path: the refund is pinned to the unheld one (#3639 delta D1)", async () => {
+    // X: an older outstanding capture, 40.00, no task. Y: a newer late capture,
+    // 60.00, held by a treasurer-approval task. Newest-first would send the
+    // 40.00 against Y.
+    const capture = (id: string, pi: string, amountCents: number, day: string) => ({
+      id,
+      paymentId: "payment_1",
+      kind: "PRIMARY",
+      source: "STRIPE",
+      stripePaymentIntentId: pi,
+      amountCents,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      paymentMethodId: "pm_123",
+      reason: null,
+      createdAt: new Date(`2026-05-0${day}T00:00:00Z`),
+      updatedAt: new Date(`2026-05-0${day}T00:00:00Z`),
+    });
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        transactions: [
+          capture("txn_x", "pi_x", 4000, "1"),
+          capture("txn_y", "pi_y_held", 6000, "2"),
+        ],
+      },
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      lateCaptureApprovalTasks: [
+        { bookingId: booking.id, lateCaptureApprovalIntentId: "pi_y_held" },
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:4000"],
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(deps.refundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 4000,
+        allocation: [{ paymentTransactionId: "txn_x", amountCents: 4000 }],
+      })
+    );
+    const [x, y] = booking.payment.transactions as any[];
+    expect(x.refundedAmountCents).toBe(4000);
+    // The held capture is untouched, so the treasurer's decision still stands.
+    expect(y.refundedAmountCents).toBe(0);
+    expect(report.passes[0].bookings[0].actions).toContainEqual(
+      expect.objectContaining({ type: "AUTO_REFUND_LATE_CAPTURED_PAYMENT", status: "applied" })
+    );
+    // And the next scan offers nothing more: the rest is the held capture's.
+    const rescan = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+    expect(
+      rescan.passes[0].bookings[0].actions.some(
+        (a: any) => a.type === "AUTO_REFUND_LATE_CAPTURED_PAYMENT"
+      )
+    ).toBe(false);
   });
 
   it("keeps Xero consistent when a multi-slice late-capture refund fails partway, then notes only the remainder on re-run (#1495)", async () => {

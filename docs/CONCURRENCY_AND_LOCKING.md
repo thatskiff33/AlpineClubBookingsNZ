@@ -2815,6 +2815,18 @@ and the create, joins no capacity or member-credit tier, and every Stripe call
 on that path is made by its caller outside the transaction — so it composes with
 nothing and reverses no order.
 
+**#3639 adds its sibling on the webhook side.** `holdLateCaptureForTreasurerIfRequired`
+(`src/lib/late-capture-refund-hold.ts`) raises the treasurer-approval
+`ManualRefundTask` for a late capture when the club has chosen approval over an
+automatic refund (owner decision 26 Sep 2026) — from either late-capture handler
+or the superseded-intent hand-off (webhook hook or recovery cron). Same shape, same
+reason: a find-then-create keyed on the payment intent, which must also see the
+#2700 raise's OPEN task for that intent (and marks it rather than raising a second).
+It takes `lock(1)` and nothing else, makes no provider call inside, and the #2700
+raise also matches this task's `lateCaptureApprovalIntentId`, so whichever writer is
+second finds the first's row. From the cron it runs after the operation's claim and
+outside any other transaction, so it composes with nothing.
+
 The middle read is a **refund fence**, and it is why the read must be inside
 this lock rather than beside it. The transaction row for this intent is re-read
 under the key and the raise is skipped when Stripe has already refunded the
@@ -3732,6 +3744,26 @@ call spans `lock(1)`: cancellation either commits first (email suppressed, VOID
 queued) or waits until the email call finishes and then commits its VOID debt.
 No invoice construction, contact lookup, create, or VOID provider call is held
 inside that transaction.
+
+A settlement waiting on its combined invoice is bound to it (`INV-PAY-105`,
+#3642). Every writer that could change it re-reads the settlement under the
+same `lock(1)`: the child-commit transaction (a card attempt is refused before
+any claim; an Internet Banking change is refused after its claims, so they roll
+back, unless the settlement still points at the invoice checked in Xero before
+the lock), the Internet Banking settle transaction (which retires the old
+invoice and queues the next attempt in the same commit), and the card attach
+transaction. The reaper's release transaction retires the invoice in its
+commit, except for a cancelled group. The create worker's post-create fence
+(`bindCreatedGroupSettlementInvoice`) writes the pointer and the ACTIVE object
+link together under `lock(1)`, or abandons the invoice when the settlement is
+released, superseded by a later attempt, pointing elsewhere, or at another
+total; `releaseUninvoiceableGroupSettlement` FAILS a bound settlement under the
+same key when its joiners' stored prices cannot make the invoice. The
+paid-invoice and card applies compare what arrived with the total,
+invoice and intent read under `lock(1)`. Every Xero read (the replacement
+check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
+any transaction. No lock key, order or site is added; the realdb proof is
+`group-settlement-invoice-binding-races.realdb.test.ts`.
 
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database

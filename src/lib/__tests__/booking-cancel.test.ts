@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => {
   // would mean this suite could never see a wrong day at all (A4's trap).
   clubTimeSettingsFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
+  // #3639: the paid path writes its CANCELLED event inside the claim.
+  txBookingEventCreate: vi.fn().mockResolvedValue({}),
   calculateRefundAmount: vi.fn(),
   calculateAppliedCreditRestore: vi.fn(),
   daysUntilDate: vi.fn(),
@@ -292,6 +294,7 @@ describe("cancelBooking credit refunds", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -2072,6 +2075,150 @@ describe("cancelBooking credit refunds", () => {
   });
 
   // -------------------------------------------------------------------------
+  // #3639 (`INV-PAY-106`): the CANCELLED event's policy snapshot is the decision
+  // record the Stripe webhook reads before it refunds a late notice, and on a
+  // 0%-tier cancel it is the only one. It is written INSIDE the claim, so it
+  // commits with the CANCELLED flip: no notice can find the booking cancelled
+  // and the decision missing.
+  // -------------------------------------------------------------------------
+  describe("the CANCELLED event commits with the claim (#3639)", () => {
+    function cancelledEventWrites() {
+      return mocks.txBookingEventCreate.mock.calls.filter(
+        (call) => call[0]?.data?.type === "CANCELLED"
+      );
+    }
+
+    function expectNoPostCommitCancelledEvent() {
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CANCELLED" })
+      );
+    }
+
+    it("writes the 0%-tier snapshot inside the claim, after the flip, with the content the post-commit write used", async () => {
+      mocks.calculateRefundAmount.mockReturnValueOnce({
+        refundAmountCents: 0,
+        refundPercentage: 0,
+      });
+
+      await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(cancelledEventWrites()).toHaveLength(1);
+      expect(mocks.txBookingEventCreate).toHaveBeenCalledWith({
+        data: {
+          bookingId: "booking_1",
+          type: "CANCELLED",
+          actorMemberId: "member_1",
+          amountCents: 10000,
+          reason: null,
+          snapshot: {
+            policySummary:
+              "Cancelled 30 day(s) before check-in: no refund was due under the policy in effect at the time.",
+            refundMethod: "card",
+            refundPercentage: 0,
+            paidAmountCents: 10000,
+            settledAmountCents: 0,
+            retainedAmountCents: 10000,
+            changeFeeCents: 0,
+          },
+        },
+      });
+      // Same transaction as the claim, and after the CANCELLED flip in it.
+      expect(
+        mocks.bookingUpdate.mock.invocationCallOrder[0]
+      ).toBeLessThan(mocks.txBookingEventCreate.mock.invocationCallOrder[0]);
+      expectNoPostCommitCancelledEvent();
+    });
+
+    it("writes the card-refund snapshot inside the claim, before any Stripe call", async () => {
+      await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(cancelledEventWrites()).toHaveLength(1);
+      expect(cancelledEventWrites()[0][0].data.snapshot).toEqual({
+        policySummary:
+          "Cancelled 30 day(s) before check-in: 50% card refund under the policy in effect at the time.",
+        refundMethod: "card",
+        refundPercentage: 50,
+        paidAmountCents: 10000,
+        settledAmountCents: 5000,
+        retainedAmountCents: 5000,
+        changeFeeCents: 0,
+      });
+      expect(
+        mocks.txBookingEventCreate.mock.invocationCallOrder[0]
+      ).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]);
+      expectNoPostCommitCancelledEvent();
+      // The REFUNDED event still follows the money, after commit.
+      expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REFUNDED" })
+      );
+    });
+
+    it("writes the credit-refund snapshot inside the claim", async () => {
+      await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "credit"
+      );
+
+      expect(cancelledEventWrites()).toHaveLength(1);
+      expect(cancelledEventWrites()[0][0].data.snapshot).toEqual(
+        expect.objectContaining({
+          policySummary:
+            "Cancelled 30 day(s) before check-in: 50% credit refund under the policy in effect at the time.",
+          refundMethod: "credit",
+          settledAmountCents: 5000,
+          retainedAmountCents: 5000,
+        })
+      );
+      expectNoPostCommitCancelledEvent();
+    });
+
+    it("rolls the cancellation back when the event cannot be written, rather than committing a cancel with no record of its decision", async () => {
+      mocks.calculateRefundAmount.mockReturnValueOnce({
+        refundAmountCents: 0,
+        refundPercentage: 0,
+      });
+      mocks.txBookingEventCreate.mockRejectedValueOnce(
+        new Error("could not write booking event")
+      );
+
+      await expect(
+        cancelBooking(
+          "booking_1",
+          "member_1",
+          "MEMBER",
+          "127.0.0.1",
+          CLUB_FORMAT_TEST,
+          "card"
+        )
+      ).rejects.toThrow("could not write booking event");
+
+      // Nothing after the claim ran: no refund, no audit of a cancellation.
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.logAudit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "booking.cancel" })
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Authorization widening + refund parity (issue #1313, owner-approved option
   // A2). A Booking Officer (bookings:edit) may cancel a booking they do not own
   // with the SAME authority as a Full Admin. `hasBookingsEditAccess` widens ONLY
@@ -2884,6 +3031,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -3047,6 +3195,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -3337,6 +3486,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

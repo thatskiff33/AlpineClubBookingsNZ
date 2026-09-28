@@ -715,6 +715,36 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `--apply --apply-action <key>` (#1491). Rows flattened by the old defect are
   not backfilled.
 
+## INV-PAY-106
+
+- **Nothing later re-decides what a cancellation settled** (#3639). One rule,
+  `classifyCaptureOnCancelledBooking` (`src/lib/cancellation-settled-money.ts`).
+  A decision is a paid-path policy snapshot (recognised by shape, so unpaid
+  auto-cancel and hold-expiry snapshots and the #2262 markers are not), a
+  cancellation credit or a live cancel-refund recovery.
+- **Both late-capture handlers** acknowledge a success notice on a `CANCELLED`
+  booking — no refund, Xero note or status write — when the capture is not
+  known to have landed after the cancel and the cancel recorded a decision, or
+  when any of it was already refunded (`captureRefundState`, which reads the
+  refunded total). "Landed after" is the primary handler's own
+  `cancelled_booking_late_capture` write or a `CANCEL_PAYMENT_INTENT` recovery
+  for the intent. Each writes `booking.payment.late_notice_acknowledged`. A
+  replay after a refund skips the epilogue, so a hard kill mid-epilogue is left
+  to the repair tool. The paid-path `CANCELLED` event commits inside the claim.
+- **A genuine late capture follows the club's setting** (owner decision 26 Sep
+  2026, [#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249)),
+  including a change payment the superseded-intent hand-off catches: refunded
+  automatically (default) or held as one #2700-kind task per intent, marked by
+  `lateCaptureApprovalIntentId`. Approval is the automatic refund, same Stripe
+  keys; a task of any status owns its capture, and the repair tool offers no
+  refund behind it. A #2700 hand-back is refused once its capture was refunded.
+- **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
+  of every source and skips a payment already carrying a refund or
+  account-credit note, or such an operation queued or failed.
+- Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
+  `payment-recovery.test.ts`, `manual-refund-task.test.ts` and
+  `xero-booking-repair.test.ts`.
+
 ## INV-PAY-019
 
 - Applied account credit is conserved across cancellation (#1547): EVERY
@@ -1142,6 +1172,41 @@ one, check the other.
   refund mirror twice — the replay only ever writes a mirror to an
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
+
+## INV-PAY-105
+
+**Related: `INV-PAY-031`** (children total at apply) and **`INV-PAY-035`**
+(the cancellation VOID).
+
+- An organiser-pays group settlement is **bound** to its combined Internet
+  Banking invoice while it waits for it (`isGroupSettlementBoundToInvoice`)
+  (#3642) until it is paid, replaced, cancelled or lapses. It is never
+  switched to card.
+- **A change to the group replaces the invoice** (orchestrator decision under
+  the issue's item 1, which allowed refuse-or-replace). The invoice is read in
+  Xero first: with no payment or credit it is retired and a new one raised at
+  the new total; with any money on it nothing changes and the operators are
+  alerted. A claim for a moved invoice rolls back under `lock(1)`. Asking
+  again unchanged returns the same invoice and keeps the reaper's clock.
+- An invoice is bound only to the current attempt at the settlement's total;
+  anything else is abandoned on arrival: VOID queued, pointer cleared, link
+  kept inactive.
+- **Money on an invoice is never walked away from.** An invoice that has
+  started being paid or credited is not voided, not released (the group keeps
+  its beds, the owner's #3643 rule) and not replaced; each alerts once per
+  kind. One Xero cannot show is held, with an alert, until check-in or seven
+  days past the deadline; one Xero does not have is never voided. Joiner
+  prices that cannot make the invoice release the binding and alert. A paid
+  invoice settles the group only for the settlement's total read under
+  `lock(1)` while it is still the settlement's invoice; a card capture only
+  while the settlement is still on that intent (otherwise it is refunded).
+- Pinned by `group-settlement.test.ts`, `cron-group-settlement-reaper.test.ts`,
+  `xero-group-settlement-invoices.test.ts`,
+  `xero-group-settlement-invoice-outbox.test.ts`,
+  `xero-group-settlement-invoice-lines.test.ts`,
+  `group-settlement-paid-invoice.test.ts`,
+  `organiser-group-booking-card.test.tsx` and
+  `group-settlement-invoice-binding-races.realdb.test.ts`.
 
 ## INV-PAY-051
 

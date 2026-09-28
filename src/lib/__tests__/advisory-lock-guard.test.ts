@@ -578,6 +578,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Settlement, refunds and money side effects ────────────────────────────
   {
+    site: "holdLateCaptureForTreasurerIfRequired#1",
+    tier: "GLOBAL",
+    reason:
+      "#3639 (owner decision 26 Sep 2026): raising the treasurer-approval ManualRefundTask for a late capture is a find-then-create keyed on the payment INTENT, and it must also see the confirm route's #2700 OPEN question for the same capture — which that raise creates under this same key. Two webhook deliveries, or a delivery and a confirm, would otherwise put two tasks on one capture and a treasurer could refund it twice. Same cohort as raiseDeletedBookingModificationRefundTask; takes nothing else and makes no provider call inside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "raiseDeletedBookingModificationRefundTask#1",
     tier: "GLOBAL",
     reason:
@@ -825,14 +832,21 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "createXeroInvoiceForGroupSettlement#2",
     tier: "GLOBAL",
     reason:
-      "After the provider call returns, the create-versus-cancel race is decided under the same fence: a cancellation that acquired it first wins and the invoice is voided, otherwise issuance won the serialisation point.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
     invariant: "INV-LOCK-001",
   },
   {
-    site: "createXeroInvoiceForGroupSettlement#3",
+    site: "releaseUninvoiceableGroupSettlement#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime is never emailed.",
+      "#3642: a bound settlement whose joiners' stored prices cannot make its invoice is FAILED to release the binding; the guarded update must serialise with the settle, card-attach, reaper and create-worker writers of the same settlement, which all take this key.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "bindCreatedGroupSettlementInvoice#1",
+    tier: "GLOBAL",
+    reason:
+      "The post-create fence (moved out of createXeroInvoiceForGroupSettlement by #3642): after the provider call returns it decides create-versus-cancel and create-versus-release under the key the cancellation, the reaper and the settle paths take, binding the invoice with its active link or abandoning it on arrival.",
     invariant: "INV-LOCK-001",
   },
 
