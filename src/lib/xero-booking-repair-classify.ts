@@ -1672,6 +1672,25 @@ export function classifyBookingContext(
           } else if (blockingOperation?.kind === "resolved") {
             // #3635 (`INV-INT-025`): an officer allocated it by hand in Xero -
             // done, so no fresh allocation is queued beside theirs.
+          } else if (blockingOperation?.kind === "blocked") {
+            // #3635: a live allocation (pending, running, or failed and not
+            // retryable) is reported, never queued beside - the #1356/#1427
+            // third-arm rule the modification allocation arm follows.
+            addFinding(findings, {
+              code: "BLOCKED_BY_XERO_OPERATION",
+              severity: "warning",
+              summary: ["FAILED", "PARTIAL"].includes(blockingOperation.operation.status)
+                ? "A Xero invoice-clearing allocation operation failed and cannot be auto-retried - resolve it by hand so the cancelled unpaid booking's invoice closes."
+                : isStuckOperation(blockingOperation.operation)
+                  ? "A pending or running Xero invoice-clearing allocation operation looks stuck."
+                  : "A Xero invoice-clearing allocation operation is already pending or running.",
+              safeToAutoApply: false,
+              details: {
+                operationId: blockingOperation.operation.id,
+                operationStatus: blockingOperation.operation.status,
+              },
+              actionKeys: [],
+            });
           } else if (allocationAmountCents === null) {
             // #3643: a recognised booking's note covers only the rest, and no
             // stored figure says how much - a full-size allocation would

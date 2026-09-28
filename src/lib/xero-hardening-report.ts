@@ -357,7 +357,7 @@ export async function buildXeroReconciliationReport(
     payments,
     subscriptions,
     links,
-    recentFailureOperations,
+    recentFailureOperationRows,
     stalePendingOperations,
     stalePendingOperationExamples,
     failedInboundEvents,
@@ -750,6 +750,11 @@ export async function buildXeroReconciliationReport(
   }
   const overCoveredStripeRefundPayments = overCoveredStripeRefundItems.length;
 
+  // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done, so
+  // it is not a failure: not repeated, not recent, not an unsupported partial.
+  const recentFailureOperations = recentFailureOperationRows.filter(
+    (operation) => !isResolvedInXero(operation)
+  );
   const repeatedFailures = groupRepeatedFailures(recentFailureOperations)
     .filter((group) => group.failureCount >= repeatedFailureThreshold)
     .slice(0, topLimit);
@@ -764,9 +769,7 @@ export async function buildXeroReconciliationReport(
   const unsupportedPartialOperationsList = recentPartialOperationsList
     .flatMap((operation) => {
       const retryMeta = getXeroOperationRetryMeta(operation);
-      // #3635 (`INV-INT-025`): a partial an officer resolved in Xero is done,
-      // not an unsupported one waiting for a repair handler.
-      if (retryMeta.supported || isResolvedInXero(operation)) {
+      if (retryMeta.supported) {
         return [];
       }
 

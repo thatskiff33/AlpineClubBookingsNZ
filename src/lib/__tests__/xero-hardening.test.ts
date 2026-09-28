@@ -475,6 +475,63 @@ describe("buildXeroReconciliationReport", () => {
     ]);
   });
 
+  it.each([
+    ["unresolved (control)", null, 1, 2, 1],
+    ["resolved in Xero", new Date("2026-04-13T11:30:00Z"), 0, 0, 0],
+  ])(
+    "counts repeated, failed and partial operations only while not %s (#3635)",
+    async (_label, manuallyResolvedAt, repeated, failed, partial) => {
+      // `INV-INT-025`: an operation an officer resolved in Xero is done, so it
+      // is not a failure the digest reports.
+      mocks.memberFindMany.mockResolvedValue([]);
+      mocks.operationFindFirst.mockResolvedValue(null);
+      mocks.paymentFindMany.mockResolvedValue([]);
+      mocks.subscriptionFindMany.mockResolvedValue([]);
+      mocks.linkFindMany.mockResolvedValue([]);
+      mocks.operationCount.mockResolvedValue(0);
+      const failure = (id: string, status: string, minute: number) => ({
+        id,
+        direction: "OUTBOUND",
+        correlationKey: "payment:pay_1:invoice:v1",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        lastErrorMessage: "Timeout",
+        replayable: true,
+        requestPayload: null,
+        responsePayload: null,
+        status,
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_1",
+        createdAt: new Date(`2026-04-13T10:${String(minute).padStart(2, "0")}:00Z`),
+        startedAt: null,
+        xeroObjectNumber: "INV-001",
+        xeroObjectUrl: null,
+        manuallyResolvedAt,
+      });
+      mocks.operationFindMany.mockResolvedValueOnce([
+        failure("op_c", "FAILED", 10),
+        failure("op_b", "PARTIAL", 5),
+        failure("op_a", "FAILED", 0),
+      ]);
+      mocks.operationFindMany.mockResolvedValue([]);
+
+      const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
+        now: new Date("2026-04-13T12:00:00Z"),
+      });
+
+      expect(report.summary).toEqual(
+        expect.objectContaining({
+          repeatedFailureCorrelations: repeated,
+          recentFailedOperations: failed,
+          recentPartialOperations: partial,
+        })
+      );
+      expect(report.repeatedFailures).toHaveLength(repeated);
+    }
+  );
+
   it("does not report Stripe per-delta refund notes as stale, mismatched, or duplicate drift (#2901)", async () => {
     mocks.memberFindMany.mockResolvedValue([]);
     mocks.operationFindFirst.mockResolvedValue(null);

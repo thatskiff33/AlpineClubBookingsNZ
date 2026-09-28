@@ -18,10 +18,10 @@ reason: it revalidates the real booking page through the one route-pattern
   constant instead of a path that does not exist; that costs its import.
 
 file: src/lib/xero-hardening-report.ts
-lines: 1103
-reason: the unsupported-partials list leaves out a partial an officer resolved
-  in Xero, which the retry helper now refuses; the predicate's import and the
-  selected column sit beside the one filter that reads them.
+lines: 1106
+reason: the report's failure counts (repeated, failed, partial, unsupported)
+  leave out an operation an officer resolved in Xero; the predicate's import,
+  the selected column and one filter sit where the failure rows are read.
 
 file: src/lib/xero-refund-note-link-repair.ts
 lines: 883

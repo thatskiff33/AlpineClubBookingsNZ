@@ -5908,6 +5908,50 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     ).toEqual([]);
   });
 
+  it.each(["PENDING", "RUNNING"])(
+    "a %s clearing allocation is reported as blocked, never queued beside",
+    async (status) => {
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [cancelledUnpaid()],
+          links: [clearingNoteLink],
+          operations: [
+            makeOperation({
+              id: "operation_live_allocation",
+              localModel: "Booking",
+              localId: "booking_1",
+              entityType: "ALLOCATION",
+              operationType: "ALLOCATE",
+              status,
+              xeroObjectType: null,
+              xeroObjectId: null,
+              requestPayload: {
+                queueType: "CREDIT_NOTE_ALLOCATION",
+                creditNoteId: "cn_clear",
+                invoiceId: "inv_primary",
+                amountCents: 10000,
+                role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+              },
+            }),
+          ],
+        }),
+        scope: { all: true },
+      });
+      const bookingReport = report.passes[0].bookings[0];
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+        "QUEUE_CREDIT_NOTE_ALLOCATION"
+      );
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          safeToAutoApply: false,
+          actions: [],
+          details: expect.objectContaining({ operationId: "operation_live_allocation" }),
+        })
+      );
+    }
+  );
+
   it("a newer live failure is not hidden behind an older resolved one", async () => {
     const booking = makeBooking({
       status: "PAID",
