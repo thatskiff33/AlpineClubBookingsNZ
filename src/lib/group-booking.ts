@@ -384,28 +384,48 @@ async function requireOwnedGroupBookingByCode(
   return group;
 }
 
-/** Close a group to new joins. Existing child bookings are untouched. */
-export async function closeGroupBooking(rawCode: string, sessionUserId: string) {
+/**
+ * Set a group's join status (OPEN or CLOSED) for its organiser, never from
+ * CANCELLED. The organiser-pays cancel fence writes CANCELLED under
+ * `pg_advisory_xact_lock(1)`, and the paid apply, the reaper and the payer
+ * switch rely on it staying CANCELLED. So this takes the same key, re-reads the
+ * status under it, and writes with a status-guarded `updateMany`: a close or
+ * reopen racing the cancel waits for it and then refuses, instead of writing
+ * OPEN over CANCELLED from a stale read (#3672 review).
+ */
+async function setGroupBookingJoinStatus(
+  rawCode: string,
+  sessionUserId: string,
+  status: typeof GroupBookingStatus.OPEN | typeof GroupBookingStatus.CLOSED
+): Promise<{ id: string; status: GroupBookingStatus }> {
   const group = await requireOwnedGroupBookingByCode(rawCode, sessionUserId);
-  if (group.status === GroupBookingStatus.CANCELLED) {
+  const written = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const current = await tx.groupBooking.findUnique({
+      where: { id: group.id },
+      select: { status: true },
+    });
+    if (!current || current.status === GroupBookingStatus.CANCELLED) return false;
+    const claimed = await tx.groupBooking.updateMany({
+      where: { id: group.id, status: { not: GroupBookingStatus.CANCELLED } },
+      data: { status },
+    });
+    return claimed.count > 0;
+  });
+  if (!written) {
     throw new GroupBookingError("This group booking has been cancelled", 409);
   }
-  return prisma.groupBooking.update({
-    where: { id: group.id },
-    data: { status: GroupBookingStatus.CLOSED },
-  });
+  return { id: group.id, status };
+}
+
+/** Close a group to new joins. Existing child bookings are untouched. */
+export async function closeGroupBooking(rawCode: string, sessionUserId: string) {
+  return setGroupBookingJoinStatus(rawCode, sessionUserId, GroupBookingStatus.CLOSED);
 }
 
 /** Reopen a closed group to new joins. */
 export async function reopenGroupBooking(rawCode: string, sessionUserId: string) {
-  const group = await requireOwnedGroupBookingByCode(rawCode, sessionUserId);
-  if (group.status === GroupBookingStatus.CANCELLED) {
-    throw new GroupBookingError("This group booking has been cancelled", 409);
-  }
-  return prisma.groupBooking.update({
-    where: { id: group.id },
-    data: { status: GroupBookingStatus.OPEN },
-  });
+  return setGroupBookingJoinStatus(rawCode, sessionUserId, GroupBookingStatus.OPEN);
 }
 
 // ---------------------------------------------------------------------------

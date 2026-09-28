@@ -843,6 +843,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "setGroupBookingJoinStatus#1",
+    tier: "GLOBAL",
+    reason:
+      "#3672 review: an organiser's close or reopen re-reads the group's status under the key the organiser-pays cancel fence writes CANCELLED under, and writes OPEN or CLOSED only with a not-CANCELLED guard, so a reopen racing the cancel can never overwrite the CANCELLED that the paid apply, the reaper and the payer switch rely on.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "releaseJoinersLeftBehindPaidSettlements#1",
     tier: "GLOBAL",
     reason:
