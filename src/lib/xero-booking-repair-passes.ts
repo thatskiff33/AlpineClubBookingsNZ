@@ -231,7 +231,19 @@ async function applyLateCaptureRefundRepair(
       ? action.payload.invoiceId
       : null;
 
-  if (!Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
+  // #3639 delta D1: the classifier pins the refund to the captures no
+  // treasurer-approval task owns. Without that plan this refuses rather than
+  // letting a newest-first allocation reach a held capture.
+  // A legacy payment with no ledger rows carries no plan (and can hold nothing).
+  const allocation = Array.isArray(action.payload.allocation)
+    ? (action.payload.allocation as { paymentTransactionId: string; amountCents: number }[])
+    : null;
+  if (
+    !Number.isFinite(refundAmountCents) ||
+    refundAmountCents <= 0 ||
+    (allocation !== null &&
+      allocation.reduce((sum, slice) => sum + slice.amountCents, 0) !== refundAmountCents)
+  ) {
     action.status = "failed";
     action.resultMessage = "Late-capture repair payload is incomplete.";
     return;
@@ -245,6 +257,7 @@ async function applyLateCaptureRefundRepair(
       format,
       paymentId,
       amountCents: refundAmountCents,
+      allocation: allocation ?? undefined,
       reason: "requested_by_customer",
       metadata: {
         bookingId,
@@ -331,8 +344,10 @@ async function applyLateCaptureRefundRepair(
  * the worker books the invoice's own net as the Stripe receipt, so releasing
  * would assert money the club does not hold - the overstatement
  * `planEditReviewChargeInvoicePayment` refuses at classify time, arriving by a
- * different door. That case is reported instead, and the invoice it leaves
- * behind is retired by the 14-day reaper; a stated limit, not a silent one.
+ * different door. That case is reported instead. The invoice it leaves behind
+ * is not issued: the waiting-invoice reaper's next run (#3641) finds its payment
+ * captured, applies the same capture rule, and cancels it unsent with an alert
+ * to an officer, so the shortfall is collected by hand.
  */
 async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
   action: BookingXeroRepairAction;

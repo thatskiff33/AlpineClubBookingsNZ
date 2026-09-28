@@ -5,15 +5,13 @@ modification credit note inside its own transaction, so the one enqueue that
 builds that note learns to take the caller's transaction client and to carry
 the unpaid-invoice wording choice through to the worker.
 
-file: src/lib/xero-operation-outbox.ts
-lines: 3307
-reason: the transaction-client option and the wording choice belong on the
-  existing enqueue and its dispatch arm, beside the dedupe they change; a
-  second enqueue elsewhere would fork the one booking-anchored clearing note
-  the cancel path, the repair tool and the cron all raise.
+The outbox entry this fragment carried (3307 lines) was removed when #3641
+merged in: #3641 moved the waiting-invoice reaper and the late-capture release
+out of `xero-operation-outbox.ts`, so the composed file (3205 lines) is below
+its base length and needs no allowance.
 
 file: src/lib/booking-cancel.ts
-lines: 2591
+lines: 2535
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
@@ -27,9 +25,11 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   three points of the cancel's own sequence. The delta round adds the officer
   gate and the no-note unpaid cancel of DECISION 2, and the throw that rolls a
   refused claim back, at the same points.
+  #3639 (same epic) shrank the file, so the composed length is #3643's share
+  alone.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1846
+lines: 1894
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -39,20 +39,31 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   the predicates themselves live in `xero-clearing-allocations.ts`.
   #3638 (same epic) adds one predicate call so the late-capture arm does not
   read an admin-only settlement marker as a recorded refund decision.
+  Composed with #3639 at the epic sync (one file, one allowance, so its growth
+  is declared here): the late-capture arm leaves out captures a
+  treasurer-approval task owns and pins its refund to the rest, and the one
+  home of the "cash retired the clearing note" finding moved before the
+  arm's gate, replacing this arm's own copy; #3639 shrank `booking-cancel.ts`
+  (its entry above carries #3643's share alone); the #1491 test is the shared
+  `isCancellationRefundDecisionRecorded`, which excludes #3638's marker too.
   #3643 (same epic) adds the manual-review answer to a recorded or recognised
   part payment, naming it; the predicates live in `xero-inbound/object-links.ts`
-  and `part-payment-recognition-reason.ts`.
+  and `part-payment-recognition-reason.ts`. Composed with #3639, the recognised
+  part payment still enters that arm past its captured-money gate.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1610
+lines: 1689
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
   only the two dispatch arms here, beside their siblings, and the refusal of a
   recorded plan with a redacted invoice id at the two places it is read.
+  #3642 (same epic) returns a failed group-settlement invoice row (CREATE or
+  VOID) to the outbox, rebuilding the CREATE's queued payload, in the existing
+  outbox-requeue branch beside the applied-credit one.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1734
+lines: 1847
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
@@ -61,6 +72,11 @@ reason: the already-cancelled credit arm retires a still-pending
   #3638 (same epic) writes its second-instrument marker inside this settle
   transaction, beside the receipt it describes; the detection, the writer and
   the alert live in `settlement-conflicts.ts`.
+  #3642 (same epic): the paid group invoice arm hands the invoice's cash to
+  the settle and recognises a payment on an abandoned invoice (by its link,
+  with the cancelled-group wording) and a card double payment; all read the
+  invoice and cash evidence that arm already classifies. The alert lives in
+  `group-settlement-invoice-alerts.ts`.
   #3643 exports the cash rule for the hold payment check and corrects its
   "only caller" comments.
 

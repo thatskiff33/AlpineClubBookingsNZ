@@ -235,4 +235,29 @@ describe("AdditionalPaymentCard amount source", () => {
     // Still no instrument: an explanation is not an offer to charge.
     expect(screen.queryByTestId("elements")).toBeNull();
   });
+
+  /*
+    #3641: the route answers 409 when Stripe already holds this payment. The
+    card says so plainly: not "still owing", not a red error, no form.
+  */
+  it("says the payment has been made, and nothing contradicting it, on a 409", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: "This payment has already been made. Refresh the page to see it.",
+      }),
+    });
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/already been made/)).toBeVisible(),
+    );
+    expect(screen.queryByText(/according to our records/)).toBeNull();
+    expect(screen.queryByText(/still owing/)).toBeNull();
+    expect(screen.queryByTestId("elements")).toBeNull();
+  });
 });

@@ -76,6 +76,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // its reconcile-by-hand siblings; not delivery-locked, because no money moved
   // and the booking is still visibly held.
   "admin-internet-banking-hold-kept",
+  // #3639 (delta D7): a late capture held for a treasurer's approval. Same
+  // channel and preference as the hand-back task alert: a nudge for a durable
+  // task, moving no money, so not delivery-locked.
+  "admin-late-capture-held",
   // #3638: the second-instrument conflict — a card payment and a Xero payment
   // on one booking. Admin audience, sent through the unmuteable sender and
   // delivery-locked below, because the system refunds nothing on its own and
@@ -538,6 +542,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #3643: {{holdKeptNote}} is the instruction - part-paid, paid in full,
   // unreadable and released-while-unreadable need different next steps.
   "admin-internet-banking-hold-kept": ["memberName", "reviewUrl", "holdKeptNote"],
+  "admin-late-capture-held": ["memberName", "bookingId", "amount", "reviewUrl"],
   // #3638: {{secondInstrumentConflictNote}} is the sentence that differs
   // between a live booking and a cancelled one — what the card money already
   // did, and so what the treasurer does next — and {{xeroObjectUrl}} is the
@@ -817,6 +822,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable at check-in or seven days after the deadline, released",
     frequency:
       "At most once per hold for each reason - part-paid, paid in full but not yet synced, unreadable, and released while still unreadable - guarded by a cross-instance claim that is given back when the email could not be delivered",
+  },
+  "admin-late-capture-held": {
+    triggerSummary:
+      "A card payment went through after its booking was cancelled and the club has a treasurer approve these refunds, so it was held on the payments board instead of refunded",
+    frequency:
+      "Once per late payment held - claim-guarded, so a Stripe redelivery or a retry does not re-send",
   },
   "admin-second-instrument-settlement-conflict": {
     triggerSummary:

@@ -30,6 +30,13 @@ const mocks = vi.hoisted(() => ({
   // reaper drains it after commit.
   enqueueOwnHostingCoverage: vi.fn(),
   settleHostingCoverage: vi.fn(),
+  // #3642: the combined Internet Banking invoice a released settlement retires.
+  abandonInvoice: vi.fn(),
+  // #3642: the invoice read in Xero before an Internet Banking release, and the
+  // operator alert when it has started being paid.
+  readInvoiceState: vi.fn(),
+  alertInvoice: vi.fn(),
+  loadModuleFlags: vi.fn(),
 }));
 
 const txClient = {
@@ -55,6 +62,19 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntent,
+}));
+vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
+  abandonGroupSettlementInvoiceInTx: mocks.abandonInvoice,
+}));
+vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
+  readGroupSettlementInvoiceState: mocks.readInvoiceState,
+  describeGroupSettlementInvoiceMoney: () => "$500.00 paid",
+}));
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: mocks.loadModuleFlags,
+}));
+vi.mock("@/lib/group-settlement-invoice-alerts", () => ({
+  alertGroupSettlementInvoice: mocks.alertInvoice,
 }));
 vi.mock("@/lib/group-cancel", () => ({
   settleGroupBookingOnOrganiserCancel:
@@ -162,6 +182,10 @@ beforeEach(() => {
   // Resume phase (#1236): default to no interrupted organiser-cancel cleanups.
   mocks.groupBookingFindMany.mockResolvedValue([]);
   mocks.settleGroupBookingOnOrganiserCancel.mockResolvedValue(undefined);
+  mocks.abandonInvoice.mockResolvedValue(undefined);
+  mocks.readInvoiceState.mockResolvedValue({ kind: "open", totalCents: 30000 });
+  mocks.alertInvoice.mockResolvedValue(undefined);
+  mocks.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
 });
 
 describe("groupSettlementReapDeadline", () => {
@@ -207,6 +231,8 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
     // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
@@ -303,6 +329,216 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
   });
 
+  // #3642 (INV-PAY-105): before this the reaper cancelled only a Stripe intent,
+  // and the emailed invoice stayed AUTHORISED in receivables for a bill nobody
+  // owed. It is retired in the SAME transaction that releases the settlement.
+  it("retires the combined invoice of an Internet Banking settlement it releases (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "xinv_1",
+      updatedAt,
+      groupBooking: { status: "OPEN" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    let abandonedInsideTheRelease = false;
+    mocks.abandonInvoice.mockImplementation(async (tx: unknown) => {
+      abandonedInsideTheRelease =
+        tx === txClient && mocks.settlementUpdateMany.mock.calls.length === 1;
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_1",
+    });
+    expect(abandonedInsideTheRelease).toBe(true);
+  });
+
+  it("retires an invoice an older FAILED settlement still carries, without restarting its clock (#3642)", async () => {
+    // Released before #3642 shipped: FAILED, children already reverted, and the
+    // invoice still live. The pass retires it but must not bump `updatedAt`,
+    // which the expiry phase measures its second window from.
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ status: PaymentStatus.FAILED, stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      xeroInvoiceId: "xinv_legacy",
+      updatedAt,
+      groupBooking: { status: "OPEN" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_legacy",
+      preserveUpdatedAt: updatedAt,
+    });
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: PaymentStatus.FAILED } })
+    );
+  });
+
+  it("leaves a cancelled group's invoice to the cancellation VOID (#3642)", async () => {
+    // The organiser cancelled while the invoice was outstanding. The
+    // cancellation VOID reads the settlement's pointer; clearing it here would
+    // strand that VOID and make a later payment read as "lapsed".
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_cancelled",
+        groupBooking: { ...staleSettlement().groupBooking, status: "CANCELLED" },
+      }),
+    ]);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "xinv_cancelled",
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+      groupBooking: { status: "CANCELLED" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+  });
+
+  it("keeps a group whose invoice has started being paid, and alerts the operators (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_part_paid",
+        groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+      }),
+    ]);
+    mocks.readInvoiceState.mockResolvedValue({
+      kind: "has_money",
+      status: "AUTHORISED",
+      amountPaidCents: 50000,
+      amountCreditedCents: 0,
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).toHaveBeenCalledWith("xinv_part_paid", expect.any(String));
+    expect(result.reaped).toBe(0);
+    expect(result.heldForInvoicePayment).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settlementId: "settle-1",
+        invoiceId: "xinv_part_paid",
+        errorMessage: expect.stringMatching(/held rather than released/),
+      }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  function ibSettlement(invoiceId: string) {
+    return staleSettlement({
+      stripePaymentIntentId: null,
+      source: "INTERNET_BANKING",
+      xeroInvoiceId: invoiceId,
+      groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+    });
+  }
+
+  it("holds an Internet Banking group, and alerts, while Xero cannot show its invoice (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_unreadable")]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(result.heldForUnreadableInvoice).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "reaper_held_unreadable",
+        invoiceId: "xinv_unreadable",
+        errorMessage: expect.stringMatching(/Xero could not be reached/),
+      }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("says the integration is off, rather than reading Xero, when the Xero module is switched off (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_off")]);
+    mocks.loadModuleFlags.mockResolvedValue({ xeroIntegration: false });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).not.toHaveBeenCalled();
+    expect(result.heldForUnreadableInvoice).toBe(1);
+    expect(mocks.alertInvoice.mock.calls[0][0].errorMessage).toMatch(/switched off/);
+  });
+
+  it("releases, with an alert, a group Xero still cannot show once its hold ends at check-in (#3642)", async () => {
+    // Check-in has arrived: the hold ends (seven days past the deadline would
+    // end it too, for a later check-in).
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date(NOW.getTime() - HOUR);
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(result.heldForUnreadableInvoice).toBe(0);
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "reaper_released_unchecked" }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("releases a group whose invoice the connected Xero organisation does not have, with an alert (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_elsewhere")]);
+    mocks.readInvoiceState.mockResolvedValue({ kind: "not_found" });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invoice_not_found", invoiceId: "xinv_elsewhere" }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("releases an Internet Banking group whose invoice Xero shows unpaid (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_open",
+        groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+      }),
+    ]);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).toHaveBeenCalledTimes(1);
+    expect(result.reaped).toBe(1);
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+  });
+
   it("does not reap a settlement still inside the window", async () => {
     mocks.settlementFindMany.mockResolvedValue([
       staleSettlement({ updatedAt: new Date(NOW.getTime() - 47 * HOUR) }),
@@ -318,6 +554,8 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
@@ -366,6 +604,8 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -396,6 +636,8 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     // No-op passes must not rewrite the settlement: that would bump

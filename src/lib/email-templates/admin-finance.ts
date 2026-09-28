@@ -568,6 +568,25 @@ export function adminManualRefundTaskTemplate(data: {
   `);
 }
 
+// ---- #3639: Admin Alert — late capture held for a treasurer (once per payment; the task is the record) ----
+export function adminLateCaptureHeldTemplate(data: {
+  memberName: string; checkIn: Date; checkOut: Date; amountCents: number; bookingId: string; reviewUrl: string;
+}, format: ClubFormat): string {
+  return layout(`
+    ${heading("Late Payment Held for Approval")}
+    ${alertBox("A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.", "warning")}
+    ${paragraph("Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Amount held", value: formatCents(data.amountCents, format) },
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
 // ---- N-05: Admin Alert — Xero Sync Error ----
 
 export function adminXeroSyncErrorTemplate(data: {

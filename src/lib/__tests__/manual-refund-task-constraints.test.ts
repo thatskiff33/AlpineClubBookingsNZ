@@ -79,6 +79,15 @@ const OCCURRENCE_KEY_MIGRATION =
  */
 const WITHHELD_SHARE_MIGRATION =
   "prisma/migrations/20260910010000_register_uncollected_edit_review_share_kind/migration.sql";
+/**
+ * #3639: the treasurer-approval marker `lateCaptureApprovalIntentId` - a nullable
+ * column, its unique index (one approval item per capture) and the CHECK that
+ * only a `DELETED_BOOKING_LATE_CAPTURE` row may carry it. No new kind label, so
+ * the previous app version can read every row. Its `BookingDefaults` column is
+ * filtered out with every other statement that names another table.
+ */
+const LATE_CAPTURE_APPROVAL_MIGRATION =
+  "prisma/migrations/20261013010000_add_late_capture_refund_approval/migration.sql";
 
 /**
  * The foundation migration also constrains `BookingGuest` and
@@ -154,6 +163,7 @@ async function withManualRefundTaskSchema(
       FOUNDATION_MIGRATION,
       OCCURRENCE_KEY_MIGRATION,
       WITHHELD_SHARE_MIGRATION,
+      LATE_CAPTURE_APPROVAL_MIGRATION,
     ]) {
       for (const statement of await manualRefundTaskStatements(migrationPath)) {
         await client.query(statement);
@@ -393,6 +403,35 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         code: "23514",
         constraint: "ManualRefundTask_edit_review_occurrence_key_present",
       });
+    });
+  });
+
+  it("allows one treasurer-approval marker per late capture, and only on the #2700 late-capture kind (#3639)", async () => {
+    await withManualRefundTaskSchema(async (client) => {
+      const approval = (id: string, kind: string, intent: string) =>
+        client.query(
+          `INSERT INTO "ManualRefundTask"
+             ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
+              "kind", "lateCaptureApprovalIntentId", "reason", "status")
+           VALUES ($1, 'booking-1', 'payment-1', 2500, 2500,
+                   $2::"ManualRefundTaskKind", $3, 'held for a treasurer', 'OPEN')`,
+          [id, kind, intent],
+        );
+      await approval("late-first", "DELETED_BOOKING_LATE_CAPTURE", "pi_late");
+      // The duplicate fence: a second item for the same capture.
+      await expect(
+        approval("late-second", "DELETED_BOOKING_LATE_CAPTURE", "pi_late"),
+      ).rejects.toMatchObject({ code: "23505" });
+      // The marker on any other kind would route a hand-back to a card refund.
+      await expect(
+        approval("late-wrong-kind", "CANCELLED_BOOKING_HAND_BACK", "pi_other"),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_late_capture_approval_kind",
+      });
+      // And every unmarked row is untouched: many NULLs, any kind.
+      await insert(client, { id: "legacy-a", kind: "DELETED_BOOKING_LATE_CAPTURE" });
+      await insert(client, { id: "legacy-b", kind: "DELETED_BOOKING_LATE_CAPTURE" });
     });
   });
 

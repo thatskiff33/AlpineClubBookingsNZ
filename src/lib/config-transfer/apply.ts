@@ -3,6 +3,8 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
+import { auditLateCaptureSettingChange } from "@/lib/late-capture-refund-setting-change";
 import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
 import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
 import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
@@ -240,6 +242,9 @@ export async function applyConfigImport(
   }> = [];
   let appliedEntities: string[] = [];
   let selectedCategories: ConfigTransferCategory[] = [];
+  // #3639 (delta D8): the late-capture refund choice before and after, so an
+  // import that switches it writes the same payment entry the page does.
+  let lateCaptureSetting = { before: false, after: false };
 
   await prisma.$transaction(
     async (tx) => {
@@ -297,6 +302,25 @@ export async function applyConfigImport(
         throw new ConfigImportDriftError();
       }
       selectedCategories = replan.selectedCategories;
+
+      // Read only when the plan says this import touches it.
+      const lateCaptureTouched = replan.categories.some((cat) =>
+        cat.items.some(
+          (i) =>
+            i.entity === "booking-defaults" &&
+            (i.action === "create" ||
+              (i.changedFields ?? []).includes("lateCaptureRefundNeedsApproval")),
+        ),
+      );
+      const readLateCaptureSetting = async () =>
+        (
+          await tx.bookingDefaults.findUnique({
+            where: { id: "default" },
+            select: { lateCaptureRefundNeedsApproval: true },
+          })
+        )?.lateCaptureRefundNeedsApproval ??
+        DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval;
+      if (lateCaptureTouched) lateCaptureSetting.before = await readLateCaptureSetting();
 
       // Bounded per-item diff for the audit record (what this import changes).
       auditDiff = replan.categories
@@ -357,6 +381,13 @@ export async function applyConfigImport(
         totals.skipped += result.skipped;
       }
 
+      if (lateCaptureTouched) {
+        lateCaptureSetting = {
+          before: lateCaptureSetting.before,
+          after: await readLateCaptureSetting(),
+        };
+      }
+
       // ADR-003 bootstrap only: write the `configuration.bootstrap_imported`
       // idempotence marker on the SAME transaction, so the config writes and
       // the marker commit or roll back together — no crash window in which
@@ -401,6 +432,15 @@ export async function applyConfigImport(
       },
     },
   });
+
+  if (lateCaptureSetting.before !== lateCaptureSetting.after) {
+    auditLateCaptureSettingChange({
+      actorMemberId,
+      before: lateCaptureSetting.before,
+      after: lateCaptureSetting.after,
+      via: "configuration-import",
+    });
+  }
 
   // Adult-hosting policy replacement queues every affected active incident in
   // the import transaction. Drain only after that transaction and its audit

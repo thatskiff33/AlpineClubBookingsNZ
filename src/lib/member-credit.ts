@@ -32,6 +32,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
 
@@ -140,7 +141,7 @@ export async function createCancellationCredit(
       memberId,
       amountCents,
       type: CreditType.CANCELLATION_REFUND,
-      description: `Cancellation refund for booking ${bookingId.slice(0, 8)}`,
+      description: cancellationCreditDescription(bookingId),
       sourceBookingId: bookingId,
       xeroCreditNoteId: xeroCreditNoteId ?? null,
     },

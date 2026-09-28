@@ -770,13 +770,25 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
   });
 
   /**
-   * CONTROL, and it is the reason this is scoped to the second ask rather than
-   * to the queue type. The change's own invoice keeps the wholesale replacement:
-   * its amounts live on the `BookingModification` row, which is what
-   * `xero-operation-retry.ts` rebuilds them from, and four comments around this
-   * code correctly rely on the overwrite happening.
+   * #3641 review round: the change's OWN invoice keeps its queued payload too.
+   * The overwrite erased `paymentIntentId`, so the late-capture release could
+   * not see an invoice for the same payment request that was already sent and
+   * alerted an officer about a correct booking; and it erased the queued
+   * amounts the retry replays first (#1356) to keep the Xero key identical.
    */
-  it("CONTROL: the change's own invoice still replaces its payload", async () => {
+  it("the change's own invoice keeps its queued payload, payment request included", async () => {
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: true,
+        paymentIntentId: "pi_ask",
+        waitForConfirmedAdditionalPayment: true,
+      },
+    });
     mocks.retryXeroWriteWithContactRepair.mockRejectedValue(
       new Error("Account code 200 has been archived"),
     );
@@ -788,19 +800,29 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         priceDiffCents: 3000,
         changeFeeCents: 0,
         bookingModificationId: "mod_123",
-        recordPayment: false,
+        recordPayment: true,
         syncOperationId: "op_q",
       }),
     ).rejects.toThrow("Account code 200 has been archived");
 
-    // No read of the queued row at all on this path, so no queued shape can be
-    // written onto it by accident.
-    expect(mocks.xeroSyncOperationFindUnique).not.toHaveBeenCalled();
     const written = mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
-    // The document and, since #3530, the record of which lines it carries -
-    // and nothing that could read as a queued instruction.
-    expect(Object.keys(written)).toEqual(["invoices", "priceLines"]);
+    // The document and the record of its lines, beside the queued instruction.
+    expect(written.invoices[0].lineItems[0].unitAmount).toBe(30);
     expect(written.priceLines).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "NO_STORED_LINES" });
-    expect(readQueuedOutboxPayload(written)).toBeNull();
+    expect(written.paymentIntentId).toBe("pi_ask");
+    expect(readQueuedOutboxPayload(written)).toMatchObject({
+      queueType: "SUPPLEMENTARY_INVOICE",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      recordPayment: true,
+    });
+    // And the retry screen still accepts the FAILED row.
+    expect(
+      getXeroOperationRetryMeta({
+        ...failedOperationRow(written),
+        localModel: "BookingModification",
+        localId: "mod_123",
+      }),
+    ).toEqual({ supported: true, reason: null });
   });
 });

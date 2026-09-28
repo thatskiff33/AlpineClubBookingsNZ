@@ -81,12 +81,14 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * transition is never undone purely because its narrative event failed.
  *
  * The ban is on SWALLOWING inside a transaction, not on writing an event in
- * one. The one deliberate exception is #3638's second-instrument conflict
- * marker (`recordSecondInstrumentMarkerInTransaction`), an admin-only record
- * written with a direct, un-swallowed `tx.bookingEvent.create` inside the Xero
- * settle transaction: it must commit or roll back with the bank receipt it
- * describes, so a failed insert there is meant to abort the transaction and
- * have the delivery retried.
+ * one. The documented exceptions write a DECISION record, not narrative, with a
+ * direct, un-swallowed `tx.bookingEvent.create` inside the transition's own
+ * transaction, so it must commit or roll back with what it describes:
+ * #3638's second-instrument conflict marker
+ * (`recordSecondInstrumentMarkerInTransaction`, inside the Xero settle
+ * transaction, so a failed insert aborts it and the delivery is retried), and
+ * the paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
+ * `INV-PAY-106`), so the cancel cannot commit without its decision.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

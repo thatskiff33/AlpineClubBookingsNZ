@@ -33,15 +33,17 @@ reason: the soft delete reads the same "is this intent dead" predicate as
   booking cancellation, so an intent already cancelled at Stripe has its row
   closed here too: the import and a three-line comment.
 
-file: src/lib/payment-recovery.ts
-lines: 3185
-reason: one import; the superseded-intent cancel now reads the shared
-  predicate instead of spelling the rule inline.
+payment-recovery.ts needs no allowance once #3640 composes with this change: its
+superseded-payment refund moved onto the one card-refund writer, and the file is
+shorter than its base.
 
 file: src/lib/email-message-registry.ts
-lines: 2131
+lines: 2142
 reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with
-  the comment saying why it is locked. #3643 (same epic, one entry per file) registers its
-  admin-internet-banking-hold-kept alert the same way, in the same tables.
+  the comment saying why it is locked. #3639 (same epic, one file one
+  allowance) adds its held late-capture alert's name, required tokens and
+  trigger summary beside the hand-back task alert it mirrors. #3643 (same epic)
+  registers its admin-internet-banking-hold-kept alert the same way, in the
+  same tables.

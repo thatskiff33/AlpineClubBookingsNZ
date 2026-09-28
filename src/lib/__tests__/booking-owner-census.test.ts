@@ -485,7 +485,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:505",
+  "src/lib/booking-cancel.ts:512",
   "src/lib/booking-date-modification-service.ts:392",
   "src/lib/booking-delete.ts:124",
   "src/lib/booking-delete.ts:73",
@@ -498,7 +498,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:269",
   "src/lib/kiosk-access.ts:232",
-  "src/lib/manual-refund-task-queue-payload.ts:188",
+  "src/lib/manual-refund-task-queue-payload.ts:196",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:342",
   "src/lib/waitlist-cross-lodge.ts:530",
@@ -519,8 +519,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1226",
-  "src/lib/payment-recovery.ts:2516",
-  "src/lib/payment-recovery.ts:2568",
+  "src/lib/payment-recovery.ts:2557",
+  "src/lib/payment-recovery.ts:2609",
   "src/lib/xero-admin-health.ts:324",
 ];
 

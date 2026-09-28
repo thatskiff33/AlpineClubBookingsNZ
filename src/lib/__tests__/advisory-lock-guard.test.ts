@@ -578,6 +578,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Settlement, refunds and money side effects ────────────────────────────
   {
+    site: "holdLateCaptureForTreasurerIfRequired#1",
+    tier: "GLOBAL",
+    reason:
+      "#3639 (owner decision 26 Sep 2026): raising the treasurer-approval ManualRefundTask for a late capture is a find-then-create keyed on the payment INTENT, and it must also see the confirm route's #2700 OPEN question for the same capture — which that raise creates under this same key. Two webhook deliveries, or a delivery and a confirm, would otherwise put two tasks on one capture and a treasurer could refund it twice. Same cohort as raiseDeletedBookingModificationRefundTask; takes nothing else and makes no provider call inside.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "raiseDeletedBookingModificationRefundTask#1",
     tier: "GLOBAL",
     reason:
@@ -825,14 +832,21 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "createXeroInvoiceForGroupSettlement#2",
     tier: "GLOBAL",
     reason:
-      "After the provider call returns, the create-versus-cancel race is decided under the same fence: a cancellation that acquired it first wins and the invoice is voided, otherwise issuance won the serialisation point.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
     invariant: "INV-LOCK-001",
   },
   {
-    site: "createXeroInvoiceForGroupSettlement#3",
+    site: "releaseUninvoiceableGroupSettlement#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime is never emailed.",
+      "#3642: a bound settlement whose joiners' stored prices cannot make its invoice is FAILED to release the binding; the guarded update must serialise with the settle, card-attach, reaper and create-worker writers of the same settlement, which all take this key.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "bindCreatedGroupSettlementInvoice#1",
+    tier: "GLOBAL",
+    reason:
+      "The post-create fence (moved out of createXeroInvoiceForGroupSettlement by #3642): after the provider call returns it decides create-versus-cancel and create-versus-release under the key the cancellation, the reaper and the settle paths take, binding the invoice with its active link or abandoning it on arrival.",
     invariant: "INV-LOCK-001",
   },
 
@@ -1129,6 +1143,18 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // serialisation itself is proven against real PostgreSQL by
   // `edit-financial-review-races.realdb.test.ts`.
   "src/lib/xero-operation-outbox.ts": 1,
+  //
+  // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
+  // which both the enqueue and the late-capture re-queue
+  // (`xero-supplementary-invoice-late-capture.ts`,
+  // `requeueRetiredSupplementaryInvoiceOperation`) call, so the two cannot drift
+  // onto different keys. The re-queue takes it on a reaper-retired operation's
+  // anchor for covered-check -> link-check -> queued-check -> revive, so a
+  // revived invoice and a fresh enqueue can never both go out (forced against
+  // real PostgreSQL in `edit-financial-review-races.realdb.test.ts`). Its
+  // callers (the Stripe webhook's additional-payment handler, the
+  // confirm-modification-payment route, the waiting-invoice reaper) hold no
+  // transaction or other advisory lock there, and no provider call runs inside.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1255,6 +1281,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // and an ordinary rejection. See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Approve, reject and release of one `DeletionRequest`".
   "src/lib/deletion-request-decision.ts": 1,
+  // #3640 (delta review, D1): `lockPaymentForRefundedTotal` takes the Payment
+  // row `FOR NO KEY UPDATE` FIRST in every writer of the transaction refund
+  // mirror - the card-refund writer, `applyLocalRefundAllocation`, and the
+  // cancel claim before its #1491 fold - so the order is Payment row -> refund
+  // rows -> transaction row everywhere. NO KEY strength so a `PaymentRefund`
+  // insert's FK check (`FOR KEY SHARE`) is not blocked. Keyed on an immutable
+  // cuid; taken after `lock(1)` where the caller holds it. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> the #3640 paragraph.
+  "src/lib/payment-transactions.ts": 1,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";

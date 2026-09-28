@@ -176,6 +176,14 @@ function summarizeQueuedPayload(
 
     case "GROUP_SETTLEMENT_INVOICE_VOID":
       facts.add("Settlement", shortId(req.settlementId));
+      // #3642: the abandon VOID names its invoice; the cancellation VOID does not.
+      if (readString(req.xeroInvoiceId)) {
+        facts.add("Xero invoice", shortId(req.xeroInvoiceId));
+        return {
+          title: "Queued: void abandoned group-settlement invoice",
+          facts: facts.build(),
+        };
+      }
       return {
         title: "Queued: void cancelled group-settlement invoice",
         facts: facts.build(),

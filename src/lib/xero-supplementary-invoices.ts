@@ -292,24 +292,23 @@ export async function createXeroSupplementaryInvoice(params: {
     changeFeeCents,
   });
   /**
-   * A SECOND ASK KEEPS ITS QUEUED PAYLOAD; every other supplementary invoice
-   * still replaces it (#3193 fix round - the retry that was dead on arrival).
+   * EVERY QUEUED SUPPLEMENTARY INVOICE KEEPS ITS QUEUED PAYLOAD (#3193 fix
+   * round for a second ask; #3641 review round for all of them).
    *
    * This function records the Xero invoice body on the operation BEFORE the
-   * create call, so a Xero rejection leaves a FAILED row whose only content is
-   * the request Xero refused. For the booking change's own invoice that costs
-   * nothing: `xero-operation-retry.ts` rebuilds the amounts from the
-   * `BookingModification` row, which is their record, and four comments around
-   * this code correctly rely on the overwrite happening.
-   *
-   * A SECOND ASK HAS NO SUCH RECORD. It bills one settled review share, and
-   * that figure exists only in the payload the outbox queued - so overwriting it
-   * made the `ManualRefundTask` replay branch UNREACHABLE in the exact case it
-   * was written for. Xero rejects the create (archived contact, bad account
-   * code, a validation refusal); the payload is already gone; the officer whom
-   * the booking's own audit row sent to the retry button is told the amounts
-   * were overwritten and to bill by hand - which is the state this issue exists
-   * to remove.
+   * create call. It used to REPLACE the queued payload with that body for the
+   * booking change's own invoice, which erased three things other code reads:
+   *   - `paymentIntentId`, which the late-capture release matches to see that
+   *     an invoice for the same payment request is already on its way or sent
+   *     (without it, a sent invoice read as "already linked" and an officer was
+   *     alerted about a correct booking), and which
+   *     `hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent` counts;
+   *   - the queued amounts and `recordPayment`, which the retry replays first
+   *     (#1356) so the Xero idempotency key stays identical to the first
+   *     attempt, falling back to the `BookingModification` row only when they
+   *     are gone;
+   *   - for a SECOND ASK, the only record of the share it bills, so a Xero
+   *     rejection left the `ManualRefundTask` replay branch unreachable.
    *
    * PRESERVED, NOT REBUILT. The queued row is re-read and the Xero body added
    * beside it, rather than the queued fields being re-derived from `params`
@@ -331,7 +330,7 @@ export async function createXeroSupplementaryInvoice(params: {
    */
   let operationId = syncOperationId ?? null;
   const queuedRequestPayload =
-    syncOperationId && shortfallReviewTaskId
+    syncOperationId
       ? asRecord(
           (
             await prisma.xeroSyncOperation.findUnique({

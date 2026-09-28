@@ -289,6 +289,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Internet banking hold needs attention: {{memberName}}",
     "defaultBody": "Internet Banking Hold Needs Attention\n\n{{holdKeptNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}} ({{bookingId}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nHold deadline: {{holdUntil}}\nPaid so far: {{paidAmount}}\nStill owing: {{amountOwing}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nView Payments: {{reviewUrl}}"
   },
+  "admin-late-capture-held": {
+    "defaultSubject": "Late payment held for approval: {{memberName}}",
+    "defaultBody": "Late Payment Held for Approval\n\nA card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.\n\nOpen the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount held: {{amount}}\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-second-instrument-settlement-conflict": {
     "defaultSubject": "Booking may have been paid twice — card and Xero: {{memberName}}",
     "defaultBody": "Booking May Have Been Paid Twice - Card and Xero\n\nA card payment and an Internet Banking payment have both been recorded against this booking. Nothing was refunded or credited automatically - please reconcile.\n\n{{secondInstrumentConflictNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nBooking status: {{status}}\nInvoice amount: {{amount}}\nCard payment still held: {{paidAmount}}\nStripe PI: {{paymentIntentId}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"

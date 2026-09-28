@@ -1,3 +1,4 @@
+import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { prisma } from "./prisma";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
@@ -172,7 +173,7 @@ export async function reconcileCreditBalances(): Promise<{
       const creditsWithXero = await prisma.memberCredit.count({
         where: {
           xeroCreditNoteId: { not: null },
-          type: { in: ["CANCELLATION_REFUND", "BOOKING_MODIFICATION_REFUND"] },
+          type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
         },
       });
 

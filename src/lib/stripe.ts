@@ -265,10 +265,21 @@ export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Ref
  * Retrieve a PaymentIntent by ID.
  */
 export async function getPaymentIntent(
-  paymentIntentId: string
+  paymentIntentId: string,
+  /**
+   * #3641: a background sweep bounds its read (the client sets no timeout, so
+   * stripe-node's ~80s default and its retries apply) rather than let a Stripe
+   * brown-out stall the cron behind it. Omitted, the request is unchanged.
+   */
+  options?: { timeoutMs: number; expand?: string[] }
 ): Promise<Stripe.PaymentIntent> {
   const stripe = await getStripe();
-  return stripe.paymentIntents.retrieve(paymentIntentId);
+  if (!options) return stripe.paymentIntents.retrieve(paymentIntentId);
+  return stripe.paymentIntents.retrieve(
+    paymentIntentId,
+    options.expand ? { expand: options.expand } : {},
+    { timeout: options.timeoutMs, maxNetworkRetries: 0 }
+  );
 }
 
 /**
