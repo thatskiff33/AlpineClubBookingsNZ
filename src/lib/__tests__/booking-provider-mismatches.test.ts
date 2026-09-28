@@ -54,7 +54,8 @@ function makeDeps(overrides: {
   invoiceSyncFault?: BookingInvoiceSyncFault | null;
   /** #3635: an officer resolved the create in Xero. Defaults to none. */
   resolvedInvoiceCreate?: boolean;
-  resolvedRefundNote?: boolean;
+  /** #3635 round 4: the refund-note gap; defaults to "nothing resolved". */
+  refundGap?: { uncoveredCents: number; resolvedInXeroCents: number };
 }) {
   const booking =
     overrides.booking === null ? null : bookingRecord(overrides.booking ?? {});
@@ -87,9 +88,13 @@ function makeDeps(overrides: {
     findResolvedBookingInvoiceCreate: vi
       .fn()
       .mockResolvedValue(overrides.resolvedInvoiceCreate ? { id: "op-invoice" } : null),
-    findResolvedRefundCreditNoteCreate: vi
-      .fn()
-      .mockResolvedValue(overrides.resolvedRefundNote ? { id: "op-note" } : null),
+    readRefundCreditNoteGap: vi.fn().mockResolvedValue({
+      cashRefundCents: 4500,
+      coveredCents: 0,
+      uncoveredCents: 4500,
+      resolvedInXeroCents: 0,
+      ...overrides.refundGap,
+    }),
   } as unknown as BookingProviderMismatchDependencies;
 }
 
@@ -114,9 +119,13 @@ describe("getBookingProviderMismatches", () => {
     expect(mismatches[0].description).toMatch(/resolved in Xero/);
   });
 
-  it("says an officer resolved the refund note in Xero, not that it is pending (#3635)", async () => {
+  it.each([
+    [{ uncoveredCents: 0, resolvedInXeroCents: 4500 }, "xero-resolved-in-xero"],
+    // A later refund beyond the hand-made note: still pending, never hidden.
+    [{ uncoveredCents: 3000, resolvedInXeroCents: 5000 }, "xero-credit-note-pending"],
+  ])("shows a hand-resolved refund note only while it covers everything (#3635 round 4): %o", async (refundGap, expected) => {
     const deps = makeDeps({
-      resolvedRefundNote: true,
+      refundGap,
       booking: {
         status: "CANCELLED",
         payment: {
@@ -131,7 +140,7 @@ describe("getBookingProviderMismatches", () => {
 
     const mismatches = await getBookingProviderMismatches("booking-1", { deps });
 
-    expect(mismatches.map((mismatch) => mismatch.id)).toEqual(["xero-resolved-in-xero"]);
+    expect(mismatches.map((mismatch) => mismatch.id)).toEqual([expected]);
   });
 
   it("stays quiet for a paid booking with invoice evidence", async () => {

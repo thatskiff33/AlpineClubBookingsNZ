@@ -1,7 +1,6 @@
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import {
   readQueuedOutboxPayload,
-  XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
@@ -19,17 +18,18 @@ import {
   isResolvedInXero,
   RESOLVED_IN_XERO_RETRY_REASON,
 } from "@/lib/xero-operation-resolution";
-import { asRecord, readNumber, readString } from "@/lib/xero-json";
+import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
+import {
+  parsePaymentCreditNoteRetryInput,
+  readCashRefundMethod,
+} from "@/lib/xero-payment-credit-note-payload";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 import { CLUB_NAME } from "@/config/club-identity";
-import {
-  defaultRefundMethodForPaymentSource,
-  parseRefundMethod,
-} from "@/lib/xero-refund-method";
+import { defaultRefundMethodForPaymentSource } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -40,18 +40,6 @@ import {
 } from "@/lib/xero-clearing-allocations";
 import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
 import type { ClubFormat } from "@/lib/club-format";
-
-/**
- * `INV-PAY-101`: the refund method a stored payload carries, as the cash-refund
- * builders take it. Both the enqueue-time shape and the execution-time shape
- * record it under the same key; account credit never reaches a cash builder, so
- * it reads as "not carried" here and the builder falls back to the payment's
- * source.
- */
-function readCashRefundMethod(payload: Record<string, unknown> | null): CashRefundMethod | undefined {
-  const method = parseRefundMethod(payload?.refundMethod);
-  return method && method !== "account-credit" ? method : undefined;
-}
 
 /**
  * The `@/lib/xero` module namespace, named because an `import()` type written
@@ -245,10 +233,6 @@ const MEMBER_CONTACT_RETRY_SELECT = {
   postalCountry: true,
 } as const;
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 function readPayloadContact(operation: Pick<RetryableOperation, "requestPayload">): Record<string, unknown> | null {
   const payload = asRecord(operation.requestPayload);
   const contact = payload ? asArray(payload.contacts)[0] : null;
@@ -343,73 +327,6 @@ async function buildCurrentMemberContactUpdateRetryInput(
 
 function containsRedactedContactRetryData(input: { data: XeroContactUpdateData }) {
   return Object.values(input.data).some((value) => value === REDACTED_SECRET);
-}
-
-function parsePaymentCreditNoteRetryInput(
-  operation: Pick<RetryableOperation, "requestPayload">
-): {
-  amountCents: number;
-  kind: "refund" | "unapplied";
-  /** `INV-PAY-101`: carried on both payload shapes; absent on pre-#3529 rows. */
-  refundMethod?: CashRefundMethod;
-  /**
-   * F4 (#1354): present when the operation is a per-delta Stripe refund note.
-   * The retry MUST re-enter delta mode — pre-#1354 it dropped the watermark,
-   * fell into legacy single-note mode, and silently skipped as soon as ANY
-   * refund note existed, reporting the swallowed delta as resolved. The
-   * value itself is advisory: createXeroCreditNote recomputes coverage at
-   * execution time.
-   */
-  watermarkCents?: number;
-} | null {
-  const payload = asRecord(operation.requestPayload);
-  if (!payload) {
-    return null;
-  }
-
-  // Queued payload shape (#1354): an operation that failed BEFORE the handler
-  // overwrote requestPayload still carries the enqueue-time
-  // {queueType, refundAmountCents[, watermarkCents]} — previously unparseable
-  // here, leaving operator-reset operations permanently dead-ended.
-  const queueType = typeof payload.queueType === "string" ? payload.queueType : null;
-  const queuedRefundAmount = readNumber(payload.refundAmountCents);
-  if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
-    const queuedWatermark = readNumber(payload.watermarkCents);
-    return {
-      amountCents: Math.round(queuedRefundAmount),
-      kind: "refund",
-      watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0,
-      refundMethod: readCashRefundMethod(payload),
-    };
-  }
-  if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
-    return {
-      amountCents: Math.round(queuedRefundAmount),
-      kind: "unapplied",
-    };
-  }
-
-  const allocation = asRecord(payload.allocation);
-  const allocationAmountCents = providerAmountToCents(readNumber(allocation?.amount));
-  if (allocationAmountCents !== null) {
-    return {
-      amountCents: allocationAmountCents,
-      kind: "refund",
-      refundMethod: readCashRefundMethod(payload),
-    };
-  }
-
-  const creditNote = asRecord(asArray(payload.creditNotes)[0]);
-  const lineItem = asRecord(creditNote ? asArray(creditNote.lineItems)[0] : null);
-  const unitAmountCents = providerAmountToCents(readNumber(lineItem?.unitAmount));
-  if (unitAmountCents === null) {
-    return null;
-  }
-
-  return {
-    amountCents: unitAmountCents,
-    kind: "unapplied",
-  };
 }
 
 function parseMembershipCancellationCreditNoteRetryInput(

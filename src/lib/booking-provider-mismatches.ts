@@ -10,10 +10,8 @@ import {
   type BookingInvoiceSyncFault,
 } from "@/lib/booking-invoice-sync-status";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
-import {
-  findResolvedBookingInvoiceCreate,
-  findResolvedRefundCreditNoteCreate,
-} from "@/lib/xero-resolved-in-xero-fences";
+import { findResolvedBookingInvoiceCreate } from "@/lib/xero-resolved-in-xero-fences";
+import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 
 /**
  * Issue #1089: per-booking provider-mismatch surfacing. The aggregate views
@@ -106,7 +104,7 @@ export interface BookingProviderMismatchDependencies {
   getBookingInvoiceSyncFault: typeof getBookingInvoiceSyncFault;
   readBookingInvoiceEvidence: typeof readBookingInvoiceEvidence;
   findResolvedBookingInvoiceCreate: typeof findResolvedBookingInvoiceCreate;
-  findResolvedRefundCreditNoteCreate: typeof findResolvedRefundCreditNoteCreate;
+  readRefundCreditNoteGap: typeof readRefundCreditNoteGap;
 }
 
 const defaultDependencies: BookingProviderMismatchDependencies = {
@@ -116,7 +114,7 @@ const defaultDependencies: BookingProviderMismatchDependencies = {
   getBookingInvoiceSyncFault,
   readBookingInvoiceEvidence,
   findResolvedBookingInvoiceCreate,
-  findResolvedRefundCreditNoteCreate,
+  readRefundCreditNoteGap,
 };
 
 /**
@@ -373,19 +371,26 @@ export async function getBookingProviderMismatches(
       }
     }
 
-    if (
-      booking.payment.source === "STRIPE" &&
-      booking.payment.refundedAmountCents > 0 &&
-      booking.payment.xeroInvoiceId !== null &&
-      booking.payment.xeroRefundCreditNoteId === null &&
-      (await deps.findResolvedRefundCreditNoteCreate(booking.payment.id))
-    ) {
-      mismatches.push(resolvedInXeroRow("refund credit note", booking.payment.id));
-    } else if (
+    // #3635 round 4 (`INV-INT-025`): a refund note an officer raised by hand
+    // and resolved covers its recorded amount. The booking says "resolved by
+    // hand" only when nothing is left uncovered; a later refund beyond it is
+    // still "pending", so the hand-made note never hides it.
+    const refundGap =
       booking.payment.source === "STRIPE" &&
       booking.payment.refundedAmountCents > 0 &&
       booking.payment.xeroInvoiceId !== null &&
       booking.payment.xeroRefundCreditNoteId === null
+        ? await deps.readRefundCreditNoteGap({
+            id: booking.payment.id,
+            bookingId: booking.id,
+            refundedAmountCents: booking.payment.refundedAmountCents,
+          })
+        : null;
+    if (refundGap && refundGap.uncoveredCents <= 0 && refundGap.resolvedInXeroCents > 0) {
+      mismatches.push(resolvedInXeroRow("refund credit note", booking.payment.id));
+    } else if (
+      refundGap &&
+      (refundGap.resolvedInXeroCents === 0 || refundGap.uncoveredCents > 0)
     ) {
       mismatches.push({
         id: "xero-credit-note-pending",

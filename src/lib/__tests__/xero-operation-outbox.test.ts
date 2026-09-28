@@ -922,6 +922,8 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
 describe("enqueueXeroRefundCreditNoteOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // #3635: no hand-resolved refund note unless a test says so.
+    mocks.findManyOperations.mockResolvedValue([]);
     mocks.findFirstLink.mockResolvedValue(null);
     mocks.findUniquePayment.mockResolvedValue({
       id: "payment_1",
@@ -982,32 +984,79 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
   // read/write through the caller's client so the outbox row commits
   // atomically with the caller's release (and the dedupe sees uncommitted
   // state), never through the global prisma client.
-  it("queues no second refund note when an officer resolved one for this payment in Xero (#3635)", async () => {
-    // The fence's query carries the officer's mark; the dedupe's does not.
-    mocks.findFirstOperation.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-      args.where.manuallyResolvedAt
-        ? { id: "op_resolved_note", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
-        : null
-    );
+  // #3635 round 4 (review N1): a hand-resolved refund note covers its RECORDED
+  // amount, never the whole payment. $50 refunded and its note raised by hand,
+  // then a second refund of $30.
+  const resolvedFiftyDollarNote = {
+    id: "op_resolved_note",
+    correlationKey: "payment:payment_1:refund-credit-note:5000:v2",
+    requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5000, watermarkCents: 5000 },
+  };
+
+  it("the Stripe webhook's later $30 refund still gets its own note beside a hand-resolved $50 one (#3635)", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 8000,
+      xeroRefundCreditNoteId: null,
+    });
+    mocks.findManyOperations.mockResolvedValue([resolvedFiftyDollarNote]);
+    // No link covers the hand-made note; cash evidence is the full $80.
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(0);
 
     await expect(
-      enqueueXeroRefundCreditNoteOperation("payment_1", 5000, { createdByMemberId: "cron" })
-    ).resolves.toMatchObject({
+      enqueueXeroRefundCreditNoteOperation("payment_1", 3000)
+    ).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+        requestPayload: expect.objectContaining({ refundAmountCents: 3000, watermarkCents: 8000 }),
+      })
+    );
+
+    // And the self-heal asking for the whole uncovered figure re-mints nothing
+    // the officer made: the same state, sized from the same coverage.
+    mocks.startXeroSyncOperation.mockClear();
+    await enqueueXeroRefundCreditNoteOperation("payment_1", 8000);
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: expect.objectContaining({ refundAmountCents: 3000 }),
+      })
+    );
+  });
+
+  it("a refund-request approval of $30 on a non-Stripe payment is queued beside a hand-resolved $50 note (#3635)", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        ...resolvedFiftyDollarNote,
+        correlationKey: "payment:payment_1:refund-credit-note:5000:v1",
+      },
+    ]);
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 3000, { createdByMemberId: "admin_1" })
+    ).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+
+    // The SAME refund again (a cron rerun) is the one the officer covered.
+    mocks.startXeroSyncOperation.mockClear();
+    await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 5000)).resolves.toMatchObject({
       queueOperationId: null,
       resolvedInXeroOperationId: "op_resolved_note",
     });
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
-    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          entityType: "CREDIT_NOTE",
-          operationType: "CREATE",
-          localModel: "Payment",
-          localId: "payment_1",
-          manuallyResolvedAt: { not: null },
-        }),
-      })
-    );
+  });
+
+  it("refuses loudly when a hand-resolved note's amount cannot be read (#3635)", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      { id: "op_unreadable", correlationKey: null, requestPayload: null },
+    ]);
+
+    await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 3000)).resolves.toMatchObject({
+      queueOperationId: null,
+      resolvedInXeroOperationId: "op_unreadable",
+      message: expect.stringContaining("by hand"),
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("routes all reads and the insert through the caller's store client", async () => {
@@ -1023,6 +1072,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       },
       xeroSyncOperation: {
         findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
       },
     };
 
@@ -1037,8 +1087,9 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     });
 
     expect(store.payment.findUnique).toHaveBeenCalledTimes(1);
-    // The #3635 resolved-in-Xero fence, then the queued-row dedupe.
-    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(2);
+    // The queued-row dedupe; the #3635 coverage read goes through the store too.
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(1);
+    expect(store.xeroSyncOperation.findMany).toHaveBeenCalledTimes(1);
     // The global-prisma delegates stayed untouched.
     expect(mocks.findUniquePayment).not.toHaveBeenCalled();
     expect(mocks.findFirstOperation).not.toHaveBeenCalled();
@@ -1767,6 +1818,50 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
     expect(args.orderBy).toEqual({ createdAt: "asc" });
     expect(args.take).toBe(7);
+  });
+
+  it("closes CANCELLED, with no Xero call, a copy queued before an officer resolved the same document (#3635 N3)", async () => {
+    const queuedAt = new Date("2026-06-10T00:00:00.000Z");
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_stale_copy",
+        localId: "payment_1",
+        localModel: "Payment",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        correlationKey: "payment:payment_1:refund-credit-note:5000:v2",
+        createdAt: queuedAt,
+        createdByMemberId: null,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5000, watermarkCents: 5000 },
+      },
+    ]);
+    mocks.findFirstOperation.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.manuallyResolvedAt
+        ? { id: "op_resolved_sibling", manuallyResolvedAt: new Date("2026-06-11T00:00:00.000Z") }
+        : null
+    );
+
+    const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ processed: 1, skipped: 1, succeeded: 0, failed: 0 });
+    expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { not: "op_stale_copy" },
+          correlationKey: "payment:payment_1:refund-credit-note:5000:v2",
+          manuallyResolvedAt: { gt: queuedAt },
+        }),
+      })
+    );
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_stale_copy",
+      expect.objectContaining({
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({ resolvedOperationId: "op_resolved_sibling" }),
+      })
+    );
+    mocks.findFirstOperation.mockReset();
   });
 
   it("returns a simultaneous applied-credit loser to PENDING instead of stranding it FAILED", async () => {

@@ -5,6 +5,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 
 type OperationReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
@@ -22,18 +23,29 @@ function toResolved(
 }
 
 /**
- * A refund credit-note create on this payment that an officer resolved in
- * Xero, or null. ANY such row, not only one with the same correlation key: the
- * hand-made note has no local link, so coverage still reads it as missing and
- * every later delta's watermark would size a note that re-covers it. A person
- * places the rest (`MAINTENANCE.md`). A legacy row with no recorded queue type
- * counts too, conservative in the safe direction.
+ * What the refund credit notes an officer raised by hand in Xero cover on this
+ * payment (#3635 round 4, `INV-INT-025`). AMOUNT-based, never a per-payment
+ * block: each resolved refund-note create counts its RECORDED amount as
+ * covered - the note the officer made stands in for exactly that - so a later,
+ * different refund on the same payment still gets its own note, and the
+ * hand-made one is never covered twice. The amount is read by the one reader
+ * the retry replays with (`parsePaymentCreditNoteRetryInput`).
+ *
+ * A resolved row whose amount cannot be read is reported in
+ * `unreadableOperationIds`; callers must refuse loudly on it rather than guess.
  */
-export async function findResolvedRefundCreditNoteCreate(
+export interface ResolvedRefundCreditNoteCoverage {
+  coveredCents: number;
+  correlationKeys: string[];
+  operationIds: string[];
+  unreadableOperationIds: string[];
+}
+
+export async function readResolvedRefundCreditNoteCoverage(
   paymentId: string,
   db: OperationReader = prisma,
-): Promise<ResolvedInXeroOperation | null> {
-  const row = await db.xeroSyncOperation.findFirst({
+): Promise<ResolvedRefundCreditNoteCoverage> {
+  const rows = await db.xeroSyncOperation.findMany({
     where: {
       direction: "OUTBOUND",
       entityType: "CREDIT_NOTE",
@@ -41,12 +53,31 @@ export async function findResolvedRefundCreditNoteCreate(
       localModel: "Payment",
       localId: paymentId,
       manuallyResolvedAt: { not: null },
+      // A legacy row with no recorded queue type is read too; its payload
+      // says whether it was a refund or an account-credit note.
       OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
     },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, manuallyResolvedAt: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, correlationKey: true, requestPayload: true },
   });
-  return toResolved(row);
+  const coverage: ResolvedRefundCreditNoteCoverage = {
+    coveredCents: 0,
+    correlationKeys: [],
+    operationIds: [],
+    unreadableOperationIds: [],
+  };
+  for (const row of rows ?? []) {
+    const recorded = parsePaymentCreditNoteRetryInput(row);
+    if (!recorded) {
+      coverage.unreadableOperationIds.push(row.id);
+      continue;
+    }
+    if (recorded.kind !== "refund") continue;
+    coverage.coveredCents += recorded.amountCents;
+    coverage.operationIds.push(row.id);
+    if (row.correlationKey) coverage.correlationKeys.push(row.correlationKey);
+  }
+  return coverage;
 }
 
 /**
@@ -68,6 +99,38 @@ export async function findResolvedBookingInvoiceCreate(
       localId: paymentId,
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true, manuallyResolvedAt: true },
+  });
+  return toResolved(row);
+}
+
+/**
+ * #3635 round 4 (review N3): a queued copy of a document is stale when an
+ * officer resolved a sibling for the SAME document (same correlation key)
+ * after this copy was queued - the sibling's hand-made document now stands for
+ * it. The outbox checks this after it claims a row and before any Xero call. A
+ * copy queued AFTER the resolve (a force-sync override, or a later delta with
+ * its own key) is not stale.
+ */
+export async function findResolvedSiblingSince(
+  operation: {
+    id: string;
+    correlationKey: string | null;
+    entityType: string;
+    operationType: string;
+    createdAt: Date;
+  },
+  db: OperationReader = prisma,
+): Promise<ResolvedInXeroOperation | null> {
+  if (!operation.correlationKey) return null;
+  const row = await db.xeroSyncOperation.findFirst({
+    where: {
+      id: { not: operation.id },
+      correlationKey: operation.correlationKey,
+      entityType: operation.entityType,
+      operationType: operation.operationType,
+      manuallyResolvedAt: { gt: operation.createdAt },
+    },
     select: { id: true, manuallyResolvedAt: true },
   });
   return toResolved(row);

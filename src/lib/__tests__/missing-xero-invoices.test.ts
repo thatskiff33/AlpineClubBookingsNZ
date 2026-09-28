@@ -35,7 +35,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
   findResolvedBookingInvoiceCreate: mocks.findResolvedBookingInvoiceCreate,
-  findResolvedRefundCreditNoteCreate: vi.fn().mockResolvedValue(null),
+  readResolvedRefundCreditNoteCoverage: vi.fn().mockResolvedValue({
+    coveredCents: 0,
+    correlationKeys: [],
+    operationIds: [],
+    unreadableOperationIds: [],
+  }),
 }));
 
 vi.mock("@/lib/prisma", () => ({

@@ -10,11 +10,11 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   sumCovered: vi.fn(),
   resolveEvidence: vi.fn(),
-  findResolvedRefundCreditNoteCreate: vi.fn(),
+  readResolvedRefundCreditNoteCoverage: vi.fn(),
 }));
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
-  findResolvedRefundCreditNoteCreate: mocks.findResolvedRefundCreditNoteCreate,
+  readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
   findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
 }));
 
@@ -44,7 +44,12 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sumCovered.mockResolvedValue(0);
-  mocks.findResolvedRefundCreditNoteCreate.mockResolvedValue(null);
+  mocks.readResolvedRefundCreditNoteCoverage.mockResolvedValue({
+    coveredCents: 0,
+    correlationKeys: [],
+    operationIds: [],
+    unreadableOperationIds: [],
+  });
   mocks.resolveEvidence.mockImplementation(
     async (payment: { refundedAmountCents: number }) => ({
       cashRefundCents: payment.refundedAmountCents,
@@ -109,25 +114,30 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
     });
   });
 
-  it("leaves out a payment whose refund note an officer resolved by hand in Xero (#3635)", async () => {
-    const row = (id: string) => ({
+  it("counts a hand-resolved note's amount as covered, and still lists a later refund beyond it (#3635 round 4)", async () => {
+    // $50 refunded, its note raised by hand and resolved; then $30 more.
+    const row = (id: string, refundedAmountCents: number) => ({
       id,
       bookingId: `book_${id}`,
-      refundedAmountCents: 4200,
+      refundedAmountCents,
       updatedAt: new Date("2026-06-19T00:00:00.000Z"),
       booking: { member: { firstName: "Sam", lastName: "Lee", email: "sam@example.com" } },
     });
-    mocks.findMany.mockResolvedValue([row("pay_resolved"), row("pay_open")]);
-    mocks.findResolvedRefundCreditNoteCreate.mockImplementation(async (paymentId: string) =>
-      paymentId === "pay_resolved"
-        ? { id: "op_note", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
-        : null
-    );
+    mocks.findMany.mockResolvedValue([row("pay_only_resolved", 5000), row("pay_second_refund", 8000)]);
+    mocks.readResolvedRefundCreditNoteCoverage.mockResolvedValue({
+      coveredCents: 5000,
+      correlationKeys: ["payment:x:refund-credit-note:5000:v2"],
+      operationIds: ["op_note"],
+      unreadableOperationIds: [],
+    });
 
     const result = await getRefundsMissingXeroCreditNotes();
 
-    // The nightly self-heal reads this list: it must not re-mint the note.
-    expect(result.payments.map((payment) => payment.paymentId)).toEqual(["pay_open"]);
+    // The first is covered by the hand-made note, so the self-heal leaves it;
+    // the second is listed for exactly the $30 no note covers.
+    expect(result.payments).toEqual([
+      expect.objectContaining({ paymentId: "pay_second_refund", uncoveredCents: 3000 }),
+    ]);
   });
 
   it("flags only the still-uncovered remainder and drops fully-covered refunds", async () => {
