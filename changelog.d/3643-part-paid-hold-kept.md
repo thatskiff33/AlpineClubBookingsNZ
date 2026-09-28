@@ -18,4 +18,8 @@
   with a second email. A fully unpaid hold is released exactly as before. The
   Xero repair tool no longer offers to queue or retry a full clearing credit
   note for an invoice with a payment recorded against it; it asks for a person
-  to review instead.
+  to review instead, and stops asking once nothing is owed: a booking paid in
+  full before its cancel is not listed, and a rest you cleared by hand drops
+  off once its failed operation is marked resolved. A cancelled organisation
+  booking whose late payment became a hand-back task is shown as needing no
+  clearing note.
