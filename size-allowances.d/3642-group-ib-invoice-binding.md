@@ -16,7 +16,7 @@ arm it guards. The growth of `xero-inbound/invoice-paid-effects.ts` and
 file across the epic).
 
 file: src/lib/group-settlement.ts
-lines: 1577
+lines: 1595
 reason: the bound-invoice checks run inside the lock(1) transactions whose
   re-read they depend on — the child-commit, the Internet Banking settle (which
   retires the old invoice and asks for the next attempt), the card attach and
@@ -25,16 +25,17 @@ reason: the bound-invoice checks run inside the lock(1) transactions whose
   group-settlement-invoice-replacement.ts. #3672 (same epic) adds its share:
   the paid apply releases the joiners its bill missed to member-pays inside the
   same lock(1) transaction that marks the settlement paid, and hands them to
-  the notice after commit; the rule, the release and the notice live in
-  group-late-joiner.ts.
+  the notice after commit, or, for a joiner whose stay has started, to the
+  treasurer's once-per-group alert; the rule, the release, the notice and the
+  alert live in group-late-joiner.ts.
 
 file: src/lib/cron-group-settlement-reaper.ts
-lines: 993
+lines: 1001
 reason: the reaper reads an Internet Banking settlement's invoice in Xero
   before releasing it: it keeps and alerts on a group whose invoice has started
   being paid, holds (with an alert, bounded by check-in or seven days) one Xero
   cannot show, and releases one Xero does not have. Its release transaction
   retires the invoice in the same commit, except for a cancelled group. Each
   rule decides the release it sits beside. #3672 (same epic) adds its share: the
-  run calls the paid-group self-heal and reports its count, with the phase
-  named in the header; the heal itself lives in group-late-joiner.ts.
+  run calls the paid-group self-heal and reports how many joiners it moved
+  and how many it left for the treasurer because the stay has started; the heal itself lives in group-late-joiner.ts.
