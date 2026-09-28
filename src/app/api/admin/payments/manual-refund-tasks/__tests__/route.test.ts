@@ -270,6 +270,53 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     expect(JSON.stringify(body)).not.toContain("payment-secret");
   });
 
+  // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the inbound sync's note that
+  // Xero reported a reviewed invoice paid reaches the card, because it - not the
+  // best-effort email - is the record.
+  it("carries the sync's Xero-paid note on a part-payment review, and on nothing else (#3643)", async () => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([
+        {
+          ...OPEN_ROW,
+          id: "task-review",
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          amountCents: null,
+          raisedAmountCents: null,
+          partPaymentReviewPaymentId: "payment-secret",
+          partPaymentReviewXeroPaidAt: new Date("2026-07-01T00:00:00.000Z"),
+          partPaymentReviewXeroPaidCents: 20000,
+        },
+        {
+          ...OPEN_ROW,
+          id: "task-review-quiet",
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          amountCents: null,
+          raisedAmountCents: null,
+          partPaymentReviewPaymentId: "payment-quiet",
+          partPaymentReviewXeroPaidAt: null,
+          partPaymentReviewXeroPaidCents: null,
+        },
+      ]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: {
+        id: string;
+        partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
+      }[];
+    };
+
+    expect(calls()[0].select).toMatchObject({
+      partPaymentReviewXeroPaidAt: true,
+      partPaymentReviewXeroPaidCents: true,
+    });
+    expect(body.tasks.map((t) => [t.id, t.partPaymentReviewXeroPaid])).toEqual([
+      ["task-review", { reportedAt: "2026-07-01T00:00:00.000Z", cashCents: 20000 }],
+      ["task-review-quiet", null],
+    ]);
+  });
+
   it("keeps the hand-back queue exactly as it was: OPEN, oldest first", async () => {
     await GET();
 

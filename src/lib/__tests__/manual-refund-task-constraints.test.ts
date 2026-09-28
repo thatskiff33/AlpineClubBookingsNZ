@@ -462,17 +462,18 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
           paymentId?: string | null;
           status?: string;
           marker?: string | null;
-          recordedCents?: number | null;
+          xeroPaidAt?: string | null;
+          xeroPaidCents?: number | null;
         } = {},
       ) =>
         client.query(
           `INSERT INTO "ManualRefundTask"
              ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
-              "kind", "partPaymentReviewPaymentId", "partPaymentReviewRecordedCents",
-              "reason", "status")
+              "kind", "partPaymentReviewPaymentId", "partPaymentReviewXeroPaidAt",
+              "partPaymentReviewXeroPaidCents", "reason", "status")
            VALUES ($1, 'booking-1', $2, $3, NULL,
-                   $4::"ManualRefundTaskKind", $5, $6, 'settle in Xero',
-                   $7::"ManualRefundTaskStatus")`,
+                   $4::"ManualRefundTaskKind", $5, $6::timestamp(3), $7, 'settle in Xero',
+                   $8::"ManualRefundTaskStatus")`,
           [
             id,
             overrides.paymentId ?? null,
@@ -480,7 +481,8 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
             // `in`, not `??`: a NULL kind is a case under test (migration review F1).
             "kind" in overrides ? overrides.kind : "CANCELLED_BOOKING_HAND_BACK",
             "marker" in overrides ? overrides.marker : "payment-1",
-            overrides.recordedCents ?? null,
+            overrides.xeroPaidAt ?? null,
+            overrides.xeroPaidCents ?? null,
             overrides.status ?? "OPEN",
           ],
         );
@@ -495,10 +497,23 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         ["review-with-payment", { paymentId: "payment-4", marker: "payment-4" }],
         // A NULL kind: a plain "=" would be NULL here, which a CHECK accepts.
         ["review-no-kind", { kind: null, marker: "payment-7" }],
-        // The recorded figure: positive when known (0 never means unknown), and
-        // only on a marked row.
-        ["review-zero-recorded", { recordedCents: 0, marker: "payment-8" }],
-        ["unmarked-with-recorded", { marker: null, recordedCents: 5000, amountCents: 5000 }],
+        // The sync's Xero-paid note (INV-PAY-109): both halves together, never
+        // negative cents, and only on a marked row.
+        ["review-paid-at-only", { xeroPaidAt: "2026-07-01T00:00:00Z", marker: "payment-8" }],
+        ["review-paid-cents-only", { xeroPaidCents: 5000, marker: "payment-10" }],
+        [
+          "review-paid-negative",
+          { xeroPaidAt: "2026-07-01T00:00:00Z", xeroPaidCents: -1, marker: "payment-11" },
+        ],
+        [
+          "unmarked-with-paid",
+          {
+            marker: null,
+            amountCents: 5000,
+            xeroPaidAt: "2026-07-01T00:00:00Z",
+            xeroPaidCents: 5000,
+          },
+        ],
       ] as const) {
         await expect(review(id, overrides)).rejects.toMatchObject({
           code: "23514",
@@ -510,8 +525,12 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         review("review-completed", { status: "COMPLETED", marker: "payment-5" }),
       ).rejects.toMatchObject({ code: "23514" });
       await review("review-dismissed", { status: "DISMISSED", marker: "payment-6" });
-      // A review that recorded the cash it covers.
-      await review("review-recorded", { recordedCents: 5000, marker: "payment-9" });
+      // A review the sync has noted Xero-paid, including a zero-cash read.
+      await review("review-noted", {
+        xeroPaidAt: "2026-07-01T00:00:00Z",
+        xeroPaidCents: 0,
+        marker: "payment-9",
+      });
       // The widening is for marked rows only: an unmarked hand-back still needs an amount.
       await expect(
         insert(client, { id: "legacy-no-amount", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, raisedAmountCents: null }),

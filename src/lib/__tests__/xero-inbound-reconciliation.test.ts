@@ -2623,33 +2623,58 @@ describe("processStoredXeroInboundEvents", () => {
   }
 
   /*
-    #3643 (`INV-PAY-107`, task-queue review F1): a cancel that raised a
+    #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): a cancel that raised a
     part-payment review has told the treasurer to settle the recorded cash in
-    Xero. A later PAID event must not hand that same cash back a second time.
-  */
-  describe("#3643: a part-payment review covers the cash it recorded", () => {
-    const succeeded = { found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0 };
+    Xero. While that review exists, open or closed, a later PAID event sizes
+    nothing and mints nothing: it is written onto the review, in the same
+    transaction, and a dismissed review goes back on the queue.
 
-    it("raises no second hand-back when the treasurer clears the rest of an organisation's part-paid invoice", async () => {
-      // $200 booking, $50 paid before the cancel; the treasurer clears the
-      // other $150 with a credit note, so Xero reports PAID with $50 of cash.
+    Each review fixture also carries `partPaymentReviewRecordedCents`, the figure
+    69820d1b3's cover sized "cash beyond the review" from. The code under test
+    ignores it; it is there so these tests fail against that baseline.
+  */
+  describe("#3643: late cash on a reviewed payment goes to the review, never to money", () => {
+    const succeeded = { found: 1, processed: 1, succeeded: 1, failed: 0, skipped: 0 };
+    const review = (overrides: Record<string, unknown> = {}) => ({
+      id: "review_1",
+      bookingId: "booking_ib_cancelled",
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      amountCents: null,
+      raisedAmountCents: null,
+      status: "OPEN",
+      completedAt: null,
+      completedByMemberId: null,
+      note: null,
+      partPaymentReviewXeroPaidAt: null,
+      partPaymentReviewRecordedCents: 5000,
+      booking: { memberId: "mem_cancelled" },
+      ...overrides,
+    });
+    const dismissed = {
+      status: "DISMISSED",
+      completedAt: new Date("2026-06-20T00:00:00.000Z"),
+      completedByMemberId: "treasurer_1",
+      note: "Refunded the $50 in Xero.",
+    };
+    const reopenEntries = () =>
+      mocks.auditLogCreate.mock.calls
+        .map(([arg]) => (arg as { data: Record<string, unknown> }).data)
+        .filter((data) => data.action === "booking-payment.manual-refund-task.reopen");
+
+    it("organisation, dismissed review: raises no hand-back, reopens the review and notes the date and cash on it", async () => {
       mockAlreadyCancelledInboundEvent({
         paymentStatus: "PENDING",
         existingCredit: null,
         owner: "organisation",
         faceCents: 20000,
         paymentXeroInvoiceId: "inv_ib_cancelled",
-        amountPaid: 50,
+        amountPaid: 200,
       });
-      mocks.manualRefundTaskFindUnique.mockResolvedValue({
-        id: "review_1",
-        kind: "CANCELLED_BOOKING_HAND_BACK",
-        status: "OPEN",
-        partPaymentReviewRecordedCents: 5000,
-        completedAt: null,
-        completedByMemberId: null,
-        note: null,
-      });
+      mocks.manualRefundTaskFindFirst.mockResolvedValue(null);
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(
+        review({ ...dismissed, booking: { memberId: null } }),
+      );
+      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
 
       await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
 
@@ -2660,90 +2685,22 @@ describe("processStoredXeroInboundEvents", () => {
       );
       expect(mocks.manualRefundTaskCreate).not.toHaveBeenCalled();
       expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
-      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-      expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
-    });
-
-    it("hands back only the new cash when more arrives beyond an organisation's reviewed part payment", async () => {
-      mockAlreadyCancelledInboundEvent({
-        paymentStatus: "PENDING",
-        existingCredit: null,
-        owner: "organisation",
-        faceCents: 20000,
-        paymentXeroInvoiceId: "inv_ib_cancelled",
-        amountPaid: 200,
-      });
-      mocks.manualRefundTaskFindFirst.mockResolvedValue(null);
-      mocks.manualRefundTaskFindUnique.mockResolvedValue({
-        id: "review_1",
-        kind: "CANCELLED_BOOKING_HAND_BACK",
-        status: "DISMISSED",
-        partPaymentReviewRecordedCents: 5000,
-        completedAt: new Date("2026-06-20T00:00:00.000Z"),
-        completedByMemberId: "treasurer_1",
-        note: "Refunded the $50 in Xero.",
-      });
-
-      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
-
-      expect(mocks.manualRefundTaskCreate).toHaveBeenCalledTimes(1);
-      expect(mocks.manualRefundTaskCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          paymentId: "pay_ib_cancelled",
-          amountCents: 15000,
-          raisedAmountCents: 15000,
-          kind: "CANCELLED_BOOKING_HAND_BACK",
-        }),
-      });
-      // Sized, so the closed review is left closed.
-      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
-      expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ amountCents: 15000 }),
-        CLUB_FORMAT_TEST,
-      );
-    });
-
-    it("mints no automatic credit for a member's unsizable reviewed payment, and puts the dismissed review back on the queue", async () => {
-      mockAlreadyCancelledInboundEvent({
-        paymentStatus: "PENDING",
-        existingCredit: null,
-        faceCents: 20000,
-        paymentXeroInvoiceId: "inv_ib_cancelled",
-        amountPaid: 50,
-      });
-      mocks.manualRefundTaskFindUnique.mockResolvedValue({
-        id: "review_1",
-        kind: "CANCELLED_BOOKING_HAND_BACK",
-        amountCents: null,
-        raisedAmountCents: null,
-        status: "DISMISSED",
-        partPaymentReviewRecordedCents: null,
-        completedAt: new Date("2026-06-20T00:00:00.000Z"),
-        completedByMemberId: "treasurer_1",
-        note: "Refunded in Xero.",
-        booking: { memberId: "mem_cancelled" },
-      });
-      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
-
-      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
-
-      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
       expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith({
-        where: { id: "review_1", status: "DISMISSED" },
-        data: { status: "OPEN", completedAt: null, completedByMemberId: null },
+        where: { id: "review_1", status: "DISMISSED", partPaymentReviewXeroPaidAt: null },
+        data: {
+          partPaymentReviewXeroPaidAt: new Date("2026-07-01T00:00:00.000Z"),
+          partPaymentReviewXeroPaidCents: 20000,
+          status: "OPEN",
+          completedAt: null,
+          completedByMemberId: null,
+        },
       });
-      expect(mocks.auditLogCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          action: "booking-payment.manual-refund-task.reopen",
-          entityId: "review_1",
-        }),
-      });
+      const [entry] = reopenEntries();
+      expect(entry).toMatchObject({ entityId: "review_1" });
       // The system reopened it: no acting member is invented.
-      const reopenEntry = mocks.auditLogCreate.mock.calls
-        .map(([arg]) => (arg as { data: Record<string, unknown> }).data)
-        .find((data) => data.action === "booking-payment.manual-refund-task.reopen");
-      expect(reopenEntry?.actorMemberId ?? null).toBeNull();
-      expect(reopenEntry?.memberId ?? null).toBeNull();
+      expect(entry?.actorMemberId ?? null).toBeNull();
+      expect(entry?.memberId ?? null).toBeNull();
       expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
       expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2753,32 +2710,135 @@ describe("processStoredXeroInboundEvents", () => {
       );
     });
 
-    it("mints no automatic credit while a member's unsizable review is still open, and leaves it as it is", async () => {
+    it("organisation, open review after the rest was cleared by credit note: notes it, leaves it open, raises nothing", async () => {
+      // $200 booking, $50 paid before the cancel; the treasurer clears the
+      // other $150 with a credit note, so Xero reports PAID with $50 of cash.
       mockAlreadyCancelledInboundEvent({
         paymentStatus: "PENDING",
         existingCredit: null,
+        owner: "organisation",
+        faceCents: 20000,
         paymentXeroInvoiceId: "inv_ib_cancelled",
+        amountPaid: 50,
       });
-      mocks.manualRefundTaskFindUnique.mockResolvedValue({
-        id: "review_1",
-        kind: "CANCELLED_BOOKING_HAND_BACK",
-        status: "OPEN",
-        partPaymentReviewRecordedCents: null,
-        completedAt: null,
-        completedByMemberId: null,
-        note: null,
-      });
+      mocks.manualRefundTaskFindFirst.mockResolvedValue(null);
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(review({ booking: { memberId: null } }));
+      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
 
       await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
 
-      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
-      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskCreate).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: "review_1", status: "OPEN", partPaymentReviewXeroPaidAt: null },
+        data: {
+          partPaymentReviewXeroPaidAt: new Date("2026-07-01T00:00:00.000Z"),
+          partPaymentReviewXeroPaidCents: 5000,
+        },
+      });
+      expect(reopenEntries()).toEqual([]);
       expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({
           errorMessage: expect.stringContaining("still open on the queue"),
         }),
         CLUB_FORMAT_TEST,
       );
+    });
+
+    it("member, dismissed review: mints no credit, reopens the review and notes the cash", async () => {
+      mockAlreadyCancelledInboundEvent({
+        paymentStatus: "PENDING",
+        existingCredit: null,
+        paymentXeroInvoiceId: "inv_ib_cancelled",
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(review(dismissed));
+      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
+
+      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
+
+      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: "review_1", status: "DISMISSED", partPaymentReviewXeroPaidAt: null },
+        data: expect.objectContaining({
+          partPaymentReviewXeroPaidCents: 12345,
+          status: "OPEN",
+        }),
+      });
+      expect(reopenEntries()).toHaveLength(1);
+      expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("member, open review: mints no credit, notes the cash and leaves the review open", async () => {
+      mockAlreadyCancelledInboundEvent({
+        paymentStatus: "PENDING",
+        existingCredit: null,
+        paymentXeroInvoiceId: "inv_ib_cancelled",
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(review());
+      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
+
+      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
+
+      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith({
+        where: { id: "review_1", status: "OPEN", partPaymentReviewXeroPaidAt: null },
+        data: {
+          partPaymentReviewXeroPaidAt: new Date("2026-07-01T00:00:00.000Z"),
+          partPaymentReviewXeroPaidCents: 12345,
+        },
+      });
+      expect(reopenEntries()).toEqual([]);
+    });
+
+    it("a replay that finds the note already on the review writes nothing, reopens nothing and alerts nobody", async () => {
+      mockAlreadyCancelledInboundEvent({
+        paymentStatus: "PENDING",
+        existingCredit: null,
+        paymentXeroInvoiceId: "inv_ib_cancelled",
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(
+        review({
+          ...dismissed,
+          partPaymentReviewRecordedCents: null,
+          partPaymentReviewXeroPaidAt: new Date("2026-06-25T00:00:00.000Z"),
+        }),
+      );
+
+      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
+
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+      expect(reopenEntries()).toEqual([]);
+      expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it("R6-3: a member's reviewed payment, then a replayed PAID, raises no 'later cash' alert asking for the reviewed amount", async () => {
+      // First event: the payment never settled, a review names it.
+      mockAlreadyCancelledInboundEvent({
+        paymentStatus: "PENDING",
+        existingCredit: null,
+        paymentXeroInvoiceId: "inv_ib_cancelled",
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(review());
+      mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
+      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
+
+      // The replay: the first event flipped the payment to SUCCEEDED, and the
+      // credit lookup sees whatever the first event minted.
+      const minted = mocks.memberCreditCreate.mock.calls[0]?.[0]?.data as
+        | { amountCents: number }
+        | undefined;
+      mockAlreadyCancelledInboundEvent({
+        paymentStatus: "SUCCEEDED",
+        existingCredit: minted ? { id: "credit_1", amountCents: minted.amountCents } : null,
+      });
+      await expect(processStoredXeroInboundEvents()).resolves.toEqual(succeeded);
+
+      expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+      const messages = vi
+        .mocked(sendAdminPaymentFailureAlert)
+        .mock.calls.map(([args]) => (args as { errorMessage: string }).errorMessage);
+      expect(messages.some((message) => message.includes("Additional Internet Banking cash"))).toBe(false);
+      expect(messages.some((message) => message.includes("top up the member's account credit"))).toBe(false);
     });
   });
 

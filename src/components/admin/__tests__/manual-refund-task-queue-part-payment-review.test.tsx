@@ -106,6 +106,28 @@ describe("#3643 - a part payment the club settles in Xero", () => {
     expect(within(dialog).getByRole("button", { name: "Close as settled in Xero" })).toBeDisabled();
   });
 
+  // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the sync's note is the
+  // record that Xero reported the invoice paid, so the card prints it.
+  it("prints the sync's note that Xero reported the invoice paid, with the date and the cash", async () => {
+    const queue = await renderQueue([
+      {
+        ...REVIEW_TASK,
+        partPaymentReviewXeroPaid: { reportedAt: "2026-07-01T00:00:00.000Z", cashCents: 20000 },
+      },
+    ]);
+
+    expect(queue).toHaveTextContent(
+      /Xero reported this invoice paid on 1 Jul 2026, with \$200\.00 of cash recorded against it\./,
+    );
+    expect(queue).toHaveTextContent(/Nothing was credited or handed back automatically/);
+  });
+
+  it("prints no such note on a review the sync has not touched", async () => {
+    const queue = await renderQueue();
+
+    expect(queue).not.toHaveTextContent(/Xero reported this invoice paid/);
+  });
+
   it("keeps the hand-back wording on an unmarked hand-back of the same kind", async () => {
     const queue = await renderQueue([
       { ...REVIEW_TASK, id: "task-cash", amountCents: 4000, raisedAmountCents: 4000, partPaymentReview: false },

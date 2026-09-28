@@ -3293,9 +3293,6 @@ describe("cancelBooking credit refunds", () => {
       expect(data).toEqual({
         bookingId: "booking_ib",
         partPaymentReviewPaymentId: "payment_ib",
-        // Xero could not size it, so the review records no figure: a later PAID
-        // event is sent to the review rather than sized (task-queue review F1).
-        partPaymentReviewRecordedCents: null,
         kind: "CANCELLED_BOOKING_HAND_BACK",
         reason: expect.stringContaining("Xero could not give the amount paid exactly."),
       });
@@ -3365,41 +3362,6 @@ describe("cancelBooking credit refunds", () => {
           reason: expect.stringContaining("belongs to an organisation"),
         }),
       });
-    });
-
-    // Task-queue review F1: the review records the cash it covers when Xero
-    // gave it exactly for the booking's one invoice, so a later PAID event can
-    // act on cash beyond it only. Two invoices, or an inexact figure: NULL.
-    it("DECISION 2: an organisation's review records the exact cash on its one invoice, and only then", async () => {
-      const reading = {
-        invoiceId: "inv_primary",
-        invoiceNumber: "INV-1",
-        hasCash: true,
-        paidCents: 10000,
-        cashComplete: true,
-        amountDueCents: 20000,
-      };
-      const recordedFor = async (evidence: Record<string, unknown>) => {
-        mocks.txManualRefundTaskCreate.mockClear();
-        mocks.readHoldPaymentEvidence.mockResolvedValue(evidence);
-        mocks.bookingFindUnique.mockResolvedValue(orgBooking());
-        mocks.txBookingFindUnique.mockResolvedValue(orgBooking());
-        mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
-        await cancelAs("ADMIN");
-        return mocks.txManualRefundTaskCreate.mock.calls[0]?.[0]?.data
-          ?.partPaymentReviewRecordedCents;
-      };
-
-      expect(await recordedFor({ ...PART_PAID, invoices: [reading] })).toBe(10000);
-      expect(
-        await recordedFor({
-          ...PART_PAID,
-          invoices: [reading, { ...reading, invoiceId: "inv_supplementary" }],
-        }),
-      ).toBeNull();
-      expect(
-        await recordedFor({ ...PART_PAID, invoices: [reading], cashComplete: false }),
-      ).toBeNull();
     });
 
     it("still cancels an unpaid internet banking booking the never-captured way", async () => {
