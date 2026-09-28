@@ -511,12 +511,17 @@ export async function loadAuditData(
   }
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
+  const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string }>>();
   const keptApprovalsByBookingId = new Map<string, Map<string, { id: string; createdAt: Date }>>();
   for (const task of lateCaptureApprovalTasks) {
     if (!task.lateCaptureApprovalIntentId) continue;
     const ids = approvalIntentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
     ids.add(task.lateCaptureApprovalIntentId);
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
+    const tasks =
+      lateCaptureTasksByBookingId.get(task.bookingId) ?? new Map<string, { id: string; status: string }>();
+    tasks.set(task.lateCaptureApprovalIntentId, { id: task.id, status: task.status });
+    lateCaptureTasksByBookingId.set(task.bookingId, tasks);
     if (task.status === "DISMISSED") {
       const kept =
         keptApprovalsByBookingId.get(task.bookingId) ??
@@ -526,21 +531,22 @@ export async function loadAuditData(
     }
   }
   // #3635: a kept booking payment's invoice anchors on its task, which no
-  // scope above reaches, so its rows are read by the kept task ids.
-  const keptTaskIds = [...keptApprovalsByBookingId.values()].flatMap((kept) =>
-    [...kept.values()].map((task) => task.id),
+  // scope above reaches, so its rows are read by the approval task ids - every
+  // one, whatever its status (round-3 N1/R5).
+  const approvalTaskIds = [...lateCaptureTasksByBookingId.values()].flatMap((tasks) =>
+    [...tasks.values()].map((task) => task.id),
   );
   const keptTaskOperations =
-    keptTaskIds.length > 0
+    approvalTaskIds.length > 0
       ? ((await deps.prisma.xeroSyncOperation.findMany({
-          where: { localModel: "ManualRefundTask", localId: { in: keptTaskIds } },
+          where: { localModel: "ManualRefundTask", localId: { in: approvalTaskIds } },
           select: xeroOperationSelect,
           orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
         })) as XeroOperationRecord[]).filter(
           (operation) =>
             operation.localModel === "ManualRefundTask" &&
             operation.localId !== null &&
-            keptTaskIds.includes(operation.localId),
+            approvalTaskIds.includes(operation.localId),
         )
       : [];
 
@@ -613,6 +619,18 @@ export async function loadAuditData(
           {
             taskId: task.id,
             raisedAt: task.createdAt,
+            operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
+          },
+        ],
+      ),
+    ),
+    lateCaptureTasks: new Map(
+      [...(lateCaptureTasksByBookingId.get(booking.id) ?? new Map<string, { id: string; status: string }>())].map(
+        ([paymentIntentId, task]) => [
+          paymentIntentId,
+          {
+            taskId: task.id,
+            status: task.status,
             operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
           },
         ],

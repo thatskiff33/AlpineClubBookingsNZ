@@ -39,6 +39,7 @@ import {
   findOrCreateXeroContactForInvoicedParty,
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
+import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   xeroDocumentDateForClubToday,
@@ -258,10 +259,34 @@ export async function createXeroSupplementaryInvoice(params: {
     bookingModification?.createdAt ?? new Date(),
     await readClubTimeZoneOutsideRequest(),
   );
+  // #3635 round-3 R2: a KEPT LATE CAPTURE's change invoice is its card
+  // receipt, dated the day Stripe took the money; every other supplementary
+  // invoice is unchanged. Read on the outbox path only, stored on the row
+  // before the Xero call so a retry never drifts.
+  let queuedRequestPayload =
+    syncOperationId
+      ? asRecord(
+          (
+            await prisma.xeroSyncOperation.findUnique({
+              where: { id: syncOperationId },
+              select: { requestPayload: true },
+            })
+          )?.requestPayload,
+        )
+      : null;
+  const keptCaptureOn = await readKeptLateCaptureChargeDate(queuedRequestPayload);
+  if (keptCaptureOn && queuedRequestPayload && queuedRequestPayload.keptLateCaptureChargedOn !== keptCaptureOn) {
+    queuedRequestPayload = { ...queuedRequestPayload, keptLateCaptureChargedOn: keptCaptureOn };
+    await prisma.xeroSyncOperation.update({
+      where: { id: syncOperationId! },
+      data: { requestPayload: sanitizeForJson(queuedRequestPayload) },
+    });
+  }
   // Read the club day ONCE. `buildInvoice` is called for the recorded
   // `requestPayload` and again for each contact-repair attempt, so a per-call
   // clock read could record one date and send another across midnight.
-  const supplementaryInvoiceIssueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
+  const supplementaryInvoiceIssueDate =
+    keptCaptureOn ?? xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
@@ -329,17 +354,6 @@ export async function createXeroSupplementaryInvoice(params: {
    * it look queued to both.
    */
   let operationId = syncOperationId ?? null;
-  const queuedRequestPayload =
-    syncOperationId
-      ? asRecord(
-          (
-            await prisma.xeroSyncOperation.findUnique({
-              where: { id: syncOperationId },
-              select: { requestPayload: true },
-            })
-          )?.requestPayload,
-        )
-      : null;
   const buildStoredPayload = (resolvedContactId: string) => ({
     ...(queuedRequestPayload ?? {}),
     invoices: [buildInvoice(resolvedContactId)],
@@ -440,7 +454,8 @@ export async function createXeroSupplementaryInvoice(params: {
         // reason as the issue date above — `callXeroApi` re-invokes this
         // callback on every retry attempt, so a read inside it could send a
         // different date on a retry that crossed club midnight.
-        const supplementaryPaymentDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
+        const supplementaryPaymentDate =
+          keptCaptureOn ?? xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
         const paymentResponse = await callXeroApi(
           () =>
             xero.accountingApi.createPayments(
@@ -531,3 +546,25 @@ export async function createXeroSupplementaryInvoice(params: {
  *
  * Fire-and-forget: caller should catch errors and log them.
  */
+
+/**
+ * #3635 round-3 R2: the charge day of a KEPT late capture this queued
+ * supplementary invoice records (its task DISMISSED), or null for every other
+ * supplementary invoice. Stored on the row once read (`keptLateCaptureChargedOn`),
+ * so a retry reuses it; read from the Stripe charge otherwise, with today as
+ * the fallback when Stripe cannot say.
+ */
+async function readKeptLateCaptureChargeDate(
+  queuedRequestPayload: Record<string, unknown> | null,
+): Promise<string | null> {
+  const stored = queuedRequestPayload?.keptLateCaptureChargedOn;
+  if (typeof stored === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+  const paymentIntentId = queuedRequestPayload?.paymentIntentId;
+  if (typeof paymentIntentId !== "string" || !paymentIntentId) return null;
+  const task = await prisma.manualRefundTask.findUnique({
+    where: { lateCaptureApprovalIntentId: paymentIntentId },
+    select: { status: true },
+  });
+  if (task?.status !== "DISMISSED") return null;
+  return readStripeCaptureDocumentDate(paymentIntentId, await readClubTimeZoneOutsideRequest());
+}

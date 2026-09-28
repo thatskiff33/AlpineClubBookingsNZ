@@ -18,6 +18,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // #3635: a late capture a treasurer kept on a cancelled booking, whose
   // booking payment Xero has no invoice for.
   "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+  // #3635 round-3 R5: a kept capture an officer recorded by hand in Xero was
+  // refunded; the app raises no note for it, so an officer records the refund
+  // by hand too. Report-only, never actionable.
+  "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -437,6 +441,16 @@ export interface BookingClassificationContext {
   keptLateCaptures: Map<
     string,
     { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
+  >;
+  /**
+   * #3635 round-3 N1/R5: EVERY #3639 approval task on this booking, whatever
+   * its status, by intent, with the Xero rows anchored on it. A kept invoice
+   * raised before a reopen and approval can still lack its payment, and one an
+   * officer recorded by hand can still have been refunded.
+   */
+  lateCaptureTasks: Map<
+    string,
+    { taskId: string; status: string; operations: XeroOperationRecord[] }
   >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm

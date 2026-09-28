@@ -59,6 +59,23 @@ export function decideLateCapture(input: {
 }
 
 /**
+ * DOES THE BOOKING HAVE ITS ORIGINAL XERO INVOICE? (#3635 round-3 nit, one
+ * reading for the dismissal and the repair tool.) The payment's recorded
+ * invoice id, or an active PRIMARY_INVOICE link on the payment.
+ */
+export function bookingHasPrimaryXeroInvoice(input: {
+  paymentXeroInvoiceId: string | null | undefined;
+  paymentLinks: ReadonlyArray<{ role: string; xeroObjectType: string; active: boolean }>;
+}): boolean {
+  return (
+    Boolean(input.paymentXeroInvoiceId) ||
+    input.paymentLinks.some(
+      (link) => link.active && link.xeroObjectType === "INVOICE" && link.role === "PRIMARY_INVOICE",
+    )
+  );
+}
+
+/**
  * WHICH DOCUMENT RECORDS A KEPT CAPTURE. A change payment on a booking whose
  * original invoice exists keeps its own supplementary invoice (released by the
  * late-capture release). Everything else - the booking's own payment, and a

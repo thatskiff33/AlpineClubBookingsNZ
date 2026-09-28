@@ -103,6 +103,10 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // the bank account its settling payment posts to. Absent on rows queued
   // before the field existed; the executor then reads the payment's source.
   refundMethod?: RefundMethod;
+  // #3635 round-3 R4/R3: the late capture this note answers, and the club day
+  // its refund left Stripe. Absent on every other note.
+  paymentIntentId?: string;
+  documentDate?: string;
 }
 
 interface QueuedAccountCreditNoteOutboxPayload {
@@ -220,6 +224,13 @@ interface QueuedKeptLateCaptureInvoiceOutboxPayload {
   capturedCents: number;
   /** `YYYY-MM-DD`, the club's calendar day of the capture. */
   capturedOn: string;
+  /**
+   * #3635 round-3 R2: set once `capturedOn` was read from the Stripe charge
+   * (`readStripeCaptureDocumentDate`) and stored before the Xero call, so a
+   * retry never reads it again or drifts. Absent, `capturedOn` is the task's
+   * raise day, the enqueue's estimate.
+   */
+  capturedOnFromStripe?: boolean;
 }
 
 export type QueuedOutboxPayload =
@@ -328,6 +339,8 @@ export function readQueuedOutboxPayload(
       refundAmountCents,
       watermarkCents: readNumber(payload.watermarkCents) ?? undefined,
       refundMethod: parseRefundMethod(payload.refundMethod) ?? undefined,
+      paymentIntentId: readString(payload.paymentIntentId) ?? undefined,
+      documentDate: readString(payload.documentDate) ?? undefined,
     };
   }
 
@@ -539,6 +552,7 @@ export function readQueuedOutboxPayload(
       paymentIntentId,
       capturedCents,
       capturedOn,
+      ...(payload.capturedOnFromStripe === true ? { capturedOnFromStripe: true } : {}),
     };
   }
 

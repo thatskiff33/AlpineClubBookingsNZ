@@ -271,12 +271,14 @@ describe("admin cron health", () => {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
 
-    // #3663: the three tasks of the 15-minute payments cycle each record their
-    // own CronJobRun row, so each needs its own health entry.
+    // #3663: the tasks of the 15-minute payments cycle each record their own
+    // CronJobRun row, so each needs its own health entry (#3635 adds the
+    // held late-capture alert's re-selecting run).
     for (const jobName of [
       "payment-recovery",
       "internet-banking-hold-release",
       "xero-waiting-invoice-reaper",
+      "late-capture-held-alert",
     ]) {
       expect(
         definitions.find((definition) => definition.jobName === jobName)

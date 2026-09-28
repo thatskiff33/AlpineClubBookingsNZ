@@ -1593,6 +1593,8 @@ export async function retryXeroSyncOperation(
             ? { watermarkCents: deltaWatermarkCents }
             : {}),
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
+          ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
+          ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }

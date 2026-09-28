@@ -25,7 +25,6 @@
  *   - the member can no longer pay it: retired (CANCELLED,
  *     `STALE_WAITING_PAYMENT`), the one state a later capture can revive.
  */
-import type Stripe from "stripe";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -34,6 +33,7 @@ import {
   type AdditionalPaymentDoorInput,
 } from "@/lib/additional-payment-chase";
 import { getPaymentIntent } from "@/lib/stripe";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import {
@@ -325,14 +325,6 @@ async function decideWaitingOperation(params: {
     );
     return "keep";
   }
-}
-
-/** When Stripe took the money: the latest charge's time, else the intent's. */
-function providerCaptureTime(intent: Stripe.PaymentIntent): Date {
-  const charge = intent.latest_charge;
-  const seconds =
-    charge && typeof charge === "object" ? charge.created : intent.created;
-  return new Date(seconds * 1000);
 }
 
 /**

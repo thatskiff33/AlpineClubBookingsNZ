@@ -5,7 +5,7 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -795,6 +795,17 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * source: Stripe money can only have left through Stripe.
      */
     refundMethod?: CashRefundMethod;
+    /**
+     * #3635 round-3 R4: the late capture this note answers, recorded on the
+     * note so its refunds are noted once per capture
+     * (`sumLateCaptureNotedCents`), and the note names that capture's receipt.
+     */
+    paymentIntentId?: string;
+    /**
+     * #3635 round-3 R3: the club day the refund left Stripe (`YYYY-MM-DD`),
+     * for a note raised after the fact. Omitted, the note is dated today.
+     */
+    documentDate?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -872,10 +883,12 @@ export async function enqueueXeroRefundCreditNoteOperation(
       resolvedCoverage,
       db
     );
-    const evidence = await resolveStripeCashRefundEvidence(payment, db);
+    // #3635 round-3 R1: the cash a note may answer, which leaves out refunds of
+    // late captures the app never recorded in Xero (`INV-PAY-110`).
+    const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
     noteAmountCents = Math.max(
       0,
-      Math.min(refundAmountCents, evidence.cashRefundCents - coveredCents)
+      Math.min(refundAmountCents, eligibleCashCents - coveredCents)
     );
     watermarkCents = coveredCents + noteAmountCents;
     if (noteAmountCents <= 0) {
@@ -986,6 +999,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
       refundAmountCents: noteAmountCents,
       watermarkCents,
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
+      ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
+      ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2949,6 +2964,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.refundMethod && payload.refundMethod !== "account-credit"
               ? { refundMethod: payload.refundMethod }
               : {}),
+            ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
+            ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
           }
         );
       } else if (
@@ -3094,8 +3111,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         //
         // The un-claim must match the state the HANDLER left the row in, not the
         // state the outbox expects. Every queue type but the three named below
-        // (the kept late-capture invoice, #3635, among them) owns a
-        // `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`,
+        // owns a `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`
+        // (the kept late-capture invoice, #3635, self-fails like the rest),
         // and `failXeroSyncOperation` writes `status: FAILED` + `completedAt`
         // with no status guard — so by the time this branch runs the row is
         // already FAILED for those types, and a `status: "RUNNING"`-only guard
@@ -3194,9 +3211,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
       // payload shape, so failing fast here closes the dead-end for all
       // types.
       try {
+        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
+        // approval cancels a kept row it finds FAILED); CANCELLED stands.
         await failXeroSyncOperation(
           queuedOperation.id,
-          error instanceof Error ? error : new Error(String(error))
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          { keepCancelled: true }
         );
       } catch (failErr) {
         logger.error(

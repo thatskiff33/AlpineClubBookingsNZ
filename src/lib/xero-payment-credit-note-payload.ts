@@ -4,7 +4,7 @@
 // the resolved-in-Xero coverage fence read ONE answer to "how much did this
 // note cover" (`INV-SSOT`).
 import { providerAmountToCents } from "@/lib/money-provider-amount";
-import { asArray, asRecord, readNumber } from "@/lib/xero-json";
+import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -40,6 +40,12 @@ export function parsePaymentCreditNoteRetryInput(
    * execution time.
    */
   watermarkCents?: number;
+  /**
+   * #3635 round-3 R4/R3: the late capture a refund note answers and the club
+   * day its refund left Stripe, carried at the top level of both shapes.
+   */
+  paymentIntentId?: string;
+  documentDate?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -51,6 +57,10 @@ export function parsePaymentCreditNoteRetryInput(
   // {queueType, refundAmountCents[, watermarkCents]} — previously unparseable
   // here, leaving operator-reset operations permanently dead-ended.
   const queueType = typeof payload.queueType === "string" ? payload.queueType : null;
+  const lateCapture = {
+    ...(readString(payload.paymentIntentId) ? { paymentIntentId: readString(payload.paymentIntentId)! } : {}),
+    ...(readString(payload.documentDate) ? { documentDate: readString(payload.documentDate)! } : {}),
+  };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
     const queuedWatermark = readNumber(payload.watermarkCents);
@@ -59,6 +69,7 @@ export function parsePaymentCreditNoteRetryInput(
       kind: "refund",
       watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0,
       refundMethod: readCashRefundMethod(payload),
+      ...lateCapture,
     };
   }
   if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
@@ -75,6 +86,7 @@ export function parsePaymentCreditNoteRetryInput(
       amountCents: allocationAmountCents,
       kind: "refund",
       refundMethod: readCashRefundMethod(payload),
+      ...lateCapture,
     };
   }
 

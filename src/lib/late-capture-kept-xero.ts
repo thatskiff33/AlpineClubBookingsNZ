@@ -10,6 +10,7 @@ import {
 import { creditBackLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import {
   decideLateCapture,
+  bookingHasPrimaryXeroInvoice,
   keptLateCaptureRecordRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 
@@ -80,7 +81,7 @@ export async function planKeptLateCaptureXeroRecord(params: {
     where: { id: transaction.paymentId },
     select: { xeroInvoiceId: true },
   });
-  const primaryLinks = await store.xeroObjectLink.count({
+  const paymentLinks = await store.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
       localId: transaction.paymentId,
@@ -88,10 +89,14 @@ export async function planKeptLateCaptureXeroRecord(params: {
       role: "PRIMARY_INVOICE",
       active: true,
     },
+    select: { role: true, xeroObjectType: true, active: true },
   });
   const route = keptLateCaptureRecordRoute({
     captureKind: transaction.kind,
-    bookingHasPrimaryInvoice: Boolean(payment?.xeroInvoiceId) || primaryLinks > 0,
+    bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
+      paymentXeroInvoiceId: payment?.xeroInvoiceId,
+      paymentLinks,
+    }),
   });
   if (route === "change-invoice") {
     return { kind: "change-payment", paymentIntentId: params.paymentIntentId };

@@ -248,26 +248,30 @@ async function announceHeldLateCapture(capture: HeldLateCapture): Promise<boolea
 
 /** How many OPEN held tasks one sweep looks at. */
 const HELD_ALERT_SWEEP_LIMIT = 50;
+/** The payments cron's cadence, which the sweep's rotation steps by. */
+const HELD_ALERT_SWEEP_STEP_MS = 15 * 60 * 1000;
 
 /**
  * #3635 (review F3): THE PAYMENTS CRON'S RE-SELECTING RUN for the held
  * late-capture alert. Every OPEN task a #3639 hold raised is announced again
  * through the once-ever rule: a claim already kept makes it a no-op, and one
  * given back (the send threw) or held a day (nobody could receive it) is tried
- * now. Oldest first, a bounded batch a run. Never throws for one task.
+ * now. A bounded batch a run, taken from a STABLE order (oldest first) at an
+ * offset that ROTATES each cron step (round-3 N4), so with more OPEN tasks than
+ * one batch every task is still reached within a few runs instead of the first
+ * batch being tried for ever. Never throws for one task.
  */
-export async function reannounceHeldLateCaptures(): Promise<{
+export async function reannounceHeldLateCaptures(now: Date = new Date()): Promise<{
   checked: number;
   announced: number;
 }> {
-  const tasks = await prisma.manualRefundTask.findMany({
+  const open = await prisma.manualRefundTask.findMany({
     where: {
       status: ManualRefundTaskStatus.OPEN,
       lateCaptureApprovalIntentId: { not: null },
       paymentId: { not: null },
     },
-    orderBy: { createdAt: "asc" },
-    take: HELD_ALERT_SWEEP_LIMIT,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       bookingId: true,
       paymentId: true,
@@ -276,6 +280,9 @@ export async function reannounceHeldLateCaptures(): Promise<{
       lateCaptureApprovalIntentId: true,
     },
   });
+  const step = Math.floor(now.getTime() / HELD_ALERT_SWEEP_STEP_MS);
+  const start = open.length > HELD_ALERT_SWEEP_LIMIT ? (step * HELD_ALERT_SWEEP_LIMIT) % open.length : 0;
+  const tasks = [...open.slice(start), ...open.slice(0, start)].slice(0, HELD_ALERT_SWEEP_LIMIT);
   let announced = 0;
   for (const task of tasks) {
     const paymentIntentId = task.lateCaptureApprovalIntentId!;

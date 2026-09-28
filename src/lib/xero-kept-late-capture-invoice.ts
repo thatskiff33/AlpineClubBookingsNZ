@@ -56,6 +56,8 @@ import {
 } from "@/lib/organisation-xero-contacts";
 import { applyHutFeeLineCodes } from "@/lib/xero-hut-fee-line-codes";
 import { xeroDocumentDateFromInstant } from "@/lib/xero-provider-dates";
+import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
 import {
@@ -190,8 +192,10 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
  *  - A row whose invoice exists but whose payment was not recorded (PARTIAL)
  *    goes back to PENDING: the cash was really taken, so its worker records
  *    the payment whatever the task says now, and the refund note answers it.
- *  - A RUNNING row is decided by the worker's own locked check, which runs
- *    after this claim commits; a SUCCEEDED one is answered by the refund note.
+ *  - A RUNNING row whose check has not run is withdrawn by that check, which
+ *    runs under the task lock after this claim commits. One already past its
+ *    check sends, and its worker credits the refund back; a SUCCEEDED one is
+ *    answered by the refund note.
  *  - A row an officer resolved in Xero is left as it is: recorded by hand,
  *    never re-run, and answered by the refund note (`INV-INT-025`).
  * The change's released supplementary invoice for the same capture, still
@@ -295,8 +299,8 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       `Kept late-capture invoice operation ${syncOperationId} has no readable queued payload`,
     );
   }
-  const { bookingId, manualRefundTaskId: taskId, paymentIntentId, capturedCents, capturedOn } =
-    queued;
+  const { bookingId, manualRefundTaskId: taskId, paymentIntentId, capturedCents } = queued;
+  let capturedOn = queued.capturedOn;
 
   const linkFor = (role: string) =>
     prisma.xeroObjectLink.findFirst({
@@ -346,6 +350,24 @@ export async function createXeroKeptLateCaptureInvoice(params: {
     let invoiceBody: unknown = null;
 
     if (!invoiceId) {
+      // Round-3 R2: the receipt is dated the day of the Stripe CHARGE, read
+      // once and stored before the Xero call. The enqueue's date - the task's
+      // raise day - stands only when Stripe cannot say.
+      let storedPayload = asRecord(row?.requestPayload) ?? {};
+      if (!queued.capturedOnFromStripe) {
+        const chargedOn = await readStripeCaptureDocumentDate(
+          paymentIntentId,
+          await readClubTimeZoneOutsideRequest(),
+        );
+        if (chargedOn) {
+          capturedOn = chargedOn;
+          storedPayload = { ...storedPayload, capturedOn, capturedOnFromStripe: true };
+          await prisma.xeroSyncOperation.update({
+            where: { id: syncOperationId },
+            data: { requestPayload: sanitizeForJson(storedPayload) },
+          });
+        }
+      }
       const { xero, tenantId } = await getAuthenticatedXeroClient();
       const contactId = await findOrCreateXeroContactForInvoicedParty(booking, {
         createdByMemberId: params.createdByMemberId,
@@ -377,7 +399,7 @@ export async function createXeroKeptLateCaptureInvoice(params: {
       });
       // Keep the queued instruction beside the request, so a retry replays it.
       const buildStoredPayload = (resolvedContactId: string) => ({
-        ...(asRecord(row?.requestPayload) ?? {}),
+        ...storedPayload,
         invoices: [buildInvoice(resolvedContactId)],
       });
       await prisma.xeroSyncOperation.update({
