@@ -426,6 +426,28 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
+  it("#3635: reads and writes through the caller's transaction when handed one", async () => {
+    const store = {
+      booking: { findUnique: vi.fn().mockResolvedValue({ id: "booking_1", payment: { id: "payment_1", xeroInvoiceId: null } }) },
+      xeroObjectLink: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn() },
+      payment: { findUnique: vi.fn() },
+      xeroSyncOperation: { findFirst: vi.fn().mockResolvedValue(null) },
+    };
+
+    await enqueueXeroBookingInvoiceOperation("booking_1", {
+      invoiceEmailDelivery: null,
+      store: store as never,
+    });
+
+    expect(store.booking.findUnique).toHaveBeenCalled();
+    expect(store.xeroObjectLink.findFirst).toHaveBeenCalled();
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalled();
+    expect(mocks.findUniqueBooking).not.toHaveBeenCalled();
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ store }),
+    );
+  });
+
   it("skips queueing when the booking payment is already linked to Xero", async () => {
     mocks.findUniqueBooking.mockResolvedValue({
       id: "booking_1",
@@ -474,10 +496,11 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
-  it("records no instruction for the fifteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
-    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Seventeen call sites reach
+  it("records no instruction for the sixteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
+    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Eighteen call sites reach
     // this function; the two in `booking-create` carry the officer's answer and
-    // the other FIFTEEN pass an explicit null — confirm-draft, waitlist-confirm,
+    // the other SIXTEEN pass an explicit null — the kept late capture (#3635,
+    // `late-capture-kept-xero.ts`), confirm-draft, waitlist-confirm,
     // charge-saved-method, switch-to-internet-banking, confirm-pending-guests,
     // cron-confirm-pending, group settlement, the school-booking-request
     // conversion (`approveSchoolBookingRequest`), the member whole-lodge request
