@@ -118,7 +118,7 @@ describe("remove-worktree", () => {
     const { repo, lane, outside } = fixture();
     pnpmShapedNodeModules(lane, outside);
     fs.writeFileSync(path.join(lane, "wip.txt"), "unsaved\n");
-    expect(() => remove(repo, lane)).toThrow(/git did not remove[\s\S]*intact apart from its node_modules/);
+    expect(() => remove(repo, lane)).toThrow(/git did not remove[\s\S]*git deleted nothing[\s\S]*still registered/);
     expect(fs.readFileSync(path.join(lane, "wip.txt"), "utf8")).toBe("unsaved\n");
     expect(fs.existsSync(path.join(lane, "node_modules"))).toBe(false);
     expect(listed(repo)).toBe(true);
@@ -169,10 +169,10 @@ describe("remove-worktree", () => {
     expect(fs.existsSync(path.join(lane, "node_modules", "pkg"))).toBe(true);
   });
 
-  it("refuses a locked worktree before deleting anything", () => {
+  it.each([[[]], [["--reason", "keep me"]]])("refuses a locked worktree before deleting anything (%j)", (reason) => {
     const { repo, lane, outside } = fixture();
     pnpmShapedNodeModules(lane, outside);
-    git(repo, "worktree", "lock", lane);
+    git(repo, "worktree", "lock", ...reason, lane);
     expect(() => remove(repo, lane)).toThrow(/locked/);
     expect(fs.existsSync(path.join(lane, "node_modules", "pkg"))).toBe(true);
   });
@@ -182,10 +182,16 @@ describe("remove-worktree", () => {
       worktree: "wt-x",
       base: "origin/epic/1",
       allowUnmerged: true,
+      forgetMissing: false,
     });
+    expect(parseArguments(["wt-x", "--forget-missing"])).toMatchObject({ forgetMissing: true, allowUnmerged: false });
     expect(() => parseArguments([])).toThrow(/Usage/);
     expect(() => parseArguments(["a", "b"])).toThrow(/One worktree/);
     expect(() => parseArguments(["a", "--force"])).toThrow(/Unknown option --force/);
+    expect(() => parseArguments(["a", "-x"])).toThrow(/Unknown option -x/);
+    // `--base` followed by another option is a missing ref, not a ref named `--allow-unmerged`.
+    expect(() => parseArguments(["a", "--base", "--allow-unmerged"])).toThrow(/--base needs a ref/);
+    expect(() => parseArguments(["a", "--base"])).toThrow(/--base needs a ref/);
   });
 
   it("exits non-zero with the reason when it refuses", () => {
@@ -383,14 +389,28 @@ describe("remove-worktree: other repositories, spellings, and git's own answer",
     expect(fs.existsSync(path.join(lane, "work.txt"))).toBe(true);
   });
 
-  it("explains a lane with no .git, and forgets one whose folder is already gone", () => {
+  it("explains a lane with no .git", () => {
     const { repo, lane } = fixture();
     fs.rmSync(path.join(lane, ".git"));
     expect(() => remove(repo, lane)).toThrow(/has no \.git[\s\S]*git worktree remove/);
     expect(fs.existsSync(lane)).toBe(true);
+  });
+
+  // Review round 8 (reproduced): a folder moved away for a moment was
+  // unregistered without any check, losing a commit only its HEAD held.
+  it("refuses a lane whose folder is missing unless --forget-missing is given", () => {
+    const { repo, lane } = fixture();
+    fs.writeFileSync(path.join(lane, "c.txt"), "unmerged\n");
+    git(lane, "add", "c.txt");
+    git(lane, "commit", "-q", "-m", "only here");
+    fs.renameSync(lane, `${lane}-away`);
+    expect(() => remove(repo, lane)).toThrow(/folder is missing[\s\S]*--forget-missing/);
+    expect(listed(repo)).toBe(true);
+    fs.renameSync(`${lane}-away`, lane);
+    expect(git(lane, "log", "-1", "--format=%s")).toBe("only here");
 
     fs.rmSync(lane, { recursive: true, force: true });
-    remove(repo, lane);
+    remove(repo, lane, { forgetMissing: true });
     expect(listed(repo)).toBe(false);
   });
 
@@ -561,7 +581,7 @@ describe("remove-worktree: what git worktree remove itself would not refuse", ()
     while (dir.length < 300) dir = path.join(dir, "d".repeat(40));
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "PRECIOUS.txt"), "work\n");
-    expect(() => remove(repo, lane)).toThrow(/git did not remove[\s\S]*intact/);
+    expect(() => remove(repo, lane)).toThrow(/git did not remove[\s\S]*git deleted nothing/);
     expect(fs.existsSync(path.join(dir, "PRECIOUS.txt"))).toBe(true);
     expect(fs.existsSync(path.join(lane, "README.md"))).toBe(true);
     expect(listed(repo)).toBe(true);
@@ -605,3 +625,124 @@ describe("remove-worktree: what git worktree remove itself would not refuse", ()
     expect(fs.existsSync(lane)).toBe(false);
   });
 });
+
+describe("remove-worktree: round 8, the generated folders and failing git calls", () => {
+  // Review round 8 (reproduced): the tool deletes node_modules and .next
+  // without asking git, so work git would protect there was lost.
+  it("refuses a tracked file inside node_modules, and the edit survives", () => {
+    const { repo, lane } = fixture();
+    fs.mkdirSync(path.join(lane, "node_modules", "patched"), { recursive: true });
+    fs.writeFileSync(path.join(lane, "node_modules", "patched", "index.js"), "original\n");
+    git(lane, "add", "-f", "node_modules/patched/index.js");
+    git(lane, "commit", "-q", "-m", "vendor a patch");
+    git(repo, "merge", "-q", "--ff-only", "lane");
+    fs.writeFileSync(path.join(lane, "node_modules", "patched", "index.js"), "EDITED\n");
+    expect(() => remove(repo, lane)).toThrow(/tracked or unignored files in node_modules[\s\S]*patched/);
+    expect(fs.readFileSync(path.join(lane, "node_modules", "patched", "index.js"), "utf8")).toBe("EDITED\n");
+  });
+
+  it("refuses an unignored file in .next on a branch that does not ignore it", () => {
+    const { repo, lane } = fixture();
+    fs.mkdirSync(path.join(lane, ".next"));
+    fs.writeFileSync(path.join(lane, ".next", "notes.md"), "my notes\n");
+    expect(() => remove(repo, lane)).toThrow(/tracked or unignored files[\s\S]*notes\.md/);
+    expect(fs.existsSync(path.join(lane, ".next", "notes.md"))).toBe(true);
+  });
+
+  // Review round 8 (reproduced): deleting a real node_modules takes seconds,
+  // and a junction created meanwhile was followed by git.
+  it.each([
+    [".cache/late", (lane, outside) => {
+      fs.mkdirSync(path.join(lane, ".cache"), { recursive: true });
+      fs.symlinkSync(outside, path.join(lane, ".cache", "late"), DIR_LINK);
+    }],
+    ["a re-created node_modules", (lane, outside) => {
+      fs.mkdirSync(path.join(lane, "node_modules"));
+      fs.symlinkSync(outside, path.join(lane, "node_modules", "late"), DIR_LINK);
+    }],
+  ])("re-checks the lane after deleting node_modules: %s", (_label, appear) => {
+    const { repo, lane, outside } = fixture();
+    ignoreInLane(repo, lane, ".cache");
+    pnpmShapedNodeModules(lane, outside);
+    const realRm = fs.rmSync.bind(fs);
+    vi.spyOn(fs, "rmSync").mockImplementation((p, options) => {
+      const result = realRm(p, options);
+      if (path.basename(String(p)) === ".next") appear(lane, outside);
+      return result;
+    });
+    expect(() => remove(repo, lane)).toThrow(/changed while node_modules and \.next were being deleted[\s\S]*(late|node_modules)$/);
+    expect(listed(repo)).toBe(true);
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("keep\n");
+  });
+
+  it("passes rmSync retries, so a briefly busy file does not stop it", () => {
+    const { repo, lane, outside } = fixture();
+    pnpmShapedNodeModules(lane, outside);
+    const spy = vi.spyOn(fs, "rmSync");
+    remove(repo, lane);
+    const call = spy.mock.calls.find(([p]) => path.basename(String(p)) === "node_modules");
+    expect(call?.[1]?.maxRetries).toBeGreaterThan(0);
+  });
+
+  // Review round 8 (reproduced on a case-sensitive folder): `NODE_MODULES` is not
+  // the folder the tool deletes, so a link in it must be reported, not skipped.
+  it("exempts only the exact names node_modules and .next from the link scan", () => {
+    const { lane, outside } = fixture();
+    for (const name of ["NODE_MODULES", ".Next"]) {
+      fs.rmSync(path.join(lane, name), { recursive: true, force: true });
+      fs.mkdirSync(path.join(lane, name));
+      fs.symlinkSync(outside, path.join(lane, name, "link"), DIR_LINK);
+      expect(scanWorktree(lane).links.join("\n")).toContain(path.join(name, "link"));
+      fs.rmSync(path.join(lane, name), { recursive: true, force: true });
+    }
+  });
+
+  // Fail closed: a git call that fails is a refusal, never a pass.
+  it.each([
+    ["rev-parse --git-path", (args) => args.includes("--git-path"), /git rev-parse failed/],
+    ["for-each-ref", (args) => args[0] === "for-each-ref", /refs of its own/],
+    ["ls-files -v", (args) => args[0] === "ls-files" && args.includes("-v"), /--skip-worktree or --assume-unchanged/],
+    ["ls-files of the generated folders", (args) => args[0] === "ls-files" && args.includes("--others"), /tracked or unignored/],
+    ["merge-base", (args) => args[0] === "merge-base", /Could not compare HEAD/],
+  ])("refuses when %s fails", (_label, matches, message) => {
+    const { repo, lane } = fixture();
+    const runGit = (cwd, args) => (matches(args) ? { status: 128, stdout: "", stderr: "simulated" } : realGit(cwd, args));
+    expect(() => remove(repo, lane, { runGit })).toThrow(message);
+    expect(listed(repo)).toBe(true);
+  });
+
+  // The walk's error handling: ENOENT is a file that vanished mid-walk and is
+  // fine; anything else is recorded, so the lane is refused.
+  it("records lstat and realpath errors, but not a file that vanished", () => {
+    const { lane } = fixture();
+    fs.mkdirSync(path.join(lane, "sub"));
+    const fail = (code) => Object.assign(new Error(code), { code });
+    const realLstat = fs.lstatSync.bind(fs);
+    const lstat = vi.spyOn(fs, "lstatSync").mockImplementation((p, o) => {
+      if (path.basename(String(p)) === "a.txt") throw fail("ENOENT");
+      if (path.basename(String(p)) === "README.md") throw fail("EACCES");
+      return realLstat(p, o);
+    });
+    let { unreadable } = scanWorktree(lane);
+    expect(unreadable.join("\n")).toMatch(/README\.md \(EACCES\)/);
+    expect(unreadable.join("\n")).not.toMatch(/a\.txt/);
+    lstat.mockRestore();
+
+    const realReal = fs.realpathSync.native.bind(fs.realpathSync);
+    const real = vi.spyOn(fs.realpathSync, "native").mockImplementation((p, o) => {
+      if (path.basename(String(p)) === "sub") throw fail("EPERM");
+      return realReal(p, o);
+    });
+    ({ unreadable } = scanWorktree(lane));
+    expect(unreadable.join("\n")).toMatch(/sub \(EPERM\)/);
+    real.mockImplementation((p, o) => {
+      if (fold(String(p)) === fold(lane)) throw fail("EPERM");
+      return realReal(p, o);
+    });
+    expect(scanWorktree(lane).unreadable.join("\n")).toMatch(/wt-lane \(EPERM\)/);
+  });
+});
+
+function fold(p) {
+  return process.platform === "win32" ? p.toLowerCase() : p;
+}

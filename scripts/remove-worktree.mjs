@@ -5,6 +5,7 @@
  *   pnpm run worktree:remove <path>                   # merged into origin/main
  *   pnpm run worktree:remove <path> --base <ref>      # merged into another base
  *   pnpm run worktree:remove <path> --allow-unmerged  # an abandoned lane
+ *   pnpm run worktree:remove <path> --forget-missing  # its folder is really gone
  *   node scripts/remove-worktree.mjs <path> ...       # the same, without pnpm
  *
  * Run it from OUTSIDE the worktree being removed (for example the main
@@ -24,13 +25,23 @@
  *    `node_modules` and `.next`, with Node's `fs.rmSync`, which removes a link
  *    itself instead of descending into it. If one cannot be fully deleted it
  *    stops, and running it again carries on.
- * 3. Runs plain `git worktree remove <path>`, WITHOUT `--force`. git's own
+ * 3. Checks again (deleting a real `node_modules` takes about ten seconds): if
+ *    either folder has reappeared or the scan now finds a link, an unreadable
+ *    folder or another repository, it stops before git runs.
+ * 4. Runs plain `git worktree remove <path>`, WITHOUT `--force`. git's own
  *    checks then refuse on modified, untracked or submodule work exactly as in
- *    normal use; if git refuses, the lane is intact apart from its
- *    `node_modules` and `.next` (`pnpm install` brings them back).
+ *    normal use; if git refuses, git has deleted nothing and the lane is still
+ *    registered, and only `node_modules` and `.next` are gone (`pnpm install`
+ *    brings them back).
  *
  * The accepted trade-off, the same as plain `git worktree remove`: IGNORED
  * files, such as `.env.local`, are deleted with the lane.
+ *
+ * The remaining window: step 3 narrows it but cannot close it. A link created
+ * in the lane, outside `node_modules` and `.next`, after that check and before
+ * git reaches it could still be followed (measured on a real lane: about 0.3 s
+ * for the check, about 3 s for git's own check and delete). Stop anything
+ * writing to a lane before removing it.
  *
  * Every git call runs without any `GIT_*` environment variable (so nothing
  * points git at another repository or injects config) and with
@@ -42,6 +53,12 @@
  *
  * - The main checkout, a path that is not a registered linked worktree, a
  *   locked one, and a path that is itself a link to the worktree.
+ * - A lane whose folder is missing, unless `--forget-missing` says it is really
+ *   gone: none of the checks can run, and a folder that is only away (an
+ *   unmounted drive, a moved folder) would lose its index and any commit only
+ *   its HEAD holds.
+ * - Anything git would protect inside `node_modules` or `.next` (a tracked
+ *   file, or one the branch does not ignore), which the tool deletes itself.
  * - Being run from inside the target (the current directory, or `INIT_CWD`,
  *   where `pnpm run` was typed).
  * - Another registered worktree inside the target, or any `.git` below its root
@@ -49,7 +66,7 @@
  *   repository whose work git would not check.
  * - A top-level `node_modules` that is itself a link (the legacy shape in
  *   `docs/agents/CODEX_WORKFLOW.md`), and any link outside the top-level
- *   `node_modules` and `.next`, which git would follow. A link is anything
+ *   `node_modules` and `.next` (exact names), which git would follow. A link is anything
  *   `lstat` flags, OR a directory whose real path is not its own (a
  *   volume-path junction or mount point, which `lstat` calls a directory).
  * - Any folder it cannot read, since it could hide a link.
@@ -69,7 +86,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const USAGE =
-  "Usage: pnpm run worktree:remove <worktree-path> [--base <ref>] [--allow-unmerged]";
+  "Usage: pnpm run worktree:remove <worktree-path> [--base <ref>] [--allow-unmerged] [--forget-missing]";
 
 /** Generated, link-heavy directories at the worktree root, deleted by Node. */
 const GENERATED_ROOT_DIRS = ["node_modules", ".next"];
@@ -98,10 +115,11 @@ const GIT_CONFIG = [
 export function parseArguments(argv) {
   // A literal `--` is tolerated, as in the repository's other CLIs.
   const args = argv.filter((arg) => arg !== "--");
-  const options = { worktree: "", base: "origin/main", allowUnmerged: false };
+  const options = { worktree: "", base: "origin/main", allowUnmerged: false, forgetMissing: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--allow-unmerged") options.allowUnmerged = true;
+    else if (arg === "--forget-missing") options.forgetMissing = true;
     else if (arg === "--base") {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) throw new Error(`--base needs a ref. ${USAGE}`);
@@ -174,7 +192,9 @@ function isFlaggedLink(p) {
 }
 
 const isDotGit = (name) => fold(name) === ".git";
-const isGenerated = (name) => GENERATED_ROOT_DIRS.some((dir) => fold(dir) === fold(name));
+// Exact names only: on a case-sensitive folder `NODE_MODULES` is a different
+// folder, which the tool does not delete, so it must not be exempt from the scan.
+const isGenerated = (name) => GENERATED_ROOT_DIRS.includes(name);
 
 /**
  * Walk the worktree (except its own top-level `.git`) and return
@@ -258,6 +278,7 @@ export function preflight({
   worktree,
   base,
   allowUnmerged,
+  forgetMissing = false,
   cwd = process.cwd(),
   initCwd = process.env.INIT_CWD,
   runGit = git,
@@ -273,9 +294,20 @@ export function preflight({
   const registered = worktrees.find((w) => samePath(w.path, given));
   if (!registered) refuse(`${given} is not a registered worktree of this repository.`);
   if (registered.locked) refuse(`${given} is locked (git worktree lock). Unlock it deliberately first.`);
-  // A lane whose folder is already gone has nothing left to check or delete:
-  // only git's registration, which plain `git worktree remove` forgets.
-  if (!fs.existsSync(given)) return { target: given, registeredPath: registered.path };
+  // A missing folder may only be away (an unmounted drive, a moved folder):
+  // none of the checks below can run, and unregistering it loses its index and
+  // any commit only its HEAD holds. So it is forgotten only when asked.
+  if (!fs.existsSync(given)) {
+    if (!forgetMissing) {
+      refuse(
+        `${given} is registered but its folder is missing, so none of the checks can run. If it is ` +
+          "only elsewhere (an unmounted drive, a moved folder), put it back and run this again. " +
+          "Pass --forget-missing only if it is really gone: git then forgets it, with its index " +
+          "and any commit that only its HEAD held.",
+      );
+    }
+    return { target: given, registeredPath: registered.path };
+  }
 
   const target = fs.realpathSync.native(given);
   const nested = worktrees.filter((w) => w !== registered && isInside(w.path, target));
@@ -334,6 +366,25 @@ export function preflight({
   if (refs.status !== 0 || refs.stdout.trim() !== "") {
     refuse(`${target} has refs of its own that removing the lane would delete.`, refs.stdout.trim().split(/\r?\n/));
   }
+  // The tool deletes node_modules and .next without asking git, so anything
+  // git would protect there (a tracked file, or one the branch does not ignore)
+  // must not be in them.
+  const protectedHere = runGit(target, [
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--",
+    ...GENERATED_ROOT_DIRS,
+  ]);
+  if (protectedHere.status !== 0 || protectedHere.stdout !== "") {
+    refuse(
+      `${target} has tracked or unignored files in node_modules or .next, which git would protect ` +
+        "and this tool would delete without asking.",
+      protectedHere.stdout.split("\0").filter(Boolean),
+    );
+  }
   const listed = runGit(target, ["ls-files", "-v", "-z"]);
   const hidden = listed.stdout.split("\0").filter((record) => /^[a-zS] /.test(record));
   if (listed.status !== 0 || hidden.length > 0) {
@@ -362,6 +413,7 @@ export function removeWorktree({
   worktree,
   base = "origin/main",
   allowUnmerged = false,
+  forgetMissing = false,
   cwd,
   initCwd,
   runGit = git,
@@ -371,6 +423,7 @@ export function removeWorktree({
     worktree,
     base,
     allowUnmerged,
+    forgetMissing,
     runGit,
     ...(cwd !== undefined ? { cwd } : {}),
     ...(initCwd !== undefined ? { initCwd } : {}),
@@ -388,14 +441,29 @@ export function removeWorktree({
       }
     }
   }
+  // Deleting a real node_modules takes seconds. Anything that appeared in the
+  // lane meanwhile (a re-created node_modules, a new link) is caught here,
+  // before git, which would follow a link, starts deleting.
+  if (fs.existsSync(target)) {
+    const back = GENERATED_ROOT_DIRS.filter((name) => fs.existsSync(path.join(target, name)));
+    const again = scanWorktree(target);
+    const changed = [...back.map((name) => path.join(target, name)), ...again.links, ...again.unreadable, ...again.repositories];
+    if (changed.length > 0) {
+      throw new Error(
+        `${target} changed while node_modules and .next were being deleted. The lane is still ` +
+          `registered and git has not been run. Stop whatever is writing to it, then run this again:\n  ${changed.join("\n  ")}`,
+      );
+    }
+  }
   const removed = runGit(repoDir, ["worktree", "remove", registeredPath]);
   if (removed.status !== 0) {
     const stillListed = listWorktrees(repoDir, runGit).some((w) => samePath(w.path, registeredPath));
     throw new Error(
       `git did not remove ${target}: ${removed.stderr.trim()}\n` +
         (stillListed
-          ? "The lane is intact apart from its node_modules and .next (pnpm install brings them " +
-            "back). Commit, stash or discard the work git names, then run this again."
+          ? "git deleted nothing and the lane is still registered; only its node_modules and .next " +
+            "are gone (pnpm install brings them back). Commit, stash or discard the work git names, " +
+            "then run this again."
           : "git had already checked the lane was clean and has unregistered it, but could not " +
             "delete everything (a file held open?). What is left needs deleting by hand."),
     );

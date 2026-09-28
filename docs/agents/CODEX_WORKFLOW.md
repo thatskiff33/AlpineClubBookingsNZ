@@ -268,6 +268,7 @@ generated folders itself and leaves everything else to git:
 pnpm run worktree:remove C:\path\to\exact-worktree                     # merged into origin/main
 pnpm run worktree:remove C:\path\to\exact-worktree --base origin/epic/1  # an epic child
 pnpm run worktree:remove C:\path\to\exact-worktree --allow-unmerged      # an abandoned lane
+pnpm run worktree:remove C:\path\to\exact-worktree --forget-missing      # its folder is really gone
 ```
 
 Run it from outside the worktree it removes (the main checkout is the usual
@@ -276,13 +277,18 @@ place). What it does:
 1. Runs the refusals below. Nothing is deleted until they all pass.
 2. Deletes the lane's top-level `node_modules` and `.next` with Node's
    `fs.rmSync`, which removes a link itself rather than descending into it
-   (verified on Windows for drive-letter and volume-path junctions). If one
-   cannot be fully deleted it stops with the lane still registered; run it
-   again.
-3. Runs plain `git worktree remove <path>`, **without `--force`**. git's own
+   (verified on Windows for drive-letter and volume-path junctions). Before
+   that it refuses if git would protect anything in them (a tracked file, or
+   one the branch does not ignore). If one cannot be fully deleted it stops
+   with the lane still registered; run it again.
+3. Checks the lane again, because deleting a real `node_modules` takes about
+   ten seconds: if either folder has reappeared, or the scan below now finds a
+   link, an unreadable folder or another repository, it stops before git runs.
+4. Runs plain `git worktree remove <path>`, **without `--force`**. git's own
    checks then refuse on modified, untracked or submodule work exactly as in
-   normal use. If git refuses, the lane is intact apart from its `node_modules`
-   and `.next`, which `pnpm install` brings back.
+   normal use. If git refuses, git has deleted nothing and the lane is still
+   registered; only its `node_modules` and `.next` are gone, and
+   `pnpm install` brings them back.
 
 **The accepted trade-off, the same as plain `git worktree remove`: ignored
 files, such as `.env.local`, are deleted with the lane.** That includes files a
@@ -323,13 +329,20 @@ It refuses, before deleting anything:
   `submodule deinit`); and files marked `--skip-worktree` or
   `--assume-unchanged`, whose edits git status does not show (a sparse checkout
   uses the same flag, so it is refused too);
-- a HEAD not merged into the base without `--allow-unmerged`.
+- a HEAD not merged into the base without `--allow-unmerged`;
+- a lane whose folder is missing, because none of these checks can run and a
+  folder that is only away (an unmounted drive, a moved folder) would lose its
+  index and any commit only its HEAD holds. `--forget-missing` unregisters it
+  when it is really gone.
 
-A lane whose folder is already gone is simply unregistered. If git itself
-fails part way through deleting (a file held open), it has already checked the
-lane and unregistered it; the tool says so, and what is left is deleted by
-hand. The link checks run before git starts: a link created in the lane after
-them, outside `node_modules` and `.next`, is not covered.
+Stated limits. If git itself fails part way through deleting (a file held
+open), it has already checked the lane and unregistered it; the tool says so,
+and what is left is deleted by hand. And the second check narrows the window
+for a new link but does not close it: a link created in the lane, outside
+`node_modules` and `.next`, after that check and before git reaches it could
+still be followed. Measured on a real lane of this repository: the re-check
+took about 0.3 s, and git's own run, its check and then its delete, about 3 s.
+Stop anything writing to a lane (a dev server, an install) before removing it.
 
 ### 4. Preserve progress while lanes run
 
