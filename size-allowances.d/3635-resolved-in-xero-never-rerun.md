@@ -18,10 +18,25 @@ reason: it revalidates the real booking page through the one route-pattern
   constant instead of a path that does not exist; that costs its import.
 
 file: src/lib/xero-hardening-report.ts
-lines: 1106
+lines: 1108
 reason: the report's failure counts (repeated, failed, partial, unsupported)
   leave out an operation an officer resolved in Xero; the predicate's import,
-  the selected column and one filter sit where the failure rows are read.
+  the selected column and one filter sit where the failure rows are read, and
+  the summary keeps the count of resolved rows it left out.
+
+file: src/app/api/admin/subscription-billing/route.ts
+lines: 334
+reason: it revalidates the member's admin page through the one route-pattern
+  constant, which names the page file, instead of a pattern that matched no
+  page; that costs its import.
+
+file: src/app/api/admin/xero/force-sync/route.ts
+lines: 340
+reason: force-sync of one booking is the single deliberate override of an
+  officer's resolved-in-Xero mark, so it passes the override and its audit row
+  names the operation it overrode, at the one call and the one audit write
+  that must carry them; the fence itself lives in
+  `xero-resolved-in-xero-fences.ts`.
 
 file: src/lib/xero-refund-note-link-repair.ts
 lines: 883
