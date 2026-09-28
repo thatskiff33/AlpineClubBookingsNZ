@@ -62,8 +62,10 @@ const {
   mockClaimAlertCooldown,
   mockBookingDefaultsFindUnique,
   mockPaymentRefundFindMany,
+  mockFindLateCapturePaymentIntents,
 } = vi.hoisted(() => ({
   mockPaymentRefundFindMany: vi.fn().mockResolvedValue([]),
+  mockFindLateCapturePaymentIntents: vi.fn(),
   mockPaymentRecoveryOperationFindFirst: vi.fn().mockResolvedValue(null),
   // #3639: the treasurer-approval task and the club's setting. Null is "no task
   // owns this capture" and "the club never saved the setting", which is the
@@ -334,8 +336,8 @@ vi.mock("@/lib/xero-token-store", () => ({
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
   hasXeroReceiptForLateCapture: (paymentIntentId: string) =>
     mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId),
-  // #3635 round-3: no charge.refunded here is of a late capture.
-  findLateCapturePaymentIntents: async () => new Set<string>(),
+  // #3635 round-3: no charge.refunded here is of a late capture unless a case says so.
+  findLateCapturePaymentIntents: (...args: unknown[]) => mockFindLateCapturePaymentIntents(...args),
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -403,6 +405,7 @@ describe("Stripe webhook Xero alerting", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPaymentRefundFindMany.mockResolvedValue([]);
+    mockFindLateCapturePaymentIntents.mockImplementation(async () => new Set<string>());
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
@@ -789,6 +792,59 @@ describe("Stripe webhook Xero alerting", () => {
       "payment-3",
       3800
     );
+  });
+
+  // #3635 round-3 R1/R4: a refund of a LATE capture is noted per capture, and
+  // only once the app recorded that capture's receipt - never by the
+  // payment-wide delta, which would note a capture Xero never received.
+  describe("charge.refunded of a late capture (round 3)", () => {
+    const refundEvent = () => {
+      mockConstructWebhookEvent.mockReturnValue({
+        id: "evt_refund_late",
+        type: "charge.refunded",
+        data: { object: { id: "ch_late", payment_intent: "pi_late", amount_refunded: 3800 } },
+      } as any);
+      mockListRefundsForCharge.mockResolvedValue([]);
+      mockSyncRefundsFromStripeCharge.mockResolvedValue({
+        paymentId: "payment-3",
+        refundDeltaCents: 3800,
+        payment: { id: "payment-3", amountCents: 24000, refundedAmountCents: 3800 },
+      });
+      mockIsXeroConnected.mockResolvedValue(false);
+      mockFindLateCapturePaymentIntents.mockImplementation(async () => new Set(["pi_late"]));
+      mockPaymentRefundFindMany.mockResolvedValue([
+        {
+          amountCents: 3800,
+          status: "succeeded",
+          stripeCreatedAt: new Date("2026-06-11T22:00:00.000Z"),
+          createdAt: new Date("2026-06-11T22:00:00.000Z"),
+        },
+      ]);
+    };
+
+    it("queues nothing while the app has recorded no receipt for the capture", async () => {
+      refundEvent();
+      mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(false);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("queues the capture's own refunds, naming the capture and the refund's day, once it has a receipt", async () => {
+      refundEvent();
+      mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(true);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-3", 3800, {
+        refundMethod: "card",
+        paymentIntentId: "pi_late",
+        documentDate: "2026-06-12",
+      });
+    });
   });
 
   it("marks canceled additional payment intents as failed when Stripe sends payment_intent.canceled", async () => {

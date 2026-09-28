@@ -3770,6 +3770,51 @@ describe("runBookingXeroRepair", () => {
       }
     });
 
+    // #3635 round-3 N1: an invoice raised before a reopen and approval whose
+    // Stripe payment never recorded is still offered its payment retry.
+    it("offers the payment retry of a raised kept invoice even once the task was reopened and approved", async () => {
+      const partial = { ...keptOperation("PARTIAL"), xeroObjectId: "inv_kept" };
+      const { bookingReport } = await run(keptBooking(), "COMPLETED", [partial]);
+      expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeDefined();
+      expect(
+        bookingReport.findings.find(
+          (finding) =>
+            finding.code === "BLOCKED_BY_XERO_OPERATION" &&
+            (finding.details as { operationId?: string }).operationId === "op_kept_invoice",
+        ),
+      ).toBeDefined();
+      // A FAILED one before its invoice was raised is not: the approval withdrew it.
+      const failed = await run(keptBooking(), "COMPLETED", [keptOperation("FAILED")]);
+      expect(failed.bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+    });
+
+    // #3635 round-3 R5: the app raises no refund note for a receipt an officer
+    // recorded by hand, so once it is refunded an officer is told to record
+    // that refund by hand too. Report-only.
+    it("asks for the refund to be recorded by hand once a kept invoice resolved by hand is refunded", async () => {
+      const resolved = {
+        ...keptOperation("FAILED"),
+        manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedReason: "Raised by hand in Xero",
+      };
+      const byHand = (report: { findings: { code: string }[] }) =>
+        report.findings.find((finding) => finding.code === "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND");
+
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [resolved]);
+      expect(byHand(bookingReport)).toMatchObject({
+        severity: "warning",
+        safeToAutoApply: false,
+        details: expect.objectContaining({ paymentIntentId: "pi_kept", refundedCents: 10000 }),
+      });
+      expect(bookingReport.actions).toEqual([]);
+
+      expect(byHand((await run(keptBooking(), "DISMISSED", [resolved])).bookingReport)).toBeUndefined();
+    });
+
     it("applies it on a transaction of its own, where the enqueue re-reads the task under its lock", async () => {
       const booking = keptBooking();
       const deps = createDependencies({

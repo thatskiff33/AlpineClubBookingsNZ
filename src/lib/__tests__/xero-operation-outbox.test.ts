@@ -1152,6 +1152,37 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     );
   });
 
+  // #3635 round-3 R4/R3: a late capture's note records the capture it answers
+  // and the day its refund left Stripe, for the executor and the per-capture count.
+  it("records the late capture a note answers, and its refund's day, on the queued row", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 8000,
+      xeroRefundCreditNoteId: "cn_1",
+    });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(5000);
+
+    await enqueueXeroRefundCreditNoteOperation("payment_1", 3000, {
+      refundMethod: "card",
+      paymentIntentId: "pi_late",
+      documentDate: "2026-06-12",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
+          refundMethod: "card",
+          paymentIntentId: "pi_late",
+          documentDate: "2026-06-12",
+        },
+      })
+    );
+  });
+
   it("skips a replayed Stripe delta once the notes already cover the refund", async () => {
     mocks.findUniquePayment.mockResolvedValue({
       id: "payment_1",

@@ -275,8 +275,8 @@ export async function createXeroSupplementaryInvoice(params: {
         )
       : null;
   const keptCaptureOn = await readKeptLateCaptureChargeDate(queuedRequestPayload);
-  if (keptCaptureOn && queuedRequestPayload && queuedRequestPayload.keptLateCaptureChargedOn !== keptCaptureOn) {
-    queuedRequestPayload = { ...queuedRequestPayload, keptLateCaptureChargedOn: keptCaptureOn };
+  if (keptCaptureOn && queuedRequestPayload && queuedRequestPayload.keptLateCaptureDay !== keptCaptureOn) {
+    queuedRequestPayload = { ...queuedRequestPayload, keptLateCaptureDay: keptCaptureOn };
     await prisma.xeroSyncOperation.update({
       where: { id: syncOperationId! },
       data: { requestPayload: sanitizeForJson(queuedRequestPayload) },
@@ -550,14 +550,14 @@ export async function createXeroSupplementaryInvoice(params: {
 /**
  * #3635 round-3 R2: the charge day of a KEPT late capture this queued
  * supplementary invoice records (its task DISMISSED), or null for every other
- * supplementary invoice. Stored on the row once read (`keptLateCaptureChargedOn`),
+ * supplementary invoice. Stored on the row once read (`keptLateCaptureDay`),
  * so a retry reuses it; read from the Stripe charge otherwise, with today as
  * the fallback when Stripe cannot say.
  */
 async function readKeptLateCaptureChargeDate(
   queuedRequestPayload: Record<string, unknown> | null,
 ): Promise<string | null> {
-  const stored = queuedRequestPayload?.keptLateCaptureChargedOn;
+  const stored = queuedRequestPayload?.keptLateCaptureDay;
   if (typeof stored === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
   const paymentIntentId = queuedRequestPayload?.paymentIntentId;
   if (typeof paymentIntentId !== "string" || !paymentIntentId) return null;
