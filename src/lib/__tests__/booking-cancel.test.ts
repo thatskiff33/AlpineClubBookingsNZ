@@ -92,6 +92,10 @@ const mocks = vi.hoisted(() => {
   txPaymentFindUnique: vi.fn(),
   reconcilePaymentAggregates: vi.fn(),
   recordInternetBankingPaymentTransaction: vi.fn(),
+  // #3643 (owner decision 28 Sep 2026): the DECISION 2 hand-back task, raised
+  // inside the unpaid claim.
+  txManualRefundTaskFindFirst: vi.fn(),
+  txManualRefundTaskCreate: vi.fn(),
   };
 });
 
@@ -350,6 +354,10 @@ describe("cancelBooking credit refunds", () => {
             // credit under the lock to floor the invoice-clearing amount.
             memberCreditNoteAllocation: {
               aggregate: mocks.txMemberCreditAggregate,
+            },
+            manualRefundTask: {
+              findFirst: mocks.txManualRefundTaskFindFirst,
+              create: mocks.txManualRefundTaskCreate,
             },
           };
           mocks.lastTx = mockTx;
@@ -3107,6 +3115,8 @@ describe("cancelBooking credit refunds", () => {
         refundPercentage: 50,
       });
       mocks.alertExpiredHold.mockResolvedValue(undefined);
+      mocks.txManualRefundTaskFindFirst.mockResolvedValue(null);
+      mocks.txManualRefundTaskCreate.mockResolvedValue({ id: "task_review" });
     });
 
     const cancelAs = (role: string, hasBookingsEditAccess = false) =>
@@ -3260,6 +3270,59 @@ describe("cancelBooking credit refunds", () => {
       );
     });
 
+    // Owner decision 28 Sep 2026: the cancel also raises one hand-back task,
+    // inside the claim, with no amount and the payment named by the marker.
+    it("DECISION 2: the cancel raises exactly one part-payment review task, in the claim transaction", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        ...PART_PAID,
+        fromRecordedLinkOnly: true,
+        cashComplete: false,
+        amountDueCents: null,
+      });
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 200 });
+      expect(mocks.txManualRefundTaskFindFirst).toHaveBeenCalledWith({
+        where: { partPaymentReviewPaymentId: "payment_ib" },
+        select: { id: true },
+      });
+      expect(mocks.txManualRefundTaskCreate).toHaveBeenCalledTimes(1);
+      const [{ data }] = mocks.txManualRefundTaskCreate.mock.calls[0];
+      expect(data).toEqual({
+        bookingId: "booking_ib",
+        partPaymentReviewPaymentId: "payment_ib",
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        reason: expect.stringContaining("Xero could not give the amount paid exactly."),
+      });
+      // No amount, no raised amount, no paymentId: the database refuses them.
+      expect(data).not.toHaveProperty("amountCents");
+      expect(data).not.toHaveProperty("paymentId");
+      expect(data.reason.length).toBeLessThanOrEqual(500);
+      // Inside the claim: the cancel's own transaction wrote it.
+      expect(mocks.lastTx).not.toBeNull();
+      expect(mocks.txManualRefundTaskCreate.mock.invocationCallOrder[0]).toBeGreaterThan(
+        mocks.bookingUpdateMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("DECISION 2: a replay that finds the payment's review raises no second task", async () => {
+      mocks.readHoldPaymentEvidence.mockResolvedValue({
+        ...PART_PAID,
+        fromRecordedLinkOnly: true,
+        cashComplete: false,
+        amountDueCents: null,
+      });
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+      mocks.txManualRefundTaskFindFirst.mockResolvedValue({ id: "task_existing" });
+
+      const result = await cancelAs("ADMIN");
+
+      expect(result).toMatchObject({ status: 200 });
+      expect(mocks.txManualRefundTaskCreate).not.toHaveBeenCalled();
+    });
+
     it("DECISION 2: a member's own cancel of such a booking is sent to the club", async () => {
       mocks.readHoldPaymentEvidence.mockResolvedValue({
         ...PART_PAID,
@@ -3291,6 +3354,12 @@ describe("cancelBooking credit refunds", () => {
         "cancelled-payment-recorded",
         expect.anything(),
       );
+      expect(mocks.txManualRefundTaskCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          partPaymentReviewPaymentId: "payment_ib",
+          reason: expect.stringContaining("belongs to an organisation"),
+        }),
+      });
     });
 
     it("still cancels an unpaid internet banking booking the never-captured way", async () => {
@@ -3306,6 +3375,7 @@ describe("cancelBooking credit refunds", () => {
       expect(result).toMatchObject({ status: 200, data: { refundAmountCents: 0 } });
       expect(mocks.txPaymentTransactionUpdate).not.toHaveBeenCalled();
       expect(mocks.alertExpiredHold).not.toHaveBeenCalled();
+      expect(mocks.txManualRefundTaskCreate).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
         { bookingId: "booking_ib", refundAmountCents: 30000, clearsUnpaidInvoice: true },
         { createdByMemberId: "member_1" },

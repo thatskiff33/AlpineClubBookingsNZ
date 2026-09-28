@@ -281,6 +281,12 @@ function createDependencies(state: {
   lateCaptureApprovalTasks?: { bookingId: string; lateCaptureApprovalIntentId: string }[];
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
+  // #3643 (owner decision 28 Sep 2026): DECISION 2 part-payment review tasks.
+  partPaymentReviewTasks?: {
+    bookingId: string;
+    partPaymentReviewPaymentId: string;
+    status: "OPEN" | "COMPLETED" | "DISMISSED";
+  }[];
   // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
   // allocation term). Empty for every pre-existing test.
   allocatedAppliedCreditByBookingId?: Record<string, number>;
@@ -481,6 +487,8 @@ function createDependencies(state: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
           where?.kind === "CANCELLED_BOOKING_HAND_BACK"
             ? (state.handBackTasks ?? [])
+            : where?.partPaymentReviewPaymentId
+              ? (state.partPaymentReviewTasks ?? [])
             : where?.lateCaptureApprovalIntentId
               ? (state.lateCaptureApprovalTasks ?? [])
               : (state.editReviewChargeShares ?? []),
@@ -1416,6 +1424,60 @@ describe("runBookingXeroRepair", () => {
     expect(pending.actions.map((action) => action.type)).not.toContain(
       "QUEUE_MODIFICATION_CREDIT_NOTE"
     );
+  });
+
+  // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2 cancel
+  // raised a hand-back task for the payment. The manual-review finding stays
+  // while the task is open and goes quiet once a treasurer has completed or
+  // dismissed it - and a quiet booking never falls through to a full note.
+  it("quiets the part-payment finding once its hand-back task is closed (#3643)", async () => {
+    const report = async (status?: "OPEN" | "COMPLETED" | "DISMISSED") =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            links: [
+              paymentLink({
+                id: "link_part_payment",
+                xeroObjectType: "PAYMENT",
+                xeroObjectId: "xero_payment_1",
+                role: "INVOICE_PAYMENT",
+                metadata: { invoiceId: "inv_primary", amount: 50, status: "AUTHORISED" },
+              }),
+            ],
+            partPaymentReviewTasks: status
+              ? [{ bookingId: "booking_1", partPaymentReviewPaymentId: "payment_1", status }]
+              : [],
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+    const partPaymentFinding = expect.objectContaining({
+      code: "MANUAL_REVIEW_REQUIRED",
+      severity: "manual_review",
+      summary: expect.stringContaining("has a payment recorded against it"),
+    });
+
+    for (const status of [undefined, "OPEN"] as const) {
+      expect((await report(status)).findings).toContainEqual(partPaymentFinding);
+    }
+    for (const status of ["COMPLETED", "DISMISSED"] as const) {
+      const closed = await report(status);
+      expect(closed.findings).not.toContainEqual(partPaymentFinding);
+      expect(
+        closed.findings.filter((finding) =>
+          ["manual_review", "critical"].includes(finding.severity),
+        ),
+      ).toEqual([]);
+      expect(closed.actions.map((action) => action.type)).not.toContain(
+        "QUEUE_MODIFICATION_CREDIT_NOTE",
+      );
+    }
   });
 
   // #3643 F2: the ORGANISATION late-cash arm retires the pending clearing note
