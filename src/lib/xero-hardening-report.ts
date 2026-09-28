@@ -15,6 +15,7 @@ import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import type {
   CanonicalLinkExpectation,
   CanonicalLinkRecord,
@@ -471,6 +472,7 @@ export async function buildXeroReconciliationReport(
         xeroObjectUrl: true,
         startedAt: true,
         createdAt: true,
+        manuallyResolvedAt: true,
       },
     }),
     prisma.xeroSyncOperation.count({
@@ -762,7 +764,9 @@ export async function buildXeroReconciliationReport(
   const unsupportedPartialOperationsList = recentPartialOperationsList
     .flatMap((operation) => {
       const retryMeta = getXeroOperationRetryMeta(operation);
-      if (retryMeta.supported) {
+      // #3635 (`INV-INT-025`): a partial an officer resolved in Xero is done,
+      // not an unsupported one waiting for a repair handler.
+      if (retryMeta.supported || isResolvedInXero(operation)) {
         return [];
       }
 

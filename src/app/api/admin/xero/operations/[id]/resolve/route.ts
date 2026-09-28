@@ -4,6 +4,7 @@ import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 
 const resolveSchema = z.object({
   reason: z.string().trim().min(3).max(500),
@@ -38,7 +39,7 @@ export async function POST(
       return NextResponse.json({ error: "Xero operation not found." }, { status: 404 });
     }
 
-    if (operation.manuallyResolvedAt) {
+    if (isResolvedInXero(operation)) {
       return NextResponse.json({
         ok: true,
         message: "Xero operation was already resolved.",
@@ -52,14 +53,31 @@ export async function POST(
       );
     }
 
-    await prisma.xeroSyncOperation.update({
-      where: { id },
+    // #3635 (`INV-INT-025`): status-guarded, the mirror of the retry claims'
+    // `manuallyResolvedAt: null` guard. A retry that claimed the row after the
+    // read above (FAILED -> RUNNING/PENDING) wins, and the officer is told to
+    // look again rather than stamping "done" on an operation now re-running.
+    const resolved = await prisma.xeroSyncOperation.updateMany({
+      where: {
+        id,
+        status: { in: ["FAILED", "PARTIAL"] },
+        manuallyResolvedAt: null,
+      },
       data: {
         manuallyResolvedAt: new Date(),
         manuallyResolvedReason: parsed.data.reason,
         manuallyResolvedById: session.user.id,
       },
     });
+    if (resolved.count !== 1) {
+      return NextResponse.json(
+        {
+          error:
+            "This Xero operation changed while it was being resolved (a retry may have started). Reload it and check before resolving.",
+        },
+        { status: 409 }
+      );
+    }
 
     await createAuditLog({
       action: "xero.operation.manually_resolved",

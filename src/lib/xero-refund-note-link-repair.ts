@@ -489,11 +489,15 @@ const EXECUTOR_LIFECYCLE_CREATE_STATUSES = [
  * call — which is why these statuses must block at all. PARTIAL is
  * conservative rather than a proven mint path: a supported Payment-scoped
  * PARTIAL retry routes to the follow-up repair, which reuses the existing
- * note instead of calling `createXeroCreditNote`. `manuallyResolvedAt` is
- * deliberately NOT mirrored here — resolving gates nothing in the retry
- * machinery, so a resolved-but-replayable FAILED row can still mint and
- * still blocks. SUCCEEDED and CANCELLED rows cannot re-execute and never
- * block.
+ * note instead of calling `createXeroCreditNote`. `manuallyResolvedAt` IS
+ * mirrored here, the same way (#3635, `INV-INT-025`): an operation an officer
+ * resolved in Xero is done, `getXeroOperationRetryMeta` refuses it, and the
+ * retry claims and the queued-retry drain refuse it too, so it can never mint
+ * again and must not fence the payment's link repair. The one window left is a
+ * credit-note retry already past its checks and inside its provider call when
+ * the officer resolves the row; that retry's own completion writes the note's
+ * link, which this repair then reads like any other. SUCCEEDED and CANCELLED
+ * rows cannot re-execute and never block.
  */
 const RETRYABLE_CREATE_STATUSES = ["FAILED", "PARTIAL"];
 
@@ -534,6 +538,8 @@ async function findBlockingRefundCreditNoteOperationId(
           operationType: "CREATE",
           status: { in: RETRYABLE_CREATE_STATUSES },
           replayable: true,
+          // The query-side spelling of `isResolvedInXero` (`INV-INT-025`).
+          manuallyResolvedAt: null,
         },
         {
           operationType: "REQUEUE",

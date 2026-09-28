@@ -2,13 +2,13 @@
 // detection and booking summary assembly) for the booking-vs-Xero repair tool.
 // Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
 import { bookingOwner } from "@/lib/booking-owner";
-import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type {
   BookingClassificationContext,
   BookingXeroRepairAction,
   BookingXeroRepairBookingSummary,
   MutableFinding,
   ResolvedLocalObject,
+  RetryableOperationMatch,
   XeroAmountEvidence,
   XeroObjectLinkRecord,
   XeroOperationRecord,
@@ -46,17 +46,22 @@ export function addFinding(
   findings.push(input);
 }
 
+/**
+ * A repair offer to re-run an operation. It is auto-applied, so it takes only
+ * the `retryable` match (#3635, `INV-INT-025`): a row an officer resolved in
+ * Xero, or one the retry helper refuses, cannot reach here.
+ */
 export function buildRetryAction(
   bookingId: string,
-  operation: XeroOperationRecord,
-  retryMeta: XeroOperationRetryMeta
+  match: RetryableOperationMatch
 ) {
+  const { operation } = match;
   return {
     key: `retry:${operation.id}`,
     bookingId,
     type: "REQUEUE_XERO_OPERATION" as const,
     description: `Requeue Xero operation ${operation.id} (${operation.entityType}/${operation.operationType}).`,
-    safeToAutoApply: retryMeta.supported,
+    safeToAutoApply: match.retryMeta.supported,
     payload: {
       operationId: operation.id,
     },

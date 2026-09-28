@@ -15,6 +15,10 @@ import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysi
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import {
+  isResolvedInXero,
+  RESOLVED_IN_XERO_RETRY_REASON,
+} from "@/lib/xero-operation-resolution";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
@@ -71,6 +75,9 @@ type RetryableOperation = Pick<
   | "responsePayload"
   | "xeroObjectId"
   | "xeroObjectNumber"
+  // #3635: REQUIRED, so a caller whose select forgot it fails to compile
+  // instead of silently offering a resolved row for retry.
+  | "manuallyResolvedAt"
 > & {
   // #1354: enqueue-time queue type (never updated afterward) — the only
   // reliable delta-mode marker once a handler has overwritten requestPayload.
@@ -131,6 +138,26 @@ function groupSettlementInvoiceRequeuePayload(
 export interface XeroOperationRetryMeta {
   supported: boolean;
   reason: string | null;
+}
+
+/**
+ * The retry paths' refusal of a resolved operation, as a 409 so the operator
+ * routes answer "conflicts with the officer's mark" rather than "bad request",
+ * and so the queued-retry drain can tell it apart from a real failure.
+ */
+export class XeroOperationResolvedInXeroError extends XeroOperationRetryError {
+  constructor() {
+    super(RESOLVED_IN_XERO_RETRY_REASON, 409);
+    this.name = "XeroOperationResolvedInXeroError";
+  }
+}
+
+export function refuseRetryIfResolvedInXero(operation: {
+  manuallyResolvedAt: Date | null;
+}): void {
+  if (isResolvedInXero(operation)) {
+    throw new XeroOperationResolvedInXeroError();
+  }
 }
 
 function readAppliedCreditAllocationChildContext(payload: unknown): {
@@ -725,6 +752,10 @@ function parseModificationCreditNoteRepairInput(
 }
 
 export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOperationRetryMeta {
+  if (isResolvedInXero(operation)) {
+    return { supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON };
+  }
+
   if (!operation.replayable) {
     return {
       supported: false,
@@ -1047,6 +1078,7 @@ export async function retryXeroSyncOperation(
     throw new XeroOperationRetryError("Xero operation not found.", 404);
   }
 
+  refuseRetryIfResolvedInXero(operation);
   const retryMeta = getXeroOperationRetryMeta(operation);
   if (!retryMeta.supported) {
     throw new XeroOperationRetryError(retryMeta.reason ?? "This Xero operation cannot be retried.");
@@ -1071,6 +1103,8 @@ export async function retryXeroSyncOperation(
       where: {
         id: operation.id,
         status: { in: ["FAILED", "PARTIAL"] },
+        // #3635: a resolve landing after the read above makes this claim lose.
+        manuallyResolvedAt: null,
       },
       data: {
         status: "PENDING",
@@ -1099,7 +1133,8 @@ export async function retryXeroSyncOperation(
   if (groupSettlementPayload) {
     const queued = await prisma.xeroSyncOperation
       .updateMany({
-        where: { id: operation.id, status: "FAILED" },
+        // #3635: a resolve landing after the read makes this claim lose.
+        where: { id: operation.id, status: "FAILED", manuallyResolvedAt: null },
         data: {
           status: "PENDING",
           requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
@@ -1321,7 +1356,12 @@ export async function retryXeroSyncOperation(
       // land on THIS row (accurate outbox/ops-panel state instead of a
       // permanently-FAILED row behind a false success message).
       const claimed = await prisma.xeroSyncOperation.updateMany({
-        where: { id: operation.id, status: { in: ["FAILED", "PARTIAL"] } },
+        // #3635: a resolve landing after the read makes this claim lose.
+        where: {
+          id: operation.id,
+          status: { in: ["FAILED", "PARTIAL"] },
+          manuallyResolvedAt: null,
+        },
         data: { status: "RUNNING", startedAt: new Date() },
       });
       if (claimed.count !== 1) {

@@ -11,7 +11,9 @@ import {
 } from "@/lib/xero-sync";
 import {
   getXeroOperationRetryMeta,
+  refuseRetryIfResolvedInXero,
   retryXeroSyncOperation,
+  XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import type { ClubFormat } from "@/lib/club-format";
@@ -90,6 +92,9 @@ export async function enqueueXeroSyncOperationRetry(
     throw new XeroOperationRetryError("Xero operation not found.", 404);
   }
 
+  // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done,
+  // so the retry and requeue routes answer 409 rather than queue it.
+  refuseRetryIfResolvedInXero(operation);
   const retryMeta = getXeroOperationRetryMeta(operation);
   if (!retryMeta.supported) {
     throw new XeroOperationRetryError(
@@ -227,6 +232,22 @@ export async function processQueuedXeroOperationRetries(
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof XeroOperationResolvedInXeroError) {
+        // #3635 (`INV-INT-025`): a retry queued before an officer resolved the
+        // operation in Xero. `retryXeroSyncOperation` re-read the row and
+        // refused it, so nothing ran; the queued row is closed as skipped, not
+        // failed, because nothing went wrong and nothing is left to do.
+        await completeXeroSyncOperation(queuedOperation.id, {
+          status: "CANCELLED",
+          responsePayload: {
+            originalOperationId,
+            skipped: "resolved-in-xero",
+            reason: error.message,
+          },
+        });
+        result.skipped += 1;
+        continue;
+      }
       logger.error(
         {
           err: error,

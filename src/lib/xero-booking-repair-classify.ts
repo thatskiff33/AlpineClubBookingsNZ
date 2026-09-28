@@ -6,7 +6,7 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
-import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import {
   isClearingAllocationShortfall,
   partialClearingNoteIsIncomplete,
@@ -28,6 +28,7 @@ import {
 } from "./xero-booking-repair-payments";
 import {
   getBlockingOperation,
+  toRetryableOperationMatch,
   isStuckOperation,
   paymentNoteAnswersInvoice,
   resolveObjectFromCandidates,
@@ -73,16 +74,16 @@ import { formatDateOnly } from "@/lib/date-only";
 /**
  * #3643: a booking's invoice-clearing credit note create that still stands -
  * not retired (CANCELLED) and not marked resolved in Xero by an officer (the
- * operations resolve route). The one home of "the officer's mark means the
- * clearing was done by hand"; the cancelled-open-invoice arm asks it both
- * for a recognised part payment's rest and for a refused or failed note.
+ * operations resolve route). The officer's mark is read through
+ * `isResolvedInXero`, the one home of "resolved means done" (#3635,
+ * `INV-INT-025`); the recognised part payment's rest asks this.
  */
 function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolean {
   return (
     operation.entityType === "CREDIT_NOTE" &&
     operation.operationType === "CREATE" &&
     operation.status !== "CANCELLED" &&
-    !operation.manuallyResolvedAt
+    !isResolvedInXero(operation)
   );
 }
 
@@ -231,10 +232,10 @@ export function classifyBookingContext(
         "INVOICE",
         "CREATE"
       );
-      if (blockingOperation && blockingOperation.retryMeta.supported) {
+      if (blockingOperation?.kind === "retryable") {
         const action = addAction(
           actionMap,
-          buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+          buildRetryAction(booking.id, blockingOperation)
         );
         addFinding(findings, {
           code: "BLOCKED_BY_XERO_OPERATION",
@@ -249,6 +250,9 @@ export function classifyBookingContext(
           },
           actionKeys: [action.key],
         });
+      } else if (blockingOperation?.kind === "resolved") {
+        // #3635 (`INV-INT-025`): an officer resolved it in Xero - done by
+        // hand, so nothing is reported, retried or queued beside it.
       } else if (blockingOperation) {
         const summary = isStuckOperation(blockingOperation.operation)
           ? "A pending or running Xero booking invoice operation looks stuck."
@@ -334,10 +338,10 @@ export function classifyBookingContext(
       "UPDATE"
     );
 
-    if (blockingOperation && blockingOperation.retryMeta.supported) {
+    if (blockingOperation?.kind === "retryable") {
       const action = addAction(
         actionMap,
-        buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+        buildRetryAction(booking.id, blockingOperation)
       );
       addFinding(findings, {
         code: "BLOCKED_BY_XERO_OPERATION",
@@ -351,6 +355,9 @@ export function classifyBookingContext(
         },
         actionKeys: [action.key],
       });
+    } else if (blockingOperation?.kind === "resolved") {
+      // #3635 (`INV-INT-025`): an officer resolved it in Xero - done by
+      // hand, so nothing is reported, retried or queued beside it.
     } else if (blockingOperation) {
       const summary = isStuckOperation(blockingOperation.operation)
         ? "A pending or running Xero primary invoice update looks stuck."
@@ -509,10 +516,10 @@ export function classifyBookingContext(
           primaryInvoiceEditTiming.outcome !== "invoice-preceded-edit"
             ? primaryInvoiceEditTiming
             : null;
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -710,6 +717,9 @@ export function classifyBookingContext(
               actionKeys: [action.key],
             });
           }
+        } else if (blockingOperation.kind === "resolved") {
+          // #3635 (`INV-INT-025`): an officer resolved it in Xero - done by
+          // hand, so nothing is reported, retried or queued beside it.
         } else {
           // #1356: a live-but-not-retryable operation (WAITING_PAYMENT parked
           // on its additional Stripe payment, or pending/running/unsupported)
@@ -882,10 +892,10 @@ export function classifyBookingContext(
           // missing invoice-applied note behind a blocked finding.
           { payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE }
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -960,6 +970,9 @@ export function classifyBookingContext(
               actionKeys: [action.key],
             });
           }
+        } else if (blockingOperation.kind === "resolved") {
+          // #3635 (`INV-INT-025`): an officer resolved it in Xero - done by
+          // hand, so nothing is reported, retried or queued beside it.
         } else {
           // #1427 (the #1356 third-arm rule): a live-but-not-retryable
           // credit-note operation must surface as blocked — silence here
@@ -1054,10 +1067,10 @@ export function classifyBookingContext(
             "ALLOCATION",
             "ALLOCATE"
           );
-          if (blockingOperation && blockingOperation.retryMeta.supported) {
+          if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
-              buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+              buildRetryAction(booking.id, blockingOperation)
             );
             addFinding(findings, {
               code: "BLOCKED_BY_XERO_OPERATION",
@@ -1134,6 +1147,9 @@ export function classifyBookingContext(
                 actionKeys: [action.key],
               });
             }
+          } else if (blockingOperation.kind === "resolved") {
+            // #3635 (`INV-INT-025`): an officer resolved it in Xero - done by
+            // hand, so nothing is reported, retried or queued beside it.
           } else {
             // #1427 third arm: a live-but-not-retryable allocation operation
             // must block, not be re-queued beside it — evidence-sized
@@ -1387,14 +1403,13 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
+        // The officer's "resolved in Xero" mark on the refused or failed note
+        // (#3643, #3635 `INV-INT-025`): the clearing was done by hand, so
+        // nothing is reported, retried or re-queued - the same rule as
+        // `recognisedRestOwed` above.
+        const blockingNoteResolvedInXero = blockingOperation?.kind === "resolved";
         // #3643: a payment the inbound sync recorded against the primary or
         // any supplementary invoice (the only local trace of a part payment).
-        // The officer's "resolved in Xero" mark on the refused or failed note
-        // (#3643): the clearing was done by hand, so nothing is reported,
-        // retried or re-queued - the same rule as `recognisedRestOwed` above.
-        const blockingNoteResolvedInXero = Boolean(
-          blockingOperation && !isOutstandingClearingNoteCreate(blockingOperation.operation)
-        );
         const recordedInvoicePayments = [
           ...paymentLinks,
           ...[...context.modificationLinksById.values()].flat(),
@@ -1444,7 +1459,7 @@ export function classifyBookingContext(
           });
         } else if (
           invoicePaymentRecorded &&
-          (!blockingOperation || blockingOperation.retryMeta.supported)
+          (!blockingOperation || blockingOperation.kind === "retryable")
         ) {
           // #3643 (`INV-PAY-107`): Xero recorded a payment against this
           // booking's invoices, so they owe less than a full-size clearing
@@ -1477,10 +1492,10 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
-        } else if (blockingOperation && blockingOperation.retryMeta.supported) {
+        } else if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -1556,10 +1571,17 @@ export function classifyBookingContext(
             operation.status === "PARTIAL" &&
             operation.xeroObjectId === cancellationCreditNote.objectId
         );
+        // #3635 (`INV-INT-025`): an officer who resolved the PARTIAL note in
+        // Xero finished its allocations by hand. That is done: no retry, and no
+        // fresh allocation queued below, which would be a second one beside
+        // the officer's.
+        const partialNoteResolvedInXero = Boolean(
+          partialNoteOperation && isResolvedInXero(partialNoteOperation)
+        );
         // Only while a planned invoice still has no allocation link from this
         // note: a repaired PARTIAL row stays PARTIAL, so its status alone
         // would report a whole note as broken forever.
-        const partialNoteRetryMeta =
+        const partialNoteRetry =
           partialNoteOperation &&
           partialClearingNoteIsIncomplete(
             partialNoteOperation.requestPayload,
@@ -1570,7 +1592,7 @@ export function classifyBookingContext(
                 link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION"
             )
           )
-            ? getXeroOperationRetryMeta(partialNoteOperation)
+            ? toRetryableOperationMatch(partialNoteOperation)
             : null;
         // The note's own amount, as its create recorded it (#3643): the cancel
         // wrote a recognised booking's rest - Xero's amount due at the read -
@@ -1604,10 +1626,12 @@ export function classifyBookingContext(
           entityType: "ALLOCATION",
           operationType: "ALLOCATE",
         });
-        if (partialNoteOperation && partialNoteRetryMeta?.supported) {
+        if (partialNoteResolvedInXero) {
+          // Done by hand in Xero: nothing reported, retried or queued.
+        } else if (partialNoteOperation && partialNoteRetry) {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, partialNoteOperation, partialNoteRetryMeta)
+            buildRetryAction(booking.id, partialNoteRetry)
           );
           addFinding(findings, {
             code: "MISSING_CREDIT_NOTE_ALLOCATION",
@@ -1628,10 +1652,10 @@ export function classifyBookingContext(
             "ALLOCATION",
             "ALLOCATE"
           );
-          if (blockingOperation && blockingOperation.retryMeta.supported) {
+          if (blockingOperation?.kind === "retryable") {
             const action = addAction(
               actionMap,
-              buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+              buildRetryAction(booking.id, blockingOperation)
             );
             addFinding(findings, {
               code: "BLOCKED_BY_XERO_OPERATION",
@@ -1645,6 +1669,9 @@ export function classifyBookingContext(
               },
               actionKeys: [action.key],
             });
+          } else if (blockingOperation?.kind === "resolved") {
+            // #3635 (`INV-INT-025`): an officer allocated it by hand in Xero -
+            // done, so no fresh allocation is queued beside theirs.
           } else if (allocationAmountCents === null) {
             // #3643: a recognised booking's note covers only the rest, and no
             // stored figure says how much - a full-size allocation would
@@ -1864,10 +1891,10 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",
@@ -1939,10 +1966,10 @@ export function classifyBookingContext(
           "CREDIT_NOTE",
           "CREATE"
         );
-        if (blockingOperation && blockingOperation.retryMeta.supported) {
+        if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
-            buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+            buildRetryAction(booking.id, blockingOperation)
           );
           addFinding(findings, {
             code: "BLOCKED_BY_XERO_OPERATION",

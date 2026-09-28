@@ -121,12 +121,15 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 import {
   getXeroOperationRetryMeta,
   retryXeroSyncOperation,
+  XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
+import { RESOLVED_IN_XERO_RETRY_REASON } from "@/lib/xero-operation-resolution";
 import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -145,9 +148,81 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     responsePayload: null,
     xeroObjectId: null,
     xeroObjectNumber: null,
+    manuallyResolvedAt: null,
     ...overrides,
   };
 }
+
+const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
+
+describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ["a failed booking invoice", {}],
+    ["a failed booking invoice update", { operationType: "UPDATE" }],
+    [
+      "a failed applied-credit allocation",
+      {
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        requestPayload: {
+          queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+          bookingId: "book_1",
+        },
+      },
+    ],
+    [
+      "a failed group settlement invoice",
+      {
+        localModel: "GroupBookingSettlement",
+        localId: "settlement_1",
+        queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+      },
+    ],
+  ])("refuses %s the officer resolved, whatever else would allow it", (_label, overrides) => {
+    const live = makeOperation(overrides);
+    // The control: the same row unresolved is retryable, so only the mark
+    // can be what refuses it.
+    expect(getXeroOperationRetryMeta(live).supported).toBe(true);
+    expect(getXeroOperationRetryMeta({ ...live, manuallyResolvedAt: RESOLVED_AT })).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+  });
+
+  it("retryXeroSyncOperation re-reads the row and 409s a resolved one without claiming it or calling Xero", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ manuallyResolvedAt: RESOLVED_AT }));
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBeInstanceOf(XeroOperationResolvedInXeroError);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)
+    ).rejects.toMatchObject({ status: 409, message: RESOLVED_IN_XERO_RETRY_REASON });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+
+  it("a resolve landing between the read and the claim makes the claim lose (no mint)", async () => {
+    // The read saw the row unresolved; the claim's `manuallyResolvedAt: null`
+    // guard is what matches nothing once the officer's mark has landed.
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+});
 
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
@@ -617,7 +692,12 @@ describe("retryXeroSyncOperation", () => {
     // fence (RUNNING is in its in-flight set) for the whole execution, and the
     // threaded syncOperationId means completion lands on THIS row.
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      // #3635: a resolve landing after the read makes the claim lose.
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+        manuallyResolvedAt: null,
+      },
       data: { status: "RUNNING", startedAt: expect.any(Date) },
     });
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("book_123", {
@@ -2109,7 +2189,7 @@ describe("retryXeroSyncOperation", () => {
       message: "Queued the group settlement invoice operation for retry.",
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: "FAILED" },
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
       data: expect.objectContaining({ status: "PENDING", requestPayload: payload }),
     });
   });
@@ -2128,7 +2208,7 @@ describe("retryXeroSyncOperation", () => {
     await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: "FAILED" },
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
       data: expect.objectContaining({
         status: "PENDING",
         requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
@@ -2188,7 +2268,11 @@ describe("retryXeroSyncOperation", () => {
     ).resolves.toEqual({ message: "Queued applied-credit allocation retry." });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+        manuallyResolvedAt: null,
+      },
       data: {
         status: "PENDING",
         startedAt: null,

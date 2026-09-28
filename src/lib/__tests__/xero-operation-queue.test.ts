@@ -40,23 +40,15 @@ vi.mock("@/lib/xero-sync", () => ({
   failXeroSyncOperation: mocks.failXeroSyncOperation,
 }));
 
-vi.mock("@/lib/xero-operation-retry", () => {
-  class TestXeroOperationRetryError extends Error {
-    status: number;
-
-    constructor(message: string, status = 400) {
-      super(message);
-      this.name = "XeroOperationRetryError";
-      this.status = status;
-    }
-  }
-
-  return {
-    getXeroOperationRetryMeta: mocks.getRetryMeta,
-    retryXeroSyncOperation: mocks.retryXeroSyncOperation,
-    XeroOperationRetryError: TestXeroOperationRetryError,
-  };
-});
+// Partial (#3635): the real error classes and the real resolved-in-Xero
+// refusal, so the queue's handling of an officer's mark is what is tested.
+vi.mock("@/lib/xero-operation-retry", async (importOriginal) => ({
+  // The cast sits OUTSIDE the call, not in a type argument: Semgrep cannot
+  // parse the latter and silently stops scanning the rest of the file (#3318).
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-retry")),
+  getXeroOperationRetryMeta: mocks.getRetryMeta,
+  retryXeroSyncOperation: mocks.retryXeroSyncOperation,
+}));
 
 import {
   buildXeroOperationRequeueCorrelationKey,
@@ -65,6 +57,7 @@ import {
   processQueuedXeroOperationRetries,
   XERO_OPERATION_REQUEUE_TYPE,
 } from "@/lib/xero-operation-queue";
+import { XeroOperationResolvedInXeroError } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
@@ -78,6 +71,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     status: "FAILED",
     createdByMemberId: null,
     requestPayload: null,
+    manuallyResolvedAt: null,
     ...overrides,
   };
 }
@@ -138,6 +132,24 @@ describe("enqueueXeroSyncOperationRetry", () => {
       enqueueXeroSyncOperationRetry("op_123", { createdByMemberId: "admin_1" })
     ).rejects.toMatchObject({
       name: "XeroOperationRetryError",
+      status: 409,
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 409 an operation an officer resolved in Xero, and queues nothing (#3635)", async () => {
+    // The retry meta is stubbed as supported, so only the resolved-in-Xero
+    // refusal can stop this - it must not lean on the meta alone.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") })
+    );
+    mocks.findFirstQueued.mockResolvedValue(null);
+
+    await expect(
+      enqueueXeroSyncOperationRetry("op_123", { createdByMemberId: "admin_1" })
+    ).rejects.toMatchObject({
+      name: "XeroOperationResolvedInXeroError",
       status: 409,
     });
 
@@ -255,6 +267,34 @@ describe("processQueuedXeroOperationRetries", () => {
       "queue_1",
       expect.objectContaining({
         name: "XeroOperationRetryError",
+      })
+    );
+  });
+
+  it("skips a retry queued before an officer resolved the operation in Xero (#3635)", async () => {
+    // Queued while FAILED; the officer then resolved it. The re-read inside
+    // `retryXeroSyncOperation` refuses it, and the drain closes the queued row
+    // as skipped - not failed, since nothing went wrong and nothing is left.
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new XeroOperationResolvedInXeroError());
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "queue_1",
+      expect.objectContaining({
+        status: "CANCELLED",
+        responsePayload: expect.objectContaining({
+          originalOperationId: "op_123",
+          skipped: "resolved-in-xero",
+        }),
       })
     );
   });

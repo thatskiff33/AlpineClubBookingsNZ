@@ -386,6 +386,7 @@ describe("Xero operation admin retry routes", () => {
   });
 
   it("marks a failed operation resolved in Xero and audits it", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
     const response = await resolveOperation(
       new NextRequest("http://localhost", {
         method: "POST",
@@ -397,9 +398,14 @@ describe("Xero operation admin retry routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.xeroOperationUpdate).toHaveBeenCalledWith(
+    expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_failed" },
+        // #3635: status-guarded, so a retry that claimed the row first wins.
+        where: {
+          id: "op_failed",
+          status: { in: ["FAILED", "PARTIAL"] },
+          manuallyResolvedAt: null,
+        },
         data: expect.objectContaining({
           manuallyResolvedReason: "Contact was archived directly in Xero.",
           manuallyResolvedById: "admin-1",
@@ -415,6 +421,48 @@ describe("Xero operation admin retry routes", () => {
       })
     );
   });
+
+  it("refuses to resolve an operation a retry claimed after the read (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+
+    const response = await resolveOperation(
+      new NextRequest("http://localhost", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Credit note raised by hand in Xero." }),
+      }),
+      { params: Promise.resolve({ id: "op_failed" }) }
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["retry", retryOperation],
+    ["requeue", requeueOperation],
+  ])(
+    "the %s route answers 409 for an operation resolved in Xero and queues nothing (#3635)",
+    async (_name, route) => {
+      mocks.enqueueXeroSyncOperationRetry.mockRejectedValue(
+        new XeroOperationRetryError(
+          "An officer marked this operation resolved in Xero; it is treated as done and is never re-run.",
+          409
+        )
+      );
+
+      const response = await route(new NextRequest("http://localhost"), {
+        params: Promise.resolve({ id: "op_resolved" }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error:
+          "An officer marked this operation resolved in Xero; it is treated as done and is never re-run.",
+      });
+      expect(mocks.processQueuedXeroOperationRetries).not.toHaveBeenCalled();
+      expect(mocks.logAudit).not.toHaveBeenCalled();
+    }
+  );
 
   it("resets stale running operations without erasing provider-created recovery proof", async () => {
     mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 3 });
