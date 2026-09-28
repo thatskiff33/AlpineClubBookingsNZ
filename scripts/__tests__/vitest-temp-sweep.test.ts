@@ -670,14 +670,26 @@ describe("the single-sweeper lock (#3675 round 2)", () => {
 
   it("lets only one of several concurrent sweeps run, and releases the lock", async () => {
     const stale = Array.from({ length: 5 }, () => vitestDir(root, nanoidName()));
-    // The lock files these sweeps create carry the real wall-clock mtime, and a
-    // lock more than an hour away from `now` in either direction is stale, so
-    // this case reads the real clock (Date is frozen here).
-    const wallClock = () => performance.timeOrigin + performance.now();
+    // A real lock's mtime follows the host clock, which libfaketime shifts in
+    // the rollover canary. Keep its age in the same frozen clock as the sweep.
+    const fixedLockClockFs: SweepFs = {
+      ...nodeSweepFs,
+      lstat: async (target) => {
+        const stats = await nodeSweepFs.lstat(target);
+        if (target !== lockPath()) return stats;
+        return {
+          isDirectory: () => stats.isDirectory(),
+          isFile: () => stats.isFile(),
+          isSymbolicLink: () => stats.isSymbolicLink(),
+          mtimeMs: NOW,
+          uid: stats.uid,
+        };
+      },
+    };
     const reports = await Promise.all([
-      sweep({ now: wallClock }),
-      sweep({ now: wallClock }),
-      sweep({ now: wallClock }),
+      sweep({ fs: fixedLockClockFs }),
+      sweep({ fs: fixedLockClockFs }),
+      sweep({ fs: fixedLockClockFs }),
     ]);
 
     expect(reports.filter((report) => !report.skipped)).toHaveLength(1);
