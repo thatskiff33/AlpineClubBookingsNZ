@@ -53,6 +53,8 @@ interface FakeOperationRow {
   replayable: boolean;
   requestPayload: unknown;
   createdAt: Date;
+  // #3635: an officer's "resolved in Xero" mark; absent means unresolved.
+  manuallyResolvedAt?: Date | null;
 }
 
 interface FakePaymentRefundRow {
@@ -240,6 +242,7 @@ const fakePrisma = vi.hoisted(() => {
             operationType?: string;
             status?: { in: string[] };
             replayable?: boolean;
+            manuallyResolvedAt?: null;
           }>;
         };
       }) => {
@@ -249,11 +252,13 @@ const fakePrisma = vi.hoisted(() => {
             operationType?: string;
             status?: { in: string[] };
             replayable?: boolean;
+            manuallyResolvedAt?: null;
           }
         ) => {
           if (branch.operationType !== undefined && row.operationType !== branch.operationType) return false;
           if (branch.status?.in && !branch.status.in.includes(row.status)) return false;
           if (branch.replayable !== undefined && row.replayable !== branch.replayable) return false;
+          if (branch.manuallyResolvedAt === null && (row.manuallyResolvedAt ?? null) !== null) return false;
           return true;
         };
         const matches = state.operations
@@ -833,6 +838,57 @@ describe("findStripeRefundNoteLinkRepairs", () => {
     expect(apply.appliedPayments).toBe(1);
     expect(state.links.find((link) => link.id === "link_90")?.active).toBe(true);
   });
+
+  it.each([
+    ["resolved in Xero", new Date("2026-06-20T00:00:00Z"), false],
+    ["unresolved (control)", null, true],
+  ])(
+    "a replayable FAILED credit-note CREATE %s blocks the repair: %s (#3635)",
+    async (_label, manuallyResolvedAt, blocks) => {
+      // Inverted by #3635 (`INV-INT-025`): before it, resolving gated nothing
+      // in the retry machinery, so a resolved-but-replayable FAILED CREATE
+      // could still mint and had to block. Now every retry path refuses it, so
+      // it is done and must not fence the payment's link repair; the
+      // unresolved twin still blocks.
+      state.links = [
+        makeLink({
+          id: "link_90",
+          xeroObjectId: "cn_90",
+          active: false,
+          metadata: { amountCents: 90, status: "AUTHORISED" },
+        }),
+        makeLink({
+          id: "link_10",
+          xeroObjectId: "cn_10",
+          active: true,
+          metadata: { amountCents: 10 },
+        }),
+      ];
+      state.operations = [
+        {
+          id: "op_failed_create",
+          direction: "OUTBOUND",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: "pay_1",
+          xeroObjectId: null,
+          status: "FAILED",
+          replayable: true,
+          manuallyResolvedAt,
+          requestPayload: { refundAmountCents: 90 },
+          createdAt: new Date("2026-05-05T00:00:00Z"),
+        },
+      ];
+
+      const report = await findStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST);
+
+      const plan = report.plans[0];
+      expect(plan?.blockedByPendingOperation).toBe(blocks);
+      expect(plan?.repairable).toBe(!blocks);
+      expect(plan?.reactivateLinkIds).toEqual(blocks ? [] : ["link_90"]);
+    }
+  );
 
   it("does not report healthy payments, non-Stripe payments, never-invoiced payments, or unrelated links", async () => {
     state.payments.push(

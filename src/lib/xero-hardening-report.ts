@@ -15,6 +15,7 @@ import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import type {
   CanonicalLinkExpectation,
   CanonicalLinkRecord,
@@ -356,7 +357,7 @@ export async function buildXeroReconciliationReport(
     payments,
     subscriptions,
     links,
-    recentFailureOperations,
+    recentFailureOperationRows,
     stalePendingOperations,
     stalePendingOperationExamples,
     failedInboundEvents,
@@ -471,6 +472,7 @@ export async function buildXeroReconciliationReport(
         xeroObjectUrl: true,
         startedAt: true,
         createdAt: true,
+        manuallyResolvedAt: true,
       },
     }),
     prisma.xeroSyncOperation.count({
@@ -748,6 +750,11 @@ export async function buildXeroReconciliationReport(
   }
   const overCoveredStripeRefundPayments = overCoveredStripeRefundItems.length;
 
+  // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done, so
+  // it is not a failure: not repeated, not recent, not an unsupported partial.
+  const recentFailureOperations = recentFailureOperationRows.filter(
+    (operation) => !isResolvedInXero(operation)
+  );
   const repeatedFailures = groupRepeatedFailures(recentFailureOperations)
     .filter((group) => group.failureCount >= repeatedFailureThreshold)
     .slice(0, topLimit);
@@ -1038,6 +1045,8 @@ export async function buildXeroReconciliationReport(
       unsupportedPartialOperations,
       repeatedFailureCorrelations: repeatedFailures.length,
       failedInboundEvents,
+      resolvedInXeroOperations:
+        recentFailureOperationRows.length - recentFailureOperations.length,
       issueCategoryCount: issueCounts.filter((count) => count > 0).length,
       issueTotalCount: issueCounts.reduce((sum, count) => sum + count, 0),
     },

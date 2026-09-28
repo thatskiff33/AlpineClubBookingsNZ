@@ -59,13 +59,20 @@ const mocks = vi.hoisted(() => {
       where,
       data,
     }: {
-      where: { id: string; status?: unknown };
+      where: { id: string; status?: unknown; manuallyResolvedAt?: null };
       data: Partial<StoredOperation>;
     }) => {
       let count = 0;
       for (const row of rows.values()) {
         if (row.id !== where.id) continue;
         if (!matchesStatus(row.status, where)) continue;
+        // #3635: honour the resolved-in-Xero guard the way Postgres would.
+        if (
+          where.manuallyResolvedAt === null &&
+          (row as { manuallyResolvedAt?: Date | null }).manuallyResolvedAt
+        ) {
+          continue;
+        }
         Object.assign(row, data);
         count += 1;
       }
@@ -292,7 +299,11 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
 
       // The un-claim widened its guard to match the FAILED row the handler left.
       expect(mocks.operationUpdateMany).toHaveBeenLastCalledWith({
-        where: { id: "op_refund_1", status: { in: ["RUNNING", "FAILED"] } },
+        where: {
+          id: "op_refund_1",
+          status: { in: ["RUNNING", "FAILED"] },
+          manuallyResolvedAt: null,
+        },
         data: {
           status: "PENDING",
           startedAt: null,
@@ -301,6 +312,23 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
           lastErrorMessage: null,
         },
       });
+    });
+
+    it("leaves FAILED a row an officer resolved in Xero in the same instant (#3635)", async () => {
+      queueOneRefundOperation();
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        const refusal = new XeroTransientOutageError(120, true);
+        await mocks.failXeroSyncOperation("op_refund_1", refusal);
+        // The officer resolves the FAILED row before the hand-back runs.
+        Object.assign(mocks.rows.get("op_refund_1")!, {
+          manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z"),
+        });
+        throw refusal;
+      });
+
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+
+      expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
     });
 
     it("MEMBERSHIP_SUBSCRIPTION_INVOICE (non-self-failing handler): returns the RUNNING row", async () => {

@@ -50,6 +50,11 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  findResolvedBookingInvoiceCreate,
+  findResolvedSiblingSince,
+  readResolvedRefundCreditNoteCoverage,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
@@ -430,6 +435,12 @@ export async function enqueueXeroBookingInvoiceOperation(
      * operator retry later still.
      */
     invoiceEmailDelivery: XeroInvoiceEmailInstruction | null;
+    /**
+     * #3635 (`INV-INT-025`): raise the invoice even though an officer resolved
+     * the last create in Xero. Only the single-booking force-sync passes it,
+     * and it audits the override; every other enqueuer is refused.
+     */
+    overrideResolvedInXero?: boolean;
   }
 ) {
   const booking = await prisma.booking.findUnique({
@@ -515,6 +526,18 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
+  // #3635 (`INV-INT-025`): an officer raised this invoice by hand in Xero and
+  // resolved the create, so a new one would bill the member twice.
+  const resolvedCreate = await findResolvedBookingInvoiceCreate(booking.payment.id);
+  if (resolvedCreate && !options.overrideResolvedInXero) {
+    return {
+      queueOperationId: null,
+      resolvedInXeroOperationId: resolvedCreate.id,
+      message:
+        "An officer resolved this booking's Xero invoice by hand in Xero, so no new invoice is queued.",
+    };
+  }
+
   const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
@@ -566,6 +589,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   return {
     queueOperationId: queuedOperation.id,
     message: "Xero booking invoice queued for background processing.",
+    // #3635: set only when force-sync overrode an officer's resolve, so it can
+    // say so in its audit row.
+    ...(resolvedCreate ? { overrodeResolvedInXeroOperationId: resolvedCreate.id } : {}),
   };
 }
 
@@ -800,6 +826,30 @@ export async function enqueueXeroRefundCreditNoteOperation(
     };
   }
 
+  // #3635 (`INV-INT-025`): a refund note an officer raised by hand in Xero and
+  // resolved has no local link, so link coverage alone reads it as missing.
+  // Its RECORDED amount counts as covered - never a per-payment block, so a
+  // later, different refund on this payment still gets its own note.
+  const resolvedCoverage = await readResolvedRefundCreditNoteCoverage(paymentId, db);
+  if (resolvedCoverage.unreadableOperationIds.length > 0) {
+    // Refused LOUDLY: the amount the officer covered cannot be read, so any
+    // figure here could credit the member twice or leave a refund unrecorded.
+    logger.error(
+      {
+        paymentId,
+        refundAmountCents,
+        resolvedOperationIds: resolvedCoverage.unreadableOperationIds,
+      },
+      "Refusing to queue a Xero refund credit note: a note resolved by hand in Xero on this payment has no readable amount (#3635)"
+    );
+    return {
+      queueOperationId: null,
+      resolvedInXeroOperationId: resolvedCoverage.unreadableOperationIds[0],
+      message:
+        "A refund credit note on this payment was resolved by hand in Xero and its amount cannot be read, so no new note is queued. Raise this refund's credit note in Xero by hand.",
+    };
+  }
+
   const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId, db);
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
@@ -815,7 +865,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // so capping the note to `cashRefundCents - coveredCents` yields this
     // delta while replays of an already-covered state — and account-credit
     // cancellations, whose cash evidence is zero — cap at zero.
-    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId, db);
+    const coveredCents =
+      (await sumCoveredRefundCreditNoteCents(paymentId, db)) +
+      resolvedCoverage.coveredCents;
     const evidence = await resolveStripeCashRefundEvidence(payment, db);
     noteAmountCents = Math.max(
       0,
@@ -823,6 +875,12 @@ export async function enqueueXeroRefundCreditNoteOperation(
     );
     watermarkCents = coveredCents + noteAmountCents;
     if (noteAmountCents <= 0) {
+      if (resolvedCoverage.coveredCents > 0) {
+        logger.info(
+          { paymentId, resolvedInXeroCents: resolvedCoverage.coveredCents },
+          "Xero refund credit note not queued: notes raised by hand in Xero cover this payment's cash refunds (#3635)"
+        );
+      }
       return {
         queueOperationId: null,
         message:
@@ -869,6 +927,22 @@ export async function enqueueXeroRefundCreditNoteOperation(
     payment.source === PaymentSource.STRIPE ? watermarkCents : noteAmountCents,
     payment.source === PaymentSource.STRIPE ? "v2" : "v1"
   );
+
+  // #3635: a non-Stripe payment issues one refund, so the resolved create for
+  // THIS refund carries this very key; its hand-made note covers it.
+  const resolvedKeyIndex = resolvedCoverage.correlationKeys.indexOf(correlationKey);
+  if (resolvedKeyIndex >= 0) {
+    logger.warn(
+      { paymentId, correlationKey },
+      "Xero refund credit note not queued: an officer raised this refund's note by hand in Xero (#3635)"
+    );
+    return {
+      queueOperationId: null,
+      resolvedInXeroOperationId: resolvedCoverage.operationIds[resolvedKeyIndex],
+      message:
+        "An officer resolved this refund's Xero credit note by hand in Xero, so no new note is queued.",
+    };
+  }
 
   const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
@@ -2783,6 +2857,24 @@ export async function processQueuedXeroOutboxOperations(options?: {
         ? claimedPayload
         : readQueuedOutboxPayload(queuedOperation.requestPayload);
 
+    // #3635 round 4 (review N3, `INV-INT-025`): a copy queued before an
+    // officer resolved a sibling for the same document is stale - the
+    // hand-made document stands for it. Closed CANCELLED, before any Xero call.
+    const resolvedSibling = await findResolvedSiblingSince(queuedOperation);
+    if (resolvedSibling) {
+      await completeXeroSyncOperation(queuedOperation.id, {
+        status: "CANCELLED",
+        responsePayload: {
+          skipped: "resolved-in-xero",
+          resolvedOperationId: resolvedSibling.id,
+          reason:
+            "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
+        },
+      });
+      result.skipped += 1;
+      continue;
+    }
+
     const entranceFeeContext = payload
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
@@ -3023,6 +3115,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           where: {
             id: queuedOperation.id,
             status: { in: ["RUNNING", "FAILED"] },
+            // #3635 (`INV-INT-025`): never revive a row an officer resolved.
+            manuallyResolvedAt: null,
           },
           data: {
             status: "PENDING",

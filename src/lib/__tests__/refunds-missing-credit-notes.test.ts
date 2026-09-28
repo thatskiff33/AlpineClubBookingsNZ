@@ -10,6 +10,12 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   sumCovered: vi.fn(),
   resolveEvidence: vi.fn(),
+  readResolvedRefundCreditNoteCoverage: vi.fn(),
+}));
+
+vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
+  readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
+  findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -38,6 +44,12 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sumCovered.mockResolvedValue(0);
+  mocks.readResolvedRefundCreditNoteCoverage.mockResolvedValue({
+    coveredCents: 0,
+    correlationKeys: [],
+    operationIds: [],
+    unreadableOperationIds: [],
+  });
   mocks.resolveEvidence.mockImplementation(
     async (payment: { refundedAmountCents: number }) => ({
       cashRefundCents: payment.refundedAmountCents,
@@ -100,6 +112,32 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
       uncoveredCents: 4200,
       refundedAt: "2026-06-19T00:00:00.000Z",
     });
+  });
+
+  it("counts a hand-resolved note's amount as covered, and still lists a later refund beyond it (#3635 round 4)", async () => {
+    // $50 refunded, its note raised by hand and resolved; then $30 more.
+    const row = (id: string, refundedAmountCents: number) => ({
+      id,
+      bookingId: `book_${id}`,
+      refundedAmountCents,
+      updatedAt: new Date("2026-06-19T00:00:00.000Z"),
+      booking: { member: { firstName: "Sam", lastName: "Lee", email: "sam@example.com" } },
+    });
+    mocks.findMany.mockResolvedValue([row("pay_only_resolved", 5000), row("pay_second_refund", 8000)]);
+    mocks.readResolvedRefundCreditNoteCoverage.mockResolvedValue({
+      coveredCents: 5000,
+      correlationKeys: ["payment:x:refund-credit-note:5000:v2"],
+      operationIds: ["op_note"],
+      unreadableOperationIds: [],
+    });
+
+    const result = await getRefundsMissingXeroCreditNotes();
+
+    // The first is covered by the hand-made note, so the self-heal leaves it;
+    // the second is listed for exactly the $30 no note covers.
+    expect(result.payments).toEqual([
+      expect.objectContaining({ paymentId: "pay_second_refund", uncoveredCents: 3000 }),
+    ]);
   });
 
   it("flags only the still-uncovered remainder and drops fully-covered refunds", async () => {

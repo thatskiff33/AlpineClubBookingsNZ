@@ -42,7 +42,12 @@ export async function hasInvoiceClearingNote(
       // No queueType filter: only the modification-note builder anchors a
       // CREDIT_NOTE create on a Booking, and a retry row written before the
       // builder stamped the column carries none.
-      status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] },
+      OR: [
+        { status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] } },
+        // #3635 (`INV-INT-025`): a failed note an officer then raised by hand
+        // in Xero and resolved - the query-side spelling of `isResolvedInXero`.
+        { status: "FAILED", manuallyResolvedAt: { not: null } },
+      ],
     },
     select: { id: true },
   });
