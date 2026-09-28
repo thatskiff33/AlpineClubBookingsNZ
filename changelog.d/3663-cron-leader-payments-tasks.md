@@ -14,7 +14,9 @@
   expired hold whose stay has not started is released:** the booking is
   cancelled, the member is emailed, any account credit they used is restored
   and the unpaid invoice is cleared. The one exception (#3643): a hold with a
-  payment recorded against its Xero invoice, or one whose invoice Xero cannot
-  read, is kept with its beds and the treasurer is emailed instead.
+  payment recorded against its Xero invoice is kept with its beds and the
+  treasurer is emailed instead of the booking being cancelled. A hold whose
+  invoice Xero cannot read is kept the same way, but only until check-in or
+  seven days past its deadline, whichever comes first.
   Before upgrading, reconcile outstanding Internet Banking payments and count
   the expired holds (see the deploy note in `DEPLOYMENT.md`).

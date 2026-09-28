@@ -1597,7 +1597,8 @@ the unpaid invoice is cleared with a credit note. A hold whose check-in is on or
 cancelled; it is left for the treasurer, who is emailed once. And a hold with
 any payment recorded against its Xero invoice is not released either (#3643):
 it is kept with its beds and the treasurer is emailed; a hold whose invoice
-Xero cannot read is kept too, for up to seven days past its deadline. Before
+Xero cannot read is kept too, until check-in or seven days past its deadline,
+whichever comes first. Before
 upgrading:
 
 1. Reconcile outstanding Internet Banking payments, so a member who paid by
@@ -1605,7 +1606,8 @@ upgrading:
 2. Count what the first run will release: `PENDING` Internet Banking payments
    holding beds (`internetBankingHoldSlots`), unreleased, past
    `internetBankingHoldUntil`, on a `CONFIRMED` booking whose check-in is after
-   today. Expect the cancellations and emails that count implies.
+   today. Expect the cancellations and emails that count implies, less any
+   hold with a payment recorded against its Xero invoice, which is kept.
 
 Without the payments cycle running on a regular schedule (the cron leader, or
 `/api/cron/payments?task=recovery` on a custom deployment), expired Internet
