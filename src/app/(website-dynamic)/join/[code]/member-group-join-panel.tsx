@@ -29,6 +29,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import type { GroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 
 /**
  * One stay night, or the join deadline, rendered as the CALENDAR DAY it is
@@ -73,22 +74,12 @@ function formatStayDay(value: string, format: ClubDateFormat): string {
 
 type PaymentMethod = "stripe" | "internet_banking";
 
-interface GroupSummary {
-  code: string;
-  status: string;
-  paymentMode: "EACH_PAYS_OWN" | "ORGANISER_PAYS";
-  /**
-   * #3672: how a member joining now pays. Each-pays-own once an organiser-pays
-   * group's settlement is paid, so this panel describes it, not `paymentMode`.
-   */
-  joinerPaymentMode: "EACH_PAYS_OWN" | "ORGANISER_PAYS";
-  organiserFirstName: string;
-  lodgeName: string;
-  checkIn: string;
-  checkOut: string;
-  joinDeadline: string | null;
-  isJoinable: boolean;
-}
+/**
+ * What the summary route sends: the shared, derived type (#3672 review), so a
+ * field the route stops sending fails to compile here rather than reading as
+ * `undefined` in the browser.
+ */
+type GroupSummary = GroupBookingSummaryResponse;
 
 interface FamilyMember extends BookingFamilyMember {
   id: string;

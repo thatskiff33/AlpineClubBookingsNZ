@@ -239,32 +239,48 @@ describe("GET /api/group-bookings/[code]", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns the public-safe summary for a known code", async () => {
+  const base = {
+    code: "ABCD2345",
+    status: GroupBookingStatus.OPEN,
+    organiserFirstName: "Andy",
+    lodgeName: "West Ridge Hut",
+    checkIn: new Date("2026-07-01T00:00:00Z"),
+    checkOut: new Date("2026-07-03T00:00:00Z"),
+    joinDeadline: null,
+    isJoinable: true,
+  };
+
+  // #3672 review (SSOT F1): the route dropped `joinerPaymentMode`, so the join
+  // page called an unpaid organiser-pays group paid and hid Internet Banking
+  // from every each-pays joiner. The whole body is pinned for each state, so a
+  // dropped or leaked field fails here.
+  it.each([
+    ["each pays their own", GroupBookingPaymentMode.EACH_PAYS_OWN, GroupBookingPaymentMode.EACH_PAYS_OWN],
+    ["organiser pays, not yet paid", GroupBookingPaymentMode.ORGANISER_PAYS, GroupBookingPaymentMode.ORGANISER_PAYS],
+    ["organiser pays, already paid", GroupBookingPaymentMode.ORGANISER_PAYS, GroupBookingPaymentMode.EACH_PAYS_OWN],
+  ])("returns the public-safe summary, with how a joiner pays, for a group where %s", async (_label, paymentMode, joinerPaymentMode) => {
     mocks.resolveGroupBookingByCode.mockResolvedValueOnce({
-      code: "ABCD2345",
-      status: GroupBookingStatus.OPEN,
-      paymentMode: GroupBookingPaymentMode.EACH_PAYS_OWN,
-      organiserFirstName: "Andy",
-      lodgeName: "West Ridge Hut",
-      checkIn: new Date("2026-07-01T00:00:00Z"),
-      checkOut: new Date("2026-07-03T00:00:00Z"),
-      joinDeadline: null,
-      isJoinable: true,
+      ...base,
+      paymentMode,
+      joinerPaymentMode,
     });
     const res = await GET(
       new NextRequest("http://localhost/api/group-bookings/ABCD2345"),
       { params: Promise.resolve({ code: "ABCD2345" }) }
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toMatchObject({
+    await expect(res.json()).resolves.toEqual({
       code: "ABCD2345",
+      status: GroupBookingStatus.OPEN,
+      paymentMode,
+      joinerPaymentMode,
       organiserFirstName: "Andy",
       lodgeName: "West Ridge Hut",
+      checkIn: "2026-07-01T00:00:00.000Z",
+      checkOut: "2026-07-03T00:00:00.000Z",
+      joinDeadline: null,
       isJoinable: true,
     });
-    // No internal ids leaked.
-    expect(body).not.toHaveProperty("organiserMemberId");
   });
 });
 

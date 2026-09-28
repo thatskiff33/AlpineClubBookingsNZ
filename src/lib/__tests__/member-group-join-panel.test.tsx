@@ -9,12 +9,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { MemberGroupJoinPanel } from "@/app/(website-dynamic)/join/[code]/member-group-join-panel";
+import type { GroupBookingSummary } from "@/lib/group-booking";
+import { toGroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 
 const CODE = "ABCD2345";
 
-function summary(overrides: Record<string, unknown> = {}) {
+/**
+ * The route's response, built by the route's own serialiser from a summary, so
+ * this fixture cannot carry a field the route does not send (#3672 review).
+ */
+function summary(overrides: Partial<GroupBookingSummary> = {}) {
   const paymentMode = overrides.paymentMode ?? "ORGANISER_PAYS";
-  return {
+  return toGroupBookingSummaryResponse({
     code: CODE,
     status: "OPEN",
     paymentMode,
@@ -22,12 +28,12 @@ function summary(overrides: Record<string, unknown> = {}) {
     joinerPaymentMode: paymentMode,
     organiserFirstName: "Olive",
     lodgeName: "West Ridge Hut",
-    checkIn: "2026-07-01",
-    checkOut: "2026-07-03",
+    checkIn: new Date("2026-07-01T00:00:00.000Z"),
+    checkOut: new Date("2026-07-03T00:00:00.000Z"),
     joinDeadline: null,
     isJoinable: true,
     ...overrides,
-  };
+  });
 }
 
 const family = {
