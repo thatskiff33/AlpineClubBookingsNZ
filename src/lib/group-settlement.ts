@@ -76,8 +76,11 @@ import {
 } from "@/lib/group-settlement-invoice-binding";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import {
+  alertStartedLeftBehindJoinersOnce,
+  clubTodayForStartedStay,
   notifyJoinersReleasedToMemberPays,
   releaseUnpaidJoinersToMemberPaysInTx,
+  type LeftBehindRelease,
 } from "@/lib/group-late-joiner";
 import {
   changesBoundInvoice,
@@ -986,10 +989,12 @@ async function settleConfirmedChildrenAndNotify(
   // cost is already accounted for.
   await settleHostingCoverageAfterCommit({ limit: 25 });
 
-  // #3672: joiners the paid bill did not cover, moved to member-pays below.
-  let releasedToMemberPays: string[] = [];
+  // #3672: joiners the paid bill did not cover, moved to member-pays below —
+  // except any whose stay has started (club day read here, outside the lock).
+  const clubTodayDateOnly = await clubTodayForStartedStay();
+  let leftBehind: LeftBehindRelease = { released: [], skippedStarted: [] };
   const settled = await prisma.$transaction(async (tx) => {
-    releasedToMemberPays = [];
+    leftBehind = { released: [], skippedStarted: [] };
     // #1881 two-tier protocol. This path flips CONFIRMED -> PAID (no net-new
     // capacity claim — both statuses already hold beds) AND flips the settlement
     // status (a money/booking-status transition). The settlement-status tier is
@@ -1228,9 +1233,10 @@ async function settleConfirmedChildrenAndNotify(
     // while it was open but was not on it (still PAYMENT_PENDING, or held for
     // review) pays for themselves, in this same transaction under `lock(1)`,
     // so no organiser-settled booking is ever left behind a paid settlement.
-    releasedToMemberPays = await releaseUnpaidJoinersToMemberPaysInTx(
+    leftBehind = await releaseUnpaidJoinersToMemberPaysInTx(
       tx,
-      settlement.groupBooking.organiserBookingId
+      settlement.groupBooking.organiserBookingId,
+      clubTodayDateOnly
     );
 
     return settledIds;
@@ -1348,11 +1354,22 @@ async function settleConfirmedChildrenAndNotify(
 
   // #3672: tell each joiner the paid bill did not cover that their booking is
   // now theirs to pay. The booking link in the email opens the pay step.
-  if (releasedToMemberPays.length > 0) {
+  if (leftBehind.released.length > 0) {
     await notifyJoinersReleasedToMemberPays(
       settlement.groupBookingId,
       settlement.groupBooking.organiserMember,
-      releasedToMemberPays
+      leftBehind.released
+    );
+  }
+  if (leftBehind.skippedStarted.length > 0) {
+    await alertStartedLeftBehindJoinersOnce(
+      {
+        groupBookingId: settlement.groupBookingId,
+        organiserBookingId: settlement.groupBooking.organiserBookingId,
+        organiser: settlement.groupBooking.organiserMember,
+        checkIn: settlement.groupBooking.organiserBooking.checkIn,
+      },
+      leftBehind.skippedStarted
     );
   }
 
@@ -1360,7 +1377,8 @@ async function settleConfirmedChildrenAndNotify(
     {
       groupBookingId: settlement.groupBookingId,
       settledCount: settled.length,
-      releasedToMemberPaysCount: releasedToMemberPays.length,
+      releasedToMemberPaysCount: leftBehind.released.length,
+      skippedStartedCount: leftBehind.skippedStarted.length,
       source: options.source,
     },
     "Group settlement paid"

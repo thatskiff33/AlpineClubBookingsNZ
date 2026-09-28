@@ -1190,11 +1190,15 @@ total at apply).
   for review) is moved to member-pays in the transaction that marks the
   settlement paid, and is emailed to pay. The organiser's card lists them as
   paying for themselves.
-- "Paid" is the shared captured predicate (`isCapturedTransactionStatus`), so
-  a settlement paid and later refunded still counts. The group-settlement
-  reaper re-applies the release to any live paid group still holding such a
-  joiner, under `lock(1)`; a moved joiner is never selected again, so each is
-  emailed once.
+- "Paid" is SUCCEEDED or PARTIALLY_REFUNDED
+  (`CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST`). REFUNDED is
+  unpaid: on a live group the capture was handed back before it settled
+  anyone. The group-settlement reaper re-applies the release to any live
+  paid group still holding such a joiner, under `lock(1)`, emailing each
+  once.
+- **A joiner whose stay has started is never switched** (check-in on or
+  before the club's today, the `INV-PAY-016` rule), at payment or by the
+  reaper: the treasurer is alerted once per group instead.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `booking-split.test.ts`,
   `group-settlement.test.ts`, `group-booking.test.ts`,

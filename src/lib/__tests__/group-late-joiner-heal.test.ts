@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   executeRaw: vi.fn(),
   transaction: vi.fn(),
   sendPaySelf: vi.fn(),
+  sendStartedAlert: vi.fn(),
+  claimAlertCooldown: vi.fn(),
 }));
 
 const tx = {
@@ -37,7 +39,20 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
   },
 }));
-vi.mock("@/lib/email", () => ({ sendGroupJoinPaySelfEmail: mocks.sendPaySelf }));
+vi.mock("@/lib/email", () => ({
+  sendGroupJoinPaySelfEmail: mocks.sendPaySelf,
+  sendAdminGroupJoinerStartedStayAlert: mocks.sendStartedAlert,
+}));
+vi.mock("@/lib/alert-cooldown", () => ({ claimAlertCooldown: mocks.claimAlertCooldown }));
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
+}));
+
+/** 1 Oct 2026, 13:00 in Auckland: the club's today is 2026-10-01. */
+const NOW = new Date("2026-10-01T00:00:00.000Z");
+const PAST = new Date("2026-09-30T00:00:00.000Z");
+const TODAY = new Date("2026-10-01T00:00:00.000Z");
+const FUTURE = new Date("2026-10-02T00:00:00.000Z");
 
 import { releaseJoinersLeftBehindPaidSettlements } from "@/lib/group-late-joiner";
 
@@ -46,6 +61,7 @@ function liveGroup(id: string) {
     id,
     organiserBookingId: `org-${id}`,
     organiserMember: { firstName: "Olive", lastName: "Organiser" },
+    organiserBooking: { checkIn: FUTURE },
   };
 }
 
@@ -73,6 +89,8 @@ beforeEach(() => {
   mocks.executeRaw.mockResolvedValue(undefined);
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.sendPaySelf.mockResolvedValue(undefined);
+  mocks.sendStartedAlert.mockResolvedValue(undefined);
+  mocks.claimAlertCooldown.mockResolvedValue(true);
 });
 
 describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
@@ -80,10 +98,13 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
     mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "late-1" }])
+      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
       .mockResolvedValueOnce([released]);
 
-    await expect(releaseJoinersLeftBehindPaidSettlements()).resolves.toBe(1);
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      skippedStarted: 0,
+    });
 
     // Only live, paid organiser-pays groups that still hold an
     // organiser-settled, unpaid, live child are candidates, so a joiner moved
@@ -137,6 +158,61 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
         organiserName: "Olive Organiser",
       })
     );
+    expect(mocks.sendStartedAlert).not.toHaveBeenCalled();
+  });
+
+  // The `INV-PAY-016` started-stay rule, in the club's zone: check-in before
+  // or on the club's today is a stay that has started.
+  it("leaves joiners whose stay started yesterday or today, and tells the treasurer once for the group", async () => {
+    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([
+        { id: "past-1", checkIn: PAST },
+        { id: "today-1", checkIn: TODAY },
+        { id: "late-1", checkIn: FUTURE },
+      ])
+      // The moved joiner, for their email.
+      .mockResolvedValueOnce([released])
+      // The skipped joiners, named in the treasurer's alert.
+      .mockResolvedValueOnce([
+        { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
+        { memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
+      ]);
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      skippedStarted: 2,
+    });
+
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingUpdateMany.mock.calls[0][0].where.id).toEqual({ in: ["late-1"] });
+    expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "group-joiner-started-stay:g1" })
+    );
+    expect(mocks.sendStartedAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendStartedAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organiserBookingId: "org-g1",
+        joinerNames: "Pat Past, Tia Today",
+      })
+    );
+  });
+
+  it("does not alert the treasurer again once the group's alert is claimed", async () => {
+    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingFindMany.mockResolvedValueOnce([{ id: "past-1", checkIn: PAST }]);
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 0,
+      skippedStarted: 1,
+    });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.sendStartedAlert).not.toHaveBeenCalled();
+    expect(mocks.sendPaySelf).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -151,9 +227,12 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(row);
     // A left-behind joiner is there to move, so only the re-read can stop it.
-    mocks.bookingFindMany.mockResolvedValue([{ id: "late-1" }]);
+    mocks.bookingFindMany.mockResolvedValue([{ id: "late-1", checkIn: FUTURE }]);
 
-    await expect(releaseJoinersLeftBehindPaidSettlements()).resolves.toBe(0);
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 0,
+      skippedStarted: 0,
+    });
 
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.sendPaySelf).not.toHaveBeenCalled();
@@ -165,10 +244,13 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce(lockedRow());
     mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "late-1" }])
+      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
       .mockResolvedValueOnce([released]);
 
-    await expect(releaseJoinersLeftBehindPaidSettlements()).resolves.toBe(1);
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      skippedStarted: 0,
+    });
     expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
   });
 });

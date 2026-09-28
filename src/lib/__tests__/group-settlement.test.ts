@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
   sendJoinPaySelf: vi.fn(),
+  sendStartedStayAlert: vi.fn(),
+  claimAlertCooldown: vi.fn(),
   lodgeFindFirst: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   // #2576 §9: committing a group child CONFIRMED records the bounded same-owner
@@ -150,10 +152,19 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
+vi.mock("@/lib/alert-cooldown", () => ({
+  claimAlertCooldown: mocks.claimAlertCooldown,
+}));
+// #3672: the club's day for the started-stay rule, pinned so a joiner's
+// check-in is judged against a fixed today.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
+}));
 vi.mock("@/lib/email", () => ({
   sendGroupSettlementReceiptEmail: mocks.sendSettlementReceipt,
   sendGroupJoinSettledEmail: mocks.sendJoinSettled,
   sendGroupJoinPaySelfEmail: mocks.sendJoinPaySelf,
+  sendAdminGroupJoinerStartedStayAlert: mocks.sendStartedStayAlert,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -234,6 +245,9 @@ beforeEach(() => {
   });
   mocks.sendSettlementReceipt.mockResolvedValue(undefined);
   mocks.sendJoinSettled.mockResolvedValue(undefined);
+  mocks.sendJoinPaySelf.mockResolvedValue(undefined);
+  mocks.sendStartedStayAlert.mockResolvedValue(undefined);
+  mocks.claimAlertCooldown.mockResolvedValue(true);
   mocks.cancelPaymentIntent.mockResolvedValue(null);
 });
 
@@ -1570,8 +1584,12 @@ describe("applyGroupSettlementSucceeded", () => {
       .mockResolvedValueOnce([
         { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
       ])
-      // Inside the lock, after SUCCEEDED: the joiner the paid bill missed.
-      .mockResolvedValueOnce([{ id: "late-1" }])
+      // Inside the lock, after SUCCEEDED: the joiners the paid bill missed —
+      // one yet to arrive, and one whose stay has already started.
+      .mockResolvedValueOnce([
+        { id: "late-1", checkIn: new Date("2999-01-01T00:00:00.000Z") },
+        { id: "started-1", checkIn: new Date("2000-01-01T00:00:00.000Z") },
+      ])
       // After commit: the settled booking, for its confirmation.
       .mockResolvedValueOnce([
         {
@@ -1592,6 +1610,14 @@ describe("applyGroupSettlementSucceeded", () => {
           checkIn: new Date(),
           checkOut: new Date(),
           member: { email: "late@example.com", firstName: "Lee" },
+          organisation: null,
+        },
+      ])
+      // After commit: the started joiner, named in the treasurer's alert.
+      .mockResolvedValueOnce([
+        {
+          memberId: "m-started",
+          member: { email: "s@example.com", firstName: "Sam", lastName: "Started" },
           organisation: null,
         },
       ]);
@@ -1642,6 +1668,16 @@ describe("applyGroupSettlementSucceeded", () => {
         email: "late@example.com",
         organiserName: "Olive Organiser",
       })
+    );
+    // The joiner whose stay has started is NOT switched or emailed; the
+    // treasurer is told once for the group instead.
+    expect(releaseCall?.[0].where.id).toEqual({ in: ["late-1"] });
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: `group-joiner-started-stay:${GROUP_ID}` })
+    );
+    expect(mocks.sendStartedStayAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendStartedStayAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ organiserBookingId: ORG_BOOKING, joinerNames: "Sam Started" })
     );
     // The receipt counts only the joiner the organiser paid for.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledWith(

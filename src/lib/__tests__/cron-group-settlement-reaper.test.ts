@@ -179,7 +179,7 @@ beforeEach(() => {
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
-  mocks.releaseLeftBehindJoiners.mockResolvedValue(0);
+  mocks.releaseLeftBehindJoiners.mockResolvedValue({ released: 0, skippedStarted: 0 });
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
   mocks.sendSettlementExpired.mockResolvedValue(undefined);
@@ -241,6 +241,7 @@ describe("reapStaleGroupSettlements", () => {
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       releasedToMemberPays: 0,
+      skippedStarted: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
     // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
@@ -551,12 +552,13 @@ describe("reapStaleGroupSettlements", () => {
   // joiner left behind before the rule existed is moved on the first run.
   it("runs the paid-group self-heal every cycle and reports how many joiners it moved", async () => {
     mocks.settlementFindMany.mockResolvedValue([]);
-    mocks.releaseLeftBehindJoiners.mockResolvedValue(3);
+    mocks.releaseLeftBehindJoiners.mockResolvedValue({ released: 3, skippedStarted: 1 });
 
     const result = await reapStaleGroupSettlements(NOW);
 
-    expect(mocks.releaseLeftBehindJoiners).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseLeftBehindJoiners).toHaveBeenCalledWith(NOW);
     expect(result.releasedToMemberPays).toBe(3);
+    expect(result.skippedStarted).toBe(1);
   });
 
   it("does not reap a settlement still inside the window", async () => {
@@ -577,6 +579,7 @@ describe("reapStaleGroupSettlements", () => {
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       releasedToMemberPays: 0,
+      skippedStarted: 0,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
@@ -628,6 +631,7 @@ describe("reapStaleGroupSettlements", () => {
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       releasedToMemberPays: 0,
+      skippedStarted: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -661,6 +665,7 @@ describe("reapStaleGroupSettlements", () => {
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       releasedToMemberPays: 0,
+      skippedStarted: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     // No-op passes must not rewrite the settlement: that would bump

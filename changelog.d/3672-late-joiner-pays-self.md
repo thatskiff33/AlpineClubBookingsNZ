@@ -12,10 +12,12 @@
   organiser paid is switched to paying for themselves when the payment comes
   in, and is emailed a link to pay. The organiser is never charged for them,
   and the organiser's group card lists them as paying for themselves rather
-  than asking the organiser to contact the club. A group paid and later
-  refunded still counts as paid. Groups where each person pays for themselves
-  are unchanged.
+  than asking the organiser to contact the club. A joiner whose stay has
+  already started is never switched automatically: the treasurer gets one
+  email per group to sort them out by hand. Groups where each person pays for
+  themselves are unchanged.
 
   Joiners already stuck this way are fixed automatically: the first run of the
-  group-settlement clean-up after this release switches each of them to paying
-  for themselves and emails them once.
+  group-settlement clean-up after this release switches each one whose stay
+  has not started to paying for themselves and emails them once, and sends the
+  treasurer one email for each group whose stuck joiners' stay has started.

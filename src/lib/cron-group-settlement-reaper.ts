@@ -138,6 +138,11 @@ export interface GroupSettlementReapResult {
    * not cover, moved to paying for themselves this run.
    */
   releasedToMemberPays: number;
+  /**
+   * #3672: such joiners NOT moved because their stay has started; the
+   * treasurer is alerted once per group.
+   */
+  skippedStarted: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -202,6 +207,7 @@ export async function reapStaleGroupSettlements(
     heldForInvoicePayment: 0,
     heldForUnreadableInvoice: 0,
     releasedToMemberPays: 0,
+    skippedStarted: 0,
   };
 
   for (const settlement of candidates) {
@@ -266,7 +272,9 @@ export async function reapStaleGroupSettlements(
 
   await expireReapedChildren(now, result);
 
-  result.releasedToMemberPays = await releaseJoinersLeftBehindPaidSettlements();
+  const leftBehind = await releaseJoinersLeftBehindPaidSettlements(now);
+  result.releasedToMemberPays = leftBehind.released;
+  result.skippedStarted = leftBehind.skippedStarted;
 
   await resumeInterruptedOrganiserCancels(now, result, format);
 

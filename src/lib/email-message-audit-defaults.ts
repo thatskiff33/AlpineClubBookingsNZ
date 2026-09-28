@@ -494,6 +494,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
   },
+  // #3672 (`INV-PAY-108`): paid-group joiners left for the treasurer because
+  // the stay has started.
+  "admin-group-joiner-started-stay": {
+    "defaultSubject": "Unpaid group joiners on a stay that has started",
+    "defaultBody": "Unpaid Group Joiners on a Stay That Has Started\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Their stay has already started, so they were NOT switched to paying for themselves automatically. Arrange their payment by hand, or cancel their bookings.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nCheck-in: {{checkIn}}\nJoiners: {{joinerNames}}\n\nView Bookings: {{reviewUrl}}"
+  },
   "group-join-pay-self": {
     "defaultSubject": "Please pay for your place — {{CLUB_NAME}}",
     "defaultBody": "Please Pay For Your Place\n\nHi {{firstName}}, {{organiserName}} has paid for their group's stay at {{CLUB_NAME}}'s lodge. You joined after that payment was prepared, so your place was not included in it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nYour place is not confirmed until you pay for it yourself. Open your booking to pay.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."

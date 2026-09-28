@@ -108,6 +108,16 @@ vi.mock("@/lib/adult-member-hosting-proposed", async (importOriginal) => {
   };
 });
 
+// Settings the join reads that this suite does not vary, answered directly so
+// the run does not log a fail-soft read of an unmocked delegate per test.
+vi.mock("@/lib/member-subscription-eligibility", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  resolveSubscriptionLockoutMode: vi.fn(async () => "HARD_BLOCK"),
+}));
+vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  resolveBookingGuestDietarySeeding: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/internet-banking-settings", async (importOriginal) => {
   const actual =
     (await importOriginal()) as typeof import("@/lib/internet-banking-settings");
@@ -127,6 +137,8 @@ import {
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 const CLUB_ZONE = "Pacific/Auckland";
+/** The club's today, in the `@db.Date` encoding check-ins are stored in. */
+const CLUB_TODAY = new Date("2026-10-01T00:00:00.000Z");
 const checkIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
 const checkOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 32);
 
@@ -293,9 +305,11 @@ describe("group-late-joiner helpers (#3672)", () => {
     [GroupBookingPaymentMode.ORGANISER_PAYS, null, true],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.PENDING, true],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.FAILED, true],
-    // Paid, then refunded in whole or part: the organiser still paid.
-    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.REFUNDED, false],
+    // Partly refunded: money is still held, so the organiser paid.
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.PARTIALLY_REFUNDED, false],
+    // Fully refunded: on a live group the capture was handed back before it
+    // settled anyone, so the organiser has not paid.
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.REFUNDED, true],
     [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.SUCCEEDED, false],
     [GroupBookingPaymentMode.EACH_PAYS_OWN, null, false],
     [GroupBookingPaymentMode.EACH_PAYS_OWN, PaymentStatus.SUCCEEDED, false],
@@ -318,6 +332,30 @@ describe("group-late-joiner helpers (#3672)", () => {
     );
   });
 
+  // #3672: the started-stay rule (`INV-PAY-016`'s): a joiner whose check-in
+  // is on or before the club's today is left for the treasurer.
+  it("moves a joiner yet to arrive and leaves one whose stay started yesterday or today", async () => {
+    const tx = {
+      booking: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "past", checkIn: new Date("2026-09-30T00:00:00.000Z") },
+          { id: "today", checkIn: CLUB_TODAY },
+          { id: "future", checkIn: new Date("2026-10-02T00:00:00.000Z") },
+        ]),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    await expect(
+      releaseUnpaidJoinersToMemberPaysInTx(tx as never, "booking-1", CLUB_TODAY)
+    ).resolves.toEqual({ released: ["future"], skippedStarted: ["past", "today"] });
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ["future"] } }),
+        data: { organiserSettled: false },
+      })
+    );
+  });
+
   it("writes nothing when the paid bill left nobody behind", async () => {
     const tx = {
       booking: {
@@ -326,8 +364,8 @@ describe("group-late-joiner helpers (#3672)", () => {
       },
     };
     await expect(
-      releaseUnpaidJoinersToMemberPaysInTx(tx as never, "booking-1")
-    ).resolves.toEqual([]);
+      releaseUnpaidJoinersToMemberPaysInTx(tx as never, "booking-1", CLUB_TODAY)
+    ).resolves.toEqual({ released: [], skippedStarted: [] });
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 });

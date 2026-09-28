@@ -75,7 +75,7 @@ offered to them at all:
 | Alert | Area | Sent when |
 | --- | --- | --- |
 | New bookings | Bookings | A new booking is created or confirmed |
-| Payment failures | Finance | A booking payment fails |
+| Payment failures | Finance | A booking payment fails, or a paid group's unpaid joiners are left for reconciliation by hand because the stay has started (#3672) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
 | Xero sync errors | Finance | Xero contact or invoice sync fails |

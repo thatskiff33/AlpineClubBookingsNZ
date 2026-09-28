@@ -61,6 +61,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // gated by the adminPaymentFailure notification preference at send time, like
   // its siblings.
   "admin-duplicate-capture-refund",
+  // #3672: paid-group joiners left for the treasurer because the stay has
+  // started. sendToAdmins on the adminPaymentFailure preference like its
+  // reconcile-by-hand siblings; not delivery-locked, because no money moved.
+  "admin-group-joiner-started-stay",
   // B5 (#2262): the reciprocal fence's conflict alert and the cash-cancellation
   // hand-back task alert. Both ship via sendToAdmins, so admin audience, and
   // both are operator nudges rather than money movers — the conflict alert
@@ -525,6 +529,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #3672: the organiser's booking, who is waiting, and where to act.
+  "admin-group-joiner-started-stay": ["bookingReference", "joinerNames", "reviewUrl"],
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
@@ -1073,6 +1079,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
+  },
+  "admin-group-joiner-started-stay": {
+    triggerSummary:
+      "A paid organiser-pays group has joiners its bill did not cover, but the stay has started, so they were left for the treasurer instead of being switched to paying for themselves (#3672)",
+    frequency:
+      "At most once per group, guarded by a cross-instance claim, from the settlement's payment or the group-settlement cycle",
   },
   "group-join-pay-self": {
     triggerSummary:
@@ -1801,6 +1813,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueReportUrl",
   "issueTotalCount",
   "joinerCount",
+  "joinerNames",
   "latestErrorMessage",
   "latestErrorNote",
   "localId",

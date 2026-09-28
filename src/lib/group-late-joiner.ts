@@ -14,6 +14,11 @@
  * commits first, the other sees it. The group-settlement reaper re-applies the
  * release to any paid group still holding a leftover (one left before this rule
  * existed), under the same lock.
+ *
+ * Neither switches a joiner whose stay has started (check-in on or before the
+ * club's today, the `INV-PAY-016` rule): asking them to pay mid-stay is the
+ * treasurer's call, so they stay as they are and the treasurer is told once
+ * per group.
  */
 import {
   BookingStatus,
@@ -22,18 +27,31 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { bookingOwner } from "@/lib/booking-owner";
-import { sendGroupJoinPaySelfEmail } from "@/lib/email";
+import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  sendAdminGroupJoinerStartedStayAlert,
+  sendGroupJoinPaySelfEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /**
+ * "The organiser has paid": the settlement holds captured money that was not
+ * all handed back — SUCCEEDED or PARTIALLY_REFUNDED, the shared list
+ * (`INV-SSOT`). REFUNDED is unpaid: on a live group it is a capture the webhook
+ * refunded before it settled anyone, so the organiser still owes.
+ */
+const ORGANISER_PAID_STATUSES: readonly PaymentStatus[] =
+  CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST;
+
+/**
  * The one definition of "the organiser pays for a member joining now": an
- * organiser-pays group whose settlement has not captured the organiser's
- * money. A settlement paid and later refunded (in part or whole) still counts
- * as paid: the captured predicate is the shared one (`INV-SSOT`). Pure, so the
- * public join page and the join write path give the same answer.
+ * organiser-pays group whose organiser has not paid. Pure, so the public join
+ * page and the join write path give the same answer.
  */
 export function organiserPaysForNewJoiner(group: {
   paymentMode: GroupBookingPaymentMode;
@@ -41,7 +59,17 @@ export function organiserPaysForNewJoiner(group: {
 }): boolean {
   return (
     group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS &&
-    !(group.settlement && isCapturedTransactionStatus(group.settlement.status))
+    !(group.settlement && ORGANISER_PAID_STATUSES.includes(group.settlement.status))
+  );
+}
+
+/**
+ * The club's today in the `@db.Date` encoding check-ins are stored in, for the
+ * started-stay rule. Read outside every transaction (`INV-LOCK-004`).
+ */
+export async function clubTodayForStartedStay(now: Date = new Date()): Promise<Date> {
+  return dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest())
   );
 }
 
@@ -91,29 +119,102 @@ const LEFT_BEHIND_CHILD = {
   status: { notIn: [...LEFT_BEHIND_EXCLUDED_STATUSES] },
 } satisfies Prisma.BookingWhereInput;
 
+export interface LeftBehindRelease {
+  /** Moved to member-pays: tell each to pay. */
+  released: string[];
+  /** Left as they are because their stay has started: tell the treasurer. */
+  skippedStarted: string[];
+}
+
 /**
  * Move every organiser-settled child the paid settlement did not cover to
- * member-pays. Called in the paid apply's transaction, under `lock(1)`, after
- * the settlement is marked SUCCEEDED. Returns the moved booking ids so the
- * caller can tell each joiner to pay for their own place.
+ * member-pays, except one whose stay has started (check-in on or before
+ * `clubTodayDateOnly`, from `clubTodayForStartedStay`). Called in the paid
+ * apply's transaction, under `lock(1)`, after the settlement is marked
+ * SUCCEEDED, and by the reaper's heal under the same lock.
  */
 export async function releaseUnpaidJoinersToMemberPaysInTx(
   tx: Prisma.TransactionClient,
-  organiserBookingId: string
-): Promise<string[]> {
+  organiserBookingId: string,
+  clubTodayDateOnly: Date
+): Promise<LeftBehindRelease> {
   const where = {
     parentBookingId: organiserBookingId,
     ...LEFT_BEHIND_CHILD,
   } satisfies Prisma.BookingWhereInput;
-  const leftBehind = await tx.booking.findMany({ where, select: { id: true } });
-  if (leftBehind.length === 0) {
-    return [];
-  }
-  await tx.booking.updateMany({
-    where: { ...where, id: { in: leftBehind.map((b) => b.id) } },
-    data: { organiserSettled: false },
+  const leftBehind = await tx.booking.findMany({
+    where,
+    select: { id: true, checkIn: true },
   });
-  return leftBehind.map((b) => b.id);
+  const started = (b: { checkIn: Date }) =>
+    b.checkIn.getTime() <= clubTodayDateOnly.getTime();
+  const released = leftBehind.filter((b) => !started(b)).map((b) => b.id);
+  const skippedStarted = leftBehind.filter(started).map((b) => b.id);
+  if (released.length > 0) {
+    await tx.booking.updateMany({
+      where: { ...where, id: { in: released } },
+      data: { organiserSettled: false },
+    });
+  }
+  return { released, skippedStarted };
+}
+
+/**
+ * "Once" for the started-stay alert: the claim window outlives any stay, so
+ * one `AlertCooldown` row per group means the treasurer is told a single time.
+ */
+const STARTED_STAY_ALERT_WINDOW_MS = 36_500 * 86_400_000;
+
+/**
+ * Tell the treasurer ONCE per group that joiners its paid bill did not cover
+ * were left as they are because the stay has started. Claim first, send after,
+ * outside any transaction; best-effort, so a failed send never stops the run.
+ */
+export async function alertStartedLeftBehindJoinersOnce(
+  group: {
+    groupBookingId: string;
+    organiserBookingId: string;
+    organiser: { firstName: string; lastName: string };
+    checkIn: Date;
+  },
+  bookingIds: string[]
+): Promise<void> {
+  try {
+    const claimed = await claimAlertCooldown({
+      key: `group-joiner-started-stay:${group.groupBookingId}`,
+      windowMs: STARTED_STAY_ALERT_WINDOW_MS,
+    });
+    if (!claimed) return;
+    const joiners = await prisma.booking.findMany({
+      where: { id: { in: bookingIds } },
+      select: {
+        memberId: true,
+        member: { select: { email: true, firstName: true, lastName: true } },
+        // #3369: the owner may be an Organisation; bookingOwner() reads both.
+        organisation: { select: { name: true, email: true } },
+      },
+    });
+    logger.warn(
+      { groupBookingId: group.groupBookingId, bookingIds },
+      "Paid group joiners not covered by the bill, left for the treasurer because the stay has started"
+    );
+    await sendAdminGroupJoinerStartedStayAlert({
+      organiserName: `${group.organiser.firstName} ${group.organiser.lastName}`.trim(),
+      organiserBookingId: group.organiserBookingId,
+      checkIn: group.checkIn,
+      joinerNames: joiners
+        .map((b) => {
+          const member = bookingOwner(b).member;
+          return `${member.firstName} ${member.lastName ?? ""}`.trim();
+        })
+        .join(", "),
+    });
+  } catch (err) {
+    logger.error(
+      { err, groupBookingId: group.groupBookingId },
+      "Failed to alert on paid group joiners whose stay has started"
+    );
+  }
 }
 
 /**
@@ -167,10 +268,14 @@ export async function notifyJoinersReleasedToMemberPays(
  * inside it, then the same email. A released child is no longer
  * organiser-settled, so it is never selected again and each joiner is emailed
  * at most once. A cancelled group (or organiser booking) is left to the
- * organiser-cancel cleanup, which owns its organiser-settled children.
- * Returns how many joiners it moved.
+ * organiser-cancel cleanup, which owns its organiser-settled children. A
+ * joiner whose stay has started is left as they are and the treasurer told
+ * once per group. Returns how many joiners it moved and how many it skipped.
  */
-export async function releaseJoinersLeftBehindPaidSettlements(): Promise<number> {
+export async function releaseJoinersLeftBehindPaidSettlements(
+  now: Date = new Date()
+): Promise<{ released: number; skippedStarted: number }> {
+  const clubTodayDateOnly = await clubTodayForStartedStay(now);
   const groups = await prisma.groupBooking.findMany({
     where: {
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
@@ -186,12 +291,13 @@ export async function releaseJoinersLeftBehindPaidSettlements(): Promise<number>
       id: true,
       organiserBookingId: true,
       organiserMember: { select: { firstName: true, lastName: true } },
+      organiserBooking: { select: { checkIn: true } },
     },
   });
-  let moved = 0;
+  const totals = { released: 0, skippedStarted: 0 };
   for (const group of groups) {
     try {
-      const released = await prisma.$transaction(async (tx) => {
+      const outcome = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         const current = await tx.groupBooking.findUnique({
           where: { id: group.id },
@@ -208,17 +314,34 @@ export async function releaseJoinersLeftBehindPaidSettlements(): Promise<number>
           current.organiserBooking.deletedAt !== null ||
           current.organiserBooking.status === BookingStatus.CANCELLED
         ) {
-          return [];
+          return { released: [], skippedStarted: [] };
         }
-        return releaseUnpaidJoinersToMemberPaysInTx(tx, group.organiserBookingId);
+        return releaseUnpaidJoinersToMemberPaysInTx(
+          tx,
+          group.organiserBookingId,
+          clubTodayDateOnly
+        );
       });
+      const { released, skippedStarted } = outcome;
       if (released.length > 0) {
-        moved += released.length;
+        totals.released += released.length;
         logger.info(
           { groupBookingId: group.id, releasedCount: released.length },
           "Moved joiners a paid group settlement did not cover to member-pays (#3672)"
         );
         await notifyJoinersReleasedToMemberPays(group.id, group.organiserMember, released);
+      }
+      if (skippedStarted.length > 0) {
+        totals.skippedStarted += skippedStarted.length;
+        await alertStartedLeftBehindJoinersOnce(
+          {
+            groupBookingId: group.id,
+            organiserBookingId: group.organiserBookingId,
+            organiser: group.organiserMember,
+            checkIn: group.organiserBooking.checkIn,
+          },
+          skippedStarted
+        );
       }
     } catch (err) {
       logger.error(
@@ -227,5 +350,5 @@ export async function releaseJoinersLeftBehindPaidSettlements(): Promise<number>
       );
     }
   }
-  return moved;
+  return totals;
 }
