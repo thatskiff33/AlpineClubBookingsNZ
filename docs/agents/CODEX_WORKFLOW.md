@@ -261,8 +261,8 @@ strict layout builds `node_modules` from about 2,700 directory junctions per
 worktree here. Measured on git 2.53.0.windows.1 (#3673), `git worktree remove`
 cannot delete them (it deregistered the worktree, deleted part of it and stopped
 with "Directory not empty"), and it FOLLOWS a junction it meets anywhere in the
-tree and deletes the target's contents. So the helper deletes the directory
-itself and asks git only to forget the registration:
+tree and deletes the target's contents. So the helper deletes only the
+generated folders itself and leaves everything else to git:
 
 ```powershell
 pnpm run worktree:remove C:\path\to\exact-worktree                     # merged into origin/main
@@ -271,64 +271,65 @@ pnpm run worktree:remove C:\path\to\exact-worktree --allow-unmerged      # an ab
 ```
 
 Run it from outside the worktree it removes (the main checkout is the usual
-place). Before deleting anything it refuses:
+place). What it does:
 
-- the main checkout, a path that is not a registered worktree, or a locked one;
-- a path that is itself a link to the worktree (pass the worktree's own path);
-- a registered worktree whose directory is already gone (the message names the
-  `git worktree remove <path>` that forgets just it), or one with no `.git` left
-  in it;
-- another registered worktree inside the target, main checkout included, and
-  any `.git` file or folder below its root: another worktree or clone whose
-  uncommitted work the lane's own `git status` cannot see. A Claude Code
-  session's `.claude/worktrees/<name>` inside a lane is exactly this;
-- a `.git` that git does not accept as the lane's own, where
-  `git rev-parse --show-toplevel` names another tree (git searches upward, so a
-  lane under `.artifacts/worktrees/` would otherwise be checked as the main
-  checkout);
+1. Runs the refusals below. Nothing is deleted until they all pass.
+2. Deletes the lane's top-level `node_modules` and `.next` with Node's
+   `fs.rmSync`, which removes a link itself rather than descending into it
+   (verified on Windows for drive-letter and volume-path junctions). If one
+   cannot be fully deleted it stops with the lane still registered; run it
+   again.
+3. Runs plain `git worktree remove <path>`, **without `--force`**. git's own
+   checks then refuse on modified, untracked or submodule work exactly as in
+   normal use. If git refuses, the lane is intact apart from its `node_modules`
+   and `.next`, which `pnpm install` brings back.
+
+**The accepted trade-off, the same as plain `git worktree remove`: ignored
+files, such as `.env.local`, are deleted with the lane.** That includes files a
+repository-local ignore rule (`.git/info/exclude`, a per-worktree
+`core.excludesFile`) makes ignored. Copy out anything ignored you want to keep
+first.
+
+Every git call runs without any `GIT_*` environment variable, in any case (so
+nothing in your shell points git at another repository or injects config), and
+with `core.longpaths=true`, `core.fsmonitor=false` and
+`status.showUntrackedFiles=normal`, so a long path, a stale fsmonitor or a
+config setting cannot hide work from git's check.
+
+It refuses, before deleting anything:
+
+- the main checkout, a path that is not a registered worktree, a locked one, and
+  a path that is itself a link to the worktree (pass the worktree's own path);
 - being run from inside the target (the current directory or `INIT_CWD`);
-- a top-level `node_modules` that is itself a link (the legacy shape above, which
-  needs the manual unlink);
-- any symlink, junction or other reparse point outside the top-level
-  `node_modules` and `.next` (both generated, and full of links: a built
-  worktree's `.next` held 200). A link is anything `readdir` or `lstat` flags,
-  or a directory whose real path is not its own path, which is how a junction
-  to a `\\?\Volume{…}` path or a mount point shows up (`lstat` calls those
-  plain directories). The refusal lists them; delete the links, not their
-  targets, and run it again;
+- another registered worktree inside the target, and any `.git` file or folder
+  below its root, in any case on Windows and inside `node_modules` and `.next`
+  too: another repository whose work git would not check. A Claude Code
+  session's `.claude/worktrees/<name>` inside a lane is exactly this;
+- a top-level `node_modules` that is itself a link (the legacy shape above,
+  which needs the manual unlink), and any symlink, junction or other reparse
+  point outside the top-level `node_modules` and `.next`, which git would
+  follow. A link is anything `lstat` flags, or a directory whose
+  real path is not its own path, which is how a junction to a
+  `\\?\Volume{…}` path or a mount point shows up. The refusal lists them;
+  delete the links, not their targets, and run it again;
 - any folder it cannot read, since it could hide a link;
-- uncommitted or untracked work, read with every setting that could hide some
-  overridden (`git status --porcelain=v1 -z --untracked-files=all
-  --ignore-submodules=none`, so `status.showUntrackedFiles=no` hides nothing);
-  the one change allowed is an unstaged deletion (` D`) of a tracked file that
-  is really absent from disk, which is what a removal that stopped part way
-  leaves. A `D` for a path that is on disk again (git reports that when a
-  folder replaces the file) is refused;
-- files marked `--skip-worktree` or `--assume-unchanged` (a lowercase or `S` tag
-  in `git ls-files -v`), whose edits `git status` does not show. A sparse
-  checkout uses `--skip-worktree` too, so a sparse lane is refused as well;
-- an unmerged HEAD without `--allow-unmerged`.
+- a `.git` that git does not accept as the lane's own (`git rev-parse
+  --show-toplevel` names another tree): git searches upward, so a lane under
+  `.artifacts/worktrees/` would otherwise be checked as the main checkout;
+- what `git worktree remove` would delete without complaint: an in-progress
+  rebase (its autostash lives in the lane's git directory), merge, cherry-pick,
+  revert, bisect or sequence; any `refs/worktree/*` or `refs/bisect/*` ref; a
+  submodule repository kept in the lane's git directory (it survives
+  `submodule deinit`); and files marked `--skip-worktree` or
+  `--assume-unchanged`, whose edits git status does not show (a sparse checkout
+  uses the same flag, so it is refused too);
+- a HEAD not merged into the base without `--allow-unmerged`.
 
-The `.git` search also walks the top-level `node_modules` and `.next` (without
-following their links), compares names case-insensitively on Windows, and on a
-full pnpm `node_modules` takes a few seconds. `GIT_DIR`, `GIT_WORK_TREE` and the
-other variables that point git elsewhere are removed from its environment.
-
-What is then guaranteed: the worktree is resolved to its real path, and that
-is what is deleted and checked afterwards. Node's `fs.rmSync` deletes every
-top-level entry except `.git`, then `.git`, then the empty folder; it removes a
-link itself rather than descending into it (verified on Windows for
-drive-letter and volume-path junctions, so it also covers a link that appears
-after the checks). If anything is left on disk the registration is **kept** and
-the tool says so, so the lane stays visible to git; because `.git` goes last,
-the retry can run every check again (a tracked file already deleted does not
-count as a change, since its content is in HEAD). Only when the directory is
-gone does it unregister the lane with `git worktree remove <path>`, which on a
-missing folder forgets that one registration and nothing else, and then check
-that git no longer lists it. It never runs `git worktree prune`, which would
-also forget every other worktree whose folder is missing at that moment (a
-moved folder, an unmounted drive), and with it that worktree's index and
-staged work.
+A lane whose folder is already gone is simply unregistered. If git itself
+fails part way through deleting (a file held open), it has already checked the
+lane and unregistered it; the tool says so, and what is left is deleted by
+hand. The link checks run before git starts: a link created in the lane after
+them, outside `node_modules` and `.next`, is not covered.
 
 ### 4. Preserve progress while lanes run
 
