@@ -159,16 +159,14 @@ export function resolveObjectFromCandidates(params: {
 
 /**
  * #3635 (`INV-INT-025`): the one way to turn an operation into a repair
- * retry offer. A row an officer resolved in Xero, or one the retry helper
- * refuses, gives null - so `buildRetryAction`, which accepts only this
- * shape, can never auto-apply a re-run of either.
+ * retry offer. A row the retry helper refuses - including one an officer
+ * resolved in Xero, which `getXeroOperationRetryMeta` refuses first - gives
+ * null, so `buildRetryAction`, which accepts only this shape, can never
+ * auto-apply a re-run of it.
  */
 export function toRetryableOperationMatch(
   operation: XeroOperationRecord
 ): RetryableOperationMatch | null {
-  if (isResolvedInXero(operation)) {
-    return null;
-  }
   const retryMeta = getXeroOperationRetryMeta(operation);
   return retryMeta.supported
     ? { kind: "retryable", operation, retryMeta: { ...retryMeta, supported: true } }
