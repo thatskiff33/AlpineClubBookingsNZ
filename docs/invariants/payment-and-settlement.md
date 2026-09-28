@@ -717,16 +717,17 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 ## INV-PAY-109
 
-- **A part payment under review is never handed back twice** (#3643, the
-  task-queue review of the owner's 28 September 2026 decision). The review task
-  [INV-PAY-107]'s cancel raises records, in
-  `partPaymentReviewRecordedCents`, the cash Xero showed on the booking's one
-  invoice when it gave it exactly, and NULL otherwise.
-- When Xero later reports that invoice PAID, the inbound sync's late-cash arms
-  (an organisation's hand-back, a member's account credit) find the task by
-  its marker, never by `paymentId`, and act only on cash beyond that figure.
-  When either figure is unknown they move nothing, reopen a dismissed task and
-  email the club (`part-payment-review-cover.ts`).
+- **A part payment under review is never handed back twice** (#3643,
+  orchestrator decision 3 within the owner's 28 September 2026 decision).
+  While the review task [INV-PAY-107]'s cancel raises exists, open or
+  dismissed, a PAID event for its invoice makes the inbound sync's late-cash
+  arms (an organisation's hand-back, a member's account credit) size and mint
+  nothing. They find the task by its marker, never by `paymentId`.
+- Instead, in the same transaction, the sync writes onto the task when it
+  learned the invoice was paid and the invoice's cash in cents, once (a replay
+  adds nothing), and reopens a dismissed task; the queue card shows it. An
+  email is attempted too, but it is best-effort: the note is the record
+  (`part-payment-review-cover.ts`).
 - An OPEN task counts as a recorded payment for the Xero repair tool, with or
   without a local `PAYMENT` link, so it never offers the full clearing note.
 - Pinned by `xero-inbound-reconciliation.test.ts`, `booking-cancel.test.ts`,

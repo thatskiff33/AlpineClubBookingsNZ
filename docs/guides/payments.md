@@ -212,10 +212,13 @@ settle**, with its own paragraph explaining it
    it. Closing it also stops the Xero repair tool listing the booking for review.
 
 If Xero later reports the invoice paid — because you cleared the rest, or more
-money arrived — the app never hands back or credits the part payment this row
-covers a second time. It acts only on money beyond it, and where it cannot tell
-how much the row covered, it moves nothing, puts the row back on the queue and
-emails the club.
+money arrived — the app does not credit or hand back anything for it by itself,
+because it cannot tell which of that money this row already covers. Instead the
+row says so: "Xero reported this invoice paid on …, with … of cash recorded
+against it". A row you had closed comes back onto the card with that line. Check
+the invoice in Xero, settle anything beyond the part payment, then close the row
+again. The app also tries to email the club, but the line on the row is the
+record, so do not wait for the email.
 
 ### Decide a booking change the system would not price
 

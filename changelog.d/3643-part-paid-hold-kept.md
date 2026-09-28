@@ -16,10 +16,9 @@
   emailed to settle the payment by hand. That cancel also puts one item with
   no amount in **Money to settle**; closing it with a note, once the payment is
   settled in Xero, stops the Xero repair tool listing the booking for review.
-  If Xero later reports that invoice paid, the app never hands back or credits
-  the part payment that item covers a second time: it acts only on money beyond
-  it, and where it cannot tell how much the item covered it moves nothing, puts
-  the item back on the queue and emails the club.
+  If Xero later reports that invoice paid, the app credits and hands back
+  nothing for it by itself: the item records the date and the invoice's cash,
+  comes back onto the queue if it had been closed, and the club decides.
   A hold whose invoice cannot be read from Xero is kept, with one
   email, until the check-in date or seven days after its deadline, then released
   with a second email. A fully unpaid hold is released exactly as before. The

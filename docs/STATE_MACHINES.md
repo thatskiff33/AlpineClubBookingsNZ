@@ -1891,13 +1891,15 @@ OPEN -> DISMISSED   (#3643, owner decision 28 Sep 2026: the ONLY close of a
                      settled in Xero, not here. The dismissal quiets the Xero
                      repair tool's manual-review finding for the booking, and a
                      reopen re-arms it. See `INV-PAY-107`.)
-DISMISSED -> OPEN   (#3643: the inbound Xero sync, when a later PAID event
-                     arrives for a reviewed payment whose covered cash is not
-                     known exactly. It moves no money, status-fenced under
-                     `pg_advisory_xact_lock(1)`, audited as a reopen with no
-                     actor, and the treasurer is emailed. With an exact figure
-                     the review stays closed and only cash beyond it is handed
-                     back or credited. See `INV-PAY-107`.)
+DISMISSED -> OPEN   (#3643, orchestrator decision 3: the inbound Xero sync,
+                     when a PAID event arrives for a payment with a
+                     part-payment review. It moves no money: it writes onto the
+                     review when it learned the invoice was paid and the
+                     invoice's cash, once, and reopens it, status-fenced under
+                     `pg_advisory_xact_lock(1)` and audited as a reopen with no
+                     actor. An OPEN review gets the same note and stays OPEN. An
+                     email is attempted, best-effort; the note is the record.
+                     See `INV-PAY-109`.)
 ```
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
