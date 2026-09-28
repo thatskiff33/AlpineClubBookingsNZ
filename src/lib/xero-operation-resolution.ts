@@ -17,7 +17,10 @@
  * partials, the resolve route, and the admin operations panel. The query-side
  * spelling of the same rule is a `manuallyResolvedAt: null` filter (the
  * failure overview, the operations list's failure-state filter, contact-create
- * recovery, and the retry claims in `xero-operation-retry.ts`) - a `where`
+ * recovery, the retry claims in `xero-operation-retry.ts`, the resolve route,
+ * the outbox cooldown hand-back, the repeated-failure alert and the refund-note
+ * link repair) or `manuallyResolvedAt: { not: null }` (the enqueue fences in
+ * `xero-resolved-in-xero-fences.ts`, `hasInvoiceClearingNote`) - a `where`
  * clause cannot call a function, so those stay spelled out (`INV-INT-025`).
  */
 export function isResolvedInXero(operation: {

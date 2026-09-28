@@ -25,6 +25,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // action — that action would mint (and email) an awaiting-payment invoice for
   // money the club already holds.
   "MANUALLY_SETTLED_NO_XERO_EXPECTED",
+  // #3635 (orchestrator decision 2): informational, never actionable. An
+  // officer resolved the operation in Xero and the club's records hold no
+  // document for it: done, never re-run, but still seen.
+  "RESOLVED_IN_XERO_BY_OFFICER",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -335,6 +339,7 @@ export const xeroOperationSelect = Prisma.validator<Prisma.XeroSyncOperationSele
   // #3643 F1 / #3635 (`INV-INT-025`): an officer's "resolved in Xero" mark
   // means the operation is done - never retried, and never re-minted beside.
   manuallyResolvedAt: true,
+  manuallyResolvedReason: true,
 });
 
 export type XeroOperationRecord = Prisma.XeroSyncOperationGetPayload<{

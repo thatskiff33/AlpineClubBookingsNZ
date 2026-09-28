@@ -140,6 +140,37 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
     );
   });
 
+  it("does not count failures an officer resolved in Xero toward the alert (#3635)", async () => {
+    // Three failures on the key, two of them resolved: an evaluator of the
+    // count's where clause, so the test reads what the query would match.
+    const rows = [
+      { manuallyResolvedAt: null },
+      { manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") },
+      { manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") },
+    ];
+    mocks.operationCount.mockImplementation(
+      async (args: { where: { manuallyResolvedAt?: null } }) =>
+        rows.filter((row) => !("manuallyResolvedAt" in args.where) || row.manuallyResolvedAt === null)
+          .length
+    );
+
+    const result = await maybeNotifyXeroRepeatedFailure({
+      id: "op_1",
+      correlationKey: "payment:pay_1:invoice:v1",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "pay_1",
+      lastErrorMessage: "Rate limit exceeded",
+      xeroObjectType: "INVOICE",
+      xeroObjectId: "inv_1",
+      xeroObjectUrl: null,
+    });
+
+    expect(result).toEqual({ triggered: false, failureCount: 1 });
+    expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
+  });
+
   it("suppresses alerts when one has already been sent in the current window", async () => {
     mocks.emailFindFirst.mockResolvedValue({ id: "email_1" });
 
@@ -408,6 +439,7 @@ describe("buildXeroReconciliationReport", () => {
       unsupportedPartialOperations: 1,
       repeatedFailureCorrelations: 1,
       failedInboundEvents: 0,
+      resolvedInXeroOperations: 0,
       issueCategoryCount: 9,
       issueTotalCount: 13,
     });
@@ -526,6 +558,8 @@ describe("buildXeroReconciliationReport", () => {
           repeatedFailureCorrelations: repeated,
           recentFailedOperations: failed,
           recentPartialOperations: partial,
+          // Kept visible, not counted as a failure.
+          resolvedInXeroOperations: manuallyResolvedAt ? 3 : 0,
         })
       );
       expect(report.repeatedFailures).toHaveLength(repeated);

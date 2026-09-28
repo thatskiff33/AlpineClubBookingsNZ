@@ -68,6 +68,35 @@ export function buildRetryAction(
   };
 }
 
+/**
+ * #3635 (orchestrator decision 2, `INV-INT-025`): an operation an officer
+ * resolved in Xero, where the club's records hold no document for it. Resolved
+ * means "never re-run", not "never reported": info level, no action, nothing
+ * auto-applied - the shape of `MANUALLY_SETTLED_NO_XERO_EXPECTED` - so a wrong
+ * resolve can still be seen and put right by hand.
+ */
+export function addResolvedInXeroFinding(
+  findings: MutableFinding[],
+  operation: XeroOperationRecord,
+  document: string,
+  extraDetails: Record<string, unknown> = {}
+) {
+  addFinding(findings, {
+    code: "RESOLVED_IN_XERO_BY_OFFICER",
+    severity: "info",
+    summary: `An officer marked this booking's Xero ${document} operation resolved in Xero, so it is treated as done and is never re-run. The club's records hold no Xero ${document} for it; if the resolve was a mistake, raise it by hand in Xero.`,
+    safeToAutoApply: false,
+    details: {
+      ...extraDetails,
+      operationId: operation.id,
+      operationStatus: operation.status,
+      manuallyResolvedAt: operation.manuallyResolvedAt,
+      manuallyResolvedReason: operation.manuallyResolvedReason,
+    },
+    actionKeys: [],
+  });
+}
+
 export function buildManualReviewAction(bookingId: string, reason: string) {
   return {
     key: `manual:${bookingId}:${reason}`,

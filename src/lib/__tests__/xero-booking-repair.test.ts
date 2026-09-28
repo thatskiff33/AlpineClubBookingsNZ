@@ -5583,7 +5583,9 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
  * Every arm that offers `REQUEUE_XERO_OPERATION` (auto-applied) is driven here
  * twice from ONE fixture: unresolved, the control, which must offer the retry;
  * and resolved in Xero, which must offer no retry, queue no rival document,
- * and report no "blocked" finding for the officer's operation.
+ * and report the officer's operation only as the info-level, action-free
+ * RESOLVED_IN_XERO_BY_OFFICER finding (orchestrator decision 2) - or nothing,
+ * where the document itself exists (the PARTIAL clearing note).
  */
 describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
   const RESOLVED_AT = new Date("2026-05-06T00:00:00Z");
@@ -5900,12 +5902,24 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     for (const rival of scenario.rivalActionTypes) {
       expect(types).not.toContain(rival);
     }
-    expect(
-      resolved.findings.filter(
-        (finding) =>
-          (finding.details as Record<string, unknown>)?.operationId === "operation_officer"
-      )
-    ).toEqual([]);
+    const aboutTheOfficersOperation = resolved.findings.filter(
+      (finding) =>
+        (finding.details as Record<string, unknown>)?.operationId === "operation_officer"
+    );
+    const documentExists = scenario.arm === "cancelled open-invoice PARTIAL clearing note";
+    expect(aboutTheOfficersOperation).toEqual(
+      documentExists
+        ? []
+        : [
+            expect.objectContaining({
+              code: "RESOLVED_IN_XERO_BY_OFFICER",
+              severity: "info",
+              safeToAutoApply: false,
+              actions: [],
+              details: expect.objectContaining({ manuallyResolvedAt: RESOLVED_AT }),
+            }),
+          ]
+    );
   });
 
   it.each(["PENDING", "RUNNING"])(
@@ -5951,6 +5965,96 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
       );
     }
   );
+
+  it("a resolved account-credit note does not answer for a missing refund note (#3635, claims F8)", async () => {
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledCaptured({ refundedAmountCents: 10000, status: "REFUNDED" })],
+        operations: [
+          makeOperation({
+            id: "operation_account_credit_note",
+            localModel: "Payment",
+            localId: "payment_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "FAILED",
+            queueType: "ACCOUNT_CREDIT_NOTE",
+            xeroObjectType: null,
+            xeroObjectId: null,
+            requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", paymentId: "payment_1" },
+            manuallyResolvedAt: RESOLVED_AT,
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).toContain(
+      "QUEUE_REFUND_CREDIT_NOTE"
+    );
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "RESOLVED_IN_XERO_BY_OFFICER"
+    );
+  });
+
+  it("a resolved PARTIAL clearing note does not hide a separate live allocation failure (#3635, Xero F8)", async () => {
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        links: [clearingNoteLink],
+        operations: [
+          makeOperation({
+            id: "operation_resolved_partial_note",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            status: "PARTIAL",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_clear",
+            requestPayload: {
+              invoiceId: "inv_primary",
+              refundAmountCents: 10000,
+              clearsUnpaidInvoice: true,
+              allocations: [{ invoiceId: "inv_primary", amountCents: 10000 }],
+            },
+            manuallyResolvedAt: RESOLVED_AT,
+          }),
+          makeOperation({
+            id: "operation_live_allocation",
+            localModel: "Booking",
+            localId: "booking_1",
+            entityType: "ALLOCATION",
+            operationType: "ALLOCATE",
+            status: "FAILED",
+            xeroObjectType: null,
+            xeroObjectId: null,
+            requestPayload: {
+              queueType: "CREDIT_NOTE_ALLOCATION",
+              creditNoteId: "cn_clear",
+              invoiceId: "inv_primary",
+              amountCents: 10000,
+              role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            },
+          }),
+        ],
+      }),
+      scope: { all: true },
+    });
+    const bookingReport = report.passes[0].bookings[0];
+    // Seen, but report-only: the officer allocated by hand, so no retry.
+    expect(bookingReport.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        safeToAutoApply: false,
+        actions: [],
+        details: expect.objectContaining({ operationId: "operation_live_allocation" }),
+      })
+    );
+    const types = bookingReport.actions.map((action) => action.type);
+    expect(types).not.toContain("REQUEUE_XERO_OPERATION");
+    expect(types).not.toContain("QUEUE_CREDIT_NOTE_ALLOCATION");
+  });
 
   it("a newer live failure is not hidden behind an older resolved one", async () => {
     const booking = makeBooking({

@@ -1,5 +1,5 @@
 import { revalidatePath } from "next/cache";
-import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/booking-email-contract";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";

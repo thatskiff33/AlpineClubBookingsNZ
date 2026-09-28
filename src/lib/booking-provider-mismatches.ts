@@ -10,6 +10,10 @@ import {
   type BookingInvoiceSyncFault,
 } from "@/lib/booking-invoice-sync-status";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import {
+  findResolvedBookingInvoiceCreate,
+  findResolvedRefundCreditNoteCreate,
+} from "@/lib/xero-resolved-in-xero-fences";
 
 /**
  * Issue #1089: per-booking provider-mismatch surfacing. The aggregate views
@@ -26,6 +30,7 @@ type BookingProviderMismatchId =
   | "xero-invoice-sync-failed"
   | "xero-invoice-pending"
   | "xero-credit-note-pending"
+  | "xero-resolved-in-xero"
   | "waitlist-offer-email-failed";
 
 /**
@@ -100,6 +105,8 @@ export interface BookingProviderMismatchDependencies {
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
   getBookingInvoiceSyncFault: typeof getBookingInvoiceSyncFault;
   readBookingInvoiceEvidence: typeof readBookingInvoiceEvidence;
+  findResolvedBookingInvoiceCreate: typeof findResolvedBookingInvoiceCreate;
+  findResolvedRefundCreditNoteCreate: typeof findResolvedRefundCreditNoteCreate;
 }
 
 const defaultDependencies: BookingProviderMismatchDependencies = {
@@ -108,7 +115,26 @@ const defaultDependencies: BookingProviderMismatchDependencies = {
   getWaitlistOfferEmailDeliveries,
   getBookingInvoiceSyncFault,
   readBookingInvoiceEvidence,
+  findResolvedBookingInvoiceCreate,
+  findResolvedRefundCreditNoteCreate,
 };
+
+/**
+ * #3635 (orchestrator decision 2, `INV-INT-025`): the booking page says what
+ * the repair tool's info finding says - an officer resolved the operation in
+ * Xero, so nothing here will raise the document - instead of "pending", which
+ * implies the outbox will catch up. The same fence helpers the enqueues and the
+ * health lists read decide it, so the surfaces cannot disagree.
+ */
+function resolvedInXeroRow(document: string, paymentId: string): BookingProviderMismatch {
+  return {
+    id: "xero-resolved-in-xero",
+    label: `Xero ${document} resolved by hand`,
+    description: `An officer marked this booking's Xero ${document} operation resolved in Xero, so it is treated as done and nothing here will raise it again. The club's records hold no Xero ${document} for it. If the resolve was a mistake, raise it by hand in Xero.`,
+    href: buildXeroRecordActivityUrl("Payment", paymentId),
+    linkLabel: "Review Xero activity",
+  };
+}
 
 /**
  * #3001: what the officer looking at this booking is told about its Xero
@@ -330,7 +356,12 @@ export async function getBookingProviderMismatches(
       */
       const evidence = await deps.readBookingInvoiceEvidence(booking.payment);
 
-      if (!evidence.exists) {
+      if (
+        !evidence.exists &&
+        (await deps.findResolvedBookingInvoiceCreate(booking.payment.id))
+      ) {
+        mismatches.push(resolvedInXeroRow("invoice", booking.payment.id));
+      } else if (!evidence.exists) {
         mismatches.push({
           id: "xero-invoice-pending",
           label: "Paid, Xero invoice pending",
@@ -343,6 +374,14 @@ export async function getBookingProviderMismatches(
     }
 
     if (
+      booking.payment.source === "STRIPE" &&
+      booking.payment.refundedAmountCents > 0 &&
+      booking.payment.xeroInvoiceId !== null &&
+      booking.payment.xeroRefundCreditNoteId === null &&
+      (await deps.findResolvedRefundCreditNoteCreate(booking.payment.id))
+    ) {
+      mismatches.push(resolvedInXeroRow("refund credit note", booking.payment.id));
+    } else if (
       booking.payment.source === "STRIPE" &&
       booking.payment.refundedAmountCents > 0 &&
       booking.payment.xeroInvoiceId !== null &&

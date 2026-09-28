@@ -1045,6 +1045,8 @@ export async function buildXeroReconciliationReport(
       unsupportedPartialOperations,
       repeatedFailureCorrelations: repeatedFailures.length,
       failedInboundEvents,
+      resolvedInXeroOperations:
+        recentFailureOperationRows.length - recentFailureOperations.length,
       issueCategoryCount: issueCounts.filter((count) => count > 0).length,
       issueTotalCount: issueCounts.reduce((sum, count) => sum + count, 0),
     },
