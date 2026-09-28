@@ -262,8 +262,8 @@ export async function notifyJoinersReleasedToMemberPays(
 }
 
 /**
- * The reaper's self-heal: every live organiser-pays group whose settlement is
- * SUCCEEDED but still has a left-behind organiser-settled child gets the same
+ * The reaper's self-heal: every live organiser-pays group whose organiser has
+ * paid (SUCCEEDED or PARTIALLY_REFUNDED) but still has a left-behind organiser-settled child gets the same
  * release, one group per transaction under `lock(1)` with the group re-read
  * inside it, then the same email. A released child is no longer
  * organiser-settled, so it is never selected again and each joiner is emailed
@@ -280,7 +280,7 @@ export async function releaseJoinersLeftBehindPaidSettlements(
     where: {
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
       status: { not: GroupBookingStatus.CANCELLED },
-      settlement: { is: { status: PaymentStatus.SUCCEEDED } },
+      settlement: { is: { status: { in: [...ORGANISER_PAID_STATUSES] } } },
       organiserBooking: {
         deletedAt: null,
         status: { not: BookingStatus.CANCELLED },
@@ -310,7 +310,8 @@ export async function releaseJoinersLeftBehindPaidSettlements(
         if (
           !current ||
           current.status === GroupBookingStatus.CANCELLED ||
-          current.settlement?.status !== PaymentStatus.SUCCEEDED ||
+          !current.settlement ||
+          !ORGANISER_PAID_STATUSES.includes(current.settlement.status) ||
           current.organiserBooking.deletedAt !== null ||
           current.organiserBooking.status === BookingStatus.CANCELLED
         ) {

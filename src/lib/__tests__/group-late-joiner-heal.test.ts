@@ -114,7 +114,10 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
         where: {
           paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
           status: { not: GroupBookingStatus.CANCELLED },
-          settlement: { is: { status: PaymentStatus.SUCCEEDED } },
+          // "The organiser has paid": SUCCEEDED or PARTIALLY_REFUNDED.
+          settlement: {
+            is: { status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED] } },
+          },
           organiserBooking: {
             deletedAt: null,
             status: { not: BookingStatus.CANCELLED },
@@ -200,6 +203,25 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     );
   });
 
+  // The club's day, not UTC's: at 01:00 on 1 Oct in Auckland it is still
+  // 30 Sep in UTC, and a 1 Oct check-in has already started.
+  it("judges the check-in against the club's today, not UTC's", async () => {
+    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "today-1", checkIn: TODAY }])
+      .mockResolvedValueOnce([
+        { memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
+      ]);
+
+    await expect(
+      releaseJoinersLeftBehindPaidSettlements(new Date("2026-09-30T12:00:00.000Z"))
+    ).resolves.toEqual({ released: 0, skippedStarted: 1 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.sendPaySelf).not.toHaveBeenCalled();
+    expect(mocks.sendStartedAlert).toHaveBeenCalledTimes(1);
+  });
+
   it("does not alert the treasurer again once the group's alert is claimed", async () => {
     mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
@@ -215,9 +237,28 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     expect(mocks.sendPaySelf).not.toHaveBeenCalled();
   });
 
+  // Decision (2): a partly refunded settlement still holds the organiser's
+  // money, so the organiser has paid and the heal still moves the joiner.
+  it("moves a joiner of a group whose paid settlement was partly refunded", async () => {
+    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(
+      lockedRow({ settlement: { status: PaymentStatus.PARTIALLY_REFUNDED } })
+    );
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
+      .mockResolvedValueOnce([released]);
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      skippedStarted: 0,
+    });
+    expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["the group was cancelled", lockedRow({ status: GroupBookingStatus.CANCELLED })],
     ["the settlement is no longer paid", lockedRow({ settlement: { status: PaymentStatus.REFUNDED } })],
+    ["the settlement is gone", lockedRow({ settlement: null })],
     [
       "the organiser booking was cancelled",
       lockedRow({ organiserBooking: { status: BookingStatus.CANCELLED, deletedAt: null } }),
