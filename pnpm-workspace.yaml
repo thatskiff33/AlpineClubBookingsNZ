@@ -28,8 +28,17 @@ catalog:
 #   peer, `next-auth` itself and its `@auth/core`, because npm's nested form
 #   applied to the whole subtree under `next-auth` and pnpm's `>` form names a
 #   direct parent only.
+# - `next>sharp` is scoped to `next`, the only package that depends on sharp,
+#   rather than written as a bare `sharp`. A bare override also rewrites this
+#   repository's own `sharp: "catalog:"` to the resolved range in the
+#   lockfile, and pnpm's pre-run check (`verifyDepsBeforeRun`, below) compares
+#   package.json with the lockfile WITHOUT applying overrides. The two then
+#   disagree, and every `pnpm run` fails with "The lockfile ... does not
+#   satisfy project of id ." as soon as package.json is newer than the last
+#   install: a fresh checkout, a branch switch, or a Docker builder stage
+#   whose dependency layer came from the cache (#3673).
 overrides:
-  sharp: "catalog:"
+  "next>sharp": "catalog:"
   eslint-plugin-react-hooks: 7.1.1
   postcss: ^8.5.26
   next-auth>nodemailer: "catalog:"
