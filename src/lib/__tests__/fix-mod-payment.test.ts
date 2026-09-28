@@ -271,14 +271,12 @@ vi.mock("@/lib/club-format-server", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
   clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
 }));
-// #3567: PARTIAL, so `intentCurrencyDiffers` stays real (it is the rule under
-// test) and only the re-issue, whose own steps are unit-tested in
-// `additional-intent-currency.test.ts`, is replaced.
-const mockReissueAdditionalIntentInClubCurrency = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/additional-intent-currency", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/additional-intent-currency")),
-  reissueAdditionalIntentInClubCurrency: (...a: unknown[]) =>
-    mockReissueAdditionalIntentInClubCurrency(...a),
+// #3567 / #3635: `@/lib/additional-intent-currency` is NOT mocked. The re-issue
+// is a minter of an ADDITIONAL ask (`INV-OPS-015`), so it runs for real on its
+// mocked leaves - `createPaymentIntent`, the ledger upsert, the supersede's read
+// and durable cancel - and the reconcile's ledger posting below.
+vi.mock("@/lib/booking-ledger-settlement-sync", () => ({
+  syncBookingLedgerSettlements: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Chore cleanup mock
@@ -300,7 +298,13 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY } from "@/lib/stripe-charge-currency";
+import {
+  ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
+  PAYMENT_PROCESSING_BODY,
+  PAYMENT_PROCESSING_CODE,
+} from "@/lib/payment-recovery-contract";
+import { stripeIdempotencyKeyForAskAmount } from "@/lib/payment-recovery-keys";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -1999,6 +2003,43 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     };
   }
 
+  /**
+   * #3635: the payment row, plus the ledger the re-issue's REAL reconcile reads
+   * back - the old ask, and every ADDITIONAL row the re-issue has written by the
+   * time it reads - so the mirror it writes follows what was actually minted.
+   */
+  function withReissueLedger(row: ReturnType<typeof additionalPaymentRow>) {
+    const ledgerRow = (fields: Record<string, unknown>, minute: number) => ({
+      kind: "ADDITIONAL",
+      source: "STRIPE",
+      refundedAmountCents: 0,
+      withdrawnAt: null,
+      paymentMethodId: null,
+      createdAt: new Date(Date.UTC(2026, 6, 1, 0, minute)),
+      ...fields,
+    });
+    mockPaymentFindUnique.mockImplementation(async () => ({
+      amountCents: 0,
+      refundedAmountCents: 0,
+      status: "PENDING",
+      ...row,
+      transactions: [
+        ledgerRow({ stripePaymentIntentId: "pi_additional", amountCents: 3000, status: "PENDING" }, 0),
+        ...mockUpsertPaymentIntentTransaction.mock.calls.map(([written], index) =>
+          ledgerRow(
+            {
+              kind: (written as { kind: string }).kind,
+              stripePaymentIntentId: (written as { paymentIntentId: string }).paymentIntentId,
+              amountCents: (written as { amountCents: number }).amountCents,
+              status: (written as { status: string }).status,
+            },
+            1 + index,
+          ),
+        ),
+      ],
+    }));
+  }
+
   it("returns 404 if no pending additional payment", async () => {
     mockedAuth.mockResolvedValue(makeSession() as any);
     mockPaymentFindUnique.mockResolvedValue(
@@ -2153,7 +2194,32 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(409);
-    expect((await res.json()).clientSecret).toBeUndefined();
+    const body = await res.json();
+    expect(body.clientSecret).toBeUndefined();
+    // #3635: coded, so the card shows "paid" for THIS 409 and no other.
+    expect(body.code).toBe(ADDITIONAL_PAYMENT_ALREADY_MADE_CODE);
+  });
+
+  /*
+    #3635: a `processing` intent keeps its invoice at the door (#3641 - the Xero
+    reaper relies on that), but the member is told to WAIT, not that it is paid:
+    a processing payment can still fail and come back payable.
+  */
+  it("answers PAYMENT_PROCESSING for a same-currency intent Stripe is still processing", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow());
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      amount: 3000,
+      status: "processing",
+      client_secret: "pi_additional_secret_xyz",
+      currency: "nzd",
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
+    const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual(PAYMENT_PROCESSING_BODY);
   });
 
   /*
@@ -2167,7 +2233,8 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     // has taken (or is taking) is refused a second form, a cancelled intent is
     // closed. Either way the paid intent is never superseded.
     ["succeeded", 409, /already been made/],
-    ["processing", 409, /already been made/],
+    // #3635: still processing is not paid; the member waits (PAYMENT_PROCESSING).
+    ["processing", 409, /being processed/],
     ["canceled", 404, /No pending additional payment/],
   ])("does NOT re-issue an old-currency intent that is %s: answers %s", async (status, code, message) => {
     mockedAuth.mockResolvedValue(makeSession() as any);
@@ -2184,15 +2251,20 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     });
 
     expect(res.status).toBe(code);
-    expect(((await res.json()) as { error: string }).error).toMatch(message);
-    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+    const body = (await res.json()) as { error: string; code?: string };
+    expect(body.error).toMatch(message);
+    if (status === "processing") expect(body.code).toBe(PAYMENT_PROCESSING_CODE);
+    // Nothing minted, nothing written, nothing retired.
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mockEnqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
   });
 
   it.each(["requires_confirmation", "requires_action"])(
     "re-issues an old-currency intent that is still %s (unpaid) (#3567 re-review)",
     async (status) => {
       mockedAuth.mockResolvedValue(makeSession() as any);
-      mockPaymentFindUnique.mockResolvedValue(additionalPaymentRow({ stripeCustomerId: "cus_1" }));
+      withReissueLedger(additionalPaymentRow({ stripeCustomerId: "cus_1" }));
       mockedGetPaymentIntent.mockResolvedValue({
         id: "pi_additional",
         amount: 3000,
@@ -2200,26 +2272,29 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
         client_secret: "pi_additional_secret_aud", currency: "aud",
       } as any);
       mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
-      mockReissueAdditionalIntentInClubCurrency.mockResolvedValue({
+      mockedCreatePaymentIntent.mockResolvedValue({
         id: "pi_reissued",
         amount: 3000,
         client_secret: "pi_reissued_secret_nzd", currency: "nzd",
-      });
+      } as any);
 
       const res = await GET(new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret"), {
         params: Promise.resolve({ id: "bk1" }),
       });
 
       expect(res.status).toBe(200);
-      expect(mockReissueAdditionalIntentInClubCurrency).toHaveBeenCalledTimes(1);
+      await expect(res.json()).resolves.toMatchObject({ paymentIntentId: "pi_reissued" });
+      expect(mockedCreatePaymentIntent).toHaveBeenCalledTimes(1);
     },
   );
 
   it("re-issues an ask minted in another currency and returns the NEW intent's secret, never the old one (#3567)", async () => {
     mockedAuth.mockResolvedValue(makeSession() as any);
-    mockPaymentFindUnique.mockResolvedValue(
-      additionalPaymentRow({ stripeCustomerId: "cus_1" })
-    );
+    withReissueLedger(additionalPaymentRow({ stripeCustomerId: "cus_1" }));
+    // The old ask is live on the ledger, so the real supersede retires it.
+    mockPaymentTransactionFindMany.mockResolvedValue([
+      { id: "ptx_1", stripePaymentIntentId: "pi_additional", amountCents: 3000 },
+    ]);
     mockedGetPaymentIntent.mockResolvedValue({
       id: "pi_additional",
       amount: 3000,
@@ -2236,11 +2311,11 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       status: "PENDING",
       createdAt: new Date(),
     });
-    mockReissueAdditionalIntentInClubCurrency.mockResolvedValue({
+    mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_reissued",
       amount: 3000,
       client_secret: "pi_reissued_secret_nzd", currency: "nzd",
-    });
+    } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/additional-payment-secret");
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
@@ -2252,19 +2327,51 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
       amountCents: 3000,
       paymentIntentId: "pi_reissued",
     });
-    expect(mockReissueAdditionalIntentInClubCurrency).toHaveBeenCalledTimes(1);
-    const [call] = mockReissueAdditionalIntentInClubCurrency.mock.calls[0];
-    expect(call).toMatchObject({
+    // #3635: the re-issue ran for REAL. The ask is restated unchanged - the same
+    // total on a NEW intent in the club's currency, under a key discriminated by
+    // the intent it replaces...
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith({
       format: CLUB_FORMAT_TEST,
+      amountCents: 3000,
+      customerId: "cus_1",
+      metadata: {
+        bookingId: "bk1",
+        type: "modification_additional",
+        reason: "edit_financial_review_charge",
+      },
+      idempotencyKey: stripeIdempotencyKeyForAskAmount("pi_additional_reissue_nzd", 3000),
+    });
+    // ...its ADDITIONAL row keeps the carried part and the request's reason...
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith({
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      paymentIntentId: "pi_reissued",
+      amountCents: 3000,
+      carriedAskCents: 1000,
+      status: "PENDING",
+      reason: "edit_financial_review_charge",
+      stripeCustomerId: "cus_1",
+    });
+    // ...the old-currency ask is retired through the durable cancel...
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
       bookingId: "bk1",
       paymentId: "p1",
-      staleIntentId: "pi_additional",
-      reason: "edit_financial_review_charge",
-      customerId: "cus_1",
+      paymentTransactionId: "ptx_1",
+      paymentIntentId: "pi_additional",
+      amountCents: 3000,
     });
-    // The ask is restated unchanged: the same total, the same carried part.
-    expect(call.ask.amountCents).toBe(3000);
-    expect(call.ask.carriedCents).toBe(1000);
+    // ...and the payment's outstanding ask now names the new intent.
+    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "p1" },
+        data: expect.objectContaining({
+          additionalPaymentIntentId: "pi_reissued",
+          additionalAmountCents: 3000,
+        }),
+      }),
+    );
   });
 
   it("does not re-issue an intent already in the club's currency (#3567)", async () => {
@@ -2281,7 +2388,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ clientSecret: "pi_additional_secret_nzd" });
-    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   it("refuses with a 409 in a club currency without two decimal places before reading the payment (#3567)", async () => {
@@ -2293,10 +2400,11 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
     const res = await GET(req, { params: Promise.resolve({ id: "bk1" }) });
 
     expect(res.status).toBe(409);
-    await expect(res.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE });
+    // #3635: coded, so the card shows it as an error with the ask still owing.
+    await expect(res.json()).resolves.toEqual(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY);
     expect(mockPaymentFindUnique).not.toHaveBeenCalled();
     expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
-    expect(mockReissueAdditionalIntentInClubCurrency).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   it("returns 403 for a different member trying to access", async () => {

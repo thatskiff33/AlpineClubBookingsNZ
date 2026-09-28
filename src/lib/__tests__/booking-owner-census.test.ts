@@ -460,7 +460,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:201",
   "src/app/(authenticated)/bookings/page.tsx:183",
-  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:72",
+  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:80",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",

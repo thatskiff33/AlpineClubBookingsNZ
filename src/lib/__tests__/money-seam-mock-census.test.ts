@@ -125,6 +125,24 @@ export const MONEY_SEAMS: readonly MoneySeam[] = [
       "The one minter of an ADDITIONAL ask: it writes the row's amount and carried provenance and triggers the supersede. Mocking it asserts the ask a caller HANDED IN, never the one the member is asked for.",
   },
   {
+    name: "reissueAdditionalIntentInClubCurrency",
+    module: "src/lib/additional-intent-currency",
+    figures: ASK_FIGURES,
+    mintedAsk: true,
+    absentIsSilent: false,
+    why:
+      "The SECOND minter of an ADDITIONAL ask (#3567): when the club's currency changed, it mints the ask again in the new currency, writes the row's amount and carried provenance and retires the old intent. Mocking it asserts the ask a caller HANDED IN, never the re-issued one the member is asked for (#3635).",
+  },
+  {
+    name: "reissueRaisedAskIfCurrencyChanged",
+    module: "src/lib/additional-intent-currency",
+    figures: ASK_FIGURES,
+    mintedAsk: true,
+    absentIsSilent: false,
+    why:
+      "The edit review charge's raise through that minter (#3567): on an old-currency intent it re-issues the RAISED ask rather than raising the stale intent. Mocking it asserts the raise the caller computed, never the intent and row the member is charged on (#3635).",
+  },
+  {
     name: "reconcilePaymentAggregates",
     module: "src/lib/payment-transactions",
     figures: ["additionalAmountCents"],
