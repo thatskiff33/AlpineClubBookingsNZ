@@ -44,6 +44,8 @@ export type OpenManualRefundTaskRow = {
    * decides what an absent kind MEANS stays the card.
    */
   kind: string | null;
+  /** #3639: set on a late capture held for a treasurer's approval. */
+  lateCaptureApprovalIntentId: string | null;
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
@@ -97,6 +99,11 @@ export type OpenManualRefundTaskPayload = {
   amountCents: number | null;
   raisedAmountCents: number | null;
   kind: string | null;
+  /**
+   * #3639: a late capture held for a treasurer: completing it refunds the card
+   * through Stripe, so none of the hand-back wording fits it.
+   */
+  awaitingLateCaptureApproval: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -163,6 +170,7 @@ export function toOpenManualRefundTaskPayload(
     amountCents: task.amountCents,
     raisedAmountCents: task.raisedAmountCents,
     kind: task.kind,
+    awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

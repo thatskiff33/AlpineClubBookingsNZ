@@ -160,6 +160,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-late-capture-auto-refund": "adminLateCaptureAutoRefundTemplate",
   "admin-late-capture-hand-back-conflict": "adminLateCaptureHandBackConflictTemplate",
   "admin-manual-refund-task": "adminManualRefundTaskTemplate",
+  "admin-late-capture-held": "adminLateCaptureHeldTemplate",
   "admin-manual-settlement-conflict": "adminManualSettlementConflictTemplate",
   "admin-second-instrument-settlement-conflict": "adminSecondInstrumentSettlementConflictTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",

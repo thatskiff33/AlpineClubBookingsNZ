@@ -38,8 +38,10 @@ superseded-payment refund moved onto the one card-refund writer, and the file is
 shorter than its base.
 
 file: src/lib/email-message-registry.ts
-lines: 2111
+lines: 2122
 reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with
-  the comment saying why it is locked.
+  the comment saying why it is locked. #3639 (same epic, one file one
+  allowance) adds its held late-capture alert's name, required tokens and
+  trigger summary beside the hand-back task alert it mirrors.

@@ -36,6 +36,12 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import {
+  assertLateCaptureHandBackStillOwed,
+  executeLateCaptureApprovalRefund,
+  planLateCaptureApprovalRefund,
+  type LateCaptureRefundRoute,
+} from "@/lib/late-capture-refund-approval";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -197,7 +203,14 @@ export type EditReviewSettlementRoute =
    * what a charge is; the three above are the whole of what a refund is; and this
    * union is the one place that picks between them.
    */
-  | EditReviewChargeRoute;
+  | EditReviewChargeRoute
+  /**
+   * #3639: a treasurer approving the refund of a late capture on a cancelled
+   * booking. Defined in `late-capture-refund-approval.ts`, which is the whole of
+   * what that refund is: the automatic refund of the same capture, under the
+   * same Stripe keys.
+   */
+  | LateCaptureRefundRoute;
 
 /**
  * Exactly what the route decision reads off the task, and nothing else.
@@ -209,6 +222,10 @@ export type EditReviewSettlementRoute =
 export type EditReviewSettlementTask = {
   paymentId: string | null;
   kind: ManualRefundTaskKind | null;
+  /** #3639: set on a late capture held for a treasurer; names its intent. */
+  lateCaptureApprovalIntentId: string | null;
+  /** #3639: a #2700 task's frozen sentence, which names its capture. */
+  reason: string;
   reviewContext: unknown;
   payment: { source: PaymentSource } | null;
   booking: {
@@ -300,6 +317,16 @@ export async function chooseEditReviewSettlementRoute({
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
     if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
       throw new ManualBookingPaymentError(REVIEW_CHARGE_WRONG_KIND_MESSAGE, 400);
+    }
+    // #3639: an approved late-capture refund goes back to the card through
+    // Stripe - never a hand-back ledger mirror, which would count one refund
+    // twice once `charge.refunded` synced a dashboard refund of the same money.
+    if (task.lateCaptureApprovalIntentId) {
+      return planLateCaptureApprovalRefund({ task, amountCents, store });
+    }
+    // #3639: and a #2700 hand-back is refused once its capture was refunded.
+    if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
+      await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
     return task.paymentId !== null
       ? {
@@ -507,6 +534,17 @@ export async function executeEditReviewSettlement({
   additionalPaymentIntentId: string | null;
 }> {
   let stripeRefundId: string | null = null;
+
+  if (route?.kind === "late-capture-refund") {
+    stripeRefundId = await executeLateCaptureApprovalRefund({
+      bookingId,
+      taskId,
+      actingMemberId,
+      route,
+      amountCents: amountCents ?? 0,
+      format,
+    });
+  }
 
   if (route?.kind === "stripe-refund") {
     const refundAmountCents = amountCents ?? 0;

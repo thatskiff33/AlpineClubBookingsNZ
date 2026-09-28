@@ -70,6 +70,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // notification preference at send time, like their siblings.
   "admin-manual-settlement-conflict",
   "admin-manual-refund-task",
+  // #3639 (delta D7): a late capture held for a treasurer's approval. Same
+  // channel and preference as the hand-back task alert: a nudge for a durable
+  // task, moving no money, so not delivery-locked.
+  "admin-late-capture-held",
   // #3638: the second-instrument conflict — a card payment and a Xero payment
   // on one booking. Admin audience, sent through the unmuteable sender and
   // delivery-locked below, because the system refunds nothing on its own and
@@ -529,6 +533,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
   "admin-manual-refund-task": ["memberName", "reviewUrl"],
+  "admin-late-capture-held": ["memberName", "bookingId", "amount", "reviewUrl"],
   // #3638: {{secondInstrumentConflictNote}} is the sentence that differs
   // between a live booking and a cancelled one — what the card money already
   // did, and so what the treasurer does next — and {{xeroObjectUrl}} is the
@@ -802,6 +807,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "Xero reported a booking's invoice PAID for a booking this system had already recorded as settled in cash or by an off-Xero bank transfer, so the club may be holding the same money twice",
     frequency:
       "On the inbound reciprocal fence firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
+  },
+  "admin-late-capture-held": {
+    triggerSummary:
+      "A card payment went through after its booking was cancelled and the club has a treasurer approve these refunds, so it was held on the payments board instead of refunded",
+    frequency:
+      "Once per late payment held - claim-guarded, so a Stripe redelivery or a retry does not re-send",
   },
   "admin-second-instrument-settlement-conflict": {
     triggerSummary:

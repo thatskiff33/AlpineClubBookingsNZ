@@ -1655,7 +1655,9 @@ DATABASE_URL=<non-prod copy> npm run payments:audit-ib-hold-clearing -- --json
 INV-PAY-017 helper (#3535), but it recognizes only a booking-anchored
 `MODIFICATION_CREDIT_NOTE`, not the `REFUND_CREDIT_NOTE` an older release
 issued — so `--apply` would raise a second clearing note beside that refund
-note (#3639 makes it stand down). Repair those findings by hand instead:
+note. Since #3639 the arm skips any cancelled booking whose payment already
+carries a refund or account-credit note (`INV-PAY-106`), so these bookings get
+no finding from it and it will not point at the open delta. Repair those findings by hand instead:
 allocate the existing refund note to the invoice where it is unallocated, or
 issue a credit note for exactly the reported open delta, then confirm the
 invoice reaches a zero balance in Xero. A FAILED or PARTIAL clearing note on a
