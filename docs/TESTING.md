@@ -827,11 +827,15 @@ never runs for a browser spec, there is no `optOutOfFrozenClock` there, and
 
 ### The rule
 
-**Every civil date a browser spec derives comes from the club's day**, which is
-`E2E_TODAY_NZ` / `relDateOnly` in
-[`../prisma/e2e-fixtures.ts`](../prisma/e2e-fixtures.ts) — one clock read for the
-whole date space, frozen once per process, formatted through `Intl` with an
-explicit zone. Date arithmetic is `shiftDateOnly` from the same module. A spec
+**Every relative fixture date a browser spec derives comes from the club's
+day captured for that prepared E2E stack**, which is `E2E_TODAY_NZ` /
+`relDateOnly` in [`../prisma/e2e-fixtures.ts`](../prisma/e2e-fixtures.ts).
+`scripts/e2e-stack.sh prepare` captures it before seeding; `run` reads the same
+ignored date file and exports `E2E_FIXTURE_TODAY_NZ` to Playwright. Without a
+shared date, a run crossing club midnight can move a Monday-aligned fixture a
+whole week between the seed and spec (#3702). Direct imports without the
+environment variable read the current club date through `Intl` with an explicit
+zone. Date arithmetic is `shiftDateOnly` from the same module. A spec
 that calls `new Date()` and reads `getFullYear()`/`getMonth()`/`getDate()` off it
 is reading the **runner's** calendar, which is a different day from the club's for
 roughly the last twelve hours of every UTC day — and on the last day of a month,
