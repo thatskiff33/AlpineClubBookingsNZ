@@ -179,9 +179,10 @@ Every row below was verified by removing that entry and re-resolving (#2863),
 and re-checked for #3673 against the ranges the installed parents declare. Three
 bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
 (`next-auth`'s optional peer stops at `^8`) and `mysql2` (`prisma` pins 3.15.3).
-`eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding,
-and `browserslist` is a floor its parents' ranges already clear; their rows say
-so. The `sharp` override was retired in #3673: `next@16.3.5` itself requires
+`eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding.
+`browserslist` is a security floor its parents' ranges do not guarantee
+(webpack accepts `^4.28.1`); it is non-binding under highest-version resolution
+but still required. Their rows say so. The `sharp` override was retired in #3673: `next@16.3.5` itself requires
 `^0.35.4`, which met its removal condition.
 
 Since #3673 the block lives in `pnpm-workspace.yaml`, translated one entry for
@@ -203,9 +204,9 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | override | why it exists | retires when |
 | --- | --- | --- |
 | `postcss` (`^8.5.26`) | **Security.** `next` requires postcss at an **exact** version: `8.4.31` when this was added, which carries four advisories including a high, and `8.5.23` in `next@16.3.5`, still below this floor. An exact upstream pin cannot be lifted by drift, so this override is the only thing keeping the nested copy safe. | `next` moves its own postcss pin to 8.5.26 or later. |
-| `next-auth>nodemailer` and `@auth/core>nodemailer` (`catalog:`) | **Resolution.** `next-auth@5.0.0-beta.32` declares `peerOptional nodemailer@"^7.0.7 \|\| ^8.0.5"`, which conflicts with this repository's own `nodemailer` range (the workspace `catalog:`); under npm the override was what stopped `npm install` failing with `ERESOLVE`, and under pnpm it keeps both packages' optional peer on that one copy instead of a peer-mismatch resolution. Added in `8f366a08c` (#1182). | `next-auth` widens its peer range to admit nodemailer 9. |
+| `next-auth>nodemailer` and `@auth/core>nodemailer` (`catalog:`) | **Resolution.** `next-auth@5.0.0-beta.32` declares `peerOptional nodemailer@"^7.0.7 \|\| ^8.0.5"`, which conflicts with this repository's own `nodemailer` range (the workspace `catalog:`); under npm the override was what stopped `npm install` failing with `ERESOLVE`, and under pnpm it keeps both packages' optional peer on that one copy instead of a peer-mismatch resolution. Added in `8f366a08c` (#1182). | `next-auth` widens its peer range to admit the catalog's nodemailer range (currently `^10.0.10`), on both `next-auth` and `@auth/core`. |
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
-| `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `pnpm audit` will show by this entry becoming inert. |
+| `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `mysql2` (`^3.22.0`) | **Security, on a driver this application never loads.** `mysql2 < 3.22.0` carries an auth-plugin downgrade to `mysql_clear_password` that leaks plaintext credentials (GHSA-3f6p-5ww8-9rcr). It arrives transitively through `prisma`, and this product's datasource is `provider = "postgresql"` — nothing in `src/` imports it, so the advisory is not reachable here. It is overridden rather than accepted because `pnpm audit --audit-level=high` is a required check and cannot express "unreachable", and because the only remedy npm offered was `--force`, which **downgrades Prisma** and is a far larger change than the one it avoids. A **range**, not a pin. | `prisma` requires mysql2 3.22.0 or later. |
 
 ### The direct-dependency hold register
@@ -271,7 +272,12 @@ Two cautions. `pnpm audit` reflects today's advisory database, so this measures
 whether upstream has caught up as of now, not for all time. And an override may
 exist for a non-security reason that no audit can see — check `git log -S` for
 the entry before removing it, as a hold or a peer-conflict fix will look inert
-to this procedure while still being load-bearing.
+to this procedure while still being load-bearing. Nor can it see a
+security **floor** over parents whose ranges still accept a vulnerable version:
+highest-version resolution lands above the floor with or without the override,
+so the audit is clean either way. Read each parent's declared range instead;
+the floor is needed until the lowest version every parent accepts is itself
+safe (`browserslist` above is the standing example).
 
 ## Supply-Chain And Deployment Security Policy
 
