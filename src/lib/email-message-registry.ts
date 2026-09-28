@@ -61,9 +61,10 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // gated by the adminPaymentFailure notification preference at send time, like
   // its siblings.
   "admin-duplicate-capture-refund",
-  // #3672: paid-group joiners left for the treasurer because the stay has
-  // started. sendToAdmins on the adminPaymentFailure preference like its
-  // reconcile-by-hand siblings; not delivery-locked, because no money moved.
+  // #3672: paid-group joiners switched to paying for themselves mid-stay, for
+  // the treasurer to collect by hand. sendToAdmins on the adminPaymentFailure
+  // preference like its reconcile-by-hand siblings; not delivery-locked,
+  // because no money moved.
   "admin-group-joiner-started-stay",
   // B5 (#2262): the reciprocal fence's conflict alert and the cash-cancellation
   // hand-back task alert. Both ship via sendToAdmins, so admin audience, and
@@ -1082,14 +1083,14 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-group-joiner-started-stay": {
     triggerSummary:
-      "A paid organiser-pays group has joiners its bill did not cover, but the stay has started, so they were left for the treasurer instead of being switched to paying for themselves (#3672)",
+      "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
     frequency:
-      "At most once per group, guarded by a cross-instance claim, from the settlement's payment or the group-settlement cycle",
+      "Once per group, guarded by a cross-instance claim that is given back when the send reaches nobody, so the group-settlement cycle retries it",
   },
   "group-join-pay-self": {
     triggerSummary:
-      "Organiser-pays group settlement was paid without a joiner on it, so the joiner now pays for their own place (#3672)",
-    frequency: "One email per joiner booking the paid settlement did not cover",
+      "Organiser-pays group settlement was paid without a joiner on it, so the joiner now pays for their own place (#3672). Only a joiner awaiting payment whose stay has not started",
+    frequency: "At most once per joiner booking the paid settlement did not cover; the booking's payer-switch event is the record",
   },
   "group-settlement-expired": {
     triggerSummary:

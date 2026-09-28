@@ -5,22 +5,24 @@ import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import { formatBookingReference } from "@/lib/booking-reference";
 
 /**
- * #3672 (`INV-PAY-108`): a paid group's left-behind joiners were not switched
- * to paying for themselves because the stay has started. Admin audience
- * through `sendToAdmins` on the `adminPaymentFailure` preference, like the
- * other reconcile-by-hand notices; the caller sends it at most once per group.
+ * #3672 (`INV-PAY-108`): a paid group's left-behind joiners whose stay has
+ * started were switched to paying for themselves without an email, so the
+ * treasurer collects by hand. Admin audience through `sendToAdmins` on the
+ * `adminPaymentFailure` preference, linking the payments board like the other
+ * reconcile-by-hand notices. Returns how many admins it reached, so the
+ * caller's once-per-group claim can be given back when nobody was told.
  */
 export async function sendAdminGroupJoinerStartedStayAlert(data: {
   organiserName: string;
   organiserBookingId: string;
   checkIn: Date;
   joinerNames: string;
-}): Promise<void> {
+}): Promise<number> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/bookings`;
+  const reviewUrl = `${baseUrl}/admin/payments`;
 
-  await sendToAdmins({
-    subject: "Unpaid group joiners on a stay that has started",
+  return sendToAdmins({
+    subject: "Group joiners mid-stay now pay for themselves",
     html: await renderEmailHtml(() =>
       adminGroupJoinerStartedStayTemplate({ ...data, reviewUrl }),
     ),

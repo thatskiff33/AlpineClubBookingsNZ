@@ -135,6 +135,10 @@ import {
   releaseUnpaidJoinersToMemberPaysInTx,
 } from "@/lib/group-late-joiner";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import {
+  GROUP_JOINER_PAYS_OWN_EVENT_KIND,
+  GROUP_JOINER_PAYS_OWN_EVENT_REASON,
+} from "@/lib/manual-settlement-reversal-event";
 
 const CLUB_ZONE = "Pacific/Auckland";
 /** The club's today, in the `@db.Date` encoding check-ins are stored in. */
@@ -332,40 +336,82 @@ describe("group-late-joiner helpers (#3672)", () => {
     );
   });
 
-  // #3672: the started-stay rule (`INV-PAY-016`'s): a joiner whose check-in
-  // is on or before the club's today is left for the treasurer.
-  it("moves a joiner yet to arrive and leaves one whose stay started yesterday or today", async () => {
-    const tx = {
-      booking: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "past", checkIn: new Date("2026-09-30T00:00:00.000Z") },
-          { id: "today", checkIn: CLUB_TODAY },
-          { id: "future", checkIn: new Date("2026-10-02T00:00:00.000Z") },
-        ]),
-        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      },
+  // Decision 3: every left-behind joiner is switched, started stay or not;
+  // the club's today (`bookingStayHasStarted`) only decides who is told.
+  function switchTx(rows: Array<{ id: string; status: BookingStatus; checkIn: Date }>) {
+    return {
+      booking: { updateManyAndReturn: vi.fn().mockResolvedValue(rows) },
+      bookingEvent: { createMany: vi.fn().mockResolvedValue({ count: rows.length }) },
     };
+  }
+
+  it("switches every left-behind joiner, emails only one who can pay before their stay, and names started stays for the treasurer", async () => {
+    const tx = switchTx([
+      { id: "past", status: BookingStatus.PAYMENT_PENDING, checkIn: new Date("2026-09-30T00:00:00.000Z") },
+      { id: "today", status: BookingStatus.PAYMENT_PENDING, checkIn: CLUB_TODAY },
+      { id: "future", status: BookingStatus.PAYMENT_PENDING, checkIn: new Date("2026-10-02T00:00:00.000Z") },
+      { id: "review", status: BookingStatus.AWAITING_REVIEW, checkIn: new Date("2026-10-02T00:00:00.000Z") },
+    ]);
     await expect(
-      releaseUnpaidJoinersToMemberPaysInTx(tx as never, "booking-1", CLUB_TODAY)
-    ).resolves.toEqual({ released: ["future"], skippedStarted: ["past", "today"] });
-    expect(tx.booking.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: { in: ["future"] } }),
-        data: { organiserSettled: false },
-      })
-    );
+      releaseUnpaidJoinersToMemberPaysInTx(
+        tx as never,
+        { groupBookingId: "group-1", organiserBookingId: "booking-1" },
+        CLUB_TODAY
+      )
+    ).resolves.toEqual({
+      switchedCount: 4,
+      emailToPay: ["future"],
+      startedStay: ["past", "today"],
+    });
+    // Unpaid, live statuses only, from the shared lists.
+    expect(tx.booking.updateManyAndReturn).toHaveBeenCalledWith({
+      where: {
+        parentBookingId: "booking-1",
+        organiserSettled: true,
+        deletedAt: null,
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.PAYMENT_PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.AWAITING_REVIEW,
+          ],
+        },
+      },
+      data: { organiserSettled: false },
+      select: { id: true, status: true, checkIn: true },
+    });
+    // One payer-switch marker per switched joiner, in the same transaction.
+    const data = tx.bookingEvent.createMany.mock.calls[0][0].data;
+    expect(data.map((e: { bookingId: string }) => e.bookingId)).toEqual([
+      "past",
+      "today",
+      "future",
+      "review",
+    ]);
+    expect(data[0]).toMatchObject({
+      type: "CANCELLED",
+      reason: GROUP_JOINER_PAYS_OWN_EVENT_REASON,
+      snapshot: {
+        kind: GROUP_JOINER_PAYS_OWN_EVENT_KIND,
+        groupBookingId: "group-1",
+        organiserBookingId: "booking-1",
+        bookingStatus: BookingStatus.PAYMENT_PENDING,
+        stayStarted: true,
+      },
+    });
+    expect(data[2].snapshot).toMatchObject({ stayStarted: false });
   });
 
-  it("writes nothing when the paid bill left nobody behind", async () => {
-    const tx = {
-      booking: {
-        findMany: vi.fn().mockResolvedValue([]),
-        updateMany: vi.fn(),
-      },
-    };
+  it("writes no event when the paid bill left nobody behind", async () => {
+    const tx = switchTx([]);
     await expect(
-      releaseUnpaidJoinersToMemberPaysInTx(tx as never, "booking-1", CLUB_TODAY)
-    ).resolves.toEqual({ released: [], skippedStarted: [] });
-    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+      releaseUnpaidJoinersToMemberPaysInTx(
+        tx as never,
+        { groupBookingId: "group-1", organiserBookingId: "booking-1" },
+        CLUB_TODAY
+      )
+    ).resolves.toEqual({ switchedCount: 0, emailToPay: [], startedStay: [] });
+    expect(tx.bookingEvent.createMany).not.toHaveBeenCalled();
   });
 });

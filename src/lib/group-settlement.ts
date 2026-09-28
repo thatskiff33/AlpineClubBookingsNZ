@@ -76,11 +76,12 @@ import {
 } from "@/lib/group-settlement-invoice-binding";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import {
-  alertStartedLeftBehindJoinersOnce,
+  alertStartedStayJoinersOnce,
   clubTodayForStartedStay,
+  NO_PAYER_SWITCH,
   notifyJoinersReleasedToMemberPays,
   releaseUnpaidJoinersToMemberPaysInTx,
-  type LeftBehindRelease,
+  type JoinerPayerSwitch,
 } from "@/lib/group-late-joiner";
 import {
   changesBoundInvoice,
@@ -214,6 +215,8 @@ export async function createGroupSettlementIntent(
   const format = await clubFormatValues();
   const group = await requireOrganiserPaysGroup(rawCode, sessionUserId);
 
+  // SUCCEEDED alone, not `organiserHasPaidSettlement`: a refund-history
+  // settlement is re-minted below, never "already settled" (#3672 review).
   if (group.settlement?.status === PaymentStatus.SUCCEEDED) {
     return {
       outcome: "already_settled",
@@ -989,12 +992,12 @@ async function settleConfirmedChildrenAndNotify(
   // cost is already accounted for.
   await settleHostingCoverageAfterCommit({ limit: 25 });
 
-  // #3672: joiners the paid bill did not cover, moved to member-pays below —
-  // except any whose stay has started (club day read here, outside the lock).
+  // #3672: joiners the paid bill did not cover are moved to member-pays below;
+  // the club's day (read here, outside the lock) decides who is emailed.
   const clubTodayDateOnly = await clubTodayForStartedStay();
-  let leftBehind: LeftBehindRelease = { released: [], skippedStarted: [] };
+  let leftBehind: JoinerPayerSwitch = NO_PAYER_SWITCH;
   const settled = await prisma.$transaction(async (tx) => {
-    leftBehind = { released: [], skippedStarted: [] };
+    leftBehind = NO_PAYER_SWITCH;
     // #1881 two-tier protocol. This path flips CONFIRMED -> PAID (no net-new
     // capacity claim — both statuses already hold beds) AND flips the settlement
     // status (a money/booking-status transition). The settlement-status tier is
@@ -1235,7 +1238,10 @@ async function settleConfirmedChildrenAndNotify(
     // so no organiser-settled booking is ever left behind a paid settlement.
     leftBehind = await releaseUnpaidJoinersToMemberPaysInTx(
       tx,
-      settlement.groupBooking.organiserBookingId,
+      {
+        groupBookingId: settlement.groupBookingId,
+        organiserBookingId: settlement.groupBooking.organiserBookingId,
+      },
       clubTodayDateOnly
     );
 
@@ -1352,24 +1358,25 @@ async function settleConfirmedChildrenAndNotify(
     }
   }
 
-  // #3672: tell each joiner the paid bill did not cover that their booking is
-  // now theirs to pay. The booking link in the email opens the pay step.
-  if (leftBehind.released.length > 0) {
+  // #3672: tell each switched joiner who can pay now that their booking is
+  // theirs to pay, and the treasurer about any mid-stay. Neither throws, so a
+  // failed email can never fail the webhook that paid the settlement.
+  if (leftBehind.emailToPay.length > 0) {
     await notifyJoinersReleasedToMemberPays(
       settlement.groupBookingId,
       settlement.groupBooking.organiserMember,
-      leftBehind.released
+      leftBehind.emailToPay
     );
   }
-  if (leftBehind.skippedStarted.length > 0) {
-    await alertStartedLeftBehindJoinersOnce(
+  if (leftBehind.startedStay.length > 0) {
+    await alertStartedStayJoinersOnce(
       {
         groupBookingId: settlement.groupBookingId,
         organiserBookingId: settlement.groupBooking.organiserBookingId,
         organiser: settlement.groupBooking.organiserMember,
         checkIn: settlement.groupBooking.organiserBooking.checkIn,
       },
-      leftBehind.skippedStarted
+      leftBehind.startedStay
     );
   }
 
@@ -1377,8 +1384,7 @@ async function settleConfirmedChildrenAndNotify(
     {
       groupBookingId: settlement.groupBookingId,
       settledCount: settled.length,
-      releasedToMemberPaysCount: leftBehind.released.length,
-      skippedStartedCount: leftBehind.skippedStarted.length,
+      switchedToMemberPaysCount: leftBehind.switchedCount,
       source: options.source,
     },
     "Group settlement paid"
@@ -1414,6 +1420,8 @@ export async function applyGroupSettlementSucceeded(
     return { outcome: "not_found", settledBookingIds: [] };
   }
 
+  // The replay guard: THIS settlement's apply already ran. SUCCEEDED alone, not
+  // `organiserHasPaidSettlement` (#3672 review), which also counts a refund.
   if (settlement.status === PaymentStatus.SUCCEEDED) {
     return { outcome: "already_settled", settledBookingIds: [] };
   }
@@ -1493,6 +1501,8 @@ export async function applyGroupSettlementSucceededFromInvoice(
     return { outcome: "not_found", settledBookingIds: [] };
   }
 
+  // The replay guard: THIS settlement's apply already ran. SUCCEEDED alone, not
+  // `organiserHasPaidSettlement` (#3672 review), which also counts a refund.
   if (settlement.status === PaymentStatus.SUCCEEDED) {
     return { outcome: "already_settled", settledBookingIds: [] };
   }

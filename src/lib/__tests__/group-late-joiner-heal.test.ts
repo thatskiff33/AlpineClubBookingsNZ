@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BookingEventType,
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
@@ -7,35 +8,44 @@ import {
 } from "@prisma/client";
 
 /*
- * #3672 (`INV-PAY-108`): the group-settlement reaper's self-heal. A paid
- * organiser-pays group still holding an organiser-settled joiner its bill did
- * not cover (one left before the rule existed) has that joiner moved to paying
- * for themselves, under `lock(1)` with the group re-read inside it, and emailed
- * once.
+ * #3672 (`INV-PAY-108`, orchestrator decision 3): the group-settlement
+ * reaper's self-heal. A paid organiser-pays group still holding an
+ * organiser-settled joiner its bill did not cover (one left before the rule
+ * existed) has that joiner switched to paying for themselves, under `lock(1)`
+ * with the group re-read inside it — started stay or not. A joiner who can pay
+ * before their stay is emailed; for a started stay the treasurer is alerted
+ * once per group, re-driven from the payer-switch events until the alert
+ * reaches someone.
  */
 
 const mocks = vi.hoisted(() => ({
   groupFindMany: vi.fn(),
   groupFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
-  bookingUpdateMany: vi.fn(),
+  bookingSwitch: vi.fn(),
+  eventCreateMany: vi.fn(),
+  eventFindMany: vi.fn(),
   executeRaw: vi.fn(),
   transaction: vi.fn(),
   sendPaySelf: vi.fn(),
   sendStartedAlert: vi.fn(),
   claimAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
+  loggerError: vi.fn(),
 }));
 
 const tx = {
   $executeRaw: mocks.executeRaw,
   groupBooking: { findUnique: mocks.groupFindUnique },
-  booking: { findMany: mocks.bookingFindMany, updateMany: mocks.bookingUpdateMany },
+  booking: { updateManyAndReturn: mocks.bookingSwitch },
+  bookingEvent: { createMany: mocks.eventCreateMany },
 };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     groupBooking: { findMany: mocks.groupFindMany },
     booking: { findMany: mocks.bookingFindMany },
+    bookingEvent: { findMany: mocks.eventFindMany },
     $transaction: mocks.transaction,
   },
 }));
@@ -43,9 +53,16 @@ vi.mock("@/lib/email", () => ({
   sendGroupJoinPaySelfEmail: mocks.sendPaySelf,
   sendAdminGroupJoinerStartedStayAlert: mocks.sendStartedAlert,
 }));
-vi.mock("@/lib/alert-cooldown", () => ({ claimAlertCooldown: mocks.claimAlertCooldown }));
+vi.mock("@/lib/alert-cooldown", () => ({
+  ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  claimAlertCooldown: mocks.claimAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
+}));
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: mocks.loggerError, info: vi.fn(), warn: vi.fn() },
 }));
 
 /** 1 Oct 2026, 13:00 in Auckland: the club's today is 2026-10-01. */
@@ -55,14 +72,22 @@ const TODAY = new Date("2026-10-01T00:00:00.000Z");
 const FUTURE = new Date("2026-10-02T00:00:00.000Z");
 
 import { releaseJoinersLeftBehindPaidSettlements } from "@/lib/group-late-joiner";
+import {
+  GROUP_JOINER_PAYS_OWN_EVENT_KIND,
+  GROUP_JOINER_PAYS_OWN_EVENT_REASON,
+} from "@/lib/manual-settlement-reversal-event";
 
 function liveGroup(id: string) {
   return {
     id,
     organiserBookingId: `org-${id}`,
     organiserMember: { firstName: "Olive", lastName: "Organiser" },
-    organiserBooking: { checkIn: FUTURE },
   };
+}
+
+/** The group as the mid-stay alert pass loads it. */
+function alertGroup(id: string) {
+  return { ...liveGroup(id), organiserBooking: { checkIn: PAST } };
 }
 
 function lockedRow(overrides: Record<string, unknown> = {}) {
@@ -77,44 +102,64 @@ function lockedRow(overrides: Record<string, unknown> = {}) {
 const released = {
   id: "late-1",
   memberId: "m-late",
-  checkIn: new Date("2026-10-01T00:00:00.000Z"),
+  checkIn: FUTURE,
   checkOut: new Date("2026-10-03T00:00:00.000Z"),
   member: { email: "late@example.com", firstName: "Lee" },
   organisation: null,
 };
 
+/** A payer-switch marker for a started stay, as the alert pass reads it. */
+function startedMarker(bookingId: string, groupBookingId = "g1") {
+  return {
+    bookingId,
+    snapshot: {
+      kind: GROUP_JOINER_PAYS_OWN_EVENT_KIND,
+      groupBookingId,
+      organiserBookingId: `org-${groupBookingId}`,
+      bookingStatus: BookingStatus.PAYMENT_PENDING,
+      stayStarted: true,
+    },
+  };
+}
+
+const namedJoiners = [
+  { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
+];
+
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
   mocks.transaction.mockImplementation(async (cb: (store: typeof tx) => unknown) => cb(tx));
   mocks.executeRaw.mockResolvedValue(undefined);
-  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.eventCreateMany.mockResolvedValue({ count: 1 });
+  mocks.eventFindMany.mockResolvedValue([]);
   mocks.sendPaySelf.mockResolvedValue(undefined);
-  mocks.sendStartedAlert.mockResolvedValue(undefined);
+  mocks.sendStartedAlert.mockResolvedValue(1);
   mocks.claimAlertCooldown.mockResolvedValue(true);
+  mocks.releaseAlertCooldown.mockResolvedValue(undefined);
 });
 
 describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
-  it("moves a paid group's left-behind joiner to member-pays under lock(1) and emails them once", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+  it("switches a paid group's left-behind joiner under lock(1), records it, and emails them", async () => {
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
-    mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
-      .mockResolvedValueOnce([released]);
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: FUTURE },
+    ]);
+    mocks.bookingFindMany.mockResolvedValueOnce([released]);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 1,
-      skippedStarted: 0,
+      startedStayAlerts: 0,
     });
 
     // Only live, paid organiser-pays groups that still hold an
-    // organiser-settled, unpaid, live child are candidates, so a joiner moved
-    // once is never selected again.
+    // organiser-settled, unpaid, live child are candidates, so a switched
+    // joiner is never selected again.
     expect(mocks.groupFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
           status: { not: GroupBookingStatus.CANCELLED },
-          // "The organiser has paid": SUCCEEDED or PARTIALLY_REFUNDED.
           settlement: {
             is: { status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED] } },
           },
@@ -126,11 +171,11 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
                 organiserSettled: true,
                 deletedAt: null,
                 status: {
-                  notIn: [
-                    BookingStatus.PAID,
-                    BookingStatus.CANCELLED,
-                    BookingStatus.BUMPED,
-                    BookingStatus.COMPLETED,
+                  in: [
+                    BookingStatus.PENDING,
+                    BookingStatus.PAYMENT_PENDING,
+                    BookingStatus.CONFIRMED,
+                    BookingStatus.AWAITING_REVIEW,
                   ],
                 },
               },
@@ -139,20 +184,28 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
         },
       })
     );
-    // lock(1), then the re-read, then the move — all in one transaction.
+    // lock(1), then the re-read, then the switch and its record — one transaction.
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.groupFindUnique.mock.invocationCallOrder[0]
     );
     expect(mocks.groupFindUnique.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.bookingUpdateMany.mock.invocationCallOrder[0]
+      mocks.bookingSwitch.mock.invocationCallOrder[0]
     );
-    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        id: { in: ["late-1"] },
-        parentBookingId: "org-g1",
-        organiserSettled: true,
-      }),
-      data: { organiserSettled: false },
+    expect(mocks.bookingSwitch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ parentBookingId: "org-g1", organiserSettled: true }),
+        data: { organiserSettled: false },
+      })
+    );
+    expect(mocks.eventCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          bookingId: "late-1",
+          type: BookingEventType.CANCELLED,
+          reason: GROUP_JOINER_PAYS_OWN_EVENT_REASON,
+          snapshot: expect.objectContaining({ groupBookingId: "g1", stayStarted: false }),
+        }),
+      ],
     });
     expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
     expect(mocks.sendPaySelf).toHaveBeenCalledWith(
@@ -164,33 +217,50 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     expect(mocks.sendStartedAlert).not.toHaveBeenCalled();
   });
 
-  // The `INV-PAY-016` started-stay rule, in the club's zone: check-in before
-  // or on the club's today is a stay that has started.
-  it("leaves joiners whose stay started yesterday or today, and tells the treasurer once for the group", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+  // Decision 3: a started stay is switched too, never emailed mid-stay, and
+  // the treasurer is told once for the group.
+  it("switches joiners whose stay started yesterday or today without emailing them, and alerts the treasurer once", async () => {
+    mocks.groupFindMany
+      .mockResolvedValueOnce([liveGroup("g1")])
+      .mockResolvedValueOnce([alertGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "past-1", status: BookingStatus.PAYMENT_PENDING, checkIn: PAST },
+      { id: "today-1", status: BookingStatus.PAYMENT_PENDING, checkIn: TODAY },
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: FUTURE },
+    ]);
     mocks.bookingFindMany
-      .mockResolvedValueOnce([
-        { id: "past-1", checkIn: PAST },
-        { id: "today-1", checkIn: TODAY },
-        { id: "late-1", checkIn: FUTURE },
-      ])
-      // The moved joiner, for their email.
       .mockResolvedValueOnce([released])
-      // The skipped joiners, named in the treasurer's alert.
       .mockResolvedValueOnce([
-        { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
+        ...namedJoiners,
         { memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
       ]);
+    mocks.eventFindMany.mockResolvedValue([startedMarker("past-1"), startedMarker("today-1")]);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
-      released: 1,
-      skippedStarted: 2,
+      released: 3,
+      startedStayAlerts: 1,
     });
 
-    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mocks.bookingUpdateMany.mock.calls[0][0].where.id).toEqual({ in: ["late-1"] });
+    const snapshots = mocks.eventCreateMany.mock.calls[0][0].data.map(
+      (e: { snapshot: { stayStarted: boolean } }) => e.snapshot.stayStarted
+    );
+    expect(snapshots).toEqual([true, true, false]);
     expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingFindMany.mock.calls[0][0].where.id).toEqual({ in: ["late-1"] });
+    // The alert pass reads unpaid, still-live started-stay switches.
+    expect(mocks.eventFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          type: BookingEventType.CANCELLED,
+          AND: [
+            { snapshot: { path: ["kind"], equals: GROUP_JOINER_PAYS_OWN_EVENT_KIND } },
+            { snapshot: { path: ["stayStarted"], equals: true } },
+          ],
+          booking: expect.objectContaining({ deletedAt: null, organiserSettled: false }),
+        }),
+      })
+    );
     expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
       expect.objectContaining({ key: "group-joiner-started-stay:g1" })
     );
@@ -201,63 +271,88 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
         joinerNames: "Pat Past, Tia Today",
       })
     );
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
   });
 
   // The club's day, not UTC's: at 01:00 on 1 Oct in Auckland it is still
   // 30 Sep in UTC, and a 1 Oct check-in has already started.
   it("judges the check-in against the club's today, not UTC's", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
-    mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "today-1", checkIn: TODAY }])
-      .mockResolvedValueOnce([
-        { memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
-      ]);
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "today-1", status: BookingStatus.PAYMENT_PENDING, checkIn: TODAY },
+    ]);
 
-    await expect(
-      releaseJoinersLeftBehindPaidSettlements(new Date("2026-09-30T12:00:00.000Z"))
-    ).resolves.toEqual({ released: 0, skippedStarted: 1 });
-    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    await releaseJoinersLeftBehindPaidSettlements(new Date("2026-09-30T12:00:00.000Z"));
+
+    expect(mocks.eventCreateMany.mock.calls[0][0].data[0].snapshot.stayStarted).toBe(true);
     expect(mocks.sendPaySelf).not.toHaveBeenCalled();
-    expect(mocks.sendStartedAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches a joiner under review without emailing them to pay", async () => {
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "review-1", status: BookingStatus.AWAITING_REVIEW, checkIn: FUTURE },
+    ]);
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      startedStayAlerts: 0,
+    });
+    expect(mocks.eventCreateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.sendPaySelf).not.toHaveBeenCalled();
   });
 
   it("does not alert the treasurer again once the group's alert is claimed", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
-    mocks.groupFindUnique.mockResolvedValue(lockedRow());
-    mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "past-1", checkIn: PAST }])
-      // The joiner the alert would name, so only the claim can stop it.
-      .mockResolvedValueOnce([
-        { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
-      ]);
+    mocks.groupFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([alertGroup("g1")]);
+    mocks.eventFindMany.mockResolvedValue([startedMarker("past-1")]);
+    // The joiner the alert would name, so only the claim can stop it.
+    mocks.bookingFindMany.mockResolvedValue(namedJoiners);
     mocks.claimAlertCooldown.mockResolvedValue(false);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 0,
-      skippedStarted: 1,
+      startedStayAlerts: 0,
     });
-    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.sendStartedAlert).not.toHaveBeenCalled();
-    expect(mocks.sendPaySelf).not.toHaveBeenCalled();
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
   });
 
-  // Decision (2): a partly refunded settlement still holds the organiser's
-  // money, so the organiser has paid and the heal still moves the joiner.
-  it("moves a joiner of a group whose paid settlement was partly refunded", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
-    mocks.groupFindUnique.mockResolvedValue(
-      lockedRow({ settlement: { status: PaymentStatus.PARTIALLY_REFUNDED } })
-    );
-    mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
-      .mockResolvedValueOnce([released]);
+  // Concurrency review F1: a claim spent on a send that told nobody would
+  // silence the alert for good. It is given back, and the next run sends it.
+  it.each([
+    ["reaches no admin", () => mocks.sendStartedAlert.mockResolvedValueOnce(0)],
+    ["throws", () => mocks.sendStartedAlert.mockRejectedValueOnce(new Error("SES down"))],
+  ])("gives the claim back when the send %s, so the next run retries it", async (_label, fail) => {
+    mocks.groupFindMany.mockResolvedValue([]);
+    mocks.groupFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([alertGroup("g1")])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([alertGroup("g1")]);
+    mocks.eventFindMany.mockResolvedValue([startedMarker("past-1")]);
+    mocks.bookingFindMany.mockResolvedValue(namedJoiners);
+    fail();
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
-      released: 1,
-      skippedStarted: 0,
+      released: 0,
+      startedStayAlerts: 0,
     });
-    expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
+    const firstClaim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledWith({
+      key: "group-joiner-started-stay:g1",
+      claimedAt: firstClaim.now,
+    });
+
+    // The next cycle claims again and this time reaches the treasurer.
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 0,
+      startedStayAlerts: 1,
+    });
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledTimes(2);
+    expect(mocks.sendStartedAlert).toHaveBeenCalledTimes(2);
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -269,34 +364,59 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
       lockedRow({ organiserBooking: { status: BookingStatus.CANCELLED, deletedAt: null } }),
     ],
     ["the group is gone", null],
-  ])("moves nobody and emails nobody when, under the lock, %s", async (_label, row) => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
+  ])("switches nobody and emails nobody when, under the lock, %s", async (_label, row) => {
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(row);
-    // A left-behind joiner is there to move, so only the re-read can stop it.
-    mocks.bookingFindMany.mockResolvedValue([{ id: "late-1", checkIn: FUTURE }]);
+    // A left-behind joiner is there to switch, so only the re-read can stop it.
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: FUTURE },
+    ]);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 0,
-      skippedStarted: 0,
+      startedStayAlerts: 0,
     });
 
-    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingSwitch).not.toHaveBeenCalled();
+    expect(mocks.eventCreateMany).not.toHaveBeenCalled();
     expect(mocks.sendPaySelf).not.toHaveBeenCalled();
   });
 
   it("carries on with the next group when one fails", async () => {
-    mocks.groupFindMany.mockResolvedValue([liveGroup("g1"), liveGroup("g2")]);
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1"), liveGroup("g2")]);
     mocks.groupFindUnique
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce(lockedRow());
-    mocks.bookingFindMany
-      .mockResolvedValueOnce([{ id: "late-1", checkIn: FUTURE }])
-      .mockResolvedValueOnce([released]);
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: FUTURE },
+    ]);
+    mocks.bookingFindMany.mockResolvedValueOnce([released]);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 1,
-      skippedStarted: 0,
+      startedStayAlerts: 0,
     });
     expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
+  });
+
+  // Concurrency review F2: the switch committed, so a failure reading the
+  // joiners for their email is not "failed to move", and is counted as moved.
+  it("reports a committed switch as moved when loading its email fails", async () => {
+    mocks.groupFindMany.mockResolvedValueOnce([liveGroup("g1")]);
+    mocks.groupFindUnique.mockResolvedValue(lockedRow());
+    mocks.bookingSwitch.mockResolvedValue([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: FUTURE },
+    ]);
+    mocks.bookingFindMany.mockRejectedValueOnce(new Error("db blip"));
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 1,
+      startedStayAlerts: 0,
+    });
+    const messages = mocks.loggerError.mock.calls.map((call) => call[1]);
+    expect(messages).not.toContain("Failed to move a paid group's left-behind joiners to member-pays");
+    expect(messages).toContain(
+      "Failed to load switched group joiners to tell them to pay; the switch stands"
+    );
   });
 });

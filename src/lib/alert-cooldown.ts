@@ -45,3 +45,27 @@ export async function claimAlertCooldown({
     throw error;
   }
 }
+
+/**
+ * A window no stay outlives: claiming with it means "alert once, ever" for its
+ * key (#3672). One named constant so every once-only alert shares it.
+ */
+export const ALERT_ONCE_EVER_WINDOW_MS = 36_500 * 86_400_000;
+
+/**
+ * Give back a claim this caller took at `claimedAt` and could not use — the
+ * send threw or reached nobody — so the next run can claim and send again
+ * (#3672). Deletes only a row still stamped with this caller's own claim, so a
+ * newer claim by another sender is never released.
+ */
+export async function releaseAlertCooldown({
+  key,
+  claimedAt,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.deleteMany({ where: { key, lastAlertedAt: claimedAt } });
+}

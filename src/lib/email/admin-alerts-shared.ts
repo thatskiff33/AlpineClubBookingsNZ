@@ -96,7 +96,12 @@ async function getAdminAlertEmails(
     .map((admin) => admin.email);
 }
 
-/** Send an email to all active admins who opted into the alert category. */
+/**
+ * Send an email to all active admins who opted into the alert category.
+ * Returns how many recipients it reached (0 when the delivery policy skipped
+ * it, nobody is opted in, or every send failed), for a caller that holds a
+ * once-only claim and must give it back when nobody was told (#3672).
+ */
 export async function sendToAdmins({
   subject,
   html,
@@ -111,14 +116,14 @@ export async function sendToAdmins({
   preferenceKey: AdminNotificationPreferenceKey;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}) {
+}): Promise<number> {
   const delivery = await shouldSendAdminSystemEmail({ templateName });
   if (!delivery.send) {
     logger.info(
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
       "Skipped admin email by delivery policy",
     );
-    return;
+    return 0;
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
@@ -167,6 +172,7 @@ export async function sendToAdmins({
       ),
     );
   }
+  return outcomes.filter((outcome) => outcome.status === "sent").length;
 }
 
 /**

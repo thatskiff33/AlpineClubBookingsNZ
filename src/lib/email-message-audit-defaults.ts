@@ -494,11 +494,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
   },
-  // #3672 (`INV-PAY-108`): paid-group joiners left for the treasurer because
-  // the stay has started.
+  // #3672 (`INV-PAY-108`): paid-group joiners switched to paying for
+  // themselves mid-stay, for the treasurer to collect by hand.
   "admin-group-joiner-started-stay": {
-    "defaultSubject": "Unpaid group joiners on a stay that has started",
-    "defaultBody": "Unpaid Group Joiners on a Stay That Has Started\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Their stay has already started, so they were NOT switched to paying for themselves automatically. Arrange their payment by hand, or cancel their bookings.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nCheck-in: {{checkIn}}\nJoiners: {{joinerNames}}\n\nView Bookings: {{reviewUrl}}"
+    "defaultSubject": "Group joiners mid-stay now pay for themselves",
+    "defaultBody": "Group Joiners Mid-Stay Now Pay for Themselves\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Each booking is now the joiner's own to pay. Their stay has already started, so they were not emailed about it. Collect payment from them by hand and mark each booking paid, or they can pay by card from their booking.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nGroup check-in: {{checkIn}}\nJoiners: {{joinerNames}}\n\nView Payments: {{reviewUrl}}"
   },
   "group-join-pay-self": {
     "defaultSubject": "Please pay for your place — {{CLUB_NAME}}",

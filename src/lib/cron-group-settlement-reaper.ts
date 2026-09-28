@@ -50,7 +50,9 @@
  *
  * Fourth phase (#3672, `INV-PAY-108`): a paid organiser-pays group still
  * holding an organiser-settled joiner its bill did not cover has that joiner
- * moved to paying for themselves (`releaseJoinersLeftBehindPaidSettlements`).
+ * moved to paying for themselves (`releaseJoinersLeftBehindPaidSettlements`),
+ * and any mid-stay switch's treasurer alert that has not yet reached anyone is
+ * sent.
  */
 import {
   BookingEventType,
@@ -139,10 +141,10 @@ export interface GroupSettlementReapResult {
    */
   releasedToMemberPays: number;
   /**
-   * #3672: such joiners NOT moved because their stay has started; the
-   * treasurer is alerted once per group.
+   * #3672: groups whose treasurer was alerted this run about such joiners
+   * switched mid-stay (sent, or retried after a send that reached nobody).
    */
-  skippedStarted: number;
+  startedStayAlerts: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -207,7 +209,7 @@ export async function reapStaleGroupSettlements(
     heldForInvoicePayment: 0,
     heldForUnreadableInvoice: 0,
     releasedToMemberPays: 0,
-    skippedStarted: 0,
+    startedStayAlerts: 0,
   };
 
   for (const settlement of candidates) {
@@ -274,7 +276,7 @@ export async function reapStaleGroupSettlements(
 
   const leftBehind = await releaseJoinersLeftBehindPaidSettlements(now);
   result.releasedToMemberPays = leftBehind.released;
-  result.skippedStarted = leftBehind.skippedStarted;
+  result.startedStayAlerts = leftBehind.startedStayAlerts;
 
   await resumeInterruptedOrganiserCancels(now, result, format);
 

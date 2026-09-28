@@ -1718,6 +1718,8 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice, format
     return result;
   }
 
+  // SUCCEEDED alone: "was this settlement applied?", not "has the organiser
+  // paid?" (`organiserHasPaidSettlement`, #3672), which also counts a refund.
   if (settlement.status === PaymentStatus.SUCCEEDED) {
     // Settled by THIS invoice, a re-fetch of the same payment: nothing to do.
     // Settled by a card: the Internet Banking path nulls the intent pointer,

@@ -909,7 +909,7 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "groupJoinCancelledTemplate:minimal", fn: "groupJoinCancelledTemplate", render: () =>
     groupJoinCancelledTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminGroupJoinerStartedStayTemplate:minimal", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
-    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joinerNames: "joinerNames-3", reviewUrl: "https://example.test/admin/bookings" }) },
+    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joinerNames: "joinerNames-3", reviewUrl: "https://example.test/admin/payments" }) },
   { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
     groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>

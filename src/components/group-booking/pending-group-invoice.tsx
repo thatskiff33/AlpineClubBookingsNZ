@@ -149,8 +149,10 @@ export function PaidGroupSummary({
 
 /**
  * #3642: organiser-settled joiners left unpaid behind a paid settlement. Since
- * #3672 nothing leaves one there (a joiner the paid bill missed pays for
- * themselves); kept for a booking left so before that change.
+ * #3672 the paid apply switches every such live, unpaid joiner to paying for
+ * themselves, started stay or not, so this shows only for one left before that
+ * change until the group-settlement cycle next heals it, or for a status the
+ * switch does not cover (a draft or waitlisted child, which no path writes).
  */
 function NotPaidForYetNotice({ names }: { names: string[] }) {
   return (

@@ -391,6 +391,72 @@ describe("OrganiserGroupBookingCard settlement", () => {
     expect(screen.queryByText(/Everyone in your group is confirmed/)).toBeNull();
   });
 
+  // #3672 review (correctness F3): the card reads "the organiser has paid"
+  // from the one shared definition, so a partly refunded settlement is paid
+  // here exactly as it is on the server, and a fully refunded one is not.
+  it.each([
+    ["PARTIALLY_REFUNDED", true],
+    ["SUCCEEDED", true],
+    ["REFUNDED", false],
+  ])("treats a %s settlement on a live group as paid = %s", async (status, paid) => {
+    stubFetch({ internetBankingEnabled: false });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{
+          ...base,
+          joiners: base.joiners.map((j) => ({ ...j, status: paid ? "PAID" : "CONFIRMED" })),
+          settlement: {
+            status,
+            amountCents: 4500,
+            paidAt: "2026-07-01T00:00:00.000Z",
+            internetBankingReference: null,
+            invoiceDisplay: null,
+          },
+        }}
+      />
+    );
+
+    expect(await screen.findByText("Settle the group")).toBeDefined();
+    if (paid) {
+      expect(screen.getByText(/Everyone in your group is confirmed/)).toBeDefined();
+      expect(screen.queryByText(/Pay for every joiner/)).toBeNull();
+    } else {
+      expect(screen.getByText(/Pay for every joiner/)).toBeDefined();
+    }
+  });
+
+  it("offers no settle controls on a cancelled group, whatever its settlement says", async () => {
+    stubFetch({ internetBankingEnabled: true });
+    const base = group();
+
+    render(
+      <OrganiserGroupBookingCard
+        bookingId="booking-1"
+        canOpenGroup={false}
+        group={{
+          ...base,
+          status: "CANCELLED",
+          settlement: {
+            status: "PARTIALLY_REFUNDED",
+            amountCents: 4500,
+            paidAt: "2026-07-01T00:00:00.000Z",
+            internetBankingReference: null,
+            invoiceDisplay: null,
+          },
+        }}
+      />
+    );
+
+    expect(await screen.findByText(/This group has been cancelled/)).toBeDefined();
+    expect(screen.queryByText("Settle the group")).toBeNull();
+    expect(screen.queryByText(/Pay for every joiner/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /pay/i })).toBeNull();
+  });
+
   it("announces a settle error to assistive technology", async () => {
     stubFetch({ internetBankingEnabled: false, settleOk: false, settleBody: { error: "Nope" } });
 
