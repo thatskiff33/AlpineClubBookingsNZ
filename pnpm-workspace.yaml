@@ -8,37 +8,38 @@
 # nobody flips it to `hoisted` thinking it is unset.
 nodeLinker: isolated
 
-# The single home of the version range for a dependency that an override below
-# pins other packages to (pnpm's "catalog"). package.json names these two as
-# `catalog:` so that the range is written exactly once; bump it here.
+# The single home of the version range for these two direct dependencies
+# (pnpm's "catalog"). package.json names both as `catalog:`, and the nodemailer
+# overrides below point here too, so each range is written exactly once; bump
+# it here.
 catalog:
   nodemailer: ^10.0.10
   sharp: ^0.35.4
 
-# The former npm `overrides` block, translated one entry for one entry. The
+# The former npm `overrides` block, translated one entry for one entry, less
+# `sharp`, retired in #3673 (see the last point below). The
 # reasons behind each pin are recorded in docs/MAINTENANCE.md, except
 # `deepmerge-ts`, whose reason and removal condition live with its contract
 # test, src/lib/__tests__/deepmerge-override-contract.test.ts.
 #
 # - `catalog:` pins a transitive copy to this repository's own direct
-#   dependency range, which is what npm's `$sharp` / `$nodemailer` did. (pnpm
+#   dependency range, which is what npm's `$nodemailer` did. (pnpm
 #   still reads `$name` but has deprecated it in favour of catalogs.)
 # - `next-auth>nodemailer` replaces npm's nested `"next-auth": { "nodemailer" }`.
 #   It is written against both packages that declare the optional nodemailer
 #   peer, `next-auth` itself and its `@auth/core`, because npm's nested form
 #   applied to the whole subtree under `next-auth` and pnpm's `>` form names a
 #   direct parent only.
-# - `next>sharp` is scoped to `next`, the only package that depends on sharp,
-#   rather than written as a bare `sharp`. A bare override also rewrites this
-#   repository's own `sharp: "catalog:"` to the resolved range in the
+# - No override names a package this repository also depends on directly. A
+#   bare `sharp` override (retired in #3673: next itself now requires
+#   ^0.35.4) rewrote this repository's own `sharp: "catalog:"` in the
 #   lockfile, and pnpm's pre-run check (`verifyDepsBeforeRun`, below) compares
 #   package.json with the lockfile WITHOUT applying overrides. The two then
-#   disagree, and every `pnpm run` fails with "The lockfile ... does not
-#   satisfy project of id ." as soon as package.json is newer than the last
-#   install: a fresh checkout, a branch switch, or a Docker builder stage
-#   whose dependency layer came from the cache (#3673).
+#   disagreed, and every `pnpm run` failed with "The lockfile ... does not
+#   satisfy project of id ." once package.json was newer than the last
+#   install: a branch switch, or a Docker builder stage whose dependency layer
+#   came from the cache. Scope an override to its parent (`parent>name`).
 overrides:
-  "next>sharp": "catalog:"
   eslint-plugin-react-hooks: 7.1.1
   postcss: ^8.5.26
   next-auth>nodemailer: "catalog:"

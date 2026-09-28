@@ -175,29 +175,34 @@ altogether.
 
 ### The override register
 
-Every row below was verified by removing that entry and re-resolving (#2863). All
-four are load-bearing; none is inert.
+Every row below was verified by removing that entry and re-resolving (#2863),
+and re-checked for #3673 against the ranges the installed parents declare. Three
+bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
+(`next-auth`'s optional peer stops at `^8`) and `mysql2` (`prisma` pins 3.15.3).
+`eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding,
+and `browserslist` is a floor its parents' ranges already clear; their rows say
+so. The `sharp` override was retired in #3673: `next@16.3.5` itself requires
+`^0.35.4`, which met its removal condition.
 
 Since #3673 the block lives in `pnpm-workspace.yaml`, translated one entry for
-one entry from npm's `overrides` in `package.json`. Three spellings changed.
+one entry from npm's `overrides` in `package.json`. Two spellings changed.
 npm's `$sharp` and `$nodemailer` ("this repository's own range") became catalog
 references: `package.json` declares both dependencies as `catalog:`, the range
-is written once under the workspace file's `catalog:`, and the override points
-at `catalog:` too, so a bump is one edit there. npm's nested
+is written once under the workspace file's `catalog:`, and the `nodemailer`
+override points at `catalog:` too, so a bump is one edit there. npm's nested
 `"next-auth": { "nodemailer" }` covered the whole subtree under `next-auth`;
 pnpm's `>` selector names a direct parent only, so that entry is written twice,
 `next-auth>nodemailer` and `@auth/core>nodemailer`, one for each package that
-declares the optional peer. And npm's global `sharp` override is scoped to
-`next>sharp`, next being the only package that depends on sharp: a bare `sharp`
-override also rewrites this repository's own `catalog:` specifier in the
-lockfile, and pnpm's pre-run check (`verifyDepsBeforeRun`), which compares
-`package.json` with the lockfile without applying overrides, then fails every
-`pnpm run` once `package.json` is newer than the last install.
+declares the optional peer. Under pnpm, never override a package this
+repository also declares directly: the bare `sharp` override did, it rewrote
+the root's own `catalog:` specifier in the lockfile, and pnpm's pre-run check
+(`verifyDepsBeforeRun`), which compares `package.json` with the lockfile without
+applying overrides, then failed every `pnpm run` once `package.json` was newer
+than the last install. Scope an override to its parent (`parent>name`) instead.
 
 | override | why it exists | retires when |
 | --- | --- | --- |
-| `next>sharp` (`catalog:`) | **Security.** Removing it lets `next` nest `sharp@0.34.5`, which carries two high-severity advisories. Forces `next`'s copy onto this repository's own `sharp` range (the workspace `catalog:`). Added in `83b25035d`. Scoped to `next` since #3673 (see above), so a new package that brings its own sharp is not covered by it; `pnpm audit` still is. | `next` requires sharp 0.35.3 or later. |
-| `postcss` (`^8.5.26`) | **Security.** `next` requires postcss at **exactly `8.4.31`**, which carries four advisories including a high. An exact upstream pin cannot be lifted by drift, so this override is the only thing keeping the nested copy safe. | `next` moves its own postcss pin to 8.5.26 or later. |
+| `postcss` (`^8.5.26`) | **Security.** `next` requires postcss at an **exact** version: `8.4.31` when this was added, which carries four advisories including a high, and `8.5.23` in `next@16.3.5`, still below this floor. An exact upstream pin cannot be lifted by drift, so this override is the only thing keeping the nested copy safe. | `next` moves its own postcss pin to 8.5.26 or later. |
 | `next-auth>nodemailer` and `@auth/core>nodemailer` (`catalog:`) | **Resolution.** `next-auth@5.0.0-beta.32` declares `peerOptional nodemailer@"^7.0.7 \|\| ^8.0.5"`, which conflicts with this repository's own `nodemailer` range (the workspace `catalog:`); under npm the override was what stopped `npm install` failing with `ERESOLVE`, and under pnpm it keeps both packages' optional peer on that one copy instead of a peer-mismatch resolution. Added in `8f366a08c` (#1182). | `next-auth` widens its peer range to admit nodemailer 9. |
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | the deepest parent requiring it admits 4.28.7 or later, which `pnpm audit` will show by this entry becoming inert. |

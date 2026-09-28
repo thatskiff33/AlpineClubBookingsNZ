@@ -14,7 +14,6 @@ catalogs:
       version: 0.35.4
 
 overrides:
-  next>sharp: ^0.35.4
   eslint-plugin-react-hooks: 7.1.1
   postcss: ^8.5.26
   next-auth>nodemailer: ^10.0.10
