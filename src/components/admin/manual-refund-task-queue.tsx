@@ -70,6 +70,7 @@ import {
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
+import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -704,30 +705,6 @@ interface AutoRefundedNotice {
  * text instead, which is what a Full Admin needs to look the booking up and what a
  * finance operator needs to quote it to somebody who can.
  */
-/**
- * #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the inbound Xero sync's note
- * on a part-payment review. While a review exists the app credits and hands
- * back nothing for the invoice, so this line is how the treasurer learns there
- * may be more to settle - the email is best-effort, this is the record.
- */
-function PartPaymentReviewXeroPaidLine({
-  xeroPaid,
-}: {
-  xeroPaid: { reportedAt: string; cashCents: number };
-}) {
-  const format = useClubFormat();
-  const clubTime = useClubTime();
-  return (
-    <p className="text-xs font-medium text-foreground">
-      Xero reported this invoice paid on{" "}
-      {clubTime.instantDate(new Date(xeroPaid.reportedAt))}, with{" "}
-      {formatCents(xeroPaid.cashCents, format)} of cash recorded against it.
-      Nothing was credited or handed back automatically: settle any cash beyond
-      the part payment in Xero, then close this item.
-    </p>
-  );
-}
-
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
   const format = useClubFormat();
   /**
