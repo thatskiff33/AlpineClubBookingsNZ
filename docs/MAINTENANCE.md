@@ -1348,6 +1348,16 @@ key, never re-noting the completed slices. Tiered cancels that
 deliberately retained a policy penalty produce no finding at all — their
 books are correct.
 
+A late capture a treasurer-approval task owns is never offered for refund
+(#3639). One the treasurer **kept** (the task was closed without refunding) is
+recorded in Xero by the app (#3635, `INV-PAY-110`): for the booking's own
+payment, `KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE` fires when no booking invoice
+has been asked for since the task was raised. Its `QUEUE_PRIMARY_INVOICE` action
+is auto-applied only when that invoice bills exactly the kept cash; otherwise
+the finding names why and is report-only, so record the invoice and its Stripe
+payment in Xero by hand. A failed invoice operation for it is offered for retry
+instead.
+
 ### Backfill cancel-flattened payment statuses (#1473 / #1506)
 
 `scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,

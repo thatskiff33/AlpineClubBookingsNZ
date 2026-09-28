@@ -793,12 +793,38 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `lateCaptureApprovalIntentId`. Approval is the automatic refund, same Stripe
   keys; a task of any status owns its capture, and the repair tool offers no
   refund behind it. A #2700 hand-back is refused once its capture was refunded.
+  Kept money is recorded in Xero (`INV-PAY-110`).
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source and skips a payment already carrying a refund or
   account-credit note, or such an operation queued or failed.
 - Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
   `payment-recovery.test.ts`, `manual-refund-task.test.ts` and
   `xero-booking-repair.test.ts`.
+
+## INV-PAY-110
+
+**Related: `INV-PAY-106`** (who decides a late capture) **and `INV-PAY-104`**
+(the change payment's waiting invoice).
+
+- **A late capture a treasurer keeps is recorded in Xero by the app** (owner
+  decision 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
+  an invoice for the kept amount, paid from the Stripe account, the way a
+  normal card payment is. Keeping is dismissing the #3639 task
+  (`late-capture-kept-xero.ts`); a capture refunded in full since keeps nothing.
+- **A change payment** already has its document: the dismissal releases the
+  change's supplementary invoice after commit, or re-queues the row the reaper
+  retired.
+- **The booking's own payment** gets its ordinary booking invoice, queued inside
+  the dismissal's status-fenced claim, so a replay queues nothing. Only when that
+  invoice bills exactly the kept cash (`keptPrimaryCaptureInvoiceRefusal`): no
+  invoice already exists (one a cancellation cleared would count twice), no
+  applied credit, no manual settle, price equals net capture. Otherwise nothing
+  is queued and an officer is told.
+- **The repair tool** reports a kept booking payment with no booking invoice
+  asked for since its task was raised (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`),
+  queuing it automatically only under the same rule, and retries a failed one.
+- Pinned by `late-capture-kept-xero.test.ts`, `manual-refund-task.test.ts`,
+  `xero-operation-outbox.test.ts` and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-019
 
@@ -1117,11 +1143,12 @@ it was).
   (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
   only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
   rows never recorded alerts once after three days.
-- **Only a capture the webhook kept is invoiced.** `isLateCaptureRefunded` (a
-  CANCELLED booking, or a superseded intent's supersede recovery) makes both
-  the reaper and `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`
-  leave the invoice unsent, so it retires; #3403 is unchanged. A kept one is
-  released or re-queued, never retired. An invoice the capture does not cover
+- **Only a kept capture is invoiced.** `lateCaptureRefundState` answers from
+  the #3639 task owning the capture (OPEN undecided, COMPLETED refunded,
+  DISMISSED kept unless since refunded in full), else from the booking
+  (CANCELLED or a supersede recovery refunds; #3403 unchanged). The reaper and
+  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
+  refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover
   is not issued, and an officer is told. A retired row is re-queued from
   **that row**, the largest ask per change, under
   `lockSupplementaryInvoiceAnchor`, once; it alerts once where another invoice

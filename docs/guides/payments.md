@@ -584,8 +584,21 @@ waiting-items badge in the sidebar like any other refund task.
 2. **Close without refunding** closes the item and refunds nothing, for example
    when the cancellation was a mistake and the booking is being put back. A note is
    required. A closed item can be reopened later, like any other dismissed item.
+   **The club keeps the money, and the app records it in Xero** the way it records
+   any card payment: an invoice for the kept amount, paid from the Stripe bank
+   account. For a payment for a change to the booking, that is the change's own
+   invoice, sent now. For the booking's own payment it is the booking's invoice,
+   raised only when it would bill exactly what the card paid. If it would not —
+   the booking already has a Xero invoice (for example one cleared when it was
+   cancelled), account credit was used on it, its price has changed since, or it
+   was marked paid by hand — nothing is raised, admins who receive Xero sync
+   errors are told, and the Xero repair tool lists it
+   as *kept late payment without a Xero invoice* until you record it in Xero
+   yourself.
 3. **If you already refunded it in the Stripe dashboard**, use **Close without
-   refunding** and say so in the note. **Refund to card** refuses a payment that has already
+   refunding** and say so in the note. Once Stripe has told the app about that
+   refund, closing it records nothing in Xero, because nothing was kept.
+   **Refund to card** refuses a payment that has already
    been refunded, fully or in part, so it cannot refund it a second time.
 
 Once an item exists for a payment, it decides that payment. Switching the setting
