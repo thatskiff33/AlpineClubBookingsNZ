@@ -10,18 +10,20 @@
 -- carries NO amount to hand back - the club settles that money in Xero, and 0
 -- may never mean unknown.
 --
--- SEVEN STATEMENTS, ALL ADDITIVE, WIDENING, OR A NULL-SAFE RESTATEMENT:
+-- EIGHT STATEMENTS, ALL ADDITIVE, WIDENING, OR A NULL-SAFE RESTATEMENT:
 --
 --   1. "ManualRefundTask"."partPaymentReviewPaymentId" TEXT, nullable, no
 --      default: the booking's Payment id on a part-payment review, NULL on every
 --      other row.
---   2. "ManualRefundTask"."partPaymentReviewRecordedCents" INTEGER, nullable,
---      no default: the cash Xero showed against the booking's one invoice at
---      the cancel, when Xero gave it exactly; NULL when it could not. It is
---      never an amount to hand back. The inbound Xero sync reads it so that a
---      later PAID event hands back or credits ONLY cash beyond it, never the
---      reviewed cash a second time; a NULL sends the whole event back to the
---      review instead (INV-PAY-109).
+--   2. "ManualRefundTask"."partPaymentReviewXeroPaidAt" TIMESTAMP(3) and
+--      "partPaymentReviewXeroPaidCents" INTEGER, nullable, no default: on a
+--      review only, when the inbound Xero sync learned the booking's invoice
+--      was reported PAID, and the invoice's cash in cents at that read. While a
+--      review exists, that sync credits and hands back NOTHING for the invoice
+--      (ORCHESTRATOR DECISION 3 on #3643, INV-PAY-109); it writes these two
+--      columns once, in its own transaction, and reopens a dismissed review, so
+--      the treasurer's task - not a best-effort email - carries the fact.
+--      Neither is an amount to hand back.
 --   3. A UNIQUE index on the marker: one review per payment, whatever its
 --      status, so a replayed cancel cannot raise a second. PostgreSQL treats
 --      NULLs as distinct, so every existing row (all NULL) passes.
@@ -32,16 +34,16 @@
 --      fail.
 --   5. CHECK "ManualRefundTask_part_payment_review_shape": a marked row is a
 --      CANCELLED_BOOKING_HAND_BACK with no amount, no raised amount and no
---      paymentId; only a marked row may carry a recorded figure, and a recorded
---      figure is positive. The kind test is spelled IS NOT DISTINCT FROM, as
+--      paymentId; only a marked row may carry the Xero-paid pair, the pair is
+--      set together, and its cents are not negative. The kind test is spelled IS NOT DISTINCT FROM, as
 --      20260903010000 and 20260910010000 spell theirs: "kind" is nullable, a
 --      plain "=" is NULL for a NULL kind, and a CHECK accepts NULL. With
 --      "ManualRefundTask_completed_amount_present" it makes a COMPLETED review
 --      unrepresentable - a review is closed only by DISMISSED, since nothing in
 --      the app moves money for it. THIS CHECK IS ALSO THE OVERLAP FENCE against
 --      a direct API completion on the previous colour (below), so it must not be
---      "simplified" away. Every existing row is NULL in both new columns, so the
---      validating scan cannot fail.
+--      "simplified" away. Every existing row is NULL in all three new columns,
+--      so the validating scan cannot fail.
 --   6-7. DROP/ADD #3639's "ManualRefundTask_late_capture_approval_kind"
 --      (20261013010000), restated null-safe: its "kind" = '...' had the same
 --      three-valued hole, so a marked row with a NULL kind passed it. That
@@ -67,8 +69,8 @@
 -- WHY "paymentId" IS NULL ON A REVIEW. The organisation late-cash arm of the
 -- inbound Xero sync (#3369) dedupes its own sized hand-back on (booking,
 -- payment, kind). The new colour's arm finds the review by its marker instead
--- and sizes only cash beyond "partPaymentReviewRecordedCents". The previous
--- colour's arm cannot see the review, so during the overlap it may raise a
+-- and raises nothing while one exists, noting the event on the review. The
+-- previous colour's arm cannot see the review, so during the overlap it may raise a
 -- hand-back for the whole cash beside it, exactly as it does today; a
 -- "paymentId" on the review would not make that safer, only silence it.
 --
@@ -84,7 +86,7 @@
 -- docs/BLUE_GREEN_MIGRATION_SAFETY.tsv. PostgreSQL cannot widen a CHECK in
 -- place, so there is no shape without the DROP.
 --
--- LOCK IMPACT: ACCESS EXCLUSIVE on "ManualRefundTask" for two catalog-only ADD
+-- LOCK IMPACT: ACCESS EXCLUSIVE on "ManualRefundTask" for three catalog-only ADD
 -- COLUMNs, the unique index build, the two constraint DROPs and the three
 -- validating scans. That table holds one row per hand-settled refund task in
 -- the club's history, so milliseconds. No Booking, Payment, Member, capacity,
@@ -106,12 +108,14 @@
 --      row: it is the treasurer's record of money settled by hand.
 --   3. Leave the null-safe "ManualRefundTask_late_capture_approval_kind" in
 --      place: it is 20261013010000's rule, stricter only for a NULL kind.
---   4. Drop the unique index, then the two columns.
+--   4. Drop the unique index, then the three columns.
 -- No rollback.sql is required because this is not windowed.
 
 ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewPaymentId" TEXT;
 
-ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewRecordedCents" INTEGER;
+ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewXeroPaidAt" TIMESTAMP(3);
+
+ALTER TABLE "ManualRefundTask" ADD COLUMN "partPaymentReviewXeroPaidCents" INTEGER;
 
 CREATE UNIQUE INDEX "ManualRefundTask_partPaymentReviewPaymentId_key"
   ON "ManualRefundTask"("partPaymentReviewPaymentId");
@@ -131,7 +135,8 @@ ALTER TABLE "ManualRefundTask"
   ADD CONSTRAINT "ManualRefundTask_part_payment_review_shape" CHECK (
     (
       "partPaymentReviewPaymentId" IS NULL
-      AND "partPaymentReviewRecordedCents" IS NULL
+      AND "partPaymentReviewXeroPaidAt" IS NULL
+      AND "partPaymentReviewXeroPaidCents" IS NULL
     )
     OR (
       "partPaymentReviewPaymentId" IS NOT NULL
@@ -139,9 +144,10 @@ ALTER TABLE "ManualRefundTask"
       AND "amountCents" IS NULL
       AND "raisedAmountCents" IS NULL
       AND "paymentId" IS NULL
+      AND ("partPaymentReviewXeroPaidAt" IS NULL) = ("partPaymentReviewXeroPaidCents" IS NULL)
       AND (
-        "partPaymentReviewRecordedCents" IS NULL
-        OR "partPaymentReviewRecordedCents" > 0
+        "partPaymentReviewXeroPaidCents" IS NULL
+        OR "partPaymentReviewXeroPaidCents" >= 0
       )
     )
   );
