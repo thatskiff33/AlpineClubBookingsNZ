@@ -1183,26 +1183,27 @@ total at apply).
 - **Once an organiser-pays group's settlement is paid, the organiser is never
   billed for anyone else, and nobody is left unsettleable** (#3672, owner
   option B). A member who joins afterwards gets an ordinary member-pays
-  booking and pays through the normal member flow. The payer is decided by
-  `organiserPaysForNewJoiner` (`src/lib/group-late-joiner.ts`) and re-decided
-  under `lock(1)` when the booking is written. A joiner who joined while the
-  bill was open but was not on the one paid (still `PAYMENT_PENDING`, or held
-  for review) is moved to member-pays in the transaction that marks the
-  settlement paid, and is emailed to pay. The organiser's card lists them as
-  paying for themselves.
-- "Paid" is SUCCEEDED or PARTIALLY_REFUNDED
-  (`CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST`). REFUNDED is
-  unpaid: on a live group the capture was handed back before it settled
-  anyone. The group-settlement reaper re-applies the release to any live
-  paid group still holding such a joiner, under `lock(1)`, emailing each
-  once.
-- **A joiner whose stay has started is never switched** (check-in on or
-  before the club's today, the `INV-PAY-016` rule), at payment or by the
-  reaper: the treasurer is alerted once per group instead.
+  booking. The payer is decided by `organiserPaysForNewJoiner`
+  (`src/lib/group-late-joiner.ts`) and re-decided under `lock(1)` when the
+  booking is written.
+- "Paid" is SUCCEEDED or PARTIALLY_REFUNDED, defined once in
+  `src/lib/group-organiser-paid.ts` for the server and the organiser's card.
+  REFUNDED is unpaid. On a live group PARTIALLY_REFUNDED cannot occur (only
+  the organiser cancel writes it, after CANCELLED), so the settle paths'
+  SUCCEEDED-only replay guards give the same answer.
+- **Every live, unpaid organiser-settled joiner the paid bill missed is
+  switched to member-pays**, started stay or not, in the transaction that
+  marks the settlement paid. Each switch writes a payer-switch booking event
+  in that transaction. The group-settlement reaper applies the same switch
+  to any paid group still holding one, under `lock(1)`.
+- Who is told: a `PAYMENT_PENDING` joiner whose stay has not started
+  (`bookingStayHasStarted`, the club's today) is emailed to pay, at most
+  once. A started stay is not emailed; the treasurer is alerted once per
+  group, and the claim is given back if the send reaches nobody, so the
+  reaper retries it from the events.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
-  `booking-split.test.ts`,
-  `group-settlement.test.ts`, `group-booking.test.ts`,
-  `organiser-group-booking-card.test.tsx` and
+  `booking-split.test.ts`, `group-settlement.test.ts`,
+  `group-bookings-route.test.ts`, `organiser-group-booking-card.test.tsx` and
   `member-group-join-panel.test.tsx`.
 
 ## INV-PAY-051
