@@ -355,7 +355,12 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/alert-cooldown", () => ({
+  // #3635: the held late-capture alert claims through `sendAdminAlertOnceEver`.
+  ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
   claimAlertCooldown: (...args: unknown[]) => mockClaimAlertCooldown(...args),
+  deferAlertCooldown: async () => undefined,
+  releaseAlertCooldown: async () => undefined,
 }));
 
 vi.mock("@/lib/audit", () => ({

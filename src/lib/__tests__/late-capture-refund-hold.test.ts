@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   executeRaw: vi.fn(),
   logAudit: vi.fn(),
   claimAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
   sendHeldAlert: vi.fn(),
 }));
 
@@ -38,7 +40,11 @@ vi.mock("@/lib/prisma", () => {
 });
 vi.mock("@/lib/audit", () => ({ logAudit: (...a: unknown[]) => mocks.logAudit(...a) }));
 vi.mock("@/lib/alert-cooldown", () => ({
+  ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
   claimAlertCooldown: (...a: unknown[]) => mocks.claimAlertCooldown(...a),
+  deferAlertCooldown: (...a: unknown[]) => mocks.deferAlertCooldown(...a),
+  releaseAlertCooldown: (...a: unknown[]) => mocks.releaseAlertCooldown(...a),
 }));
 vi.mock("@/lib/email", () => ({
   sendAdminLateCaptureHeldAlert: (...a: unknown[]) => mocks.sendHeldAlert(...a),
@@ -71,6 +77,9 @@ const OPERATION = {
   amountCents: 2500,
 };
 
+/** `sendToAdmins`' result when one admin was sent the alert. */
+const DELIVERED = { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bookingFindUnique.mockResolvedValue({
@@ -81,7 +90,9 @@ beforeEach(() => {
     organisation: null,
   });
   mocks.claimAlertCooldown.mockResolvedValue(true);
-  mocks.sendHeldAlert.mockResolvedValue(undefined);
+  mocks.sendHeldAlert.mockResolvedValue(DELIVERED);
+  mocks.deferAlertCooldown.mockResolvedValue(undefined);
+  mocks.releaseAlertCooldown.mockResolvedValue(undefined);
   mocks.paymentTransactionFindUnique.mockResolvedValue({ kind: "ADDITIONAL" });
   mocks.bookingDefaultsFindUnique.mockResolvedValue(null);
   mocks.taskFindUnique.mockResolvedValue(null);
@@ -172,11 +183,54 @@ describe("holdSupersededLateCaptureIfRequired", () => {
       expect.anything(),
     );
 
-    // A replay raises nothing and sends nothing: the task owns it now.
+    // A replay raises nothing and sends nothing: the task owns it now, and the
+    // kept claim makes its re-announce a no-op.
     mocks.sendHeldAlert.mockClear();
+    mocks.taskCreate.mockClear();
+    mocks.claimAlertCooldown.mockResolvedValue(false);
     mocks.taskFindUnique.mockResolvedValue({ id: "task-held", status: "OPEN" });
     await holdSupersededLateCaptureIfRequired(OPERATION);
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
     expect(mocks.sendHeldAlert).not.toHaveBeenCalled();
+  });
+
+  it("#3635: an alert nobody received is held a day, and the next notice for the still-open task sends it", async () => {
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({ lateCaptureRefundNeedsApproval: true });
+    mocks.sendHeldAlert.mockResolvedValueOnce({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+
+    await holdSupersededLateCaptureIfRequired(OPERATION);
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "late-capture-held:pi_change_late" }),
+    );
+
+    // The next Stripe notice (or cron pass) finds the OPEN task and announces
+    // again; the claim is free once the day has passed.
+    mocks.taskFindUnique.mockResolvedValue({ id: "task-held", status: "OPEN" });
+    await holdSupersededLateCaptureIfRequired(OPERATION);
+    expect(mocks.sendHeldAlert).toHaveBeenCalledTimes(2);
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledTimes(1);
+  });
+
+  it("#3635: a send that throws gives the claim back; a DECIDED task never re-announces", async () => {
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({ lateCaptureRefundNeedsApproval: true });
+    mocks.sendHeldAlert.mockRejectedValueOnce(new Error("smtp down"));
+    await expect(holdSupersededLateCaptureIfRequired(OPERATION)).resolves.toBe(true);
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "late-capture-held:pi_change_late" }),
+    );
+
+    for (const status of ["COMPLETED", "DISMISSED"]) {
+      mocks.claimAlertCooldown.mockClear();
+      mocks.taskFindUnique.mockResolvedValue({ id: "task-held", status });
+      await expect(holdSupersededLateCaptureIfRequired(OPERATION)).resolves.toBe(true);
+      expect(mocks.claimAlertCooldown).not.toHaveBeenCalled();
+    }
   });
 
   it("does not send when another instance already holds the claim, and never fails the hold over the mail", async () => {

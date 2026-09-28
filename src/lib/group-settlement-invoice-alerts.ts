@@ -13,8 +13,9 @@
  * first one's cooldown.
  *
  * CONVERGED WITH #3638 (#3635): `claimGroupSettlementInvoiceAlert` claims
- * through `claimAlertCooldownFailOpen`, the one home of #3638's rule, with the
- * shared 24-hour `SETTLEMENT_MONEY_ALERT_REPEAT_MS`: a failed claim sends anyway
+ * through `claimAlertCooldownFailOpen` (`alert-cooldown-fail-open.ts`), the one
+ * home of #3638's rule, with the shared 24-hour
+ * `SETTLEMENT_MONEY_ALERT_REPEAT_MS`: a failed claim sends anyway
  * rather than staying silent about unreconciled money, because the next Xero
  * event about this invoice may never come.
  */
@@ -23,7 +24,7 @@ import logger from "@/lib/logger";
 import {
   SETTLEMENT_MONEY_ALERT_REPEAT_MS,
   claimAlertCooldownFailOpen,
-} from "@/lib/alert-cooldown";
+} from "@/lib/alert-cooldown-fail-open";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type { ClubFormat } from "@/lib/club-format";

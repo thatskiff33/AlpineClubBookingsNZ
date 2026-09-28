@@ -17,12 +17,12 @@
 import { PaymentSource } from "@prisma/client";
 import {
   ALERT_ONCE_EVER_WINDOW_MS,
-  claimAlertCooldownFailOpen,
   listOwedAlertKeys,
   markAlertOwed,
   releaseAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { claimAlertCooldownFailOpen } from "@/lib/alert-cooldown-fail-open";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";

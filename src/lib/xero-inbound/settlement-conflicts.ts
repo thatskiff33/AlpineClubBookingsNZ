@@ -34,7 +34,7 @@ import {
 import {
   SETTLEMENT_MONEY_ALERT_REPEAT_MS,
   claimAlertCooldownFailOpen,
-} from "@/lib/alert-cooldown";
+} from "@/lib/alert-cooldown-fail-open";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
@@ -51,8 +51,8 @@ import type { ClubFormat } from "@/lib/club-format";
 
 /*
  * B5 (#2262): the reciprocal fence's repeat-alert window is
- * `SETTLEMENT_MONEY_ALERT_REPEAT_MS` (`alert-cooldown.ts`, shared with #3642
- * since #3635). A webhook replay must RE-COUNT the conflict (it is still
+ * `SETTLEMENT_MONEY_ALERT_REPEAT_MS` (`alert-cooldown-fail-open.ts`, shared
+ * with #3642 since #3635). A webhook replay must RE-COUNT the conflict (it is still
  * unreconciled) without re-mailing the admins every time Xero redelivers the
  * same event.
  */

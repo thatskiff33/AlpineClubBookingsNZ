@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueGroupSettlement: vi.fn(),
   findFirstPaymentTransaction: vi.fn(),
   findFirstRecoveryOperation: vi.fn(),
+  findUniqueManualRefundTask: vi.fn(),
   findFirstOperation: vi.fn(),
   // #3170 fix round (F1): the outbox worker re-reads an operation's payload
   // AFTER it claims the row. Left returning `undefined` by default, which the
@@ -94,6 +95,12 @@ vi.mock("@/lib/prisma", () => {
     // supersede recovery. None unless a case says so.
     paymentRecoveryOperation: {
       findFirst: mocks.findFirstRecoveryOperation,
+    },
+    // #3635: a #3639 treasurer-approval task owns a held capture. None unless a
+    // case says so (a reset mock answers undefined, read as none).
+    manualRefundTask: {
+      findUnique: async (...a: unknown[]) =>
+        (await mocks.findUniqueManualRefundTask(...a)) ?? null,
     },
     xeroObjectLink: {
       findFirst: mocks.findFirstLink,
@@ -2796,6 +2803,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.findFirstRecoveryOperation.mockReset();
     mocks.findFirstRecoveryOperation.mockResolvedValue(null);
+    mocks.findUniqueManualRefundTask.mockReset();
     mocks.updateManyOperation.mockReset();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     mocks.findUniquePayment.mockReset();
@@ -3093,6 +3101,86 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
   });
 
   /**
+   * #3635 (owner decision 29 Sep 2026): on a cancelled booking a #3639 approval
+   * task, when one owns the capture, decides - not the booking's status. One
+   * fixture, the task in each state, plus the no-task control above (a
+   * CANCELLED booking with no task still retires).
+   */
+  describe("a held late capture on a cancelled booking (#3635)", () => {
+    const heldCapture = () => {
+      waiting = [waitingOp("op_held", "pi_held", 16)];
+      mocks.findManyOperations.mockImplementation(
+        async (args: { where: { status: string; requestPayload?: unknown } }) => {
+          if (!args.where.requestPayload) return waiting;
+          return args.where.status === "WAITING_PAYMENT"
+            ? [
+                {
+                  id: "op_held",
+                  localModel: "BookingModification",
+                  localId: "mod_1",
+                  requestPayload: {
+                    queueType: "SUPPLEMENTARY_INVOICE",
+                    bookingId: "booking_1",
+                    priceDiffCents: 12000,
+                    changeFeeCents: 0,
+                    paymentIntentId: "pi_held",
+                  },
+                },
+              ]
+            : [];
+        },
+      );
+      mocks.findFirstPaymentTransaction.mockResolvedValue({
+        ...transaction("SUCCEEDED"),
+        payment: { booking: { status: "CANCELLED" } },
+      });
+    };
+    const released = () =>
+      mocks.updateManyOperation.mock.calls.some(
+        ([args]) => (args as { data: { status?: string } }).data.status === "PENDING",
+      );
+
+    it("keeps the invoice WAITING while the treasurer decides (task OPEN), however old", async () => {
+      heldCapture();
+      mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "OPEN" });
+
+      const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+      expect(mocks.findUniqueManualRefundTask).toHaveBeenCalledWith({
+        where: { lateCaptureApprovalIntentId: "pi_held" },
+        select: { status: true },
+      });
+      expect(retireCall()).toBeUndefined();
+      expect(released()).toBe(false);
+      expect(result).toEqual({ reaped: 0, released: 0, queueOperationIds: [] });
+    });
+
+    it("retires it once the refund is approved (task COMPLETED)", async () => {
+      heldCapture();
+      mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "COMPLETED" });
+
+      const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+      expect(released()).toBe(false);
+      expect(result.reaped).toBe(1);
+    });
+
+    it("RELEASES it once the treasurer kept the money (task DISMISSED)", async () => {
+      heldCapture();
+      mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "DISMISSED" });
+
+      const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+      expect(retireCall()).toBeUndefined();
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: { in: ["op_held"] }, status: "WAITING_PAYMENT" },
+        data: expect.objectContaining({ status: "PENDING" }),
+      });
+      expect(result).toEqual({ reaped: 0, released: 1, queueOperationIds: ["op_held"] });
+    });
+  });
+
+  /**
    * #3641 delta D3: Stripe has the money, our rows never recorded it (the
    * webhook did not arrive). The sweep cannot release it from a FAILED local
    * row, so once Stripe's three-day redelivery window has passed it tells an
@@ -3237,6 +3325,7 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     });
     mocks.findFirstRecoveryOperation.mockReset();
     mocks.findFirstRecoveryOperation.mockResolvedValue(null);
+    mocks.findUniqueManualRefundTask.mockReset();
   });
 
   const writeWith = (predicate: (data: Record<string, unknown>) => boolean) =>
@@ -3628,6 +3717,64 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
 
     expect(mocks.updateManyOperation).not.toHaveBeenCalled();
     expect(result.outcome).toBe("left-retired");
+  });
+
+  /**
+   * #3635: the same three task states for the late-capture release, which the
+   * dismissal calls. The no-task control is the CANCELLED case above.
+   */
+  it("#3635: touches nothing, waiting or retired, while a treasurer decides a cancelled booking's capture", async () => {
+    waiting = [waitingOperation()];
+    retired = [retiredOperation()];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "SUCCEEDED",
+      amountCents: 12000,
+      payment: { booking: { status: "CANCELLED" } },
+    });
+    mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "OPEN" });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      released: 0,
+      queueOperationIds: [],
+      outcome: "awaiting-decision",
+    });
+  });
+
+  it("#3635: an approved refund (task COMPLETED) leaves it retired, as before", async () => {
+    retired = [retiredOperation()];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "SUCCEEDED",
+      amountCents: 12000,
+      payment: { booking: { status: "CANCELLED" } },
+    });
+    mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "COMPLETED" });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("left-retired");
+  });
+
+  it("#3635: a KEPT capture on a cancelled booking (task DISMISSED) revives the retired row itself", async () => {
+    retired = [retiredOperation()];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "SUCCEEDED",
+      amountCents: 12000,
+      payment: { booking: { status: "CANCELLED" } },
+    });
+    mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "DISMISSED" });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(reviveCalls()).toHaveLength(1);
+    expect(result.outcome).toBe("requeued");
   });
 
   it("never leaves a BUMPED booking's capture silent: the money was kept, so the invoice is re-issued", async () => {
