@@ -11,7 +11,7 @@ out of `xero-operation-outbox.ts`, so the composed file (3205 lines) is below
 its base length and needs no allowance.
 
 file: src/lib/booking-cancel.ts
-lines: 2546
+lines: 2547
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
