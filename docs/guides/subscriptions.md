@@ -97,6 +97,12 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
    queue annual batch**. Confirmation **freezes** the fee, proration, recipient,
    family coverage, due days, and amount before Xero work is queued — it creates
    durable invoice work and cannot be undone by later fee or family changes.
+   A member without a season assignment uses their role's stored default
+   membership type, even if an officer archived that type. Archiving stops new
+   assignments; it does not erase an existing member's annual fee. The preview
+   uses the type's saved subscription rule and an effective annual fee. If the
+   type is missing, or a required fee is missing, the preview shows an exception
+   instead of inventing a charge. Review archived-type charges before confirming.
 3. In the **Durable charge queue**, use **Retry** on any charge that failed,
    conflicted, or is still queued.
 
@@ -131,6 +137,10 @@ no fee row for their type. Unresolvable cases are tagged **Unresolved basis** in
 the **Already invoiced** panel. To re-bill such a family, either fix the holder's membership type/fee so a
 real basis resolves, or void the stale invoice in Xero (which releases the block
 and re-bills the group as one entry).
+
+An archived stored role-default type can establish the invoice-holder's basis
+when its effective fee is per-member. A missing type or fee still leaves the
+family suppressed.
 
 **Mark a family as already invoiced (operator override).** Sometimes an older,
 ambiguous invoice already covered a whole family, but it sits on a member whose

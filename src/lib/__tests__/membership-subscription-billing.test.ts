@@ -811,6 +811,48 @@ describe("membership subscription billing", () => {
     expect(preview.entries[0]).toMatchObject({ membershipTypeKey: "FULL", coveredMembers: [{ id: "new" }] });
   });
 
+  it("bills an unassigned member from an archived stored role-default type and its real fee", async () => {
+    mocks.members.findMany.mockResolvedValue([member("archived-full", { seasonalMembershipAssignments: [] })]);
+    mocks.membershipTypes.findMany.mockImplementation(async ({ where }: { where: { key: { in: string[] }; isActive?: boolean } }) =>
+      where.key.in.includes("FULL") && where.isActive !== true
+        ? [{ id: "type-full", key: "FULL", name: "Full", isActive: false, subscriptionBehavior: "REQUIRED" }]
+        : []);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+    });
+    expect(preview.exceptions).toEqual([]);
+    expect(preview.entries).toHaveLength(1);
+    expect(preview.entries[0]).toMatchObject({
+      membershipTypeId: "type-full",
+      membershipAnnualFeeId: "fee-1",
+      billingBasis: "PER_MEMBER",
+      coveredMembers: [{ id: "archived-full" }],
+    });
+    expect(mocks.effectiveFee).toHaveBeenCalledWith(
+      { membershipTypeId: "type-full", ageTier: "ADULT" },
+      expect.any(Date),
+      expect.anything(),
+    );
+  });
+
+  it("keeps an explicit assignment ahead of an archived role default", async () => {
+    mocks.members.findMany.mockResolvedValue([member("assigned", {
+      seasonalMembershipAssignments: [{ membershipType: {
+        id: "type-associate", key: "ASSOCIATE", name: "Associate", subscriptionBehavior: "REQUIRED",
+      } }],
+    })]);
+    mocks.membershipTypes.findMany.mockResolvedValue([
+      { id: "type-full", key: "FULL", name: "Full", isActive: false, subscriptionBehavior: "REQUIRED" },
+    ]);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026,
+      decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+    });
+    expect(preview.entries[0]).toMatchObject({ membershipTypeId: "type-associate" });
+    expect(mocks.membershipTypes.findMany).not.toHaveBeenCalled();
+  });
+
   it("excludes a bare ADMIN account via its NOT_REQUIRED role-default type — never billed, no exception (#2149)", async () => {
     // Guard item 2: with the role-based exemption dropped, a bare operational
     // account with no season assignment resolves its fallback type FROM THE DB.
@@ -1272,8 +1314,8 @@ describe("membership subscription billing", () => {
   });
 
   describe("family suppression refinement + operator marker (#2161)", () => {
-    const perFamilyFee = () => fee({ id: "fee-fam", billingBasis: "PER_FAMILY", prorationRule: "NONE" });
-    const perMemberFee = () => fee({ id: "fee-pm", billingBasis: "PER_MEMBER", prorationRule: "NONE" });
+    const perFamilyFee = (): ReturnType<typeof fee> => fee({ id: "fee-fam", billingBasis: "PER_FAMILY", prorationRule: "NONE" });
+    const perMemberFee = (): ReturnType<typeof fee> => fee({ id: "fee-pm", billingBasis: "PER_MEMBER", prorationRule: "NONE" });
     // effectiveFee keyed by membershipTypeId so a mixed-basis family resolves each
     // member's OWN basis (type-fam -> PER_FAMILY, type-pm -> PER_MEMBER).
     function mixedBasisFees() {
@@ -1307,6 +1349,53 @@ describe("membership subscription billing", () => {
         },
       };
     }
+
+    it("lifts family suppression only for an archived invoice holder with a proven PER_MEMBER role-default fee", async () => {
+      mixedBasisFees();
+      mocks.membershipTypes.findMany.mockImplementation(async ({ where }: { where: { key: { in: string[] }; isActive?: boolean } }) =>
+        where.key.in.includes("FULL") && where.isActive !== true
+          ? [{ id: "type-pm", key: "FULL", name: "Full", isActive: false, subscriptionBehavior: "REQUIRED" }]
+          : []);
+      const holder = perMemberBlocker("archived-holder");
+      holder.member.seasonalMembershipAssignments = [];
+      mocks.familyGroupMembers.findMany.mockResolvedValue([holder]);
+      mocks.subscriptions.findMany.mockResolvedValue([
+        { memberId: "archived-holder", status: "UNPAID", xeroInvoiceId: "xi-pm", xeroInvoiceNumber: "INV-PM", member: { firstName: "Pat", lastName: "Member" } },
+      ]);
+      mocks.members.findMany.mockResolvedValue([famMember("fam-a")]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+      });
+      expect(preview.entries).toHaveLength(1);
+      expect(preview.entries[0]).toMatchObject({ billingBasis: "PER_FAMILY", familyGroupId: "family-1" });
+      expect(preview.alreadyInvoicedFamilies).toEqual([]);
+    });
+
+    it.each([
+      ["missing type", null, perMemberFee, true],
+      ["missing fee", "REQUIRED", (): null => null, true],
+      ["NOT_REQUIRED", "NOT_REQUIRED", perMemberFee, true],
+      ["PER_FAMILY", "REQUIRED", perFamilyFee, false],
+      ["NO_INVOICE", "REQUIRED", () => fee({ billingBasis: "NO_INVOICE", amountCents: 0 }), false],
+    ] as const)("keeps family suppression for an archived role-default holder with %s", async (_case, behavior, holderFee, unresolvable) => {
+      mocks.membershipTypes.findMany.mockImplementation(async ({ where }: { where: { key: { in: string[] }; isActive?: boolean } }) =>
+        behavior && where.key.in.includes("FULL") && where.isActive !== true
+          ? [{ id: "type-pm", key: "FULL", name: "Full", isActive: false, subscriptionBehavior: behavior }]
+          : []);
+      mocks.effectiveFee.mockImplementation(async ({ membershipTypeId }: { membershipTypeId: string }) =>
+        membershipTypeId === "type-pm" ? holderFee() : perFamilyFee());
+      const holder = perMemberBlocker("archived-holder");
+      holder.member.seasonalMembershipAssignments = [];
+      mocks.familyGroupMembers.findMany.mockResolvedValue([holder]);
+      mocks.members.findMany.mockResolvedValue([famMember("fam-a")]);
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+      });
+      expect(preview.entries).toHaveLength(0);
+      expect(preview.alreadyInvoicedFamilies[0]).toMatchObject({
+        holderMemberId: "archived-holder", holderBasisUnresolvable: unresolvable,
+      });
+    });
 
     it("D1: a PER_MEMBER member's live personal invoice no longer blocks the family fee (mixed-basis family bills)", async () => {
       // pm-member holds a live personal PER_MEMBER invoice; fam-a/fam-b are

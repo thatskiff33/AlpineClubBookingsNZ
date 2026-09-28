@@ -14,6 +14,7 @@ import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
+  canonicalKeyResolvedRateHolderBookingBehavior,
   membershipTypeForcedEditOffendingTiers,
   normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeText,
@@ -160,6 +161,27 @@ export async function PATCH(
     );
   }
 
+  const canonicalBookingBehavior =
+    canonicalKeyResolvedRateHolderBookingBehavior(existing);
+  if (canonicalBookingBehavior !== null) {
+    if (existing.isActive && parsed.data.isActive === false) {
+      return NextResponse.json(
+        { error: "FULL and NON_MEMBER are used by booking policy even when archived and cannot be archived (INV-LIFE-093)." },
+        { status: 409 },
+      );
+    }
+    if (
+      parsed.data.bookingBehavior !== undefined &&
+      parsed.data.bookingBehavior !== existing.bookingBehavior &&
+      parsed.data.bookingBehavior !== canonicalBookingBehavior
+    ) {
+      return NextResponse.json(
+        { error: "The booking behavior of FULL and NON_MEMBER can only be restored to its built-in value (INV-LIFE-093)." },
+        { status: 409 },
+      );
+    }
+  }
+
   const data: Prisma.MembershipTypeUpdateInput = {};
   if (parsed.data.name !== undefined) {
     const name = parsed.data.name.trim();
@@ -193,13 +215,26 @@ export async function PATCH(
     data.publiclyListed = parsed.data.publiclyListed;
   }
   if (parsed.data.bookingBehavior !== undefined) {
-    data.bookingBehavior = parsed.data.bookingBehavior;
+    // A full editor draft repeats unchanged fields. Do not re-write a legacy
+    // wrong value after a concurrent officer has repaired it.
+    if (
+      canonicalBookingBehavior === null ||
+      parsed.data.bookingBehavior !== existing.bookingBehavior
+    ) {
+      data.bookingBehavior = parsed.data.bookingBehavior;
+    }
   }
   if (parsed.data.subscriptionBehavior !== undefined) {
     data.subscriptionBehavior = parsed.data.subscriptionBehavior;
   }
   if (parsed.data.isActive !== undefined) {
-    data.isActive = parsed.data.isActive;
+    // Likewise, an unchanged archived draft must not undo a reactivation.
+    if (
+      canonicalBookingBehavior === null ||
+      parsed.data.isActive !== existing.isActive
+    ) {
+      data.isActive = parsed.data.isActive;
+    }
   }
   if (parsed.data.sortOrder !== undefined) {
     data.sortOrder = parsed.data.sortOrder;
