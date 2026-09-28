@@ -1399,7 +1399,7 @@ export function classifyBookingContext(
           ...paymentLinks,
           ...[...context.modificationLinksById.values()].flat(),
         ].filter(isRecordedBookingInvoicePayment);
-        // #3643 (`INV-PAY-108`, task-queue review F2): an OPEN part-payment review is the
+        // #3643 (`INV-PAY-109`, task-queue review F2): an OPEN part-payment review is the
         // cancel's own durable proof that money was recorded against the
         // invoice, even with no local PAYMENT link.
         const openPartPaymentReview = Boolean(

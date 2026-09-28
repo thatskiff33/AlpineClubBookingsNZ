@@ -1,5 +1,5 @@
 /**
- * #3643 (`INV-PAY-108`, task-queue review F1): what a later PAID invoice event
+ * #3643 (`INV-PAY-109`, task-queue review F1): what a later PAID invoice event
  * may still do for a payment whose cancel raised a part-payment review.
  *
  * The review is the treasurer's instruction to settle, in Xero, the cash
@@ -28,7 +28,8 @@
  */
 import { ManualRefundTaskStatus, type Prisma } from "@prisma/client";
 
-import { createAuditLog } from "@/lib/audit";
+import { bookingOwner } from "@/lib/booking-owner";
+import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 
 export type PartPaymentReviewCover =
   | { kind: "none" }
@@ -54,12 +55,16 @@ export async function readPartPaymentReviewCover(
     where: { partPaymentReviewPaymentId: input.paymentId },
     select: {
       id: true,
+      bookingId: true,
       kind: true,
+      amountCents: true,
+      raisedAmountCents: true,
       status: true,
       partPaymentReviewRecordedCents: true,
       completedAt: true,
       completedByMemberId: true,
       note: true,
+      booking: { select: { memberId: true } },
     },
   });
   if (!review) return { kind: "none" };
@@ -90,31 +95,19 @@ export async function readPartPaymentReviewCover(
     data: { status: ManualRefundTaskStatus.OPEN, completedAt: null, completedByMemberId: null },
   });
   if (claimed.count > 0) {
-    await createAuditLog(
-      {
-        action: "booking-payment.manual-refund-task.reopen",
-        targetId: input.bookingId,
-        entityType: "ManualRefundTask",
-        entityId: review.id,
-        category: "payment",
-        severity: "important",
-        outcome: "success",
-        summary: "Part-payment review put back on the queue: Xero reported the invoice paid",
-        details:
-          "Xero reported this cancelled booking's invoice as paid, and the amount the review covers is not known exactly, so nothing was credited or handed back automatically.",
-        metadata: {
-          taskId: review.id,
-          bookingId: input.bookingId,
-          kind: review.kind,
-          partPaymentReviewPaymentId: input.paymentId,
-          xeroInvoiceId: input.eventInvoiceId,
-          dismissedByMemberId: review.completedByMemberId,
-          dismissedAt: review.completedAt?.toISOString() ?? null,
-          dismissalNote: review.note,
-        },
+    await recordManualRefundTaskReopenAudit({
+      task: review,
+      subjectMemberId: bookingOwner(review.booking).memberId,
+      actingMemberId: null,
+      summary: "Part-payment review put back on the queue: Xero reported the invoice paid",
+      details:
+        "Xero reported this cancelled booking's invoice as paid, and the amount the review covers is not known exactly, so nothing was credited or handed back automatically.",
+      extraMetadata: {
+        partPaymentReviewPaymentId: input.paymentId,
+        xeroInvoiceId: input.eventInvoiceId,
       },
-      tx,
-    );
+      store: tx,
+    });
   }
   return { kind: "route", taskId: review.id, reopened: claimed.count > 0 };
 }

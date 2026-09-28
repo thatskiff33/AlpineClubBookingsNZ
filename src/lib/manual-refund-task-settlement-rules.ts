@@ -27,7 +27,7 @@ import type { ManualRefundTaskKind } from "@prisma/client";
 /**
  * #3643 (`INV-PAY-107`): IS THIS TASK A PART-PAYMENT REVIEW? The one spelling of
  * that question for every server reader - the resolution door, the audit, the
- * queue payload, the repair loader and the inbound Xero sync - so a new door
+ * queue payload and the repair loader - so a new door
  * asks it here rather than inventing a sixth test of the marker. A review is a
  * `CANCELLED_BOOKING_HAND_BACK` like any other hand-back, so its kind cannot
  * say it; only the marker can. The browser reads the payload's boolean, which
@@ -36,7 +36,9 @@ import type { ManualRefundTaskKind } from "@prisma/client";
 export function isPartPaymentReviewTask<
   T extends { partPaymentReviewPaymentId: string | null },
 >(task: T): task is T & { partPaymentReviewPaymentId: string } {
-  return task.partPaymentReviewPaymentId !== null;
+  // Present-or-absent, not `!== null`: a row read without the column selected
+  // carries undefined, which is no review.
+  return Boolean(task.partPaymentReviewPaymentId);
 }
 
 /**

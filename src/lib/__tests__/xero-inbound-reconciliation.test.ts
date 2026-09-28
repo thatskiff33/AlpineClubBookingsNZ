@@ -2714,11 +2714,14 @@ describe("processStoredXeroInboundEvents", () => {
       mocks.manualRefundTaskFindUnique.mockResolvedValue({
         id: "review_1",
         kind: "CANCELLED_BOOKING_HAND_BACK",
+        amountCents: null,
+        raisedAmountCents: null,
         status: "DISMISSED",
         partPaymentReviewRecordedCents: null,
         completedAt: new Date("2026-06-20T00:00:00.000Z"),
         completedByMemberId: "treasurer_1",
         note: "Refunded in Xero.",
+        booking: { memberId: "mem_cancelled" },
       });
       mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
 
@@ -2735,6 +2738,12 @@ describe("processStoredXeroInboundEvents", () => {
           entityId: "review_1",
         }),
       });
+      // The system reopened it: no acting member is invented.
+      const reopenEntry = mocks.auditLogCreate.mock.calls
+        .map(([arg]) => (arg as { data: Record<string, unknown> }).data)
+        .find((data) => data.action === "booking-payment.manual-refund-task.reopen");
+      expect(reopenEntry?.actorMemberId ?? null).toBeNull();
+      expect(reopenEntry?.memberId ?? null).toBeNull();
       expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
       expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({

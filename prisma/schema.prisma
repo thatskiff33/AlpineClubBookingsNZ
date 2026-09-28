@@ -3125,7 +3125,7 @@ model ManualRefundTask {
   /// manual-review finding for the booking. The previous app version never
   /// selects or writes it.
   partPaymentReviewPaymentId String? @unique
-  /// #3643 (`INV-PAY-108`): on a part-payment review only, the cash Xero showed
+  /// #3643 (`INV-PAY-109`): on a part-payment review only, the cash Xero showed
   /// against the booking's one invoice at the cancel, when Xero gave it
   /// exactly; NULL when it could not (never 0 for unknown - a figure is
   /// positive). It is NOT an amount to hand back. The inbound Xero sync sizes a

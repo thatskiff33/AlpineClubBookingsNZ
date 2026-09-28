@@ -1,5 +1,5 @@
 -- #3643 (owner decision 28 Sep 2026, on the issue's DECISION RECORD comment).
--- INV-PAY-107 and INV-PAY-108.
+-- INV-PAY-107 and INV-PAY-109.
 --
 -- An officer may cancel an internet banking booking as unpaid while Xero records
 -- a payment against its invoice that the app cannot hand back as credit: the
@@ -21,7 +21,7 @@
 --      never an amount to hand back. The inbound Xero sync reads it so that a
 --      later PAID event hands back or credits ONLY cash beyond it, never the
 --      reviewed cash a second time; a NULL sends the whole event back to the
---      review instead (INV-PAY-108).
+--      review instead (INV-PAY-109).
 --   3. A UNIQUE index on the marker: one review per payment, whatever its
 --      status, so a replayed cancel cannot raise a second. PostgreSQL treats
 --      NULLs as distinct, so every existing row (all NULL) passes.

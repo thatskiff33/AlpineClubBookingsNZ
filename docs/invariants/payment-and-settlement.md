@@ -715,7 +715,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
   and `xero-booking-repair.test.ts`.
 
-## INV-PAY-108
+## INV-PAY-109
 
 - **A part payment under review is never handed back twice** (#3643, the
   task-queue review of the owner's 28 September 2026 decision). The review task
