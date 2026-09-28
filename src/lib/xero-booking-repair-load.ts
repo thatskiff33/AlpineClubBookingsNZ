@@ -2,6 +2,7 @@
 // for the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2).
 import {
+  ManualRefundTaskKind,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
   Prisma,
@@ -275,6 +276,7 @@ export async function loadAuditData(
     editReviewChargeShares,
     editReviewChargeIntentRecoveries,
     lateCaptureApprovalTasks,
+    handBackTasks,
     appliedCreditAllocations,
   ] = await Promise.all([
     linkScopes.length > 0
@@ -369,6 +371,17 @@ export async function loadAuditData(
       : Promise.resolve(
           [] as { bookingId: string; lateCaptureApprovalIntentId: string | null }[],
         ),
+    // #3643 F2: the organisation late-cash arm's hand-back, any status - it is
+    // the evidence that cash arrived after a retired clearing note.
+    bookingIds.length > 0
+      ? deps.prisma.manualRefundTask.findMany({
+          where: {
+            bookingId: { in: bookingIds },
+            kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+          },
+          select: { bookingId: true, paymentId: true },
+        })
+      : Promise.resolve([] as { bookingId: string; paymentId: string | null }[]),
     // #3535: INV-PAY-017's allocation term, per booking, for the
     // cancelled-open-invoice arm's clearing-note size. The release and the
     // cancel path first run `repairLegacyAppliedCreditNoteAllocationsForBooking`,
@@ -469,6 +482,14 @@ export async function loadAuditData(
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
   }
 
+  const handBackPaymentIdsByBookingId = new Map<string, Set<string>>();
+  for (const task of handBackTasks) {
+    if (!task.paymentId) continue;
+    const ids = handBackPaymentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
+    ids.add(task.paymentId);
+    handBackPaymentIdsByBookingId.set(task.bookingId, ids);
+  }
+
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
   for (const operation of operations) {
     if (!operation.localModel || !operation.localId) {
@@ -506,6 +527,8 @@ export async function loadAuditData(
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
     lateCaptureApprovalIntentIds:
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    cancelledBookingHandBackPaymentIds:
+      handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),

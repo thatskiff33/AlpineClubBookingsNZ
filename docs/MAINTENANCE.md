@@ -1714,8 +1714,11 @@ with no clearing note and sends the treasurer a "cancelled as unpaid" email
 (audit `booking.internet_banking_cancelled_payment_recorded`); a member is told
 to contact the club. The repair CLI never queues or retries a full clearing note
 over a recorded or recognised part payment, including a recognised booking whose
-unpaid-rest note is missing or failed; it reports `MANUAL_REVIEW_REQUIRED`,
-naming the recorded payment.
+unpaid-rest note failed; it reports `MANUAL_REVIEW_REQUIRED`, naming the
+recorded payment. A recognised booking is only reported while that rest note is
+outstanding: once you have cleared the rest by hand in Xero, mark the failed
+operation **resolved** on the Xero operations panel and the finding stops. A
+booking paid in full before its cancel has no rest note and is never reported.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either

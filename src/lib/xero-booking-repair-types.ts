@@ -332,6 +332,9 @@ export const xeroOperationSelect = Prisma.validator<Prisma.XeroSyncOperationSele
   createdAt: true,
   updatedAt: true,
   replayable: true,
+  // #3643 F1: an officer's "resolved in Xero" mark answers a recognised part
+  // payment's unpaid-rest note.
+  manuallyResolvedAt: true,
 });
 
 export type XeroOperationRecord = Prisma.XeroSyncOperationGetPayload<{
@@ -388,6 +391,12 @@ export interface BookingClassificationContext {
    * the late-capture finding must not offer to refund it.
    */
   lateCaptureApprovalIntentIds: Set<string>;
+  /**
+   * #3643 F2: the payments on this booking the organisation late-cash arm
+   * raised a `CANCELLED_BOOKING_HAND_BACK` task for. Beside a retired clearing
+   * note it means cash arrived and no clearing note is owed.
+   */
+  cancelledBookingHandBackPaymentIds: Set<string>;
   /**
    * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
    * money owed to the club, totalled per `BookingModification` anchor.

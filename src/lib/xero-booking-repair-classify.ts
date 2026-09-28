@@ -1288,16 +1288,22 @@ export function classifyBookingContext(
 
   // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
   // was released retires the pending clearing note (`retirePendingClearingNote`
-  // cancels its queued MODIFICATION_CREDIT_NOTE create) and settles the payment,
-  // so the arm below skips the booking - but the operator is still told why no
-  // note exists. The ONE home of this finding (#3535's copy inside the arm was
-  // removed at the sync, delta D2).
-  if (
+  // cancels its queued MODIFICATION_CREDIT_NOTE create), so the arm below skips
+  // the booking - but the operator is still told why no note exists. The ONE
+  // home of this finding (#3535's copy inside the arm was removed at the sync,
+  // delta D2). The evidence that cash arrived is either arm's own write: the
+  // member arm settles the payment and records its account-credit note; the
+  // organisation arm settles nothing and raises a hand-back task instead
+  // (#3643 F2, the population #3535's in-arm copy used to catch). The row is
+  // the one `retirePendingClearingNote` writes: a CANCELLED create stamped with
+  // the clearing note's queue type.
+  const cashRetiredClearingNote = Boolean(
     booking.status === "CANCELLED" &&
     payment &&
     primaryInvoice &&
     (hasCapturedRepairPayment(payment) ||
-      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations)) &&
+      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) ||
+      context.cancelledBookingHandBackPaymentIds.has(payment.id)) &&
     bookingOperations.some(
       (operation) =>
         operation.entityType === "CREDIT_NOTE" &&
@@ -1305,7 +1311,8 @@ export function classifyBookingContext(
         operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE &&
         operation.status === "CANCELLED"
     )
-  ) {
+  );
+  if (cashRetiredClearingNote && payment && primaryInvoice) {
     addFinding(findings, {
       code: "MANUAL_REVIEW_REQUIRED",
       severity: "info",
@@ -1318,21 +1325,34 @@ export function classifyBookingContext(
   }
 
   // #3643 delta D2: the cancel path recorded Xero's part payment as the
-  // payment's receipt (a SUCCEEDED internet banking row). Its clearing note
-  // covers only the unpaid rest and is still owed whatever was decided for the
-  // part payment, so this population enters the arm below - where it is only
-  // ever manual review, never a full-size queue or retry (`INV-PAY-107`).
+  // payment's receipt (a SUCCEEDED internet banking row) and, in the same
+  // transaction, queued a clearing note for the unpaid rest - only when Xero
+  // showed a rest owed. While that note is outstanding the booking enters the
+  // arm below, where it is only ever manual review, never a full-size queue or
+  // retry (`INV-PAY-107`). F1: no rest note (paid in full at the cancel), or
+  // one an officer marked resolved in Xero (the rest cleared by hand), means
+  // nothing is owed, and the ordinary skips apply.
   const partPaymentRecognised = (payment?.transactions ?? []).some(
     (transaction) => transaction.reason === PART_PAYMENT_RECOGNISED_REASON
   );
+  const recognisedRestOwed =
+    partPaymentRecognised &&
+    bookingOperations.some(
+      (operation) =>
+        operation.entityType === "CREDIT_NOTE" &&
+        operation.operationType === "CREATE" &&
+        operation.status !== "CANCELLED" &&
+        !operation.manuallyResolvedAt
+    );
 
   // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
   // and `paymentNoteAnswersInvoice` are the two things it asks first - except
-  // for #3643's recognised part payment above.
+  // for #3643's recognised part payment whose rest is still owed, above.
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    (partPaymentRecognised ||
+    !cashRetiredClearingNote &&
+    (recognisedRestOwed ||
       (!hasCapturedRepairPayment(payment) &&
         !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations))) &&
     primaryInvoice
