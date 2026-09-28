@@ -274,6 +274,17 @@ Run it from outside the worktree it removes (the main checkout is the usual
 place). Before deleting anything it refuses:
 
 - the main checkout, a path that is not a registered worktree, or a locked one;
+- a path that is itself a link to the worktree (pass the worktree's own path);
+- a registered worktree whose directory is already gone (run
+  `git worktree prune`), or one with no `.git` left in it;
+- another registered worktree inside the target, main checkout included, and
+  any `.git` file or folder below its root: another worktree or clone whose
+  uncommitted work the lane's own `git status` cannot see. A Claude Code
+  session's `.claude/worktrees/<name>` inside a lane is exactly this;
+- a `.git` that git does not accept as the lane's own, where
+  `git rev-parse --show-toplevel` names another tree (git searches upward, so a
+  lane under `.artifacts/worktrees/` would otherwise be checked as the main
+  checkout);
 - being run from inside the target (the current directory or `INIT_CWD`);
 - a top-level `node_modules` that is itself a link (the legacy shape above, which
   needs the manual unlink);
@@ -287,12 +298,16 @@ place). Before deleting anything it refuses:
 - any folder it cannot read, since it could hide a link;
 - uncommitted or untracked work, and an unmerged HEAD without `--allow-unmerged`.
 
-What is then guaranteed: the whole directory is deleted with Node's `fs.rmSync`,
-which removes a link itself rather than descending into it (verified on Windows
-for drive-letter and volume-path junctions, so it also covers a link that
-appears after the checks); if anything is left on disk the registration is
-**kept** and the tool says so, so the lane stays visible to git and can be
-retried; only when the directory is gone does it run `git worktree prune` and
+What is then guaranteed: the worktree is resolved to its real path, and that
+is what is deleted and checked afterwards. Node's `fs.rmSync` deletes every
+top-level entry except `.git`, then `.git`, then the empty folder; it removes a
+link itself rather than descending into it (verified on Windows for
+drive-letter and volume-path junctions, so it also covers a link that appears
+after the checks). If anything is left on disk the registration is **kept** and
+the tool says so, so the lane stays visible to git; because `.git` goes last,
+the retry can run every check again (a tracked file already deleted does not
+count as a change, since its content is in HEAD). Only when the directory is
+gone does it run `git worktree prune` and
 check that git no longer lists it. (`prune` also forgets any other registration
 whose directory is already missing; locked ones are kept.)
 

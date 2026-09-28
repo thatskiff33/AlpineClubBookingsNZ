@@ -388,3 +388,149 @@ describe("remove-worktree: links Node does not flag, unreadable folders, and git
     },
   );
 });
+
+/** Run git without a shell, for the injected-runner tests. */
+function realGit(cwd, args) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+describe("remove-worktree: other repositories inside the lane, part-way removals, aliases, prune", () => {
+  // Review round 5 (reproduced): a Claude Code session's worktree lives at
+  // `.claude/worktrees/<name>` INSIDE the lane. It is git-ignored there, so the
+  // lane's own status is clean, and removing the lane deleted it, staged work
+  // and all, and prune then forgot it without a word.
+  it("refuses a lane that contains another registered worktree, and both survive", () => {
+    const { repo, lane } = fixture();
+    ignoreInLane(repo, lane, ".claude");
+    const nested = path.join(lane, ".claude", "worktrees", "other");
+    git(repo, "worktree", "add", "-q", "-b", "other", nested, "main");
+    fs.writeFileSync(path.join(nested, "precious.txt"), "staged, not committed\n");
+    git(nested, "add", "precious.txt");
+
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /contains other registered worktrees[\s\S]*other/,
+    );
+    expect(fs.readFileSync(path.join(nested, "precious.txt"), "utf8")).toBe("staged, not committed\n");
+    const listed = git(repo, "worktree", "list");
+    expect(listed).toContain("wt-lane");
+    expect(listed).toContain("worktrees/other");
+  });
+
+  it("refuses a lane that contains another repository (a .git below its root)", () => {
+    const { repo, lane } = fixture();
+    ignoreInLane(repo, lane, "vendor");
+    const clone = path.join(lane, "vendor", "lib");
+    fs.mkdirSync(clone, { recursive: true });
+    git(clone, "init", "-q");
+    fs.writeFileSync(path.join(clone, "work.txt"), "never committed\n");
+
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /another git repository[\s\S]*vendor/,
+    );
+    expect(fs.existsSync(path.join(clone, "work.txt"))).toBe(true);
+  });
+
+  // Review round 5 (reproduced): rmSync removed `.git` first, so a removal that
+  // stopped part way left a folder git no longer recognised, and the retry
+  // failed. `.git` now goes last.
+  it("keeps .git when a removal stops part way, so the retry can finish it", () => {
+    const { repo, lane, outside } = fixture();
+    pnpmShapedNodeModules(lane, outside);
+    fs.mkdirSync(path.join(lane, "held"));
+    fs.writeFileSync(path.join(lane, "held", "f.txt"), "tracked\n");
+    git(lane, "add", ".");
+    git(lane, "commit", "-q", "-m", "held");
+    git(repo, "merge", "-q", "--ff-only", "lane");
+
+    const realRm = fs.rmSync.bind(fs);
+    const spy = vi.spyOn(fs, "rmSync").mockImplementation((p, options) => {
+      if (path.basename(String(p)) === "held") throw Object.assign(new Error("simulated"), { code: "EBUSY" });
+      return realRm(p, options);
+    });
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /held[\s\S]*\.git was kept[\s\S]*KEPT/,
+    );
+    expect(fs.readdirSync(lane).sort()).toEqual([".git", "held"]);
+    expect(git(repo, "worktree", "list")).toContain("wt-lane");
+    spy.mockRestore();
+
+    removeWorktree({ repoDir: repo, worktree: lane, base: "main" });
+    expect(fs.existsSync(lane)).toBe(false);
+    expect(git(repo, "worktree", "list")).not.toContain("wt-lane");
+    expect(fs.readFileSync(path.join(outside, "sentinel"), "utf8")).toBe("keep\n");
+  });
+
+  // A lane nested in the main checkout (this repository's .artifacts/worktrees
+  // layout) whose .git is not a valid one: git searches upward and answers for
+  // the MAIN checkout, whose clean, merged state would pass every check.
+  it("refuses when git answers for a different tree than the lane", () => {
+    const { repo } = fixture();
+    fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules\n.artifacts\n");
+    git(repo, "commit", "-q", "-am", "ignore artifacts");
+    const lane = path.join(repo, ".artifacts", "worktrees", "9999");
+    git(repo, "worktree", "add", "-q", "-b", "nested", lane, "main");
+    fs.rmSync(path.join(lane, ".git"));
+    fs.mkdirSync(path.join(lane, ".git")); // present, but not a repository
+    fs.writeFileSync(path.join(lane, "work.txt"), "not in any commit\n");
+
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /does not see[\s\S]*as its own worktree/,
+    );
+    expect(fs.existsSync(path.join(lane, "work.txt"))).toBe(true);
+  });
+
+  it("explains a lane with no .git, and one whose directory is already gone", () => {
+    const { repo, lane } = fixture();
+    fs.rmSync(path.join(lane, ".git"));
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /has no \.git[\s\S]*git worktree prune/,
+    );
+    expect(fs.existsSync(lane)).toBe(true);
+
+    fs.rmSync(lane, { recursive: true, force: true });
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /already gone[\s\S]*git worktree prune/,
+    );
+  });
+
+  // Review round 5 (reproduced): given a junction to the lane, the tool deleted
+  // the junction, found the path it was given gone, and reported "Removed"
+  // while the lane stayed on disk and registered.
+  it("refuses a target that is itself a link to the lane", () => {
+    const { root, repo, lane } = fixture();
+    const alias = path.join(root, "alias");
+    fs.symlinkSync(lane, alias, DIR_LINK);
+    expect(() => removeWorktree({ repoDir: repo, worktree: alias, base: "main" })).toThrow(
+      /itself a link/,
+    );
+    expect(fs.existsSync(alias)).toBe(true);
+    expect(fs.existsSync(path.join(lane, "README.md"))).toBe(true);
+  });
+
+  it("reports a failing prune, and a prune that leaves the lane listed", () => {
+    const failing = fixture();
+    expect(() =>
+      removeWorktree({
+        repoDir: failing.repo,
+        worktree: failing.lane,
+        base: "main",
+        runGit: (cwd, args) =>
+          args[0] === "worktree" && args[1] === "prune"
+            ? { status: 128, stdout: "", stderr: "simulated prune failure" }
+            : realGit(cwd, args),
+      }),
+    ).toThrow(/git worktree prune failed: simulated prune failure/);
+
+    const noop = fixture();
+    expect(() =>
+      removeWorktree({
+        repoDir: noop.repo,
+        worktree: noop.lane,
+        base: "main",
+        runGit: (cwd, args) =>
+          args[0] === "worktree" && args[1] === "prune" ? { status: 0, stdout: "", stderr: "" } : realGit(cwd, args),
+      }),
+    ).toThrow(/still lists it after git worktree prune/);
+  });
+});

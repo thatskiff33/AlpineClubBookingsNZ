@@ -29,14 +29,20 @@
  * ## What is guaranteed
  *
  * 1. Nothing is deleted until every check below has passed.
- * 2. The deletion is `fs.rmSync(<worktree>, { recursive: true })`, which removes
- *    a link itself instead of descending into it. Verified on Windows for
- *    directory junctions to a drive-letter path and to a `\\?\Volume{…}` path
- *    (which `lstat` reports as a plain directory), so it also covers a link
- *    created after the checks ran.
- * 3. If anything is left on disk afterwards, the registration is NOT pruned and
+ * 2. The worktree is resolved to its real path first, and that path is what
+ *    is deleted and what is checked afterwards.
+ * 3. The deletion is `fs.rmSync(<entry>, { recursive: true })` for each
+ *    top-level entry except `.git`, then `.git`, then the empty folder.
+ *    `rmSync` removes a link itself instead of descending into it. Verified on
+ *    Windows for directory junctions to a drive-letter path and to a
+ *    `\\?\Volume{…}` path (which `lstat` reports as a plain directory), so it
+ *    also covers a link created after the checks ran.
+ * 4. If anything is left on disk afterwards, the registration is NOT pruned and
  *    the tool says so: the lane stays visible to git and can be retried.
- * 4. The registration is pruned only once the directory is gone, and the tool
+ *    Because `.git` goes last, what is left is still a worktree git can check,
+ *    and the retry runs every check again (a tracked file that is already
+ *    deleted does not count as a change: its content is in HEAD).
+ * 5. The registration is pruned only once the directory is gone, and the tool
  *    checks that git no longer lists the worktree. (`git worktree prune` also
  *    forgets any OTHER registration whose directory is already missing; a
  *    locked one is kept.)
@@ -45,6 +51,18 @@
  *
  * - A path that is not a registered LINKED worktree, the main checkout, or a
  *   locked worktree (`git worktree lock` means somebody said keep it).
+ * - A path that is itself a link to the worktree: deleting it would remove only
+ *   the link.
+ * - A registered worktree whose directory is already gone (the message says to
+ *   run `git worktree prune`), or one with no `.git` left in it.
+ * - Another registered worktree inside the target (the main checkout
+ *   included), and any `.git` file or folder below its root: another worktree
+ *   or clone whose uncommitted work this worktree's `git status` cannot see.
+ *   A Claude Code session's `.claude/worktrees/<name>` is exactly that.
+ * - A `.git` that git does not accept as this worktree's own
+ *   (`git rev-parse --show-toplevel` names another tree). git searches upward,
+ *   so a lane nested in the main checkout would otherwise be checked as the
+ *   main checkout.
  * - Being run from inside the target (the current directory, or `INIT_CWD`,
  *   where `pnpm run` was typed): a folder cannot be deleted under a shell that
  *   is sitting in it.
@@ -94,7 +112,10 @@ export function parseArguments(argv) {
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  // A spawn that never started (git not on PATH, cwd gone) has no stderr, only
+  // `error`; report that rather than an empty reason.
+  const stderr = result.error ? `could not run git: ${result.error.message}` : (result.stderr ?? "");
+  return { status: result.status, stdout: result.stdout ?? "", stderr };
 }
 
 function fold(p) {
@@ -127,8 +148,8 @@ export function isInside(child, parent) {
  * Every worktree git knows about, main checkout first (git's own order), with
  * whether it is locked.
  */
-export function listWorktrees(repoDir) {
-  const out = git(repoDir, ["worktree", "list", "--porcelain"]);
+export function listWorktrees(repoDir, runGit = git) {
+  const out = runGit(repoDir, ["worktree", "list", "--porcelain"]);
   if (out.status !== 0) throw new Error(`git worktree list failed: ${out.stderr.trim()}`);
   return out.stdout
     .split(/\r?\n\r?\n/)
@@ -150,7 +171,12 @@ function isFlaggedLink(p) {
 
 /**
  * Walk the worktree (except the top-level `.git` entry and the generated
- * directories) and return `{ links, unreadable }`.
+ * directories) and return `{ links, unreadable, repositories }`.
+ *
+ * `repositories` lists every `.git` file or folder BELOW the root: another
+ * worktree or clone living inside this one (a Claude Code session's
+ * `.claude/worktrees/<name>` is exactly that), whose own uncommitted work this
+ * worktree's `git status` cannot see.
  *
  * A directory counts as a link when `readdir` or `lstat` flags it, or when its
  * real path differs from its own path. The last test is the one that catches a
@@ -161,6 +187,7 @@ function isFlaggedLink(p) {
 export function scanWorktree(target) {
   const links = [];
   const unreadable = [];
+  const repositories = [];
   const recordError = (p, error) => {
     if (error?.code !== "ENOENT") unreadable.push(`${p} (${error?.code ?? String(error)})`);
   };
@@ -175,6 +202,8 @@ export function scanWorktree(target) {
     for (const entry of entries) {
       if (atRoot && (entry.name === ".git" || GENERATED_ROOT_DIRS.has(entry.name))) continue;
       const full = path.join(dir, entry.name);
+      // Recorded, and still walked below, so a link inside it is reported too.
+      if (entry.name === ".git") repositories.push(full);
       let stat;
       try {
         stat = fs.lstatSync(full);
@@ -206,15 +235,17 @@ export function scanWorktree(target) {
     realTarget = fs.realpathSync.native(target);
   } catch (error) {
     recordError(target, error);
-    return { links, unreadable };
+    return { links, unreadable, repositories };
   }
   walk(target, realTarget, true);
-  return { links, unreadable };
+  return { links, unreadable, repositories };
 }
 
 /**
- * Check every refusal before anything is deleted. Returns the resolved path;
- * throws with the reason otherwise.
+ * Check every refusal before anything is deleted. Returns `{ target,
+ * registeredPath }`: the worktree's REAL path, which is what is deleted and
+ * checked from here on, and the spelling git registered it under. Throws with
+ * the reason otherwise.
  */
 export function preflight({
   repoDir,
@@ -223,18 +254,42 @@ export function preflight({
   allowUnmerged,
   cwd = process.cwd(),
   initCwd = process.env.INIT_CWD,
+  runGit = git,
 }) {
-  const target = path.resolve(worktree);
-  const worktrees = listWorktrees(repoDir);
-  if (worktrees.length > 0 && samePath(worktrees[0].path, target)) {
-    throw new Error(`${target} is the main checkout, not a lane worktree. Refusing.`);
+  const given = path.resolve(worktree);
+  if (isFlaggedLink(given)) {
+    throw new Error(
+      `${given} is itself a link, not the worktree. Deleting it would remove only the link and ` +
+        "leave the lane registered. Pass the worktree's own path instead. Refusing.",
+    );
   }
-  const registered = worktrees.find((w) => samePath(w.path, target));
+  const worktrees = listWorktrees(repoDir, runGit);
+  if (worktrees.length > 0 && samePath(worktrees[0].path, given)) {
+    throw new Error(`${given} is the main checkout, not a lane worktree. Refusing.`);
+  }
+  const registered = worktrees.find((w) => samePath(w.path, given));
   if (!registered) {
-    throw new Error(`${target} is not a registered worktree of this repository. Refusing.`);
+    throw new Error(`${given} is not a registered worktree of this repository. Refusing.`);
   }
   if (registered.locked) {
-    throw new Error(`${target} is locked (git worktree lock). Unlock it deliberately first.`);
+    throw new Error(`${given} is locked (git worktree lock). Unlock it deliberately first.`);
+  }
+  if (!fs.existsSync(given)) {
+    throw new Error(
+      `${given} is registered, but its directory is already gone, so there is nothing to delete. ` +
+        "Run `git worktree prune` to make git forget it.",
+    );
+  }
+  // From here on everything uses the real path, so a volume-path or 8.3
+  // spelling cannot make the post-delete checks look at a different string.
+  const target = fs.realpathSync.native(given);
+  const nested = worktrees.filter((w) => w !== registered && isInside(w.path, target));
+  if (nested.length > 0) {
+    throw new Error(
+      `${target} contains other registered worktrees, which would be deleted with it, uncommitted ` +
+        "work included. Nothing has been removed. Remove or move these first:\n  " +
+        nested.map((w) => w.path).join("\n  "),
+    );
   }
   for (const where of [cwd, initCwd]) {
     if (where && isInside(where, target)) {
@@ -244,13 +299,20 @@ export function preflight({
       );
     }
   }
+  if (!fs.existsSync(path.join(target, ".git"))) {
+    throw new Error(
+      `${target} has no .git, so git cannot check what is in it (an earlier removal may have ` +
+        "stopped part way). Nothing has been removed. Look at what is left; if none of it is " +
+        "needed, delete the folder yourself and then run `git worktree prune`.",
+    );
+  }
   if (isFlaggedLink(path.join(target, "node_modules"))) {
     throw new Error(
       `${target}/node_modules is itself a link (the legacy junction shape). Use the verified ` +
         "manual unlink in docs/agents/CODEX_WORKFLOW.md instead; this tool will not touch it.",
     );
   }
-  const { links, unreadable } = scanWorktree(target);
+  const { links, unreadable, repositories } = scanWorktree(target);
   if (unreadable.length > 0) {
     throw new Error(
       `Parts of ${target} could not be read, so it cannot be shown to be free of links. ` +
@@ -265,13 +327,37 @@ export function preflight({
         links.join("\n  "),
     );
   }
-  const status = git(target, ["status", "--porcelain"]);
+  if (repositories.length > 0) {
+    throw new Error(
+      `${target} contains another git repository or worktree, whose work this worktree's git ` +
+        "status cannot see. Nothing has been removed. Deal with these first:\n  " +
+        repositories.join("\n  "),
+    );
+  }
+  // git searches upward for a repository. If this .git is broken, a lane nested
+  // in the main checkout (.artifacts/worktrees/<n>) would be checked as the MAIN
+  // checkout, and every check below would answer for the wrong tree.
+  const toplevel = runGit(target, ["rev-parse", "--show-toplevel"]);
+  if (toplevel.status !== 0 || !samePath(toplevel.stdout.trim(), target)) {
+    const answer =
+      toplevel.status === 0 ? ` (it answers for ${toplevel.stdout.trim()})` : `: ${toplevel.stderr.trim()}`;
+    throw new Error(
+      `git does not see ${target} as its own worktree${answer}. Nothing has been removed. Refusing.`,
+    );
+  }
+  const status = runGit(target, ["status", "--porcelain"]);
   if (status.status !== 0) throw new Error(`git status failed in ${target}: ${status.stderr.trim()}`);
-  if (status.stdout.trim() !== "") {
+  // A tracked file missing from disk (` D`) loses nothing: its content is in
+  // HEAD. It is also exactly what a removal that stopped part way leaves, so
+  // allowing it is what makes a retry possible. Anything else is real work.
+  const changes = status.stdout
+    .split(/\r?\n/)
+    .filter((line) => line !== "" && !line.startsWith(" D "));
+  if (changes.length > 0) {
     throw new Error(`${target} has uncommitted or untracked changes. Commit or discard them first.`);
   }
   if (!allowUnmerged) {
-    const merged = git(target, ["merge-base", "--is-ancestor", "HEAD", base]);
+    const merged = runGit(target, ["merge-base", "--is-ancestor", "HEAD", base]);
     if (merged.status === 1) {
       throw new Error(
         `${target}'s HEAD is not merged into ${base}. Pass --allow-unmerged only for a lane ` +
@@ -282,17 +368,40 @@ export function preflight({
       throw new Error(`Could not compare HEAD with ${base}: ${merged.stderr.trim()}`);
     }
   }
-  return target;
+  return { target, registeredPath: registered.path };
 }
 
+const RM_OPTIONS = { recursive: true, force: true, maxRetries: 3 };
+
+/**
+ * Delete everything except `.git` first, then `.git`, then the empty folder.
+ * `.git` goes last so that a removal that stops part way (a file held open)
+ * leaves a worktree git can still check, and the retry runs the same checks.
+ */
 function linkSafeRemove(target) {
-  fs.rmSync(target, { recursive: true, force: true, maxRetries: 3 });
+  const failures = [];
+  for (const name of fs.readdirSync(target)) {
+    if (name === ".git") continue;
+    try {
+      fs.rmSync(path.join(target, name), RM_OPTIONS);
+    } catch (error) {
+      failures.push(`${name} (${error.code ?? error.message})`);
+    }
+  }
+  const left = fs.readdirSync(target).filter((name) => name !== ".git");
+  if (left.length > 0) {
+    const why = failures.length > 0 ? `: ${failures.join(", ")}` : "";
+    throw new Error(`could not delete ${left.join(", ")}${why}; .git was kept`);
+  }
+  fs.rmSync(path.join(target, ".git"), RM_OPTIONS);
+  fs.rmdirSync(target);
 }
 
 /**
  * Preflight, then delete the directory link-safely, then prune the
  * registration once (and only once) the directory is really gone.
- * `remove` is injectable so the "something was left behind" path is testable.
+ * `remove` and `runGit` are injectable so the "something was left behind" and
+ * "prune did not work" paths are testable.
  */
 export function removeWorktree({
   repoDir = process.cwd(),
@@ -302,12 +411,14 @@ export function removeWorktree({
   cwd,
   initCwd,
   remove = linkSafeRemove,
+  runGit = git,
 }) {
-  const target = preflight({
+  const { target, registeredPath } = preflight({
     repoDir,
     worktree,
     base,
     allowUnmerged,
+    runGit,
     ...(cwd !== undefined ? { cwd } : {}),
     ...(initCwd !== undefined ? { initCwd } : {}),
   });
@@ -325,9 +436,12 @@ export function removeWorktree({
         "run this again.",
     );
   }
-  const pruned = git(repoDir, ["worktree", "prune"]);
+  const pruned = runGit(repoDir, ["worktree", "prune"]);
   if (pruned.status !== 0) throw new Error(`git worktree prune failed: ${pruned.stderr.trim()}`);
-  if (listWorktrees(repoDir).some((w) => samePath(w.path, target))) {
+  const stillListed = listWorktrees(repoDir, runGit).some(
+    (w) => samePath(w.path, target) || samePath(w.path, registeredPath),
+  );
+  if (stillListed) {
     throw new Error(`${target} was deleted, but git still lists it after git worktree prune.`);
   }
   return target;
