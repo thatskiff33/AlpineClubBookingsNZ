@@ -189,11 +189,36 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
-The card holds three kinds of row and says which is which. The paragraph about
-cash and bank transfers only appears when there is a cash hand-back waiting; the
-one below only appears when there is a booking change to price; and the third,
-described under "Check an amount the club may not have asked for", only appears
-when there is one of those. None of them speaks for the others.
+The card holds several kinds of row and says which is which: a cash hand-back
+(above), a part payment settled in Xero (next), a booking change to price
+("Decide a booking change the system would not price"), an amount the club may
+not have asked for ("Check an amount the club may not have asked for"), and a
+late card payment held for approval. Each kind's explaining paragraph appears
+only when a row of that kind is waiting, and none of them speaks for the others.
+
+### Settle a part payment an officer cancelled as unpaid
+
+When an officer cancels an internet banking booking while Xero shows a payment
+against its invoice that the club cannot hold as account credit — the booking
+belongs to an organisation, or Xero could not give the exact amount — the
+booking is cancelled as unpaid and a row with no amount appears in **Money to
+settle**, with its own paragraph explaining it
+([Internet Banking](internet-banking.md)).
+
+1. Settle the payment in Xero: refund it, or apply it where the club decides.
+2. Clear whatever the invoice still owes in Xero.
+3. Click **Close this item** and say what you did. A note is required. There is
+   no **Mark paid back** on this row, because nothing in the app moves money for
+   it. Closing it also stops the Xero repair tool listing the booking for review.
+
+If Xero later reports the invoice paid — because you cleared the rest, or more
+money arrived — the app does not credit or hand back anything for it by itself,
+because it cannot tell which of that money this row already covers. Instead the
+row says so: "Xero reported this invoice paid on …, with … of cash recorded
+against it". A row you had closed comes back onto the card with that line. Check
+the invoice in Xero, settle anything beyond the part payment, then close the row
+again. The app also tries to email the club, but the line on the row is the
+record, so do not wait for the email.
 
 ### Decide a booking change the system would not price
 

@@ -39,6 +39,10 @@
  * repair by hand (see docs/MAINTENANCE.md).
  */
 import { PaymentSource } from "@prisma/client";
+import {
+  INVOICE_PAYMENT_ROLE,
+  isRecordedBookingInvoicePayment,
+} from "@/lib/xero-inbound/object-links";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -217,19 +221,24 @@ function allocatedOnAnchor(
 }
 
 /**
- * Did Xero record a payment against this hold's invoice? The inbound reconcile
- * writes an INVOICE_PAYMENT link on the payment for each one; a deleted or
- * voided payment does not count.
+ * Did Xero record a payment against this hold's PRIMARY invoice? The inbound
+ * reconcile writes an INVOICE_PAYMENT link on the payment for each one. What
+ * counts as a recorded payment is `isRecordedBookingInvoicePayment`'s rule
+ * (#3643); this audit narrows it to the payment's own primary-invoice links.
  */
 export function hasInvoiceCashPayment(
   links: Array<{ localModel: string; xeroObjectType?: string; role?: string; metadata: unknown }>,
 ): boolean {
-  return links.some((link) => {
-    if (link.localModel !== "Payment" || link.xeroObjectType !== "PAYMENT") return false;
-    if (link.role !== "INVOICE_PAYMENT") return false;
-    const status = String(asRecord(link.metadata)?.status ?? "").toUpperCase();
-    return status !== "DELETED" && status !== "VOIDED";
-  });
+  return links.some(
+    (link) =>
+      link.localModel === "Payment" &&
+      link.role === INVOICE_PAYMENT_ROLE &&
+      isRecordedBookingInvoicePayment({
+        xeroObjectType: link.xeroObjectType ?? "",
+        role: link.role ?? null,
+        metadata: link.metadata,
+      }),
+  );
 }
 
 /**

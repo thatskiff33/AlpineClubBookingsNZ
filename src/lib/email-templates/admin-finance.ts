@@ -6,7 +6,9 @@
  * The family boundary is `src/lib/email/admin-alerts-finance.ts`. The two
  * SCHEDULED reconciliation reports from the same sender live in
  * `./admin-xero-reports` — split off for size, and because a report renders a
- * whole tabular document rather than a single alert.
+ * whole tabular document rather than a single alert. The expired internet
+ * banking hold alert (#3643) lives in `./admin-internet-banking`, split off for
+ * size.
  */
 import { escapeHtml } from "./escape";
 import {

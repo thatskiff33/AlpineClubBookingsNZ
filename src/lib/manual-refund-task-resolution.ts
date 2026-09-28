@@ -33,7 +33,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
-import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  isPartPaymentReviewTask,
+  manualRefundTaskSettlementRefusal,
+} from "@/lib/manual-refund-task-settlement-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -150,6 +153,7 @@ export async function resolveManualRefundTask(
         // #3639: which capture a late-capture approval refunds, and the
         // sentence that names a #2700 task's capture.
         lateCaptureApprovalIntentId: true,
+        partPaymentReviewPaymentId: true,
         reason: true,
         status: true,
         // #3032: the settlement route needs three more facts, all read inside
@@ -215,7 +219,11 @@ export async function resolveManualRefundTask(
     // before any write, so no input reaches a money path - and asked of
     // `manual-refund-task-settlement-rules.ts`, the one client-safe home the
     // settle screen reads to decide whether that control exists at all.
-    const refusal = manualRefundTaskSettlementRefusal(task.kind, resolution);
+    const refusal = manualRefundTaskSettlementRefusal(
+      task.kind,
+      resolution,
+      isPartPaymentReviewTask(task),
+    );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
@@ -545,6 +553,8 @@ export async function resolveManualRefundTask(
       raisedAmountCents: task.raisedAmountCents,
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
+      /** #3643: a part-payment review, for the dismissal's wording. */
+      partPaymentReview: isPartPaymentReviewTask(task),
       /**
        * #3191: how many of this booking's blank nights this decision filled in,
        * so the operator's receipt can say it happened. Zero when none were sent,

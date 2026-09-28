@@ -61,9 +61,10 @@ export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 
 /**
  * Give back a claim this caller took at `claimedAt` and could not use — the
- * send threw before reaching anyone — so the next run can claim and send again
- * (#3672). Deletes only a row still stamped with this caller's own claim, so a
- * newer claim by another sender is never released.
+ * send threw before reaching anyone, or (#3643) reached nobody for a hold that
+ * stays a candidate — so the next run can claim and send again (#3672).
+ * Deletes only a row still stamped with this caller's own claim, so a newer
+ * claim by another sender is never released.
  */
 export async function releaseAlertCooldown({
   key,
@@ -101,4 +102,51 @@ export async function deferAlertCooldown({
     where: { key, lastAlertedAt: claimedAt },
     data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs) },
   });
+}
+
+/**
+ * An alert that could not be delivered and whose subject no run will select
+ * again (#3643: a hold already released). The marker is the durable "owed";
+ * the next run drains it (`listOwedAlertKeys`) and settles it once delivered.
+ * The key is its own namespace, beside the window key the send claimed.
+ */
+export async function markAlertOwed({
+  key,
+  now = new Date(),
+  store = prisma,
+}: {
+  key: string;
+  now?: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  try {
+    await store.alertCooldown.create({ data: { key, lastAlertedAt: now } });
+  } catch (error) {
+    if (!isPrismaUniqueConstraintError(error)) throw error;
+  }
+}
+
+export async function listOwedAlertKeys({
+  prefix,
+  store = prisma,
+}: {
+  prefix: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<string[]> {
+  const rows = await store.alertCooldown.findMany({
+    where: { key: { startsWith: prefix } },
+    select: { key: true },
+    take: 50,
+  });
+  return rows.map((row) => row.key);
+}
+
+export async function settleOwedAlert({
+  key,
+  store = prisma,
+}: {
+  key: string;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.deleteMany({ where: { key } });
 }

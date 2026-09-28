@@ -78,6 +78,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     createdAt: new Date("2026-05-02T00:00:00Z"),
     updatedAt: new Date("2026-05-02T00:00:00Z"),
     replayable: true,
+    manuallyResolvedAt: null,
     ...overrides,
   };
 }
@@ -113,6 +114,78 @@ function makePrimaryInvoiceCreateOperation(overrides: Record<string, unknown> = 
     updatedAt: new Date("2026-05-01T00:00:00Z"),
     ...overrides,
   });
+}
+
+/**
+ * #3643: a cancelled booking whose cancel recognised Xero's part payment as
+ * the payment's receipt (`PART_PAYMENT_RECOGNISED_REASON`), after the paid
+ * path applied the cancellation policy to it.
+ */
+function recognisedPartPaymentBooking(receiptCents = 5000) {
+  return makeBooking({
+    status: "CANCELLED",
+    payment: {
+      ...makeBooking().payment,
+      status: "PARTIALLY_REFUNDED",
+      stripePaymentIntentId: null,
+      transactions: [
+        {
+          id: "ptx_receipt",
+          paymentId: "payment_1",
+          kind: "PRIMARY",
+          source: "INTERNET_BANKING",
+          stripePaymentIntentId: null,
+          amountCents: receiptCents,
+          refundedAmountCents: receiptCents / 2,
+          status: "PARTIALLY_REFUNDED",
+          paymentMethodId: null,
+          reason: "xero_part_payment_recognised_at_cancel",
+          withdrawnAt: null,
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+          updatedAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    },
+  });
+}
+
+/** #3643: the unpaid-rest clearing note the cancel queued, FAILED by default. */
+function restNoteOperation(overrides: Record<string, unknown> = {}) {
+  return makeOperation({
+    id: "op_rest_note",
+    localModel: "Booking",
+    localId: "booking_1",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    queueType: "MODIFICATION_CREDIT_NOTE",
+    status: "FAILED",
+    xeroObjectType: null,
+    xeroObjectId: null,
+    requestPayload: {
+      queueType: "MODIFICATION_CREDIT_NOTE",
+      bookingId: "booking_1",
+      refundAmountCents: 5000,
+      clearsUnpaidInvoice: true,
+      clearsUnpaidBalance: true,
+    },
+    ...overrides,
+  });
+}
+
+/** A payment-anchored link, active, dated after the cancel. */
+function paymentLink(overrides: Record<string, unknown>) {
+  return {
+    id: "link_payment",
+    localModel: "Payment",
+    localId: "payment_1",
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    active: true,
+    metadata: null,
+    createdAt: new Date("2026-05-03T00:00:00Z"),
+    updatedAt: new Date("2026-05-03T00:00:00Z"),
+    ...overrides,
+  };
 }
 
 function isCapturedTransactionStatus(status: string) {
@@ -206,6 +279,14 @@ function createDependencies(state: {
   onSupplementaryInvoiceEnqueue?: () => void;
   // #3639 review F3: treasurer-approval tasks, by the capture they own.
   lateCaptureApprovalTasks?: { bookingId: string; lateCaptureApprovalIntentId: string }[];
+  // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
+  handBackTasks?: { bookingId: string; paymentId: string }[];
+  // #3643 (owner decision 28 Sep 2026): DECISION 2 part-payment review tasks.
+  partPaymentReviewTasks?: {
+    bookingId: string;
+    partPaymentReviewPaymentId: string;
+    status: "OPEN" | "COMPLETED" | "DISMISSED";
+  }[];
   // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
   // allocation term). Empty for every pre-existing test.
   allocatedAppliedCreditByBookingId?: Record<string, number>;
@@ -404,9 +485,13 @@ function createDependencies(state: {
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
-          where?.lateCaptureApprovalIntentId
-            ? (state.lateCaptureApprovalTasks ?? [])
-            : (state.editReviewChargeShares ?? []),
+          where?.kind === "CANCELLED_BOOKING_HAND_BACK"
+            ? (state.handBackTasks ?? [])
+            : where?.partPaymentReviewPaymentId
+              ? (state.partPaymentReviewTasks ?? [])
+            : where?.lateCaptureApprovalIntentId
+              ? (state.lateCaptureApprovalTasks ?? [])
+              : (state.editReviewChargeShares ?? []),
         ),
       },
       // #3187 fix round: the FRESH read the apply step takes after queueing a
@@ -1122,6 +1207,504 @@ describe("runBookingXeroRepair", () => {
       "REQUEUE_XERO_OPERATION"
     );
     expect(shortfallBooking.actions.some((action) => action.safeToAutoApply && action.type !== "SYNC_PAYMENT_PRIMARY_INVOICE_LINK")).toBe(false);
+  });
+
+  // #3643 (`INV-PAY-107`): a part payment leaves only a PAYMENT link locally.
+  // A cancelled booking whose invoice carries one is owed less than a full
+  // clearing note, so the tool neither queues nor retries one - manual review.
+  it("never auto-queues or auto-retries a full clearing note over a recorded part payment (#3643)", async () => {
+    const cancelledUnpaid = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, status: "FAILED" },
+      });
+    const partPayment = (overrides: Record<string, unknown> = {}) => ({
+      id: "link_part_payment",
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xero_payment_1",
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      role: "INVOICE_PAYMENT",
+      active: true,
+      metadata: { invoiceId: "invoice_1", amount: 50, status: "AUTHORISED" },
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+      ...overrides,
+    });
+    const expectManualReviewOnly = (report: Awaited<ReturnType<typeof runBookingXeroRepair>>) => {
+      const bookingReport = report.passes[0].bookings[0];
+      const types = bookingReport.actions.map((action) => action.type);
+      expect(types).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+      expect(types).not.toContain("REQUEUE_XERO_OPERATION");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+        "CANCELLED_BOOKING_OPEN_INVOICE"
+      );
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          code: "MANUAL_REVIEW_REQUIRED",
+          severity: "manual_review",
+          safeToAutoApply: false,
+        })
+      );
+    };
+
+    // No clearing operation yet: without the link this is the queue arm.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({ bookings: [cancelledUnpaid()], links: [partPayment()] }),
+        scope: { all: true },
+      })
+    );
+
+    // A replayable FAILED clearing operation: without the link, the retry arm.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [cancelledUnpaid()],
+          links: [partPayment()],
+          operations: [
+            makeOperation({
+              id: "op_failed_clearing",
+              localModel: "Booking",
+              localId: "booking_1",
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              queueType: "MODIFICATION_CREDIT_NOTE",
+              status: "FAILED",
+              xeroObjectType: null,
+              xeroObjectId: null,
+              lastErrorMessage: "Xero timed out",
+              requestPayload: {
+                queueType: "MODIFICATION_CREDIT_NOTE",
+                bookingId: "booking_1",
+                refundAmountCents: 10000,
+              },
+            }),
+          ],
+        }),
+        scope: { all: true },
+      })
+    );
+
+    // The part payment on an edit's SUPPLEMENTARY invoice counts the same way.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [
+            makeBooking({
+              status: "CANCELLED",
+              payment: { ...makeBooking().payment, status: "FAILED" },
+              modifications: [
+                {
+                  id: "mod_1",
+                  bookingId: "booking_1",
+                  modificationType: "DATE_CHANGE",
+                  priceDiffCents: 0,
+                  changeFeeCents: 0,
+                  createdAt: new Date("2026-05-02T00:00:00Z"),
+                },
+              ],
+            }),
+          ],
+          links: [
+            partPayment({
+              id: "link_supp_payment",
+              localModel: "BookingModification",
+              localId: "mod_1",
+              role: "SUPPLEMENTARY_INVOICE_PAYMENT",
+            }),
+          ],
+        }),
+        scope: { all: true },
+      })
+    );
+
+    // #3643 D2: the cancel path recorded the part payment as the receipt and
+    // its unpaid-rest note failed - no note link has been recorded yet. Still
+    // manual review, never a full-size re-queue or an auto-retry.
+    expectManualReviewOnly(
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: createDependencies({
+          bookings: [recognisedPartPaymentBooking()],
+          operations: [restNoteOperation({ lastErrorMessage: "Xero timed out" })],
+        }),
+        scope: { all: true },
+      })
+    );
+
+    // A reversed (DELETED) payment is not money held: the queue arm is back.
+    const reversed = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [cancelledUnpaid()],
+        links: [partPayment({ metadata: { amount: 50, status: "DELETED" } })],
+      }),
+      scope: { all: true },
+    });
+    expect(reversed.passes[0].bookings[0].actions.map((action) => action.type)).toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+  });
+
+  // #3643 F1: a recognised booking enters the arm only while the rest its
+  // cancel queued a note for is still owed. Paid in full at the cancel (no rest
+  // note) or a rest an officer cleared by hand and marked resolved in Xero is
+  // nothing owed, and the booking must not be flagged forever.
+  it("stops flagging a recognised part payment once nothing is owed (#3643 F1)", async () => {
+    const invoicePayment = paymentLink({
+      id: "link_invoice_payment",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xero_payment_1",
+      role: "INVOICE_PAYMENT",
+      metadata: { invoiceId: "inv_primary", amount: 50, status: "AUTHORISED" },
+    });
+    const accountCreditNote = paymentLink({
+      id: "link_account_credit_note",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_account_credit",
+      role: "ACCOUNT_CREDIT_NOTE",
+      metadata: { status: "AUTHORISED" },
+    });
+    const shortfall =
+      "The booking's open Xero invoices owe $0.00, less than this $50.00 invoice-clearing credit note; nothing was created.";
+    const classify = async (receiptCents: number, operations: any[]) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [recognisedPartPaymentBooking(receiptCents)],
+            links: [invoicePayment, accountCreditNote],
+            operations,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+    const expectQuiet = (bookingReport: Awaited<ReturnType<typeof classify>>) => {
+      expect(
+        bookingReport.findings.filter((finding) => finding.severity === "manual_review")
+      ).toEqual([]);
+      const types = bookingReport.actions.map((action) => action.type);
+      expect(types).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+      expect(types).not.toContain("REQUEUE_XERO_OPERATION");
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+        "CANCELLED_BOOKING_OPEN_INVOICE"
+      );
+    };
+
+    // Paid in full at the cancel: the whole amount became account credit and
+    // the cancel queued no rest note.
+    expectQuiet(await classify(10000, []));
+
+    // The rest cleared by hand in Xero: its refused note is marked resolved.
+    expectQuiet(
+      await classify(5000, [
+        restNoteOperation({
+          lastErrorMessage: shortfall,
+          manuallyResolvedAt: new Date("2026-05-05T00:00:00Z"),
+        }),
+      ])
+    );
+
+    // The rest still owed: the same refused note, unresolved, is manual review.
+    const owed = await classify(5000, [restNoteOperation({ lastErrorMessage: shortfall })]);
+    expect(owed.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        safeToAutoApply: false,
+      })
+    );
+    expect(owed.actions.map((action) => action.type)).not.toContain("REQUEUE_XERO_OPERATION");
+
+    // Still owed and still queued: reported as pending, never re-queued.
+    const pending = await classify(5000, [restNoteOperation({ status: "PENDING" })]);
+    expect(pending.findings.map((finding) => finding.code)).toContain(
+      "BLOCKED_BY_XERO_OPERATION"
+    );
+    expect(pending.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE"
+    );
+  });
+
+  // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2 cancel
+  // raised a hand-back task for the payment. The manual-review finding stays
+  // while the task is open and goes quiet once a treasurer has closed it (a
+  // review closes only as DISMISSED; COMPLETED is kept here as the loader's
+  // status test covers it) - and a quiet booking never falls through to a full
+  // note.
+  it("quiets the part-payment finding once its hand-back task is closed (#3643)", async () => {
+    const report = async (status?: "OPEN" | "COMPLETED" | "DISMISSED") =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            links: [
+              paymentLink({
+                id: "link_part_payment",
+                xeroObjectType: "PAYMENT",
+                xeroObjectId: "xero_payment_1",
+                role: "INVOICE_PAYMENT",
+                metadata: { invoiceId: "inv_primary", amount: 50, status: "AUTHORISED" },
+              }),
+            ],
+            partPaymentReviewTasks: status
+              ? [{ bookingId: "booking_1", partPaymentReviewPaymentId: "payment_1", status }]
+              : [],
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+    const partPaymentFinding = expect.objectContaining({
+      code: "MANUAL_REVIEW_REQUIRED",
+      severity: "manual_review",
+      summary: expect.stringContaining("has a payment recorded against it"),
+    });
+
+    for (const status of [undefined, "OPEN"] as const) {
+      expect((await report(status)).findings).toContainEqual(partPaymentFinding);
+    }
+    for (const status of ["COMPLETED", "DISMISSED"] as const) {
+      const closed = await report(status);
+      expect(closed.findings).not.toContainEqual(partPaymentFinding);
+      expect(
+        closed.findings.filter((finding) =>
+          ["manual_review", "critical"].includes(finding.severity),
+        ),
+      ).toEqual([]);
+      expect(closed.actions.map((action) => action.type)).not.toContain(
+        "QUEUE_MODIFICATION_CREDIT_NOTE",
+      );
+    }
+  });
+
+  // #3643 (task-queue review F2): an OPEN review is the cancel's own proof
+  // that money was recorded against the invoice. With NO local PAYMENT link (an
+  // over/prepayment allocation, or a link the inbound sync has not written yet)
+  // the booking must still be manual review, never the critical full-size
+  // clearing note offered for auto-apply.
+  it("treats an open part-payment review as a recorded payment when the local link is absent (#3643)", async () => {
+    const report = async (reviewOpen: boolean) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            partPaymentReviewTasks: reviewOpen
+              ? [{ bookingId: "booking_1", partPaymentReviewPaymentId: "payment_1", status: "OPEN" }]
+              : [],
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const open = await report(true);
+    expect(open.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        safeToAutoApply: false,
+        summary: expect.stringContaining("has a payment recorded against it"),
+      }),
+    );
+    expect(open.findings.filter((finding) => finding.severity === "critical")).toEqual([]);
+    expect(open.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE",
+    );
+
+    // The control: with no review and no link, the ordinary full-size note is
+    // what the tool offers, so the review is what changed the answer.
+    const none = await report(false);
+    expect(none.actions.map((action) => action.type)).toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE",
+    );
+  });
+
+  // #3643 F2: the ORGANISATION late-cash arm retires the pending clearing note
+  // and raises a hand-back task; it settles no payment and writes no account
+  // credit note. That retired note beside the hand-back is still "cash arrived,
+  // none owed" - never a manual review, and never a full clearing note.
+  it("reads a retired clearing note beside an organisation hand-back as cash arrived (#3643 F2)", async () => {
+    const orgBooking = () =>
+      makeBooking({
+        status: "CANCELLED",
+        memberId: null,
+        organisationId: "org_1",
+        payment: { ...makeBooking().payment, status: "PENDING", stripePaymentIntentId: null },
+      });
+    const retiredNote = restNoteOperation({
+      id: "op_retired",
+      status: "CANCELLED",
+      requestPayload: {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        refundAmountCents: 10000,
+        clearsUnpaidInvoice: true,
+      },
+    });
+    const invoicePayment = paymentLink({
+      id: "link_invoice_payment",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xero_payment_1",
+      role: "INVOICE_PAYMENT",
+      metadata: { invoiceId: "inv_primary", amount: 100, status: "AUTHORISED" },
+    });
+    const handBackTasks = [{ bookingId: "booking_1", paymentId: "payment_1" }];
+
+    // With the inbound payment link, and without it (the queue arm's shape).
+    for (const links of [[invoicePayment], []]) {
+      const bookingReport = (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [orgBooking()],
+            links,
+            operations: [retiredNote],
+            handBackTasks,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+      expect(bookingReport.findings).toContainEqual(
+        expect.objectContaining({
+          severity: "info",
+          summary: expect.stringContaining("Cash arrived for this booking after its hold was released"),
+        })
+      );
+      expect(
+        bookingReport.findings.filter((finding) => finding.severity === "manual_review")
+      ).toEqual([]);
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+        "CANCELLED_BOOKING_OPEN_INVOICE"
+      );
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+        "QUEUE_MODIFICATION_CREDIT_NOTE"
+      );
+    }
+  });
+
+  // #3643: an officer's "resolved in Xero" mark on a refused clearing note
+  // counts for an ordinary (unrecognised) cancelled unpaid booking too - the
+  // same rule the recognised rest note follows. #3535's shortfall finding goes
+  // quiet, and the booking never falls through to a retry or a re-queue.
+  it("honours the resolved-in-Xero mark on a shortfall-refused clearing note (#3643)", async () => {
+    const shortfallNote = (overrides: Record<string, unknown> = {}) =>
+      restNoteOperation({
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_1",
+          refundAmountCents: 10000,
+          clearsUnpaidInvoice: true,
+        },
+        lastErrorMessage:
+          "The booking's open Xero invoices owe $0.00, less than this $100.00 invoice-clearing credit note; nothing was created.",
+        ...overrides,
+      });
+    const classify = async (operations: any[]) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            operations,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const resolved = await classify([
+      shortfallNote({ manuallyResolvedAt: new Date("2026-05-05T00:00:00Z") }),
+    ]);
+    expect(
+      resolved.findings.filter((finding) => finding.severity === "manual_review")
+    ).toEqual([]);
+    expect(resolved.findings.map((finding) => finding.code)).not.toContain(
+      "BLOCKED_BY_XERO_OPERATION"
+    );
+    expect(resolved.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+    const resolvedTypes = resolved.actions.map((action) => action.type);
+    expect(resolvedTypes).not.toContain("REQUEUE_XERO_OPERATION");
+    expect(resolvedTypes).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+
+    // Control: the same refused note, unmarked, is still #3535's manual review.
+    const unresolved = await classify([shortfallNote()]);
+    expect(unresolved.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        summary: expect.stringContaining("owe less than it"),
+      })
+    );
+  });
+
+  // #3643: a recognised booking's clearing note covers only the unpaid rest,
+  // so its missing allocation is sized from the note's own recorded amount -
+  // the figure the cancel queued - never the booking's full clearing amount.
+  it("sizes a recognised rest note's missing allocation from the note itself (#3643)", async () => {
+    const createdRestNote = (requestPayload: unknown) =>
+      restNoteOperation({
+        status: "SUCCEEDED",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_rest",
+        requestPayload,
+        responsePayload: null,
+      });
+    const classify = async (operations: any[]) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [recognisedPartPaymentBooking()],
+            operations,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const sized = await classify([
+      createdRestNote({
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        refundAmountCents: 4000,
+        clearsUnpaidInvoice: true,
+        clearsUnpaidBalance: true,
+      }),
+    ]);
+    const allocation = sized.actions.find(
+      (action) => action.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(allocation?.payload).toMatchObject({ creditNoteId: "cn_rest", amountCents: 4000 });
+    expect(sized.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MISSING_CREDIT_NOTE_ALLOCATION",
+        details: expect.objectContaining({ amountCents: 4000 }),
+      })
+    );
+
+    // No recorded amount at all: a person allocates it, never a full-size guess.
+    const unsized = await classify([createdRestNote(null)]);
+    expect(unsized.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(unsized.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        safeToAutoApply: false,
+      })
+    );
   });
 
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the

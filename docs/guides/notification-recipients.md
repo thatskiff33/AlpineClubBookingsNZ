@@ -75,7 +75,7 @@ offered to them at all:
 | Alert | Area | Sent when |
 | --- | --- | --- |
 | New bookings | Bookings | A new booking is created or confirmed |
-| Payment failures | Finance | A booking payment fails; an expired internet banking hold is left for reconciliation by hand because its stay has started (#3663); or a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672) |
+| Payment failures | Finance | A booking payment fails; an expired internet banking hold needs attention because money may be paid against its invoice or Xero cannot read it (#3643); an expired hold is left for reconciliation by hand because its stay has started (#3663); or a paid group's unpaid joiners were switched to paying for themselves mid-stay and the treasurer must collect by hand (#3672) |
 | Pending deadlines | Bookings | Bookings approach their pending deadline (digest) |
 | Bookings bumped | Bookings | A pending booking is bumped by another booking |
 | Xero sync errors | Finance | Xero contact or invoice sync fails |

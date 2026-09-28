@@ -35,6 +35,11 @@ vi.mock("@/lib/email/admin-alerts-shared", () => ({
   sendUnmuteableAdminAlert: mocks.sendUnmuteableAdminAlert,
 }));
 
+// #3643: the hold-kept alert stamps the Xero organisation at send time.
+vi.mock("@/lib/xero-link-short-code", () => ({
+  getXeroOrgShortCode: async () => null,
+}));
+
 import { EMAIL_AUDIT_DEFAULTS } from "@/lib/email-message-audit-defaults";
 import {
   renderTemplateString,
@@ -49,6 +54,7 @@ import {
   sendAdminLateCaptureAutoRefundAlert,
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
+import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email/admin-alerts-internet-banking";
 import { sendAdminSecondInstrumentSettlementConflictAlert } from "@/lib/email/admin-alerts-settlement";
 import {
   sendBookingBumpedEmail,
@@ -339,6 +345,71 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     );
     expect(sentRendered).toContain("may have gone back TWICE");
     expect(sentRendered).not.toContain("has NOT been sent back a second time");
+  });
+
+  it("admin-internet-banking-hold-kept: {{holdKeptNote}} gives the instruction each reason needs (#3643)", async () => {
+    /*
+      Part-paid says wait for the rest or cancel in the app (which credits the
+      part payment); paid-in-full says the sync is behind; unreadable says the
+      job keeps trying up to the bound; released-unreadable says it let go.
+      One editable body carries all four only through the token.
+    */
+    const send = (
+      reason:
+        | "part-paid"
+        | "part-paid-manual"
+        | "paid-in-full"
+        | "unreadable"
+        | "released-unreadable"
+        | "cancelled-payment-recorded",
+    ) =>
+      sendAdminInternetBankingHoldKeptAlert({
+        reason,
+        memberName: "Alice Example",
+        bookingId: "booking-9",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        holdUntil:
+          reason === "cancelled-payment-recorded" ? null : new Date("2026-07-20T00:00:00Z"),
+        paidCents: reason === "part-paid" ? 5000 : null,
+        amountOwingCents: reason === "part-paid" ? 10000 : null,
+        xeroInvoiceNumber: "INV-001",
+        xeroInvoiceUrl: null,
+      }, CLUB_FORMAT_TEST);
+    const rendered = async (reason: Parameters<typeof send>[0]) => {
+      mocks.sendToAdmins.mockClear();
+      await send(reason);
+      return renderDefaultBody("admin-internet-banking-hold-kept", capturedAdminTemplateData());
+    };
+
+    const partPaid = await rendered("part-paid");
+    expect(partPaid).toContain("Xero shows part of its invoice already paid");
+    expect(partPaid).toContain("records the part payment as money received");
+    expect(partPaid).toContain("Paid so far: $50.00");
+    expect(partPaid).toContain("Still owing: $100.00");
+
+    const paidInFull = await rendered("paid-in-full");
+    expect(paidInFull).toContain("paid in full");
+    expect(paidInFull).not.toContain("pay the rest");
+
+    const unreadable = await rendered("unreadable");
+    expect(unreadable).toContain("could not be read from Xero");
+    expect(unreadable).toContain("seven days after the hold deadline");
+    expect(unreadable).toContain("Paid so far: unknown");
+
+    const released = await rendered("released-unreadable");
+    expect(released).toContain("has now been released");
+    expect(released).not.toContain("NOT cancelled");
+
+    // #3643 D5: an organisation's, or an unsizable, payment is settled by hand.
+    const manual = await rendered("part-paid-manual");
+    expect(manual).toContain("cannot hand this payment back as account credit");
+    expect(manual).not.toContain("returns the refundable share");
+
+    // DECISION 2: the cancel alert, for a booking that may never have held.
+    const cancelled = await rendered("cancelled-payment-recorded");
+    expect(cancelled).toContain("cancelled as unpaid");
+    expect(cancelled).toContain("Hold deadline: none");
   });
 
   it("admin-second-instrument-settlement-conflict: {{secondInstrumentConflictNote}} says what the card money already did (#3638)", async () => {

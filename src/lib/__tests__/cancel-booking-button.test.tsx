@@ -650,3 +650,69 @@ describe("CancelBookingButton — manual (cash / off-Xero) settlement copy (#226
     expect(screen.queryByText(/original payment method/i)).toBeNull();
   });
 });
+
+// #3643 follow-up: an internet banking payment always refunds as account
+// credit (`forcedCancelRefundMethod`, the cancel path's own decision). The
+// preview says so, and the dialog offers only that option, with a reason.
+describe("CancelBookingButton — internet banking refunds as credit only", () => {
+  function stubFetchByUrl(preview: Record<string, unknown>) {
+    const fetchMock = vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () =>
+        String(url).endsWith("/cancel-preview")
+          ? preview
+          : { refundAmountCents: 5000, refundMethod: "credit", creditAmountCents: 5000 },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("shows only the credit outcome with its reason, and cancels as credit", async () => {
+    const fetchMock = stubFetchByUrl({ ...previewBody, refundMethodForced: "credit" });
+    render(<CancelBookingButton bookingId="bk_ib" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("forced-credit-refund")).toBeTruthy();
+    });
+
+    expect(screen.queryByText("Choose refund method:")).toBeNull();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.getByText(/paid by internet banking, so any refund is held as account credit/)).toBeTruthy();
+    expect(screen.getByText("Credit to account:")).toBeTruthy();
+    expect(screen.queryByText("Refund to card:")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = fetchMock.mock.calls[1] as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ refundMethod: "credit" });
+  });
+
+  it("still offers the card-or-credit choice for a card payment", async () => {
+    stubFetchByUrl({ ...previewBody, refundMethodForced: null });
+    render(<CancelBookingButton bookingId="bk_card" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(screen.getByText("Choose refund method:")).toBeTruthy();
+    });
+    expect(screen.getAllByRole("radio")).toHaveLength(2);
+    expect(screen.queryByTestId("forced-credit-refund")).toBeNull();
+  });
+});
+
+// #3643 DECISION 2: a payment the app cannot credit is settled by hand.
+describe("CancelBookingButton — a recorded payment settled by hand", () => {
+  it("says the cancel treats the booking as unpaid and the treasurer settles the payment", async () => {
+    stubPreviewFetch({ ...previewBody, hasPayment: false, paymentSettledByHand: true });
+    render(<CancelBookingButton bookingId="bk_org" onBehalfOfMember />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel on behalf of member" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("payment-settled-by-hand")).toBeTruthy();
+    });
+    expect(screen.queryByText(/No payment has been taken/)).toBeNull();
+  });
+});

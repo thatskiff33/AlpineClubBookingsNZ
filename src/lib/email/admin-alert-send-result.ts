@@ -28,3 +28,25 @@ export interface AdminAlertSendResult {
 export function adminAlertIsDeliveredOrQueued(result: AdminAlertSendResult): boolean {
   return result.sent + result.queuedForRetry > 0;
 }
+
+/**
+ * The four-way reading of a send (#3643), for a caller that re-sends an alert
+ * nobody received rather than holding its claim for a day. Derived from
+ * `AdminAlertSendResult`, never counted separately. A recipient whose FAILED
+ * copy the email retry cron will re-send counts as `queued-for-retry`, not
+ * `undelivered`, so re-sending never duplicates it.
+ */
+export type AdminAlertSendOutcome =
+  | "sent"
+  | "queued-for-retry"
+  | "skipped-by-policy"
+  | "no-recipients"
+  | "undelivered";
+
+export function adminAlertSendOutcome(result: AdminAlertSendResult): AdminAlertSendOutcome {
+  if (!result.deliveryAllowed) return "skipped-by-policy";
+  if (result.recipients === 0) return "no-recipients";
+  if (result.sent > 0) return "sent";
+  if (result.queuedForRetry > 0) return "queued-for-retry";
+  return "undelivered";
+}

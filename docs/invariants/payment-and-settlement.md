@@ -673,10 +673,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   amount (#1597). Only credit allocated to the invoice as a Xero credit note is
   subtracted; the 100% local restore does not double-count. Gated on an ISSUED
   invoice.
+- **Only an unpaid hold is released**: one with any payment against its
+  invoices is kept ([INV-PAY-107]).
 - One note per booking: the enqueue stands down on the booking's active
   clearing-note link or a live operation with its key; the repair arm while a
   clearing operation is live or failed, proposes none once late cash retired
-  one, and never auto-retries a shortfall. The cron never re-selects a released
+  one, and never auto-retries a shortfall or a note over a recorded part
+  payment ([INV-PAY-107]). The cron never re-selects a released
   hold, including one released before #3535 with a refund note; the repair tool
   still can (#3639).
   `scripts/audit-ib-hold-clearing.ts` counts only allocated clearing
@@ -684,6 +687,56 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Pinned by `internet-banking-payment-cron.test.ts`,
   `invoice-clearing-amount.test.ts`, `xero-refund-method-documents.test.ts`
   and `xero-operation-retry.test.ts`.
+
+## INV-PAY-107
+
+- **An expired internet-banking hold with any payment against its invoices is
+  kept, not released** (#3643; owner option A, 26 September 2026).
+  Xero is read live before any transaction (primary and supplementary
+  invoices; cash by `classifyXeroInvoiceCashEvidence`). A clean read wins; the
+  inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
+  with the #3535 audit) count only when Xero cannot answer, and, for links newer
+  than the read, in the release's re-check, narrowing, not closing, the race;
+  the builder's shortfall refusal backs it.
+- **An unreadable invoice is kept only to a bound**: check-in or seven days
+  past the deadline, whichever is first, then released (a 404 counts) unless
+  its stay started ([INV-PAY-016]). Its clearing note is created only once the builder reads
+  what the invoices owe.
+- **One admin alert per hold per reason**, claim-guarded; an undelivered one
+  is retried (given back, or marked owed once the hold is gone) and a release's
+  audit row is written regardless. Live reads: 20 a run, 400 holds a day.
+- **The cancel path recognises the part payment**: the claim
+  re-checks for payments recorded since its read, records Xero's exact cash as
+  captured, so the policy tiers it as credit, and queues a note for
+  the unpaid rest (*Unpaid balance cleared - booking cancelled*, [INV-PAY-101]).
+  Money it cannot credit (an organisation's, or unsizable) is an officer's
+  unpaid cancel with no note and an alert (DECISION 2); the claim raises one
+  amountless, dismiss-only hand-back task per payment (owner decision, 28
+  September 2026). The preview shares the reader, cached a minute.
+- The repair tool raises manual review, never a queued or retried full
+  clearing note, over a recorded part payment, until that task is closed; a
+  recognised one bypasses [INV-PAY-106]'s skips until its rest note resolves.
+- Pinned by `internet-banking-payment-cron.test.ts`,
+  `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
+  and `xero-booking-repair.test.ts`.
+
+## INV-PAY-108
+
+- **A part payment under review is never handed back twice** (#3643,
+  orchestrator decision 3 within the owner's 28 September 2026 decision).
+  While the review task [INV-PAY-107]'s cancel raises exists, open or
+  dismissed, a PAID event for its invoice makes the inbound sync's late-cash
+  arms (an organisation's hand-back, a member's account credit) size and mint
+  nothing. They find the task by its marker, never by `paymentId`.
+- Instead, in the same transaction, the sync writes onto the task when it
+  learned the invoice was paid and the invoice's cash in cents, once (a replay
+  adds nothing), and reopens a dismissed task; the queue card shows it. An
+  email is attempted too, but it is best-effort: the note is the record
+  (`part-payment-review-cover.ts`).
+- An OPEN task counts as a recorded payment for the Xero repair tool, with or
+  without a local `PAYMENT` link, so it never offers the full clearing note.
+- Pinned by `xero-inbound-reconciliation.test.ts`, `booking-cancel.test.ts`,
+  `xero-booking-repair.test.ts` and `manual-refund-task-constraints.test.ts`.
 
 ## INV-PAY-018
 
