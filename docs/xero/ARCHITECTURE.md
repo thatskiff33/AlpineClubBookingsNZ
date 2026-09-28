@@ -894,7 +894,7 @@ sequenceDiagram
     OP->>CLI: run scoped repair
     CLI->>REP: runBookingXeroRepair(scope, {apply})
     REP->>DB: loadAuditData: bookings + payments +<br/>modifications + XeroSyncOperations + XeroObjectLinks
-    REP->>REP: classify findings (13 codes:<br/>MISSING_PRIMARY_INVOICE, STALE_PRIMARY_INVOICE_DETAILS,<br/>CANCELLED_BOOKING_OPEN_INVOICE, XERO_AMOUNT_MISMATCH,<br/>BLOCKED_BY_XERO_OPERATION, ...)
+    REP->>REP: classify findings (15 codes:<br/>MISSING_PRIMARY_INVOICE, STALE_PRIMARY_INVOICE_DETAILS,<br/>CANCELLED_BOOKING_OPEN_INVOICE, XERO_AMOUNT_MISMATCH,<br/>BLOCKED_BY_XERO_OPERATION, ...)
     REP->>REP: plan actions (15 types; safe-to-auto-apply flag:<br/>QUEUE_* invoice/credit-note ops, REQUEUE_XERO_OPERATION,<br/>SYNC_*_LINK/FIELD, MARK_MANUAL_REVIEW)
     opt --apply
         loop up to 3 passes
@@ -910,18 +910,46 @@ sequenceDiagram
 **An operation resolved in Xero is done (#3635, `INV-INT-025`).** The
 operations panel's **Resolve** records that an officer fixed a failed or
 partial operation by hand in Xero. It leaves the row `FAILED`/`PARTIAL` and
-replayable, so status alone would still read it as live; every retry path
-therefore asks `isResolvedInXero` (`xero-operation-resolution.ts`). The retry
-helper refuses the row before anything else. Manual retry and requeue answer
-409, and a retry queued before the resolve is closed `CANCELLED` by the drain,
-not run. The retry claims carry `manuallyResolvedAt: null`, and the resolve
-route writes only a row still `FAILED`/`PARTIAL`, so the two cannot both win.
-In the repair tool, `getBlockingOperation` returns a discriminated result:
-`retryable`, `blocked` (live, or refused by the retry helper) or `resolved`.
-A resolved row never outranks a newer live failure. It is never dropped
-either, because then every arm would read "nothing blocking" and queue a new
-document beside the one the officer made. So each arm reports nothing for it,
-and `buildRetryAction` accepts only the `retryable` case.
+replayable, so status alone would still read it as live; every reader asks
+`isResolvedInXero` (`xero-operation-resolution.ts`) or its query-side spelling
+on `manuallyResolvedAt`.
+
+- **Retries.** The retry helper refuses the row before anything else. Manual
+  retry and requeue answer 409, and a retry queued before the resolve is closed
+  `CANCELLED` by the drain, not run - also when its claim loses to a resolve,
+  which throws the resolved error rather than "claimed by another retry".
+- **Enqueues.** A new row does not carry the old row's mark, so the enqueues
+  are fenced too (`xero-resolved-in-xero-fences.ts`): no new refund credit note
+  for a payment with a resolved refund-note create, and no new booking invoice
+  while the payment's latest invoice create is resolved. The refunds-missing
+  list the nightly credit reconciliation re-enqueues from, and the
+  missing-invoices list behind **Queue all**, leave those out. Single-booking
+  force-sync is the one override: it passes `overrideResolvedInXero`, and its
+  audit row names the operation whose mark it overrode.
+- **Resolve against a running retry.** The route refuses while the operation is
+  RUNNING (a claiming retry) or a queued retry of it is RUNNING (the drain runs
+  every other retry arm while the operation row still reads FAILED). The
+  queued-retry check runs after the mark is written, and a mark that finds one
+  is withdrawn: a drain that read the row before the mark had already claimed
+  its queued row, so the check sees it, and a drain that reads after the mark
+  refuses to run. The drain is `retryXeroSyncOperation`'s only caller; a caller
+  that bypassed it would reopen that window. The mark is briefly visible before
+  a withdrawal, which only ever errs towards "done".
+- **Applied-credit allocations and deallocations cannot be resolved.** Fixing
+  Xero by hand does not converge the local credit-slice ledger, and an
+  unconverged deallocation fences cancels, the hold-expiry cron and credit
+  writes (`findAppliedCreditDeallocationFence`); a resolved one would hold them
+  for good. They are retry-only.
+- **Repair tool.** `getBlockingOperation` returns a discriminated result:
+  `retryable`, `blocked` (live, or refused by the retry helper) or `resolved`.
+  A resolved row never outranks a newer live failure, and it is never dropped,
+  because then every arm would read "nothing blocking" and queue a new document
+  beside the one the officer made. `buildRetryAction` accepts only the
+  `retryable` case. Resolved means "never re-run", not "never reported": where
+  no document is recorded the arm reports `RESOLVED_IN_XERO_BY_OFFICER` at info
+  level with no action, the booking page shows the same, and the reconciliation
+  report counts resolved rows (`resolvedInXeroOperations`) without calling them
+  failures. The repeated-failure alert leaves them out too.
 
 Scheduled hardening (cron tasks, all idempotent):
 

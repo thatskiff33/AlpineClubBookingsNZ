@@ -3101,6 +3101,10 @@ inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   never retried, requeued or re-minted beside (INV-INT-025)
+  refused while the operation, or a queued retry of it, is RUNNING
+  refused for applied-credit allocations and deallocations (retry-only)
+queued retry (REQUEUE) RUNNING -> CANCELLED when its operation is resolved in
+  Xero (read before the claim, or the claim lost to the resolve); nothing ran
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link

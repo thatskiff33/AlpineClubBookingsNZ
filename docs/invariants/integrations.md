@@ -476,29 +476,34 @@ Rationale: [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md). Pinned by
 
 ### INV-INT-025
 
-An outbound Xero operation an officer marked **resolved in Xero** is done. No
-path re-runs it and none offers to (owner decision, 28 Sep 2026).
+An outbound Xero operation an officer marked **resolved in Xero** is done: never
+re-run, never offered for retry, never re-minted beside (owner decision,
+28 Sep 2026) - but still reported.
 
-- **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`) is the
-  rule; a Prisma `where` spells it `manuallyResolvedAt: null`. The mark leaves
-  the row `FAILED`/`PARTIAL` and replayable, so status alone reads it as live.
-- **The retry helper refuses it first.** `getXeroOperationRetryMeta` requires
-  `manuallyResolvedAt` in its input type, so a caller that forgot to select it
-  fails to compile. Manual retry, requeue and the queued-retry drain refuse a
-  resolved row with a 409; the drain closes that queued row `CANCELLED` as
-  skipped, not failed.
-- **A resolve and a retry cannot both win.** Every retry claim adds
-  `manuallyResolvedAt: null`; the resolve route writes only a still
-  `FAILED`/`PARTIAL`, unresolved row.
-- **The repair tool treats it as done, never as absent.**
-  `getBlockingOperation` returns `retryable`, `blocked` or `resolved`. A
-  resolved row never outranks a live one, which would hide a newer failure, and
-  is never dropped, which would mint a rival to the officer's document.
-  `buildRetryAction` accepts only `retryable`.
-- **It fences nothing.** The refund-note link repair does not wait on a
-  resolved create.
+- **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
+  `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
+  `FAILED`/`PARTIAL`, so status alone reads it as live.
+- **Retries refuse it.** `getXeroOperationRetryMeta` requires the field in its
+  input type and refuses first; retry and requeue answer 409; the queued-retry
+  drain closes that row `CANCELLED`, including when a claim loses to a resolve.
+- **Enqueues refuse it.** No new refund credit note for a payment with a
+  resolved refund-note create, and no new booking invoice while the latest
+  invoice create is resolved; the lists the nightly self-heal and "Queue all"
+  read leave them out. Single-booking force-sync alone overrides, and audits it.
+- **Resolve and retry.** The route refuses a running retry: the operation
+  RUNNING, or a queued retry of it RUNNING, checked after the mark is written,
+  which is withdrawn if one is found. Every retry runs under one of the two, so
+  none can start unseen. A new caller of `retryXeroSyncOperation` that bypasses
+  the drain would reopen that window.
+- **Applied-credit operations cannot be resolved.** Resolving does not converge
+  the local credit ledger, and their fences would hold for good; retry only.
+- **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
+  or `resolved`; a resolved row never outranks a live one and is never dropped.
+  `buildRetryAction` takes only `retryable`. Where no document is recorded, the
+  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), and the
+  booking page says the same.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
-`xero-operation-routes.test.ts`, `xero-booking-repair.test.ts` ("resolved in
-Xero is done on every repair retry arm"),
-`xero-refund-note-link-repair.test.ts`.
+`xero-operation-routes.test.ts`, `xero-operation-outbox.test.ts`,
+`xero-booking-repair.test.ts`, `xero-refund-note-link-repair.test.ts`,
+`booking-provider-mismatches.test.ts`.
