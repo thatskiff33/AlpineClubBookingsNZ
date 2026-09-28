@@ -249,6 +249,27 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     expect(JSON.stringify(body)).not.toContain("pi_late");
   });
 
+  it("flags a part-payment review by its marker, not its hand-back kind (#3643)", async () => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValue([])
+      .mockResolvedValueOnce([
+        { ...OPEN_ROW, id: "task-review", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, raisedAmountCents: null, partPaymentReviewPaymentId: "payment-secret" },
+        { ...OPEN_ROW, id: "task-cash", kind: "CANCELLED_BOOKING_HAND_BACK", partPaymentReviewPaymentId: null },
+      ]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: { id: string; partPaymentReview: boolean; amountCents: number | null }[];
+    };
+
+    expect(calls()[0].select).toMatchObject({ partPaymentReviewPaymentId: true });
+    expect(body.tasks.map((t) => [t.id, t.partPaymentReview, t.amountCents])).toEqual([
+      ["task-review", true, null],
+      ["task-cash", false, OPEN_ROW.amountCents],
+    ]);
+    expect(JSON.stringify(body)).not.toContain("payment-secret");
+  });
+
   it("keeps the hand-back queue exactly as it was: OPEN, oldest first", async () => {
     await GET();
 
