@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2174
+lines: 2237
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -77,9 +77,14 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   kept-payment invoice asked for is queued, and a failed one retried, under the
   rule the dismissal uses, which lives in `late-capture-kept-xero-rules.ts`,
   and a resolved one answered by the info finding, as its siblings are.
+  Its round-3 fix reads every approval task, whatever its status: a raised
+  kept invoice missing its payment is retried after an approval (N1), and a
+  refunded capture whose receipt was recorded by hand asks for its refund to
+  be recorded by hand (R5), one block beside the kept arm it follows; the
+  "has a primary invoice" rule moved to `late-capture-kept-xero-rules.ts`.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1778
+lines: 1780
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
@@ -96,7 +101,8 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   lives in `xero-operation-resolution.ts`, and the payment credit-note payload
   reader moved out to `xero-payment-credit-note-payload.ts`. #3635 also adds
   the kept late-capture invoice's retry beside the group one: its meta and
-  payload reader, with the two requeues now one status-guarded helper.
+  payload reader, with the two requeues now one status-guarded helper, and a
+  refund note's replay keeps the late capture and date it was queued with.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1894
@@ -131,7 +137,10 @@ reason: the phone-like digit rule is lifted out of the pattern list so it
   one privacy helper; a second module would split one redaction decision.
 
 file: src/lib/xero-sync.ts
-lines: 938
+lines: 953
 reason: `startXeroSyncOperation` gains an explicit `queueType` for a handler
   that opens its own row with an execution-shape payload, next to the
   payload-derived queue type it falls back from; the column has one writer.
+  #3635 (same epic, round-3 N5): `failXeroSyncOperation` can leave a row
+  another writer withdrew (CANCELLED) as it is, a guarded variant of its one
+  write, which the outbox's catch uses.

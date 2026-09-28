@@ -253,7 +253,7 @@ vi.mock("@/lib/xero-invoice-payments", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", async (importOriginal) => ({
   // The REAL enqueue; only the outbox kick is stubbed (the test runs it).
-  ...(await importOriginal<typeof import("@/lib/xero-operation-outbox")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-outbox")),
   kickQueuedXeroOutboxOperationsIfConnected: async () => undefined,
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({

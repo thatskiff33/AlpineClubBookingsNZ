@@ -103,8 +103,7 @@ interface QueuedRefundCreditNoteOutboxPayload {
   // the bank account its settling payment posts to. Absent on rows queued
   // before the field existed; the executor then reads the payment's source.
   refundMethod?: RefundMethod;
-  // #3635 round-3 R4/R3: the late capture this note answers, and the club day
-  // its refund left Stripe. Absent on every other note.
+  // #3635: the late capture this note answers, and its refund's club day.
   paymentIntentId?: string;
   documentDate?: string;
 }

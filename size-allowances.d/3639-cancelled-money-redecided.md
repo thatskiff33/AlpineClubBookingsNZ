@@ -47,11 +47,16 @@ reason: one import, so the cancellation credit's description comes from the
   Re-measured at the #3635 main sync, composed with main's #3589 operator money messages.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1118
+lines: 1183
 reason: one import, for the same shared description builder. #3635 (same
   epic) lets the refund note answer a kept late capture's own invoice when the
   payment has no primary one: one import and the fallback at the gate; the
   lookup lives in `late-capture-xero-receipt.ts`. Composed with the
   resolved-in-Xero fence, the execution-time cap reads the one coverage sum
   and refuses an unreadable resolved note, beside the cap it corrects; both
-  live in `xero-resolved-in-xero-fences.ts`.
+  live in `xero-resolved-in-xero-fences.ts`. Round 3 caps against the
+  note-eligible cash (`refund-note-eligible-cash.ts`), and a late capture's
+  note names that capture's own receipt, is skipped without one the app
+  recorded, and carries its refund's day on the note and its payment; the
+  receipt rule lives in `late-capture-xero-receipt.ts`, and what stays is the
+  branch at the one place the note chooses its reference.
