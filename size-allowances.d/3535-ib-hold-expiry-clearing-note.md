@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1982
+lines: 1990
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -48,6 +48,8 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   arm's gate, replacing this arm's own copy; #3639 shrank `booking-cancel.ts`
   (its entry above carries #3643's share alone); the #1491 test is the shared
   `isCancellationRefundDecisionRecorded`, which excludes #3638's marker too.
+  #3643's fix round counts an OPEN part-payment review as a recorded invoice
+  payment in the same arm's gate, beside the recorded-link test it widens.
   #3643 (same epic) adds the manual-review answer to a recorded or recognised
   part payment, naming it; the predicates live in `xero-inbound/object-links.ts`
   and `part-payment-recognition-reason.ts`. Composed with #3639, the recognised
@@ -73,7 +75,7 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   outbox-requeue branch beside the applied-credit one.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1847
+lines: 1893
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
@@ -88,7 +90,11 @@ reason: the already-cancelled credit arm retires a still-pending
   invoice and cash evidence that arm already classifies. The alert lives in
   `group-settlement-invoice-alerts.ts`.
   #3643 exports the cash rule for the hold payment check and corrects its
-  "only caller" comments.
+  "only caller" comments. Its fix round sizes both late-cash arms by the cash
+  a part-payment review does not cover, and alerts when it routes an event to
+  the review; the lookup and the reopen live in `part-payment-review-cover.ts`,
+  and what stays is the call, the sizing each arm already had, and the alert
+  beside its three siblings.
 
 file: src/lib/redact-sensitive-json.ts
 lines: 914
