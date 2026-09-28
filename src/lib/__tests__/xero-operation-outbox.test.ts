@@ -3152,6 +3152,8 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       });
       expect(retireCall()).toBeUndefined();
       expect(released()).toBe(false);
+      // Decided in the sweep itself, never handed to the release as "captured".
+      expect(mocks.findUniqueManualRefundTask).toHaveBeenCalledTimes(1);
       expect(result).toEqual({ reaped: 0, released: 0, queueOperationIds: [] });
     });
 
