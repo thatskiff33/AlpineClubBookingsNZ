@@ -648,8 +648,10 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
 - Never once the stay has started (#3663): check-in on or before the club's
-  today is skipped, counted `skippedStarted` and alerted to finance once, for
-  reconciliation by hand. Pinned by `internet-banking-payment-cron.test.ts`.
+  today (`bookingStayHasStarted`) is skipped, counted `skippedStarted` and
+  alerted to finance once, for reconciliation by hand, under the same claim
+  rule as `INV-PAY-108` (`sendAdminAlertOnceEver`). Pinned by
+  `internet-banking-payment-cron.test.ts`.
 
 ## INV-PAY-017
 
@@ -1233,9 +1235,10 @@ total at apply).
 - Who is told: a `PAYMENT_PENDING` joiner whose stay has not started
   (`bookingStayHasStarted`, the club's today) is emailed to pay, at most
   once. A started stay is not emailed; the treasurer is alerted once per
-  group, linking each joiner's booking. The claim is kept once an admin has
-  it or a copy is queued for the email retry cron, held a day when no admin
-  can receive it, and given back only when the send throws first. The
+  group, linking each joiner's booking. The claim (`sendAdminAlertOnceEver`)
+  is kept once an admin has it or a copy is queued for the email retry cron,
+  held a day when no admin can receive it, and given back only when the send
+  throws first. The
   reaper retries it from the events of stays not yet ended.
 - Pinned by `group-late-joiner.test.ts`, `group-late-joiner-heal.test.ts`,
   `group-late-joiner-alert-outage.test.ts`, `alert-cooldown.test.ts`,

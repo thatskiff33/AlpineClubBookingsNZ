@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   reconcileHostingReviewForSystemCancellation: vi.fn(),
   settleHostingCoverageAfterCommit: vi.fn(),
   claimAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
   sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
 }));
 
@@ -67,8 +69,14 @@ vi.mock("@/lib/email", () => ({
   sendAdminInternetBankingHoldStartedStayAlert: mocks.sendAdminInternetBankingHoldStartedStayAlert,
 }));
 
+// The claim store is mocked; the claim RULE (`sendAdminAlertOnceEver`, shared
+// with #3672's mid-stay group alert) runs for real over it.
 vi.mock("@/lib/alert-cooldown", () => ({
+  ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
   claimAlertCooldown: mocks.claimAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
+  deferAlertCooldown: mocks.deferAlertCooldown,
 }));
 
 // #3663: the started-stay rule reads the club's day in the club's zone.
@@ -231,8 +239,19 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     );
     mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
     mocks.claimAlertCooldown.mockResolvedValue(true);
-    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue(undefined);
+    mocks.releaseAlertCooldown.mockResolvedValue(undefined);
+    mocks.deferAlertCooldown.mockResolvedValue(undefined);
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue(SENT_TO_ONE);
   });
+
+  // `sendToAdmins`' result for one opted-in admin who was sent the alert.
+  const SENT_TO_ONE = {
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  };
 
   // #3663 (INV-PAY-016): NOW is 2026-07-06 20:00 in Pacific/Auckland, so the
   // club's today is 2026-07-06. A stay that has started is never cancelled.
@@ -274,6 +293,9 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
         },
         expect.anything(),
       );
+      // Delivered: the claim is kept for good.
+      expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+      expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
     },
   );
 
@@ -285,6 +307,63 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
 
     expect(result.skippedStarted).toBe(1);
     expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
+    // Another run's claim is never given back or moved.
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+  });
+
+  // The claim follows what the send did, the same rule as #3672's alert.
+  it("keeps the claim when the alert is queued for the email retry cron", async () => {
+    withCheckIn("2026-07-05");
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue({
+      ...SENT_TO_ONE,
+      sent: 0,
+      queuedForRetry: 1,
+    });
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+  });
+
+  it("holds the claim for a day when no admin can receive the alert", async () => {
+    withCheckIn("2026-07-05");
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith({
+      key: "internet-banking-hold-started-stay:pay_ib_1",
+      claimedAt: claim.now,
+      windowMs: 36_500 * 86_400_000,
+      retryAfterMs: 86_400_000,
+    });
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+  });
+
+  it("gives the claim back when the send throws, and the run carries on", async () => {
+    withCheckIn("2026-07-05");
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockRejectedValue(
+      new Error("mailer down"),
+    );
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.skippedStarted).toBe(1);
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledWith({
+      key: "internet-banking-hold-started-stay:pay_ib_1",
+      claimedAt: claim.now,
+    });
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
   });
 
   it("still releases an expired hold whose check-in is tomorrow", async () => {

@@ -12,9 +12,9 @@ import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-al
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
-import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
+import { clubTodayForStartedStay } from "@/lib/club-today-for-started-stay";
 import {
   sendAdminInternetBankingHoldStartedStayAlert,
   sendBookingCancelledEmail,
@@ -52,12 +52,6 @@ export interface InternetBankingHoldReleaseResult {
   bookingIds: string[];
   paymentIds: string[];
 }
-
-/**
- * "Once" for the started-stay alert: the claim window outlives any hold, so one
- * `AlertCooldown` row per payment means the treasurer is told a single time.
- */
-const STARTED_STAY_ALERT_WINDOW_MS = 36_500 * 86_400_000;
 
 function releaseOneHold(
   paymentId: string,
@@ -101,7 +95,7 @@ function releaseOneHold(
       // lodge, or paid by a transfer nobody has reconciled yet; cancelling
       // would free occupied beds and credit-note an invoice that may be paid.
       // Read under the global lock, so a concurrent date move cannot race it.
-      if (fresh.booking.checkIn <= clubTodayDateOnly) {
+      if (bookingStayHasStarted(fresh.booking.checkIn, clubTodayDateOnly)) {
         return { type: "skipped-started" as const, payment: fresh };
       }
 
@@ -321,9 +315,7 @@ export async function releaseExpiredInternetBankingHolds(
   const format = await clubFormatValues();
   // The club's calendar day at `now`, as the `@db.Date` encoding `checkIn`
   // uses (INV-DATE-019), resolved once and outside every transaction.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
-  );
+  const clubTodayDateOnly = await clubTodayForStartedStay(now);
   const candidates = await prisma.payment.findMany({
     where: {
       source: PaymentSource.INTERNET_BANKING,
@@ -494,8 +486,11 @@ export async function releaseExpiredInternetBankingHolds(
 
 /**
  * Tell the treasurer ONCE that an expired hold was left alone because its stay
- * has started (#3663, INV-PAY-016). Claim first, send after, outside any
- * transaction; best-effort, so a failed send never stops the run.
+ * has started (#3663, INV-PAY-016). Outside any transaction; the claim's keep,
+ * one-day hold or give-back follows the send's result
+ * (`sendAdminAlertOnceEver`, the same rule as #3672's mid-stay group alert), so
+ * a hold nobody could be told about is raised again on a later cycle. Never
+ * throws, so a failed send never stops the run.
  */
 async function alertStartedStayHoldOnce(
   payment: Extract<
@@ -504,33 +499,28 @@ async function alertStartedStayHoldOnce(
   >["payment"],
   format: Awaited<ReturnType<typeof clubFormatValues>>,
 ): Promise<void> {
-  try {
-    const claimed = await claimAlertCooldown({
-      key: `internet-banking-hold-started-stay:${payment.id}`,
-      windowMs: STARTED_STAY_ALERT_WINDOW_MS,
-    });
-    if (!claimed) return;
-    const owner = bookingOwner(payment.booking);
-    logger.warn(
-      { bookingId: payment.bookingId, paymentId: payment.id },
-      "Overdue Internet Banking hold on a stay that has started; left for manual reconciliation",
-    );
-    await sendAdminInternetBankingHoldStartedStayAlert(
-      {
-        memberName: owner.member
-          ? `${owner.member.firstName} ${owner.member.lastName}`
-          : "Unknown member",
-        bookingId: payment.bookingId,
-        checkIn: payment.booking.checkIn,
-        holdUntil: payment.internetBankingHoldUntil,
-        amountOwingCents: payment.amountCents,
-      },
-      format,
-    );
-  } catch (err) {
-    logger.error(
-      { err, bookingId: payment.bookingId, paymentId: payment.id },
-      "Failed to alert on an overdue Internet Banking hold whose stay has started",
-    );
-  }
+  await sendAdminAlertOnceEver({
+    key: `internet-banking-hold-started-stay:${payment.id}`,
+    label: "overdue Internet Banking hold started-stay alert",
+    context: { bookingId: payment.bookingId, paymentId: payment.id },
+    send: () => {
+      const owner = bookingOwner(payment.booking);
+      logger.warn(
+        { bookingId: payment.bookingId, paymentId: payment.id },
+        "Overdue Internet Banking hold on a stay that has started; left for manual reconciliation",
+      );
+      return sendAdminInternetBankingHoldStartedStayAlert(
+        {
+          memberName: owner.member
+            ? `${owner.member.firstName} ${owner.member.lastName}`
+            : "Unknown member",
+          bookingId: payment.bookingId,
+          checkIn: payment.booking.checkIn,
+          holdUntil: payment.internetBankingHoldUntil,
+          amountOwingCents: payment.amountCents,
+        },
+        format,
+      );
+    },
+  });
 }

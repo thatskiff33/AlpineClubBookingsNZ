@@ -824,7 +824,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "An internet banking hold reached its deadline unpaid, but the booking's check-in had already arrived, so the booking was left alone for the treasurer to reconcile by hand",
     frequency:
-      "At most once per payment, guarded by a cross-instance claim, from the 15-minute payments cycle",
+      "Once per payment, from the 15-minute payments cycle, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "admin-manual-settlement-conflict": {
     triggerSummary:
