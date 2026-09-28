@@ -333,6 +333,13 @@ export async function correctBookingRequest(
   const guests: BookingRequestGuest[] = school
     ? generateSchoolGuests({ teachers, childCounts: school.childCounts })
     : (input.guests ?? []);
+  const pendingAdultCount = school?.pendingAdultCount ?? 0;
+  if (!Number.isSafeInteger(pendingAdultCount) || pendingAdultCount < 0) {
+    throw new BookingRequestError(
+      "Pending adult count must be a whole number of zero or more.",
+      422,
+    );
+  }
   if (guests.length === 0) {
     throw new BookingRequestError("A request needs at least one guest.", 422);
   }
@@ -340,7 +347,7 @@ export async function correctBookingRequest(
   const lodgeCapacity = request.lodgeId
     ? await getLodgeCapacity(request.lodgeId)
     : await getDefaultLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
+  if (guests.length + pendingAdultCount > lodgeCapacity) {
     throw new BookingRequestError(
       `That party is larger than the lodge capacity of ${lodgeCapacity} guests.`,
       422,
@@ -370,6 +377,9 @@ export async function correctBookingRequest(
   mark("checkIn", request.checkIn.getTime() !== checkIn.getTime());
   mark("checkOut", request.checkOut.getTime() !== checkOut.getTime());
   mark("guests", guestListKey(storedGuests) !== guestListKey(guests));
+  if (school) {
+    mark("pendingAdultCount", request.pendingAdultCount !== pendingAdultCount);
+  }
   mark("contactFirstName", request.contactFirstName !== contactFirstName);
   mark("contactLastName", request.contactLastName !== contactLastName);
   mark("contactEmail", request.contactEmail.toLowerCase() !== contactEmail);
@@ -471,6 +481,7 @@ export async function correctBookingRequest(
           ? {
               schoolName,
               teachers: teachers as unknown as Prisma.InputJsonValue,
+              pendingAdultCount,
               cateringPreference: school.cateringPreference,
             }
           : {}),

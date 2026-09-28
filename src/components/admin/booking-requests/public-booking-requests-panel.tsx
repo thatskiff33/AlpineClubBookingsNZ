@@ -204,6 +204,7 @@ interface PublicBookingRequestData {
   // hint and the actual warning threshold cannot diverge per lodge (#1656).
   schoolGroupSoftCap: number;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
+  pendingAdultCount: number;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
   contactFirstName: string;

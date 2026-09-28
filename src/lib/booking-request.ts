@@ -2996,6 +2996,8 @@ export function serializeBookingRequestForAdmin(
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
     teachers: teacherDisplay.teachers,
+    // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.
+    pendingAdultCount: request.pendingAdultCount,
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,

@@ -470,11 +470,38 @@ in that class:
   database error. Its private repair and public deploy sequence are in
   [§2.4.3](#243-3271-parentpartner-exclusivity-backstop).
 
+- `20261101020000_add_pending_school_adult_capacity` (#3413) — additive DDL,
+  but old capacity readers cannot see its new per-night reservation relation.
+  Its server-side write gate stays disabled until the drained window completes.
+
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
 the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) as well as the ones
 here, plus [§2.4.3](#243-3271-parentpartner-exclusivity-backstop) when #3271 is
 pending, and name every pending windowed migration in the override reason.
+
+#### #3413: pending school-adult capacity activation
+
+`20261101020000_add_pending_school_adult_capacity` is additive, but old runtime
+colours cannot count its reservation rows. Keep `PENDING_SCHOOL_ADULTS_ENABLED`
+absent or any value other than exactly `1` until the window has stopped admission,
+stopped every old web and worker, and proved no old database connection remains.
+Only then set `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` for the migration
+validator, deploy the new runtime, check canonical capacity readers, and set
+`PENDING_SCHOOL_ADULTS_ENABLED=1`. The application requires both values exactly;
+the migration override is not a write permission.
+
+To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`,
+resolve or explicitly cancel every request with a pending adult, and prove both
+queries return zero before running this migration's `rollback.sql`:
+
+```sql
+SELECT count(*) FROM "BookingRequest" WHERE "pendingAdultCount" <> 0;
+SELECT count(*) FROM "BookingRequestPendingAdultReservationNight";
+```
+
+Do not restart old code before that proof. It would accept new capacity using an
+occupancy calculation that cannot see held unnamed adults.
 
 **Reverse every pending windowed migration in application order.** Stop all new
 app/worker processes first. If #3271 is present, run its `rollback.sql` before any

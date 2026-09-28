@@ -123,6 +123,7 @@ function schoolRequestRow(overrides: Record<string, unknown> = {}) {
     ],
     schoolName: "Tokora Primary School",
     teachers: [{ firstName: "Ann", lastName: "Baker", email: "ann@example.test" }],
+    pendingAdultCount: 0,
     cateringPreference: SchoolCateringPreference.QUOTE_BOTH,
     linkedGuestMembers: [],
     message: null,
@@ -157,6 +158,7 @@ function schoolInput(
       teachers: [
         { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
       ],
+      pendingAdultCount: 0,
       childCounts: { CHILD: 3 },
       cateringPreference: SchoolCateringPreference.QUOTE_BOTH,
       schoolRecord: { outcome: "new" },
@@ -333,6 +335,28 @@ describe("the corrected values themselves", () => {
         }),
       ),
     ).rejects.toThrow(/larger than the lodge capacity/i);
+  });
+
+  it("counts unnamed adults for capacity and writes their count through the guarded correction", async () => {
+    stubRequest(schoolRequestRow());
+    await correctBookingRequest(
+      schoolInput({
+        school: { ...schoolInput().school!, pendingAdultCount: 2 },
+      }),
+    );
+    expect(claimData()).toMatchObject({ pendingAdultCount: 2 });
+  });
+
+  it("refuses unnamed adults that make the party exceed lodge capacity", async () => {
+    stubRequest(schoolRequestRow());
+    await expect(
+      correctBookingRequest(
+        schoolInput({
+          school: { ...schoolInput().school!, pendingAdultCount: 200 },
+        }),
+      ),
+    ).rejects.toThrow(/larger than the lodge capacity/i);
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses a school correction with no teacher attending", async () => {
