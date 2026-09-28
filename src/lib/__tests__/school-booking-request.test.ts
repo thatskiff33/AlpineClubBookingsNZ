@@ -1885,7 +1885,11 @@ describe("approveSchoolBookingRequest", () => {
       type: "approved",
       bookingId: "booking-existing",
       schoolMemberId: "school-existing",
-      teacherCount: 0,
+      // A replay still reports the real named teacher count; it created no
+      // second assignment or PIN.
+      teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: false,
+      alreadyConverted: true,
     });
     expect(mockedAcquireLodgeLock).toHaveBeenCalledWith(prisma, "lodge-1");
     expect(prisma.booking.findUnique).toHaveBeenCalledTimes(1);
