@@ -27,7 +27,7 @@ import { APPLIED_PAYMENTS_SEARCH_MAX_CHARS } from "@/app/(admin)/admin/payments/
 import { getPaymentsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getDiagnosticsPageContextRoute } from "@/lib/diagnostics/page-context/registry";
 import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "@/lib/diagnostics/page-context/types";
@@ -37,8 +37,8 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  * The club day the PAGE will be on, taken from the zone the render actually
  * supplies (CT-4, #2870).
  *
- * This was `todayDateOnlyForTimeZone()`, which defaults its zone to
- * `APP_TIME_ZONE` — the container's `TZ`. Since CT-4 the payments page takes
+ * This was `todayDateOnlyForTimeZone()`, which defaulted its zone to
+ * the environment's — the container's `TZ`. Since CT-4 the payments page takes
  * its default activity window from the club's zone delivered through
  * `ClubTimeProvider`, so the two only agree while the environment happens to
  * BE the provider's zone. MEASURED: with `TZ=America/Denver` this suite failed
@@ -425,7 +425,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
    * THE DISCRIMINATING ONE (CT-4, #2870).
    *
    * Every test above renders under `CLUB_TIME_TEST_ZONE`, which is deliberately
-   * `Pacific/Auckland` — the same zone `APP_TIME_ZONE` resolves to — so the
+   * `Pacific/Auckland` — the same zone the environment resolves to — so the
    * provider-read code and the `todayDateOnlyForTimeZone()` it replaced return
    * the identical day and the whole file passes against either.
    *
@@ -435,7 +435,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
    * default view — and the diagnostics registry calls that window "the single
    * most common reason a payment an operator expects is not on screen".
    */
-  it("takes the default activity window from the PERSISTED club zone, not APP_TIME_ZONE", async () => {
+  it("takes the default activity window from the PERSISTED club zone, not the environment zone", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
       answerKey: "today",
@@ -447,7 +447,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
       // NOT `["UTC"]`: a "today" assertion has very few calendar days to choose
       // between, and a third rival can leave a correct tree with no candidate.
     });
-    const environmentToday = dayIn(APP_TIME_ZONE);
+    const environmentToday = dayIn(ENVIRONMENT_CLUB_ZONE);
 
     const { default: PaymentsPage } = await import(
       "@/app/(admin)/admin/payments/page"

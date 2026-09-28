@@ -12,7 +12,7 @@ import {
  * The property this suite exists to hold: two members reading the same booking
  * confirmation see the same dates, and those dates do not move because the
  * container that rendered the message was redeployed to another region. Before
- * this change the zone came from `APP_TIME_ZONE` — `process.env.TZ ||
+ * this change the zone came from the environment — `process.env.TZ ||
  * NEXT_PUBLIC_TZ || "Pacific/Auckland"` — which is precisely the container's own
  * zone.
  *
@@ -133,20 +133,22 @@ describe("the persisted club timezone, once primed", () => {
 describe("before it is primed", () => {
   it("answers with the environment seed, which is what these templates used before", async () => {
     const clubTime = await import("@/lib/email-templates-club-time");
-    const { APP_TIME_ZONE } = await import("@/config/operational");
+    const { ENVIRONMENT_CLUB_ZONE } = await import(
+      "@/lib/__tests__/helpers/environment-club-zone"
+    );
 
-    // Not merely "some zone": the SAME zone `APP_TIME_ZONE` resolves to, which
+    // Not merely "some zone": the SAME zone the environment resolves to, which
     // is what makes a cold cache a no-op rather than a regression. Both are
     // frozen at module load, so this comparison is stable.
-    expect(clubTime.emailClubTimeZoneForTests()).toBe(APP_TIME_ZONE);
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(ENVIRONMENT_CLUB_ZONE);
   });
 
-  it("deliberately DIFFERS from APP_TIME_ZONE for a seed that names no place", async () => {
+  it("deliberately DIFFERS from the raw environment zone for a seed that names no place", async () => {
     /*
       THE EXCEPTION TO THE SENTENCE ABOVE, pinned rather than glossed over
       (#2869 review). The module's docblock used to claim a cold cache was
       "character-for-character the `APP_TIME_ZONE` these templates used before".
-      It is not: `APP_TIME_ZONE` is `process.env.TZ` UNVALIDATED, while this
+      It is not: the raw environment zone is `process.env.TZ` UNVALIDATED, while this
       resolves the seed through `resolveClubTimeZone`, which refuses a value
       naming no place — `UTC`, `GMT`, `Zulu`, `Etc/*` — and answers the
       documented default instead.
@@ -164,11 +166,11 @@ describe("before it is primed", () => {
       vi.resetModules();
       process.env.TZ = "UTC";
       const freshClubTime = await import("@/lib/email-templates-club-time");
-      const { APP_TIME_ZONE: freshAppTimeZone } = await import(
-        "@/config/operational"
+      const { ENVIRONMENT_CLUB_ZONE: freshEnvironmentZone } = await import(
+        "@/lib/__tests__/helpers/environment-club-zone"
       );
 
-      expect(freshAppTimeZone).toBe("UTC");
+      expect(freshEnvironmentZone).toBe("UTC");
       expect(freshClubTime.emailClubTimeZoneForTests()).toBe("Pacific/Auckland");
     } finally {
       hostTimeZone.restore();
@@ -215,16 +217,18 @@ describe("before it is primed", () => {
         }),
     );
 
-    const { APP_TIME_ZONE } = await import("@/config/operational");
+    const { ENVIRONMENT_CLUB_ZONE } = await import(
+      "@/lib/__tests__/helpers/environment-club-zone"
+    );
     expect(
       PERSISTED_ZONE,
       "the persisted fixture must differ from the runner's own zone, or this proves nothing",
-    ).not.toBe(APP_TIME_ZONE);
+    ).not.toBe(ENVIRONMENT_CLUB_ZONE);
 
     // The read is in flight and unresolved; the render still answers, from the
     // cold cache, without waiting for it.
     const coldZone = clubTime.emailClubTimeZoneForTests();
-    expect(coldZone).toBe(APP_TIME_ZONE);
+    expect(coldZone).toBe(ENVIRONMENT_CLUB_ZONE);
     expect(clubTime.emailClubDate(DIVERGENT)).toBe(
       bindClubTime(requireClubTimeZone(coldZone), CLUB_FORMAT_TEST).instantDate(
         DIVERGENT,
@@ -273,8 +277,10 @@ describe("before it is primed", () => {
     );
     await clubTime.primeEmailClubTimeZone();
 
-    const { APP_TIME_ZONE } = await import("@/config/operational");
-    expect(clubTime.emailClubTimeZoneForTests()).toBe(APP_TIME_ZONE);
+    const { ENVIRONMENT_CLUB_ZONE } = await import(
+      "@/lib/__tests__/helpers/environment-club-zone"
+    );
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(ENVIRONMENT_CLUB_ZONE);
 
     mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(
       PERSISTED_ZONE,

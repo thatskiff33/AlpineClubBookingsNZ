@@ -6,8 +6,9 @@ import { getXeroConnectedOrganisation } from "@/lib/xero-organisation";
  * GET /api/admin/xero/organisation
  * Returns the connected Xero organisation's NAME (for the setup wizard's
  * right-org confirmation, #2080), its accounting financial year-end month
- * (1-12), and its deep-link SHORT CODE (#2261), or null for each if Xero is
- * not connected. Cached in-process. Pass ?refresh=1 to bypass the cache.
+ * (1-12), its deep-link SHORT CODE (#2261) and its BASE CURRENCY (#3633, for
+ * the wizard's base-currency warning), or null for each if Xero is not
+ * connected. Cached in-process. Pass ?refresh=1 to bypass the cache.
  *
  * `readFailure` (#2394) says WHY those values are null when the read failed —
  * `disconnected` / `rate_limited` / `unavailable`, plus which Xero limit and any
@@ -46,19 +47,24 @@ import { getXeroConnectedOrganisation } from "@/lib/xero-organisation";
  * page's deep links, and the subscription-lockout settings panel.
  */
 export async function GET(request?: NextRequest) {
+  // The same audience as `XERO_ORGANISATION_READ_PERMISSION`, written as a
+  // literal because the #2975 authorisation census reads every handler's gate
+  // from its source; `xero-base-currency-server.test.ts` pins that the two
+  // agree (#3633).
   const guard = await requireAdmin({
     permission: { area: "finance", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
   const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
-  const { name, financialYearEndMonth, shortCode, readFailure } =
+  const { name, financialYearEndMonth, shortCode, baseCurrency, readFailure } =
     await getXeroConnectedOrganisation(forceRefresh);
 
   return NextResponse.json({
     name,
     financialYearEndMonth,
     shortCode,
+    baseCurrency,
     // Always present (null on success) so the client never has to guess whether
     // an absent key means "succeeded" or "old server".
     readFailure: readFailure ?? null,

@@ -4,8 +4,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLUB_FORMAT_CARD_PAYMENTS,
+  CLUB_FORMAT_PROVIDER_CURRENCIES,
   CLUB_FORMAT_REACH,
   CLUB_FORMAT_SERVER_SETTINGS,
+  clubFormatCurrencyChangeAcknowledgement,
+  clubFormatXeroBaseCurrencyMismatch,
 } from "@/lib/club-format-copy";
 import { stripComments } from "./support/strip-comments";
 
@@ -48,7 +52,23 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     expect(CLUB_FORMAT_REACH).toMatch(/every date and time/);
     expect(CLUB_FORMAT_REACH).toMatch(/Emails follow/);
     expect(CLUB_FORMAT_REACH).toMatch(/report charts/);
-    expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/card payments/);
+    // #3567 D1: the server's CURRENCY no longer decides card payments either.
+    expect(CLUB_FORMAT_SERVER_SETTINGS).toMatch(/not what cards are charged in/);
+    expect(CLUB_FORMAT_SERVER_SETTINGS).not.toMatch(/still taken from the server/);
+  });
+
+  it("says card payments follow the setting, and Stripe and Xero must match (#3567 D1, D2, D8)", () => {
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/charged in this currency/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/already started stays/);
+    // #3567 review: the retry window and the refund divergence are disclosed.
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/first 24 hours/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/refund of a payment taken before the change/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/saved card charged later/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).toMatch(/two decimal places/);
+    expect(CLUB_FORMAT_CARD_PAYMENTS).not.toMatch(/configured with|conversation with/);
+    expect(CLUB_FORMAT_PROVIDER_CURRENCIES).toMatch(/Stripe account/);
+    expect(CLUB_FORMAT_PROVIDER_CURRENCIES).toMatch(/Xero organisation's base currency/);
+    expect(clubFormatCurrencyChangeAcknowledgement("CHF")).toMatch(/Xero base currency are both CHF/);
   });
 
   // Round 2 of the #3628 review (B5): the copy called the chart labels "the
@@ -79,5 +99,40 @@ describe("Club Currency & Locale copy has one home (#3566)", () => {
     expect(section, "the guide must not put a number on the list either").not.toMatch(
       /\b(?:Two|Three|Four|Five|Six) things\b/,
     );
+  });
+});
+
+/**
+ * The Xero base-currency warning (#3633) is one sentence and one comparison,
+ * rendered on three surfaces. Each surface must route through both rather than
+ * carry its own copy or its own `===`. Disk-scanning: run by name.
+ */
+describe("the Xero base-currency warning has one home (#3633)", () => {
+  const WARNING_SURFACES = [
+    "src/app/(admin)/admin/xero/setup/xero-wizard-steps.tsx",
+    "src/components/admin/club-format-panel.tsx",
+    "src/lib/setup-readiness.ts",
+  ];
+
+  it("says which currency each side is in, and that Xero books invoices in its base currency", () => {
+    const sentence = clubFormatXeroBaseCurrencyMismatch("NZD", "AUD");
+    expect(sentence).toBe(
+      "The club's currency is AUD but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in AUD while their Xero invoices are in NZD.",
+    );
+    // One sentence.
+    expect(sentence.match(/[.!?](\s|$)/g)).toHaveLength(1);
+  });
+
+  it("is rendered on every surface through the shared comparison and sentence", () => {
+    for (const relative of WARNING_SURFACES) {
+      const code = stripComments(
+        readFileSync(path.join(process.cwd(), relative), "utf8"),
+      );
+      expect(code, relative).toContain("xeroBaseCurrencyMismatch(");
+      expect(code, relative).toContain("clubFormatXeroBaseCurrencyMismatch(");
+      expect(code, `${relative} carries its own copy`).not.toMatch(
+        /books every invoice/,
+      );
+    }
   });
 });

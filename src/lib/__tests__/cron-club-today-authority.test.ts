@@ -14,20 +14,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * ("static CLI reach, or reach from instrumentation — either one means the
  * runtime reader").
  *
- * DISCRIMINATION, as in the sibling file: the container's zone is pinned to
+ * DISCRIMINATION, as in the sibling file: the container's zone is modelled as
  * `Pacific/Auckland` — the answer the replaced helper gave, and this codebase's
- * own fallback — and the persisted club zone is `America/Denver`. Under the
+ * own fallback — and the persisted club zone is `America/Denver`. (The
+ * container zone used to be pinned with a `@/config/operational` mock; #3567
+ * deleted that module and nothing reads the environment's zone any more.) Under the
  * frozen clock (`2026-07-01T00:00:00.000Z`) that is 1 July against 30 June, so
  * nothing here can pass by coincidence.
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
@@ -64,7 +60,6 @@ vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: mocks.getLodgeCapacity,
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { checkCapacityWarnings } from "@/lib/cron-capacity-warnings";
 import { sendCheckinReminders } from "@/lib/cron-checkin-reminders";
@@ -99,7 +94,6 @@ beforeEach(() => {
 
 describe("the scheduled jobs take today from the club, not the container (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's give different days", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

@@ -2,7 +2,14 @@
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  ClubFormatTestProvider,
+  CLUB_TIME_TEST_ZONE,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/dynamic", () => ({
@@ -38,7 +45,7 @@ beforeEach(() => {
 import ReportsPage from "@/app/(admin)/admin/reports/page";
 import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
@@ -210,19 +217,13 @@ describe("ReportsPage quick ranges", () => {
     // reading trap the clock convention exists to remove.
     //
     // So the mock is gone and the window is DERIVED from the zone the presets
-    // genuinely read — `APP_TIME_ZONE` — with an independent `Intl` projection
-    // rather than through `date-only` itself, which would let the test agree
-    // with the code it is checking. Hard-coding August instead would have been
-    // a sixth `TZ=America/Denver` failure: behind UTC the frozen instant is
-    // still 30 June, so "next month" is July there.
-    //
-    // That the QUICK RANGES still read the environment rather than the club's
-    // persisted zone is a real remaining gap, in `DateRangeControls`
-    // (`src/components/**`) — reported on #2870 for the group that owns that
-    // file. This test pins today's behaviour honestly rather than asserting the
-    // behaviour we want and failing everywhere.
-    const [envYear, envMonth] = new Intl.DateTimeFormat("en-CA", {
-      timeZone: APP_TIME_ZONE,
+    // genuinely read — the club zone `render` provides, `CLUB_TIME_TEST_ZONE`
+    // (`DateRangeControls` now takes its day from `useClubTime()`, and the
+    // environment zone constant was deleted in #3567) — with an independent
+    // `Intl` projection rather than through `date-only` itself, which would let
+    // the test agree with the code it is checking.
+    const [clubYear, clubMonth] = new Intl.DateTimeFormat("en-CA", {
+      timeZone: CLUB_TIME_TEST_ZONE,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -230,8 +231,8 @@ describe("ReportsPage quick ranges", () => {
       .format(new Date())
       .split("-")
       .map(Number);
-    const nextYear = envMonth === 12 ? envYear + 1 : envYear;
-    const nextMonth = envMonth === 12 ? 1 : envMonth + 1;
+    const nextYear = clubMonth === 12 ? clubYear + 1 : clubYear;
+    const nextMonth = clubMonth === 12 ? 1 : clubMonth + 1;
     const pad = (value: number) => String(value).padStart(2, "0");
     const lastDay = new Date(Date.UTC(nextYear, nextMonth, 0)).getUTCDate();
     const expectedFrom = `${nextYear}-${pad(nextMonth)}-01`;
@@ -464,7 +465,7 @@ describe("occupancy scope label survives a lost lodge list (#2887)", () => {
  * THE DISCRIMINATING ONE (CT-4, #2870).
  *
  * Everything above renders under the default `CLUB_TIME_TEST_ZONE`, which is
- * deliberately the zone `APP_TIME_ZONE` also resolves to, so the default range
+ * deliberately the environment's default zone too, so the default range
  * is the same either way and none of it proves the provider was consulted.
  *
  * The range is not cosmetic here. `getReportsDatasetDefaults` takes the club's
@@ -486,7 +487,7 @@ describe("reports default range comes from the club's zone (CT-4, #2870)", () =>
       // An independent oracle, not the kernel under test.
     }).format(new Date());
 
-  it("anchors from/to on the PERSISTED club zone's today, not APP_TIME_ZONE's", async () => {
+  it("anchors from/to on the PERSISTED club zone's today, not the environment zone's", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
       answerKey: "day",
@@ -499,7 +500,7 @@ describe("reports default range comes from the club's zone (CT-4, #2870)", () =>
       answerFor: dayIn,
       // NOT `["UTC"]` — see the chooser's note on "today" assertions.
     });
-    const environmentDay = dayIn(APP_TIME_ZONE);
+    const environmentDay = dayIn(ENVIRONMENT_CLUB_ZONE);
     // The literals above are hand-written; this cross-checks them against the
     // pure defaults helper so a typo in one of the four cannot pass silently.
     expect(getReportsDatasetDefaults(chosen.day)).toMatchObject({

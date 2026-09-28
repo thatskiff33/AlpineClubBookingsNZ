@@ -353,6 +353,85 @@ describe("payment refund ledger", () => {
     );
   });
 
+  /*
+    #3567 D4: the refund row's currency is Stripe's, always. There is no code
+    fallback and no database default any more, so a refund of a charge taken in
+    one currency is recorded in that currency whatever the club uses now, and a
+    refund with no currency is refused rather than guessed.
+  */
+  it("records the currency Stripe refunded in, lower-cased, whatever the club's currency", async () => {
+    const { store } = createRefundStore();
+    // #3640 made the ledger writer private; its one insert is reached through
+    // the charge.refunded sync, which every card refund's webhook runs.
+    await syncRefundsFromStripeCharge({
+      paymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      refundedAmountCents: 1200,
+      refunds: [{ id: "re_aud_1", amount: 1200, currency: "AUD", status: "succeeded" }],
+      store: store as any,
+    });
+    expect(store.paymentRefund.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ currency: "aud", stripeRefundId: "re_aud_1" })],
+      }),
+    );
+  });
+
+  // #3635: main's assertion that the REFRESH of an already-recorded refund also
+  // takes Stripe's currency, restored through the sync (#3640 made the writer
+  // private and turned its upsert into insert-or-refresh).
+  it("refreshes an already-recorded refund to the currency Stripe refunded in", async () => {
+    const { store, transaction, refunds } = createRefundStore();
+    transaction.refundedAmountCents = 1200;
+    transaction.status = "PARTIALLY_REFUNDED";
+    refunds.set("re_aud_1", {
+      id: "payment_refund_1",
+      paymentId: "payment_1",
+      paymentTransactionId: "txn_1",
+      stripeRefundId: "re_aud_1",
+      stripeChargeId: "ch_1",
+      stripePaymentIntentId: "pi_1",
+      amountCents: 1200,
+      currency: "nzd",
+      status: "succeeded",
+      reason: null,
+      stripeCreatedAt: null,
+    });
+
+    await syncRefundsFromStripeCharge({
+      paymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      refundedAmountCents: 1200,
+      refunds: [{ id: "re_aud_1", amount: 1200, currency: "AUD", status: "succeeded" }],
+      store: store as any,
+    });
+
+    expect(store.paymentRefund.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ stripeRefundId: "re_aud_1" }),
+        data: expect.objectContaining({ currency: "aud" }),
+      }),
+    );
+    expect(refunds.get("re_aud_1")?.currency).toBe("aud");
+  });
+
+  it.each(["", "   "])(
+    "refuses to record a refund whose currency is %j, rather than inventing one",
+    async (currency) => {
+      const { store } = createRefundStore();
+      await expect(
+        syncRefundsFromStripeCharge({
+          paymentIntentId: "pi_1",
+          stripeChargeId: "ch_1",
+          refundedAmountCents: 1200,
+          refunds: [{ id: "re_blank", amount: 1200, currency, status: "succeeded" }],
+          store: store as any,
+        }),
+      ).rejects.toThrow(/carries no currency/);
+      expect(store.paymentRefund.createMany).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not double-count a direct refund when an idempotent retry replays the same Stripe refund", async () => {
     const { store, transaction, refunds } = createRefundStore();
     transaction.refundedAmountCents = 2500;

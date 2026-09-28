@@ -1139,6 +1139,7 @@ async function performBookingCancellation(
           bookingId,
           fresh.payment.xeroInvoiceId,
           tx,
+          format,
         );
       }
       const xeroAllocated = await tx.memberCreditNoteAllocation.aggregate({

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { resolveClubFormat } from "@/lib/club-format";
 import { stripeSdkError as stripeError } from "./support/stripe-sdk-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -270,7 +271,7 @@ const mockAdultMemberHostingPolicyFindMany = vi.fn().mockResolvedValue([]);
 
   It defaults to NO ROW so every test above resolves the same zone it always
   did: `readClubTimeZoneOutsideRequest` folds an absent row into the environment
-  seed, which is `APP_TIME_ZONE`. The club-zone block at the end of this file is
+  seed, which is `ENVIRONMENT_CLUB_ZONE`. The club-zone block at the end of this file is
   the only one that persists a value.
 */
 const mockClubTimeSettingsFindUnique = vi.fn().mockResolvedValue(null);
@@ -324,6 +325,15 @@ vi.mock("../prisma", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 const {
   confirmPendingBookings,
   splitSettlementExtensionNumber,
@@ -338,14 +348,17 @@ const {
 
   The club-zone block below used to compose it by hand as
   `process.env.TZ || process.env.NEXT_PUBLIC_TZ || "Pacific/Auckland"`. Same
-  precedence, but not the same value: `src/config/operational.ts` TRIMS the
+  precedence, but not the same value: the environment reading TRIMS the
   variable, so a `TZ` carrying a stray space made the hand-rolled copy and the
   code under test disagree — and the zone chooser below excludes candidates by
   comparing against exactly this string, so a disagreement there hands the suite
   a candidate equal to the environment's and quietly stops it discriminating.
-  One import cannot drift from the constant it is asserting against.
+  The shared helper trims the same way (`club-time-zone-env-agreement.test.ts`
+  pins it to the seed reader); it replaced the config constant #3567 deleted.
 */
-const { APP_TIME_ZONE } = await import("@/config/operational");
+const { ENVIRONMENT_CLUB_ZONE } = await import(
+  "@/lib/__tests__/helpers/environment-club-zone"
+);
 
 function makePendingBooking(
   id: string,
@@ -524,6 +537,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
     vi.clearAllMocks();
+    clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
     mockEnqueueXeroBookingInvoiceOperation.mockResolvedValue({
       queueOperationId: "op_1",
       message: "queued",
@@ -681,6 +695,85 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
+  /*
+    #3567 re-review, D3 as the owner decided: a STORED currency without two
+    decimal places refuses CHARGES, and only charges. The format below is what the
+    real resolver returns for a stored JPY row: it displays the fallback (NZD) and
+    names the stored code. The run still reads every booking, still bumps and
+    still extends a request-origin hold; the saved-card booking is neither claimed
+    nor given an attempt row, and is alerted on the refusal cadence, not per run.
+  */
+  it("with a stored JPY club: refuses only the charge branch, and bumps and extensions still run (#3567)", async () => {
+    const stored = resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null);
+    expect(stored).toEqual({ currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "JPY" });
+    clubFormatMock.mockResolvedValue(stored);
+    const toCharge = makePendingBooking("b1");
+    const toBump = makePendingBooking("b2");
+    const toExtend = makePendingBooking("b3", { hasPaymentMethod: false, originBookingRequest: { id: "req_1" } });
+    mockPendingBookings([toCharge, toBump, toExtend]);
+    mockCheckCapacityForGuestRanges
+      .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] })
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
+      .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] });
+    mockBookingUpdate.mockResolvedValue({});
+
+    const result = await confirmPendingBookings();
+
+    // The charge branch: nothing claimed, nothing charged, no attempt row.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "b1", status: "PENDING" }, data: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
+    expect(result.failedBookingIds).toEqual(["b1"]);
+    // The rest of the run: the bump and the request-origin extension still ran.
+    expect(result.bumpedBookingIds).toEqual(["b2"]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "b3", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      }),
+    );
+    // Alerted on the refusal cadence, anchored on when the charge fell due.
+    const due = new Date(Math.max(toCharge.nonMemberHoldUntil!.getTime(), toCharge.createdAt.getTime()));
+    const refusalAlerts = mockSendAdminPaymentFailureAlert.mock.calls.filter(([alert]) =>
+      /JPY does not count in hundredths/.test((alert as { errorMessage: string }).errorMessage),
+    );
+    expect(refusalAlerts).toHaveLength(shouldAlertOnSavedCardChargeRefusal(due, new Date()) ? 1 : 0);
+  });
+
+  it("labels the refusal alert with the booking's PaymentIntent, never its booking id (#3567 final check)", async () => {
+    clubFormatMock.mockResolvedValue(resolveClubFormat({ currencyCode: "JPY", locale: "en-NZ" }, null));
+    // Fell due a minute ago: the first run of the first window, so it alerts.
+    const withIntent = makePendingBooking("b1", { holdUntil: new Date(Date.now() - 60_000).toISOString() });
+    const withIntentPayment = withIntent.payment as unknown as Record<string, unknown>;
+    withIntentPayment.stripePaymentIntentId = "pi_on_file";
+    const withoutIntent = makePendingBooking("b2", { holdUntil: new Date(Date.now() - 60_000).toISOString() });
+    (withoutIntent.payment as unknown as Record<string, unknown>).stripePaymentIntentId = null;
+    mockPendingBookings([withIntent, withoutIntent]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+
+    await confirmPendingBookings();
+
+    const labels = mockSendAdminPaymentFailureAlert.mock.calls
+      .map(([alert]) => alert as { errorMessage: string; paymentIntentId: string })
+      .filter((alert) => /JPY does not count in hundredths/.test(alert.errorMessage))
+      .map((alert) => alert.paymentIntentId);
+    expect(labels).toEqual(["pi_on_file", "N/A"]);
+  });
+
+  it("refuses a charge under the Stripe minimum BEFORE claiming, writing no attempt row (#3567 re-review)", async () => {
+    mockPendingBookings([makePendingBooking("b1", { finalPriceCents: 30 })]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+
+    const result = await confirmPendingBookings();
+
+    expect(result.failedBookingIds).toEqual(["b1"]);
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CONFIRMED" }) }),
+    );
+  });
+
   it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {
     // Pre-lock read is now a minimal key/eligibility select; the buggy order
     // consumed its stale dates/guests. Make the two reads differ and prove the
@@ -753,9 +846,8 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockChargePaymentMethod).toHaveBeenCalledWith({
       format: CLUB_FORMAT_TEST,
       amountCents: 10000,
-      // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-      // caller states it. Same value the default supplied.
-      currency: "nzd",
+      // #3567 D1: no `currency` argument; the charge currency is worked out
+      // from `format` inside stripe.ts, so a caller cannot pass a second answer.
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
       metadata: { bookingId: "b1", memberId: "member_b1" },
@@ -2919,19 +3011,19 @@ describe("Cron: Confirm Pending Bookings", () => {
     The two branches below decide `PENDING -> CANCELLED` for a booking whose
     check-in day has ended. The request-origin one RELEASES REAL CAPACITY. Both
     were bound by comment to the payment link's mint boundary "so the two can
-    never disagree", and both resolved that boundary in `APP_TIME_ZONE` — the
+    never disagree", and both resolved that boundary in the environment zone — the
     deployment's `TZ` seed — while the mint, the pay page and the approval email
     moved onto the club's PERSISTED zone (#3068). They now call one function that
     takes the zone.
 
     Measured before this block existed: replacing the threaded `clubZone` with
-    `APP_TIME_ZONE` at both sites left all 57 tests in this file GREEN. The two
+    the environment zone at both sites left all 57 tests in this file GREEN. The two
     highest-consequence sites in the change had no coverage of the defect at all.
 
     ## Why the fixtures are searched for rather than written down
 
     Discriminating needs `now` to fall strictly between the club's boundary and
-    BOTH wrong answers' — `APP_TIME_ZONE`'s and the host's own resolved zone.
+    BOTH wrong answers' — the environment zone's and the host's own resolved zone.
     `divergentClubZone` guarantees three DIFFERENT answers, which is not the same
     thing: a club boundary sitting between the two wrong ones would leave the
     observable identical to one of them. So this searches the same candidate list
@@ -2986,7 +3078,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       return lo;
     }
 
-    const environmentZone = APP_TIME_ZONE;
+    const environmentZone = ENVIRONMENT_CLUB_ZONE;
     const hostZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     /**
@@ -3010,7 +3102,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       }
       throw new Error(
         "No (club zone, check-in day) pair leaves the club's day still running " +
-          `while both APP_TIME_ZONE (${environmentZone}) and the host (${hostZone}) ` +
+          `while both the environment zone (${environmentZone}) and the host (${hostZone}) ` +
           "say it has ended. Without one, this assertion cannot tell the club's " +
           "persisted zone from either wrong answer and would pass for both. " +
           `Tried: ${tried.join(", ") || "no candidate day had both wrong answers ended"}.`,
@@ -3034,7 +3126,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     it("proves the fixture really splits the club's day from both wrong answers", () => {
       // Without this the tests below could pass against a tree that read
-      // APP_TIME_ZONE. Stated separately so an ICU or candidate-list change fails
+      // the environment zone. Stated separately so an ICU or candidate-list change fails
       // here, legibly, rather than as a cancelled/extended mismatch.
       expect(endOfCivilDay(environmentZone, FIXTURE.checkIn)).toBeLessThanOrEqual(
         NOW.getTime(),
@@ -3064,7 +3156,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         result.cancelledBookingIds,
         "INV-CONFIG-002: the club's check-in day has not ended, so the requester's " +
           "/pay link is still live and this booking must keep its hold. Closing " +
-          "the day on APP_TIME_ZONE cancels it and RELEASES ITS BEDS a whole club " +
+          "the day on the environment zone cancels it and RELEASES ITS BEDS a whole club " +
           "day early, and REVOKES THE MEMBER'S LINK with them: the terminal " +
           "branch calls `revokePaymentLinksForBooking` in the same transaction, " +
           "which is why the assertion below is `not.toHaveBeenCalled()`. So the " +

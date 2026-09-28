@@ -1,26 +1,14 @@
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /*
-  `APP_TIME_ZONE` IS PINNED BEHIND GREENWICH, AND IT IS NOT THE CLUB ZONE BELOW.
-
-  Two jobs, both live. It is what makes the #3123 cases at the foot of this file
-  a migration proof rather than a spelling check: before that change the
-  "Redeemed" column went through `formatNZDateTime`, whose zone IS
-  `APP_TIME_ZONE`, so those cases read 9 July and now read 10 July. And it stays
-  a standing guard — if a future edit puts a config-zone read back into this
-  module, the assertions produce Denver's day and fail.
-
-  It is deliberately NOT `Pacific/Auckland`: that is exactly what `APP_TIME_ZONE`
-  falls back to, so a suite persisting it could not tell the club's configured
-  zone from the container's (#3123 execution contract).
+  THE ENVIRONMENT ZONE USED TO BE PINNED BEHIND GREENWICH HERE (`America/Denver`).
+  Before #3123 the "Redeemed" column went through `formatNZDateTime`, whose zone
+  was the environment's, so the #3123 cases at the foot of this file read 9 July
+  under that pin and now read 10 July. #3567 deleted the environment constant and
+  nothing reads the environment's zone any more, so the pin is gone; the cases
+  below still measure Denver's answer directly as the wrong one.
 */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
 
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {
@@ -31,7 +19,7 @@ import {
   type PromoRedemptionCsvRow,
 } from "@/lib/promo-redemptions-csv";
 
-/** The club's configured zone under test. Held apart from the mock above. */
+/** The club's configured zone under test. */
 const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
 const ROW: PromoRedemptionCsvRow = {
@@ -122,7 +110,7 @@ describe("the Redeemed column takes the club's configured zone (#3123)", () => {
   });
 
   it("names the club's day in the exported cell, not the container's", () => {
-    // BEFORE the migration this cell read "9 Jul 2026" (APP_TIME_ZONE = Denver).
+    // BEFORE the migration this cell read "9 Jul 2026" (environment zone = Denver).
     const cells = buildPromoRedemptionCsvCells(CLUB, {
       ...ROW,
       createdAt: STRADDLES,

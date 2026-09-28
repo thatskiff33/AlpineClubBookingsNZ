@@ -68,6 +68,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-workflow-suite-checkout-depth.test.mjs",
   "scripts/ci/filter-suppressed-sarif.test.mjs",
   "scripts/ci/render-epic-sync-pr-body.test.mjs",
+  "scripts/ci/require-test-shards.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/issue-thread.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
@@ -395,6 +396,7 @@ describe("typecheck project coverage", () => {
     }
   });
 
+  // Isolated on Windows 11: 2,471 ms here; 4,800 ms under load against the 5,000 ms default (#3684).
   it("declares exactly the runtime exports each JavaScript module has", async () => {
     // A declaration is a promise about a module TypeScript never reads. A name
     // the module gained is unreachable until declared; a name it lost arrives as
@@ -407,7 +409,7 @@ describe("typecheck project coverage", () => {
         `${declaration} must declare exactly the exports of ${module}`,
       ).toEqual(runtime);
     }
-  });
+  }, 30_000);
 
   it("refuses a Vitest-collected extension that TypeScript cannot load", () => {
     const unsupported = vitestTests.filter(
@@ -446,6 +448,7 @@ describe("typecheck project coverage", () => {
       "vitest.config.mts",
       "vitest.setup.ts",
       "vitest.clock-setup.ts",
+      "vitest.global-setup.ts",
     ]) {
       expect(test.files.has(file), `${file} is a test-project root`).toBe(true);
       expect(app.files.has(file), `${file} is out of tsconfig.json`).toBe(false);

@@ -1056,8 +1056,9 @@ it was).
   (`additional-payment-chase.ts`): `closed` when the booking no longer names
   the intent, the intent SUCCEEDED, the booking is deleted or not payable, or
   Stripe says `canceled` or missing; `captured-at-provider` when Stripe has
-  the money; else `payable`. The secret route serves only `payable` (404, 409);
-  the page card asks its booking half. The reaper
+  the money; else `payable`. The secret route serves only `payable` (404, 409;
+  a `processing` intent answers `PAYMENT_PROCESSING`, not paid, #3635); the
+  page card asks its booking half. The reaper
   (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
   only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
   rows never recorded alerts once after three days.

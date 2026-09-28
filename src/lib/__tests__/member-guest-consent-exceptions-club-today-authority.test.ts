@@ -15,19 +15,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * other assertion here would be vacuous); that the value the module reaches for
  * by default is the club's day; and that it is NOT the container's.
  *
- * Container zone `Pacific/Auckland`, persisted club zone `America/Denver`; under
+ * Container zone `Pacific/Auckland` (the shipped default; the environment
+ * constant once pinned to it was deleted in #3567), persisted club zone
+ * `America/Denver`; under
  * the frozen clock that is 1 July against 30 June. The fixture's booking checks
  * in on 1 July, so it is a future stay at the club and a stay starting today in
  * the container's zone — the pair the classifier separates.
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   clubTimeSettingsFindUnique: vi.fn(),
@@ -46,7 +42,6 @@ vi.mock("@/lib/booking-modify-validation", () => ({
   isQuotePricedBooking: mocks.isQuotePricedBooking,
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { listMemberGuestConsentExceptions } from "@/lib/member-guest-consent-exceptions";
 
@@ -98,7 +93,6 @@ beforeEach(() => {
 
 describe("the consent exception list classifies against the club's day (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's give different days", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(clubToday(requireClubTimeZone(ENVIRONMENT_ZONE))).toBe("2026-07-01");
     expect(clubToday(requireClubTimeZone(PERSISTED_ZONE))).toBe("2026-06-30");
   });

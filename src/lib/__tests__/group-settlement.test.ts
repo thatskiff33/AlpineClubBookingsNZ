@@ -156,6 +156,14 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
 
 import {
   createGroupSettlementIntent,
@@ -166,6 +174,11 @@ import {
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import {
+  PAYMENT_PROCESSING_CODE,
+  PAYMENT_PROCESSING_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 
 const ORGANISER = "organiser-1";
 const ORG_BOOKING = "org-booking-1";
@@ -200,6 +213,7 @@ function organiserPaysGroup(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   // The transaction callback runs against the shared txClient by default.
   mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) =>
     cb(txClient)
@@ -222,6 +236,15 @@ beforeEach(() => {
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
+  // #3635: every existing organiser intent is now read before the lock. Unless a
+  // case says otherwise it is an ordinary unpaid intent the attempt leaves behind.
+  mocks.getPaymentIntent.mockResolvedValue({
+    id: "pi_existing",
+    status: "requires_payment_method",
+    client_secret: null,
+    currency: "nzd",
+    amount: 0,
+  });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
     client_secret: "cs_settle_1",
@@ -759,6 +782,150 @@ describe("createGroupSettlementIntent", () => {
     expect(result.outcome).toBe("ready");
     expect(result.clientSecret).toBe("cs_settle_1");
     expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_old");
+  });
+
+  it("never returns a same-total intent minted in another currency; mints a fresh one and voids the old (#3567)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_aud",
+          amountCents: 9000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+    // The same total, but minted in AUD before the club moved to NZD.
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "requires_payment_method",
+      client_secret: "cs_aud",
+      currency: "aud",
+      amount: 9000,
+    });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    expect(result.clientSecret).toBe("cs_settle_1");
+    expect(result.paymentIntentId).toBe("pi_settle_1");
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 9000 })
+    );
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_aud");
+  });
+
+  /*
+    #3635: the double charge. An old-currency intent Stripe is still PROCESSING
+    cannot be cancelled, so the fresh intent the currency path mints beside it
+    would charge the group twice. Refused as both card doors refuse it - before
+    any bed is claimed, any lock taken or any intent minted.
+  */
+  it("refuses, and mints nothing, while a same-total intent in another currency is still processing (#3635)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_aud",
+          amountCents: 9000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_aud",
+      status: "processing",
+      client_secret: "cs_aud",
+      currency: "aud",
+      amount: 9000,
+    });
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toBeInstanceOf(GroupBookingError);
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      code: PAYMENT_PROCESSING_CODE,
+      message: PAYMENT_PROCESSING_MESSAGE,
+    });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  // #3635: the same double charge when the TOTAL moved, in the club's own
+  // currency. The early read used to run only for a matching total, so a changed
+  // total skipped it and minted beside the processing intent.
+  it("refuses, and mints nothing, while the old intent is processing and the total has changed (#3635)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_old_total",
+          amountCents: 4500,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_old_total",
+      status: "processing",
+      client_secret: "cs_old_total",
+      currency: "nzd",
+      amount: 4500,
+    });
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      code: PAYMENT_PROCESSING_CODE,
+      message: PAYMENT_PROCESSING_MESSAGE,
+    });
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_old_total");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("refuses a card settlement in a currency without two decimal places before committing children (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toBeInstanceOf(GroupBookingError);
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      message: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+    });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("internet banking: rejects with 400 when the module is off (no beds held, no invoice)", async () => {

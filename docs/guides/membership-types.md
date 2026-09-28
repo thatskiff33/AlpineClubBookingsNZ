@@ -38,7 +38,7 @@ change.
    its assignment count, the booking-behaviour and subscription-behaviour labels,
    and its allowed age-tier chips.
 
-   ![Membership types page: the type list with Full, Associate, Life, School, Non-Member, and Family cards, each with Edit, Archive, and reorder controls, and the Roll forward seasonal assignments section](../images/admin/admin-membership-types.png)
+   ![Membership types page showing Full and Non-Member with Edit and reorder controls, other types with Archive, and the Roll forward seasonal assignments section](../images/admin/admin-membership-types.png)
 
 2. Use the up/down arrows on a card to reorder types (the order is saved
    immediately). Click **Refresh** to reload.
@@ -52,8 +52,8 @@ change.
    assignable** to make it selectable. To show it on the public site, tick **List
    this membership type publicly** and add a **Public description** (types stay
    hidden until you enable this).
-3. Choose the **Booking behavior** (Member rate, Non-member rate, or Block
-   booking) and **Subscription behavior** (Subscription required, Subscription
+3. For other types, choose the **Booking behavior** (Member rate, Non-member rate,
+   or Block booking) and **Subscription behavior** (Subscription required, Subscription
    not required, or Subscription required based on age tier). Tick every **allowed
    age tier**. New types start with the four age tiers (Infant, Child, Youth,
    Adult) ticked. The **N/A (no age)** option makes the type *age-exempt*:
@@ -67,6 +67,9 @@ change.
      otherwise. At least one box must stay ticked. An edit that would turn N/A-only
      on or off is blocked while current or future-season members hold an age tier
      the new selection does not cover — reassign or reclassify those members first.
+   Full and Non-Member have fixed booking behavior because bookings use them by
+   key. If an older edit left one with the wrong behavior, click **Restore
+   expected booking behavior**, then **Save changes**.
 4. Click **Save changes** (or **Create type**). On a successful edit-save the
    editor closes automatically. If you close with the header **✕** or Escape
    while you have unsaved edits, a **Discard unsaved changes?**
@@ -76,7 +79,13 @@ change.
 ### Delete or archive a type
 
 1. **Archive** hides a type from new assignments without deleting it;
-   **Reactivate** brings it back.
+   **Reactivate** brings it back. Full and Non-Member cannot be archived because
+   bookings still use them. If one was archived before this guard existed,
+   **Reactivate** remains available.
+   Existing members without a season assignment can still use an archived
+   built-in role-default type for booking and annual billing. Its saved
+   subscription rule and effective annual fee continue to apply; officers
+   review any resulting charge in the billing preview.
 2. **Delete** is only offered for **Custom** (non-built-in) types. If the type has
    no assignments you confirm and it is gone. If it still has assignments, a
    **Delete … / Move assignments to** dialog opens: pick an active target type,
@@ -114,7 +123,8 @@ they live on the **Xero member grouping** surface.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Everything is read-only ("… can view membership types but cannot change them") | Your admin role has membership view but not edit | Ask a full admin for membership edit access |
-| No **Delete** button on a type | It is a **Built-in** type (cannot be deleted) | Archive it instead if you want to retire it |
+| No **Delete** button on a type | It is a **Built-in** type (cannot be deleted) | Other built-ins can be archived; Full and Non-Member remain active because bookings use them |
+| Setup warns that Full or Non-Member is archived or has the wrong booking behavior | An older edit changed a type still used by bookings | Open **Membership Types**; click **Reactivate** and, if shown, **Restore expected booking behavior**, then save |
 | A type won't delete directly | It still has member assignments | Use the merge dialog to move assignments to another active type first |
 | The merge dialog says no target is available | There is no other active type to merge into | Reactivate or create an active type first |
 | Save rejected as a duplicate name | Another type already uses that name (case-insensitive) | Choose a different name |

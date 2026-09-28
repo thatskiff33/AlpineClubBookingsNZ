@@ -30,7 +30,7 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { prisma } from "@/lib/prisma";
-import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
+import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { buildXeroIdempotencyKey, startXeroSyncOperation } from "@/lib/xero-sync";
@@ -598,7 +598,7 @@ export async function buildSubscriptionBillingPreview(input: {
   ])];
   const fallbackTypes = fallbackKeys.length > 0
     ? await db.membershipType.findMany({
-        where: { key: { in: fallbackKeys }, isActive: true },
+        where: storedRoleDefaultMembershipTypeWhere(fallbackKeys),
         select: {
           id: true, key: true, name: true, subscriptionBehavior: true,
         },
