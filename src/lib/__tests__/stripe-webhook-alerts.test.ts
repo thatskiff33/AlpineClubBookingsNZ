@@ -318,6 +318,15 @@ vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
 }));
 
+// #3635 (review F2): "was this capture ever recorded in Xero?" is asked of the
+// capture's own invoice rows. Here the only such row is a released change
+// invoice, which the supplementary double below answers.
+vi.mock("@/lib/late-capture-xero-receipt", () => ({
+  hasXeroReceiptForLateCapture: (paymentIntentId: string) =>
+    mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId),
+  stripeRefundNeedsXeroNoteNow: async () => true,
+}));
+
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
     mockEnqueueXeroBookingInvoiceOperation(...args),
@@ -2884,7 +2893,10 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     });
 
-    it("keeps the Xero credit note for a payment that carries an invoice (#2773 changes nothing here)", async () => {
+    it("raises NO Xero credit note for a payment whose invoice was cleared at cancel (#3635 review F2)", async () => {
+      // The booking's own invoice is the pre-cancel one the cancel cleared; Xero
+      // never recorded THIS capture, so a refund note would take money out of
+      // the Stripe account that never went in.
       mockConstructWebhookEvent.mockReturnValue(
         primarySucceededEvent("evt_primary_with_invoice"),
       );
@@ -2893,10 +2905,8 @@ describe("Stripe webhook Xero alerting", () => {
       const response = await POST(makeRequest());
 
       expect(response.status).toBe(200);
-      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-        "payment-7",
-        12000,
-      );
+      expect(mockRefundPaymentTransactions).toHaveBeenCalled();
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     });
 
     // -------------------------------------------------------------------------
@@ -3053,10 +3063,8 @@ describe("Stripe webhook Xero alerting", () => {
           idempotencyKeyPrefix: "late_cancel_refund_booking-7_pi_primary_late",
         }),
       );
-      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-        "payment-7",
-        12000,
-      );
+      // #3635 review F2: no receipt of this capture, so no refund note.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     });
 
     it("still refunds a saved-card charge that captured after an unpaid cancel: a captured row, but no decision (#3639)", async () => {

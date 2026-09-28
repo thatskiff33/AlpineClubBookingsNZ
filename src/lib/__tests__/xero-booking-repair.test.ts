@@ -281,9 +281,10 @@ function createDependencies(state: {
   lateCaptureApprovalTasks?: {
     bookingId: string;
     lateCaptureApprovalIntentId: string;
-    // #3635: which were kept, and the id their invoice anchors on.
+    // #3635: which were kept, the id their invoice anchors on, the capture day.
     id?: string;
     status?: string;
+    createdAt?: Date;
   }[];
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
@@ -445,6 +446,8 @@ function createDependencies(state: {
 
   return {
     prisma: {
+      // #3635: the kept-capture enqueue runs on a transaction of its own.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
       booking: {
         findMany: vi.fn().mockResolvedValue(state.bookings),
       },
@@ -3580,13 +3583,15 @@ describe("runBookingXeroRepair", () => {
   });
 
   /**
-   * #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): the booking's own
-   * payment, captured after the cancel and KEPT by a treasurer, is recorded by
-   * its own invoice for the kept cents, anchored on the approval task. The
-   * dismissal queues it; this queues one nobody queued, always automatically,
-   * because that document bills the kept cash whatever the booking's invoice did.
+   * #3635 (owner and orchestrator decisions 29 Sep 2026, `INV-PAY-110`): a late
+   * capture a treasurer KEPT - the booking's own payment, or a change payment on
+   * a booking Xero never invoiced - is recorded by its own kept-capture invoice
+   * for the GROSS capture, anchored on the approval task, dated the capture day.
+   * The dismissal queues it; this queues one nobody queued, automatically, and
+   * the pass re-reads the task under its row lock before it does.
    */
-  describe("a kept late capture of the booking's own payment (#3635)", () => {
+  describe("a kept late capture recorded by its own invoice (#3635)", () => {
+    const RAISED_AT = new Date("2026-05-01T00:05:00Z");
     const keptBooking = (
       payment: Record<string, unknown> = {},
       capture: Record<string, unknown> = {},
@@ -3595,6 +3600,8 @@ describe("runBookingXeroRepair", () => {
         status: "CANCELLED",
         payment: {
           ...makeBooking().payment,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
           amountCents: 10000,
           refundedAmountCents: 0,
           status: "SUCCEEDED",
@@ -3632,7 +3639,8 @@ describe("runBookingXeroRepair", () => {
         bookingId: "booking_1",
         manualRefundTaskId: "task_kept",
         paymentIntentId: "pi_kept",
-        keptCents: 10000,
+        capturedCents: 10000,
+        capturedOn: "2026-05-01",
       },
       replayable: true,
       manuallyResolvedAt: null,
@@ -3653,6 +3661,7 @@ describe("runBookingXeroRepair", () => {
             bookingId: booking.id,
             lateCaptureApprovalIntentId: "pi_kept",
             status,
+            createdAt: RAISED_AT,
           },
         ],
       });
@@ -3667,7 +3676,7 @@ describe("runBookingXeroRepair", () => {
         (finding) => finding.code === "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
       );
 
-    it("queues the kept invoice automatically, for the kept cents, anchored on the task", async () => {
+    it("queues the kept invoice automatically, for the gross capture, anchored on the task, dated from its raise", async () => {
       const { bookingReport } = await run(keptBooking(), "DISMISSED");
 
       expect(keptFinding(bookingReport)).toMatchObject({
@@ -3675,7 +3684,7 @@ describe("runBookingXeroRepair", () => {
         details: expect.objectContaining({
           manualRefundTaskId: "task_kept",
           paymentIntentId: "pi_kept",
-          keptCents: 10000,
+          capturedCents: 10000,
         }),
       });
       expect(
@@ -3686,28 +3695,35 @@ describe("runBookingXeroRepair", () => {
           manualRefundTaskId: "task_kept",
           bookingId: "booking_1",
           paymentIntentId: "pi_kept",
-          keptCents: 10000,
+          capturedCents: 10000,
+          capturedAt: RAISED_AT.toISOString(),
         },
       });
     });
 
-    it("queues it the same way whatever the booking's own invoice did: cleared, credit used, re-priced", async () => {
-      for (const payment of [
-        { xeroInvoiceId: "inv_primary" },
-        { creditAppliedCents: 2000 },
-        { amountCents: 10000 },
-      ]) {
-        const booking = keptBooking(payment);
-        booking.finalPriceCents = 13000;
-        const { bookingReport } = await run(booking, "DISMISSED");
-        expect(keptFinding(bookingReport)).toMatchObject({
-          safeToAutoApply: true,
-          details: expect.objectContaining({ keptCents: 10000 }),
-        });
-      }
+    it("records the gross even when the capture was refunded in the dashboard since (its refund is its own note)", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      expect(keptFinding((await run(refunded, "DISMISSED")).bookingReport)).toMatchObject({
+        details: expect.objectContaining({ capturedCents: 10000 }),
+      });
     });
 
-    it("reports nothing while the treasurer decides, after an approved refund, once queued, or once refunded in Stripe", async () => {
+    it("covers a kept change payment on a booking Xero never invoiced (review F3), not one on an invoiced booking", async () => {
+      const change = keptBooking({}, { kind: "ADDITIONAL", amountCents: 2500 });
+      expect(keptFinding((await run(change, "DISMISSED")).bookingReport)).toMatchObject({
+        details: expect.objectContaining({ captureKind: "ADDITIONAL", capturedCents: 2500 }),
+      });
+      const invoiced = keptBooking(
+        { xeroInvoiceId: "inv_primary" },
+        { kind: "ADDITIONAL", amountCents: 2500 },
+      );
+      expect(keptFinding((await run(invoiced, "DISMISSED")).bookingReport)).toBeUndefined();
+    });
+
+    it("reports nothing while the treasurer decides, after an approved refund, or once queued", async () => {
       for (const status of ["OPEN", "COMPLETED"]) {
         expect(keptFinding((await run(keptBooking(), status)).bookingReport)).toBeUndefined();
       }
@@ -3715,11 +3731,6 @@ describe("runBookingXeroRepair", () => {
         const { bookingReport } = await run(keptBooking(), "DISMISSED", [keptOperation(status)]);
         expect(keptFinding(bookingReport)).toBeUndefined();
       }
-      const refunded = keptBooking(
-        { refundedAmountCents: 10000, status: "REFUNDED" },
-        { refundedAmountCents: 10000, status: "REFUNDED" },
-      );
-      expect(keptFinding((await run(refunded, "DISMISSED")).bookingReport)).toBeUndefined();
     });
 
     it("asks again once a row was withdrawn (CANCELLED), and offers a failed one for retry instead", async () => {
@@ -3731,6 +3742,36 @@ describe("runBookingXeroRepair", () => {
       expect(
         failed.bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION"),
       ).toBeDefined();
+    });
+
+    it("applies it on a transaction of its own, where the enqueue re-reads the task under its lock", async () => {
+      const booking = keptBooking();
+      const deps = createDependencies({
+        bookings: [booking],
+        lateCaptureApprovalTasks: [
+          {
+            id: "task_kept",
+            bookingId: booking.id,
+            lateCaptureApprovalIntentId: "pi_kept",
+            status: "DISMISSED",
+            createdAt: RAISED_AT,
+          },
+        ],
+      });
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+        apply: true,
+      });
+      expect(deps.prisma.$transaction).toHaveBeenCalled();
+      expect(deps.enqueueXeroKeptLateCaptureInvoiceOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manualRefundTaskId: "task_kept",
+          capturedCents: 10000,
+          capturedOn: "2026-05-01",
+          store: expect.anything(),
+        }),
+      );
     });
   });
 

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   bookingDefaultsFindUnique: vi.fn(),
   paymentTransactionFindUnique: vi.fn(),
   taskFindUnique: vi.fn(),
+  taskFindMany: vi.fn(),
   taskFindFirst: vi.fn(),
   taskCreate: vi.fn(),
   taskUpdate: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => {
   const manualRefundTask = {
     findUnique: (...a: unknown[]) => mocks.taskFindUnique(...a),
+    findMany: (...a: unknown[]) => mocks.taskFindMany(...a),
     findFirst: (...a: unknown[]) => mocks.taskFindFirst(...a),
     create: (...a: unknown[]) => mocks.taskCreate(...a),
     update: (...a: unknown[]) => mocks.taskUpdate(...a),
@@ -59,6 +61,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   heldLateCaptureReason,
   holdSupersededLateCaptureIfRequired,
+  reannounceHeldLateCaptures,
 } from "@/lib/late-capture-refund-hold";
 
 /**
@@ -242,6 +245,51 @@ describe("holdSupersededLateCaptureIfRequired", () => {
     mocks.taskFindUnique.mockResolvedValue(null);
     mocks.sendHeldAlert.mockRejectedValueOnce(new Error("smtp down"));
     await expect(holdSupersededLateCaptureIfRequired(OPERATION)).resolves.toBe(true);
+  });
+});
+
+/**
+ * #3635 (review F3): the held alert's re-selecting run. Stripe does not
+ * redeliver a notice it was answered for, so without this a claim held for a
+ * day would never be tried again.
+ */
+describe("reannounceHeldLateCaptures (the payments cron's sweep)", () => {
+  beforeEach(() => {
+    mocks.taskFindMany.mockResolvedValue([
+      {
+        bookingId: "booking-9",
+        paymentId: "payment-9",
+        amountCents: 2500,
+        raisedAmountCents: 2500,
+        lateCaptureApprovalIntentId: "pi_change_late",
+      },
+    ]);
+  });
+
+  it("re-selects every OPEN held task, oldest first, and announces it through the once-ever claim", async () => {
+    await expect(reannounceHeldLateCaptures()).resolves.toEqual({ checked: 1, announced: 1 });
+    expect(mocks.taskFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "OPEN",
+          lateCaptureApprovalIntentId: { not: null },
+        }),
+        orderBy: { createdAt: "asc" },
+      }),
+    );
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "late-capture-held:pi_change_late" }),
+    );
+    expect(mocks.sendHeldAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-9", amountCents: 2500 }),
+      expect.anything(),
+    );
+  });
+
+  it("sends nothing once the claim is kept, and counts nothing announced", async () => {
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+    await expect(reannounceHeldLateCaptures()).resolves.toEqual({ checked: 1, announced: 0 });
+    expect(mocks.sendHeldAlert).not.toHaveBeenCalled();
   });
 });
 

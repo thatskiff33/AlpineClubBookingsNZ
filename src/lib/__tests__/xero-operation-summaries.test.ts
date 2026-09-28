@@ -72,12 +72,14 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
         bookingId: "booking-abcdefghijklmno",
         manualRefundTaskId: "task-abcdefghijklmno",
         paymentIntentId: "pi_kept",
-        keptCents: 24000,
+        capturedCents: 24000,
+        capturedOn: "2026-06-10",
       },
       responsePayload: null,
     }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: invoice a kept late payment");
-    expect(factValue(summary!, "Kept")).toBe("$240.00");
+    expect(factValue(summary!, "Captured")).toBe("$240.00");
+    expect(factValue(summary!, "Captured on")).toBe("2026-06-10");
     expect(factValue(summary!, "Payment intent")).toBe("pi_kept");
   });
 

@@ -262,18 +262,23 @@ describe("xero operation outbox payload parsing", () => {
     );
   });
 
-  it("#3635: reads a kept late-capture invoice's frozen cents and anchors it on the approval task", () => {
+  it("#3635: reads a kept late-capture invoice's frozen gross cents and capture day, anchored on the approval task", () => {
     const queued = {
       queueType: "KEPT_LATE_CAPTURE_INVOICE",
       bookingId: "booking_1",
       manualRefundTaskId: "task_1",
       paymentIntentId: "pi_kept",
-      keptCents: 24000,
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
     };
     expect(readQueuedOutboxPayload(queued)).toEqual(queued);
     // Whole positive cents only (`INV-MONEY-001`); anything else is unreadable.
-    for (const keptCents of [0, -100, 12.5]) {
-      expect(readQueuedOutboxPayload({ ...queued, keptCents })).toBeNull();
+    for (const capturedCents of [0, -100, 12.5]) {
+      expect(readQueuedOutboxPayload({ ...queued, capturedCents })).toBeNull();
+    }
+    // A receipt without its capture day would be dated on some later day.
+    for (const capturedOn of [undefined, "", "10/06/2026"]) {
+      expect(readQueuedOutboxPayload({ ...queued, capturedOn })).toBeNull();
     }
     expect(readQueuedOutboxPayload({ ...queued, manualRefundTaskId: undefined })).toBeNull();
     expect(getQueuedOutboxExpectedOperation("KEPT_LATE_CAPTURE_INVOICE")).toEqual({

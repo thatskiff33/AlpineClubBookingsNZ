@@ -2634,7 +2634,8 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
           bookingId: "booking_1",
           manualRefundTaskId: "task_kept_1",
           paymentIntentId: "pi_kept",
-          keptCents: 24000,
+          capturedCents: 24000,
+          capturedOn: "2026-06-10",
         },
       },
       handler: mocks.createXeroKeptLateCaptureInvoice,
@@ -3784,7 +3785,7 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(result.outcome).toBe("left-retired");
   });
 
-  it("#3635: a capture closed without refunding AFTER a full dashboard refund is refunded, not kept", async () => {
+  it("#3635: a capture closed without refunding AFTER a full dashboard refund is still KEPT: recorded gross, its refund noted apart", async () => {
     retired = [retiredOperation()];
     mocks.findFirstPaymentTransaction.mockResolvedValue({
       status: "REFUNDED",
@@ -3797,8 +3798,10 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     const result =
       await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
 
-    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
-    expect(result.outcome).toBe("left-retired");
+    // Recorded gross (orchestrator decision 29 Sep 2026); the dashboard refund
+    // is answered by its own refund note, so netting here would count it twice.
+    expect(reviveCalls()).toHaveLength(1);
+    expect(result.outcome).toBe("requeued");
   });
 
   it("#3635: a KEPT capture on a cancelled booking (task DISMISSED) revives the retired row itself", async () => {

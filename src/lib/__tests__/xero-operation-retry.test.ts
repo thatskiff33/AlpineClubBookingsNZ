@@ -2094,7 +2094,8 @@ describe("retryXeroSyncOperation", () => {
       bookingId: "booking_1",
       manualRefundTaskId: "task_kept",
       paymentIntentId: "pi_kept",
-      keptCents: 24000,
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
     };
     for (const status of ["FAILED", "PARTIAL"] as const) {
       mocks.updateManyOperation.mockReset();
@@ -2125,7 +2126,7 @@ describe("retryXeroSyncOperation", () => {
           localModel: "ManualRefundTask",
           localId: "task_kept",
           queueType: "KEPT_LATE_CAPTURE_INVOICE",
-          requestPayload: { ...queued, keptCents: null },
+          requestPayload: { ...queued, capturedCents: null },
         }),
       ).supported,
     ).toBe(false);
