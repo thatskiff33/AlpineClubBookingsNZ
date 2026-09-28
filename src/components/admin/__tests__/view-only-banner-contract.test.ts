@@ -339,8 +339,10 @@ const FIGURES = {
    * 365 -> 367 (#3416): the School Teacher Hut-Leader Assignments card adds
    * Edit and Save. Cancel remains a plain Button because it only discards the
    * staged choice. MEASURED by re-running this census.
+   * 367 -> 368 (#3408): the Membership Types editor adds Restore expected
+   * booking behavior for a drifted key-resolved built-in. MEASURED.
    */
-  callSites: 367,
+  callSites: 368,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -447,9 +449,10 @@ const FIGURES = {
    *
    * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
    * is a new file and heads no banner - the same shape as the settle card it
-   * sits beside, where each button explains its own view-only state.
+    * sits beside, where each button explains its own view-only state.
+    * 54 -> 55 (#3408): the Membership Types repair button keeps its own reason.
    */
-  exceptions: 54,
+   exceptions: 55,
   exceptionFiles: 30,
   /**
    * The remainder bucket: neither a member detail card nor dialog-only.
@@ -1693,7 +1696,8 @@ describe("view-only section banner coverage (#2160)", () => {
       // the wrong permission — and an admin with membership edit but finance
       // view-only would get no banner at all.
       memberDetailCards: { controls: 4, files: 1 },
-      separateA11yContainer: { controls: 10, files: 5 },
+       // #3408 adds one repair control to the Membership Types editor.
+       separateA11yContainer: { controls: 11, files: 5 },
       // +1 control / +1 file vs 20/11: the #2259 "No emails" switch; then
       // +4 controls / +1 file: the four #2249 display-wizard step controls,
       // which the shell's render-callback indirection put out of reach of both
