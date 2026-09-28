@@ -16,7 +16,10 @@ import { stripComments } from "./support/strip-comments";
  * id, or an active `PRIMARY_INVOICE` link — and reads no operation row at all.
  *
  * The prisma mock deliberately has NO `xeroSyncOperation` table: a query that
- * went back to reading the operation ledger would throw here rather than pass.
+ * went back to reading the operation ledger for EVIDENCE would throw here
+ * rather than pass. The one ledger read the list makes is #3635's separate
+ * question - did an officer resolve the create by hand in Xero - which goes
+ * through `xero-resolved-in-xero-fences.ts`, mocked below.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -27,6 +30,12 @@ const mocks = vi.hoisted(() => ({
   cursorFindFirst: vi.fn(),
   cronFindFirst: vi.fn(),
   paymentFindMany: vi.fn(),
+  findResolvedBookingInvoiceCreate: vi.fn(),
+}));
+
+vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
+  findResolvedBookingInvoiceCreate: mocks.findResolvedBookingInvoiceCreate,
+  findResolvedRefundCreditNoteCreate: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -107,6 +116,7 @@ beforeEach(() => {
   mocks.cursorFindFirst.mockResolvedValue(null);
   mocks.cronFindFirst.mockResolvedValue(null);
   mocks.paymentFindMany.mockResolvedValue([]);
+  mocks.findResolvedBookingInvoiceCreate.mockResolvedValue(null);
 });
 
 describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", () => {
@@ -173,6 +183,24 @@ describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", 
     expect(mocks.linkFindMany.mock.calls[0][0].where.localId).toEqual({
       in: ["pay-missing", "pay-linked"],
     });
+  });
+
+  it("leaves out a booking whose invoice create an officer resolved in Xero (#3635)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      paidBooking("booking-resolved", { id: "pay-resolved", xeroInvoiceId: null }),
+      paidBooking("booking-missing", { id: "pay-missing", xeroInvoiceId: null }),
+    ]);
+    mocks.findResolvedBookingInvoiceCreate.mockImplementation(async (paymentId: string) =>
+      paymentId === "pay-resolved"
+        ? { id: "op-resolved", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
+        : null
+    );
+
+    const result = await getMissingXeroInvoiceBookings();
+
+    // "Queue all" from this list would bill the member twice.
+    expect(result.bookings.map((booking) => booking.bookingId)).toEqual(["booking-missing"]);
+    expect(result.count).toBe(1);
   });
 
   it("keeps the B5 candidate filter: PAID, with a payment, not manually settled", async () => {

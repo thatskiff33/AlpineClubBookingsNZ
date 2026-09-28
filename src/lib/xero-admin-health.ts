@@ -9,6 +9,10 @@ import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoic
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
+  findResolvedBookingInvoiceCreate,
+  findResolvedRefundCreditNoteCreate,
+} from "@/lib/xero-resolved-in-xero-fences";
+import {
   STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
   STALE_RUNNING_XERO_OPERATION_MINUTES,
   countStaleProcessingXeroInboundEvents,
@@ -227,8 +231,21 @@ export async function getMissingXeroInvoiceBookings(options?: {
   */
   const evidence = await readBookingInvoiceEvidenceForPayments(payments);
 
-  const missingBookings = candidates.flatMap((booking) => {
-    if (!booking.payment?.id || evidence.get(booking.payment.id)?.exists) {
+  const unevidenced = candidates.filter(
+    (booking) => booking.payment?.id && !evidence.get(booking.payment.id)?.exists,
+  );
+  // #3635 (`INV-INT-025`): an officer raised the invoice by hand in Xero and
+  // resolved the create. "Queue all" from this list would bill the member
+  // twice; the enqueue refuses it too, and the repair tool reports it.
+  const resolvedPaymentIds = new Set<string>();
+  for (const booking of unevidenced) {
+    if (await findResolvedBookingInvoiceCreate(booking.payment!.id)) {
+      resolvedPaymentIds.add(booking.payment!.id);
+    }
+  }
+
+  const missingBookings = unevidenced.flatMap((booking) => {
+    if (!booking.payment?.id || resolvedPaymentIds.has(booking.payment.id)) {
       return [];
     }
 
@@ -311,6 +328,13 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     }
     const coveredCents = await sumCoveredRefundCreditNoteCents(payment.id);
     if (evidence.cashRefundCents <= coveredCents) {
+      continue;
+    }
+    // #3635 (`INV-INT-025`): an officer raised this payment's refund note by
+    // hand in Xero and resolved the create. It has no local link, so coverage
+    // reads short for good; listing it would page the self-heal every night and
+    // invite a second note. The repair tool reports it at info level instead.
+    if (await findResolvedRefundCreditNoteCreate(payment.id)) {
       continue;
     }
     formatted.push({

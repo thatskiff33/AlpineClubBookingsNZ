@@ -5,6 +5,25 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+import { isAppliedCreditLedgerOperation } from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  buildXeroOperationRequeueCorrelationKey,
+  XERO_OPERATION_REQUEUE_TYPE,
+} from "@/lib/xero-operation-queue";
+
+function alreadyResolved() {
+  return NextResponse.json({ ok: true, message: "Xero operation was already resolved." });
+}
+
+function retryRunning() {
+  return NextResponse.json(
+    {
+      error:
+        "A retry of this Xero operation is running. Wait for it to finish, then check Xero before resolving it.",
+    },
+    { status: 409 }
+  );
+}
 
 const resolveSchema = z.object({
   reason: z.string().trim().min(3).max(500),
@@ -40,10 +59,12 @@ export async function POST(
     }
 
     if (isResolvedInXero(operation)) {
-      return NextResponse.json({
-        ok: true,
-        message: "Xero operation was already resolved.",
-      });
+      return alreadyResolved();
+    }
+
+    if (operation.status === "RUNNING") {
+      // #3635 decision 3: a retry that claimed the operation itself.
+      return retryRunning();
     }
 
     if (operation.status !== "FAILED" && operation.status !== "PARTIAL") {
@@ -53,10 +74,23 @@ export async function POST(
       );
     }
 
+    // #3635 decision 1 (`INV-INT-025`): resolving does not converge the local
+    // credit ledger, and a resolved deallocation would fence the booking's
+    // cancel and credit writes for good.
+    if (isAppliedCreditLedgerOperation(operation)) {
+      return NextResponse.json(
+        {
+          error:
+            "An applied-credit allocation or deallocation cannot be marked resolved in Xero, because fixing Xero by hand does not bring the club's own credit ledger back in line. Retry it instead.",
+        },
+        { status: 409 }
+      );
+    }
+
     // #3635 (`INV-INT-025`): status-guarded, the mirror of the retry claims'
-    // `manuallyResolvedAt: null` guard. A retry that claimed the row after the
-    // read above (FAILED -> RUNNING/PENDING) wins, and the officer is told to
-    // look again rather than stamping "done" on an operation now re-running.
+    // `manuallyResolvedAt: null` guard, so a retry that claimed the row after
+    // the read above wins.
+    const resolvedAt = new Date();
     const resolved = await prisma.xeroSyncOperation.updateMany({
       where: {
         id,
@@ -64,19 +98,50 @@ export async function POST(
         manuallyResolvedAt: null,
       },
       data: {
-        manuallyResolvedAt: new Date(),
+        manuallyResolvedAt: resolvedAt,
         manuallyResolvedReason: parsed.data.reason,
         manuallyResolvedById: session.user.id,
       },
     });
     if (resolved.count !== 1) {
+      const current = await prisma.xeroSyncOperation.findUnique({
+        where: { id },
+        select: { manuallyResolvedAt: true, status: true },
+      });
+      if (current && isResolvedInXero(current)) return alreadyResolved();
+      if (current?.status === "RUNNING") return retryRunning();
       return NextResponse.json(
         {
           error:
-            "This Xero operation changed while it was being resolved (a retry may have started). Reload it and check before resolving.",
+            "This Xero operation changed while it was being resolved. Reload it and check before resolving.",
         },
         { status: 409 }
       );
+    }
+
+    // #3635 decision 3: a queued retry of this operation that the drain has
+    // claimed runs while the operation row still reads FAILED. Checked AFTER
+    // the mark is written: a drain that read the row before the mark landed
+    // had already claimed its queued row, so this read sees it RUNNING and the
+    // mark is withdrawn; a drain that reads after the mark refuses to run.
+    const runningRetry = await prisma.xeroSyncOperation.findFirst({
+      where: {
+        correlationKey: buildXeroOperationRequeueCorrelationKey(id),
+        operationType: XERO_OPERATION_REQUEUE_TYPE,
+        status: "RUNNING",
+      },
+      select: { id: true },
+    });
+    if (runningRetry) {
+      await prisma.xeroSyncOperation.updateMany({
+        where: { id, manuallyResolvedAt: resolvedAt },
+        data: {
+          manuallyResolvedAt: null,
+          manuallyResolvedReason: null,
+          manuallyResolvedById: null,
+        },
+      });
+      return retryRunning();
     }
 
     await createAuditLog({

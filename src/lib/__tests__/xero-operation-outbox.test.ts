@@ -419,6 +419,33 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
+  it("queues no second invoice when an officer resolved the last create in Xero, unless force-sync overrides (#3635)", async () => {
+    // The fence reads the payment's LATEST create; the dedupe reads by key.
+    mocks.findFirstOperation.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.correlationKey
+        ? null
+        : { id: "op_resolved_invoice", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
+    );
+
+    await expect(
+      enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null })
+    ).resolves.toMatchObject({
+      queueOperationId: null,
+      resolvedInXeroOperationId: "op_resolved_invoice",
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+
+    await expect(
+      enqueueXeroBookingInvoiceOperation("booking_1", {
+        invoiceEmailDelivery: null,
+        overrideResolvedInXero: true,
+      })
+    ).resolves.toMatchObject({
+      queueOperationId: "op_booking_1",
+      overrodeResolvedInXeroOperationId: "op_resolved_invoice",
+    });
+  });
+
   it("skips queueing when the booking payment is already linked to Xero", async () => {
     mocks.findUniqueBooking.mockResolvedValue({
       id: "booking_1",
@@ -955,6 +982,34 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
   // read/write through the caller's client so the outbox row commits
   // atomically with the caller's release (and the dedupe sees uncommitted
   // state), never through the global prisma client.
+  it("queues no second refund note when an officer resolved one for this payment in Xero (#3635)", async () => {
+    // The fence's query carries the officer's mark; the dedupe's does not.
+    mocks.findFirstOperation.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.manuallyResolvedAt
+        ? { id: "op_resolved_note", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
+        : null
+    );
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 5000, { createdByMemberId: "cron" })
+    ).resolves.toMatchObject({
+      queueOperationId: null,
+      resolvedInXeroOperationId: "op_resolved_note",
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: "payment_1",
+          manuallyResolvedAt: { not: null },
+        }),
+      })
+    );
+  });
+
   it("routes all reads and the insert through the caller's store client", async () => {
     const store = {
       payment: {
@@ -982,7 +1037,8 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     });
 
     expect(store.payment.findUnique).toHaveBeenCalledTimes(1);
-    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(1);
+    // The #3635 resolved-in-Xero fence, then the queued-row dedupe.
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(2);
     // The global-prisma delegates stayed untouched.
     expect(mocks.findUniquePayment).not.toHaveBeenCalled();
     expect(mocks.findFirstOperation).not.toHaveBeenCalled();

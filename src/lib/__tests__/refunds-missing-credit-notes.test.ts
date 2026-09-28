@@ -10,6 +10,12 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   sumCovered: vi.fn(),
   resolveEvidence: vi.fn(),
+  findResolvedRefundCreditNoteCreate: vi.fn(),
+}));
+
+vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
+  findResolvedRefundCreditNoteCreate: mocks.findResolvedRefundCreditNoteCreate,
+  findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -38,6 +44,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sumCovered.mockResolvedValue(0);
+  mocks.findResolvedRefundCreditNoteCreate.mockResolvedValue(null);
   mocks.resolveEvidence.mockImplementation(
     async (payment: { refundedAmountCents: number }) => ({
       cashRefundCents: payment.refundedAmountCents,
@@ -100,6 +107,27 @@ describe("getRefundsMissingXeroCreditNotes (issue #818/#1162)", () => {
       uncoveredCents: 4200,
       refundedAt: "2026-06-19T00:00:00.000Z",
     });
+  });
+
+  it("leaves out a payment whose refund note an officer resolved by hand in Xero (#3635)", async () => {
+    const row = (id: string) => ({
+      id,
+      bookingId: `book_${id}`,
+      refundedAmountCents: 4200,
+      updatedAt: new Date("2026-06-19T00:00:00.000Z"),
+      booking: { member: { firstName: "Sam", lastName: "Lee", email: "sam@example.com" } },
+    });
+    mocks.findMany.mockResolvedValue([row("pay_resolved"), row("pay_open")]);
+    mocks.findResolvedRefundCreditNoteCreate.mockImplementation(async (paymentId: string) =>
+      paymentId === "pay_resolved"
+        ? { id: "op_note", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }
+        : null
+    );
+
+    const result = await getRefundsMissingXeroCreditNotes();
+
+    // The nightly self-heal reads this list: it must not re-mint the note.
+    expect(result.payments.map((payment) => payment.paymentId)).toEqual(["pay_open"]);
   });
 
   it("flags only the still-uncovered remainder and drops fully-covered refunds", async () => {

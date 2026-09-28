@@ -50,6 +50,10 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  findResolvedBookingInvoiceCreate,
+  findResolvedRefundCreditNoteCreate,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
@@ -430,6 +434,12 @@ export async function enqueueXeroBookingInvoiceOperation(
      * operator retry later still.
      */
     invoiceEmailDelivery: XeroInvoiceEmailInstruction | null;
+    /**
+     * #3635 (`INV-INT-025`): raise the invoice even though an officer resolved
+     * the last create in Xero. Only the single-booking force-sync passes it,
+     * and it audits the override; every other enqueuer is refused.
+     */
+    overrideResolvedInXero?: boolean;
   }
 ) {
   const booking = await prisma.booking.findUnique({
@@ -515,6 +525,18 @@ export async function enqueueXeroBookingInvoiceOperation(
     };
   }
 
+  // #3635 (`INV-INT-025`): an officer raised this invoice by hand in Xero and
+  // resolved the create, so a new one would bill the member twice.
+  const resolvedCreate = await findResolvedBookingInvoiceCreate(booking.payment.id);
+  if (resolvedCreate && !options.overrideResolvedInXero) {
+    return {
+      queueOperationId: null,
+      resolvedInXeroOperationId: resolvedCreate.id,
+      message:
+        "An officer resolved this booking's Xero invoice by hand in Xero, so no new invoice is queued.",
+    };
+  }
+
   const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
@@ -566,6 +588,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   return {
     queueOperationId: queuedOperation.id,
     message: "Xero booking invoice queued for background processing.",
+    // #3635: set only when force-sync overrode an officer's resolve, so it can
+    // say so in its audit row.
+    ...(resolvedCreate ? { overrodeResolvedInXeroOperationId: resolvedCreate.id } : {}),
   };
 }
 
@@ -797,6 +822,19 @@ export async function enqueueXeroRefundCreditNoteOperation(
     return {
       queueOperationId: null,
       message: "No additional Xero refund credit note is required for this payment.",
+    };
+  }
+
+  // #3635 (`INV-INT-025`): an officer raised a refund note for this payment by
+  // hand in Xero and resolved the create. It has no local link, so coverage
+  // still reads it as missing; a new note would credit the member twice.
+  const resolvedCreate = await findResolvedRefundCreditNoteCreate(paymentId, db);
+  if (resolvedCreate) {
+    return {
+      queueOperationId: null,
+      resolvedInXeroOperationId: resolvedCreate.id,
+      message:
+        "An officer resolved this payment's Xero refund credit note by hand in Xero, so no new note is queued.",
     };
   }
 
@@ -3023,6 +3061,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
           where: {
             id: queuedOperation.id,
             status: { in: ["RUNNING", "FAILED"] },
+            // #3635 (`INV-INT-025`): never revive a row an officer resolved.
+            manuallyResolvedAt: null,
           },
           data: {
             status: "PENDING",

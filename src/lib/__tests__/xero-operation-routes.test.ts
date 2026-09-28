@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   xeroOperationFindUnique: vi.fn(),
   xeroOperationFindMany: vi.fn(),
+  xeroOperationFindFirst: vi.fn(),
   xeroOperationCount: vi.fn(),
   xeroOperationUpdate: vi.fn(),
   xeroOperationUpdateMany: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       findUnique: mocks.xeroOperationFindUnique,
       findMany: mocks.xeroOperationFindMany,
+      findFirst: mocks.xeroOperationFindFirst,
       count: mocks.xeroOperationCount,
       update: mocks.xeroOperationUpdate,
       updateMany: mocks.xeroOperationUpdateMany,
@@ -75,7 +77,9 @@ vi.mock("@/lib/xero-admin-failures", () => ({
   resolveFailedXeroOperationStates: mocks.resolveFailedXeroOperationStates,
 }));
 
-vi.mock("@/lib/xero-operation-queue", () => ({
+vi.mock("@/lib/xero-operation-queue", async (importOriginal) => ({
+  // The real requeue correlation key, which the resolve route checks (#3635).
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-queue")),
   enqueueXeroSyncOperationRetry: mocks.enqueueXeroSyncOperationRetry,
   processQueuedXeroOperationRetries: mocks.processQueuedXeroOperationRetries,
 }));
@@ -156,6 +160,7 @@ describe("Xero operation admin retry routes", () => {
       replayable: true,
     });
     mocks.xeroOperationUpdate.mockResolvedValue({});
+    mocks.xeroOperationFindFirst.mockResolvedValue(null);
     mocks.xeroOperationFindMany.mockResolvedValue([]);
     mocks.xeroOperationCount.mockResolvedValue(0);
     mocks.resolveFailedXeroOperationStates.mockResolvedValue(new Map());
@@ -422,6 +427,115 @@ describe("Xero operation admin retry routes", () => {
     );
   });
 
+  const resolveRequest = () =>
+    new NextRequest("http://localhost", {
+      method: "POST",
+      body: JSON.stringify({ reason: "Credit note raised by hand in Xero." }),
+    });
+
+  it("refuses to resolve an applied-credit allocation or deallocation, and says to retry it (#3635)", async () => {
+    for (const queueType of ["APPLIED_CREDIT_ALLOCATION", "APPLIED_CREDIT_DEALLOCATION"]) {
+      mocks.xeroOperationUpdateMany.mockClear();
+      mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+        id: "op_credit",
+        direction: "OUTBOUND",
+        entityType: "ALLOCATION",
+        operationType: "UPDATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        status: "FAILED",
+        replayable: true,
+        queueType,
+        requestPayload: null,
+        manuallyResolvedAt: null,
+      });
+
+      const response = await resolveOperation(resolveRequest(), {
+        params: Promise.resolve({ id: "op_credit" }),
+      });
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/Retry it instead/);
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    }
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses to resolve while a retry has claimed the operation itself (#3635)", async () => {
+    mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+      id: "op_failed",
+      status: "RUNNING",
+      queueType: null,
+      requestPayload: null,
+      manuallyResolvedAt: null,
+    });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/retry of this Xero operation is running/);
+    expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the mark and answers 409 when a queued retry of the operation is running (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.xeroOperationFindFirst.mockResolvedValue({ id: "queue_running" });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.xeroOperationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          correlationKey: "xero-operation:requeue:op_failed",
+          operationType: "REQUEUE",
+          status: "RUNNING",
+        },
+      })
+    );
+    // The check runs after the mark is written, and the mark is taken back.
+    const [writeCall, withdrawCall] = mocks.xeroOperationUpdateMany.mock.calls;
+    const writtenAt = writeCall[0].data.manuallyResolvedAt;
+    expect(writtenAt).toBeInstanceOf(Date);
+    expect(withdrawCall[0]).toEqual({
+      where: { id: "op_failed", manuallyResolvedAt: writtenAt },
+      data: {
+        manuallyResolvedAt: null,
+        manuallyResolvedReason: null,
+        manuallyResolvedById: null,
+      },
+    });
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("answers 'already resolved' to the second of two officers resolving at once (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.xeroOperationFindUnique
+      .mockResolvedValueOnce({
+        id: "op_failed",
+        status: "FAILED",
+        queueType: null,
+        requestPayload: null,
+        manuallyResolvedAt: null,
+      })
+      .mockResolvedValueOnce({
+        status: "FAILED",
+        manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z"),
+      });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).message).toBe("Xero operation was already resolved.");
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
   it("refuses to resolve an operation a retry claimed after the read (#3635)", async () => {
     mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
 
@@ -441,7 +555,7 @@ describe("Xero operation admin retry routes", () => {
     ["retry", retryOperation],
     ["requeue", requeueOperation],
   ])(
-    "the %s route answers 409 for an operation resolved in Xero and queues nothing (#3635)",
+    "the %s route passes the queue's 409 refusal of a resolved operation through, and kicks nothing (#3635)",
     async (_name, route) => {
       mocks.enqueueXeroSyncOperationRetry.mockRejectedValue(
         new XeroOperationRetryError(

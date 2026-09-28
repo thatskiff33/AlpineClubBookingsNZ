@@ -211,15 +211,20 @@ describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   it("a resolve landing between the read and the claim makes the claim lose (no mint)", async () => {
     // The read saw the row unresolved; the claim's `manuallyResolvedAt: null`
     // guard is what matches nothing once the officer's mark has landed.
-    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    // First read: unresolved. The re-read after the lost claim: resolved.
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(makeOperation())
+      .mockResolvedValueOnce({ manuallyResolvedAt: RESOLVED_AT });
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
     mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
       count: args.where.manuallyResolvedAt === null ? 0 : 1,
     }));
 
-    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
-      status: 409,
-    });
+    // The resolved error, not "claimed by another retry", so the drain closes
+    // its queued row CANCELLED rather than FAILED.
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
     expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
   });
 });

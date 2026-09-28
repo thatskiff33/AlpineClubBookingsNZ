@@ -152,6 +152,20 @@ export class XeroOperationResolvedInXeroError extends XeroOperationRetryError {
   }
 }
 
+/**
+ * A retry claim matched nothing. If an officer resolved the row in between,
+ * say so with the resolved error, so the queued-retry drain closes its row as
+ * skipped rather than failed and nobody is told a second retry exists.
+ */
+async function throwLostRetryClaim(operationId: string, message: string): Promise<never> {
+  const current = await prisma.xeroSyncOperation.findUnique({
+    where: { id: operationId },
+    select: { manuallyResolvedAt: true },
+  });
+  if (current) refuseRetryIfResolvedInXero(current);
+  throw new XeroOperationRetryError(message, 409);
+}
+
 export function refuseRetryIfResolvedInXero(operation: {
   manuallyResolvedAt: Date | null;
 }): void {
@@ -1115,9 +1129,9 @@ export async function retryXeroSyncOperation(
       },
     });
     if (queued.count !== 1) {
-      throw new XeroOperationRetryError(
+      await throwLostRetryClaim(
+        operation.id,
         "This applied-credit operation was already queued or claimed by another retry.",
-        409,
       );
     }
     return {
@@ -1151,9 +1165,9 @@ export async function retryXeroSyncOperation(
         throw error;
       });
     if (queued.count !== 1) {
-      throw new XeroOperationRetryError(
+      await throwLostRetryClaim(
+        operation.id,
         "This group settlement invoice operation was already queued or claimed by another retry.",
-        409,
       );
     }
     return { message: "Queued the group settlement invoice operation for retry." };
@@ -1365,9 +1379,9 @@ export async function retryXeroSyncOperation(
         data: { status: "RUNNING", startedAt: new Date() },
       });
       if (claimed.count !== 1) {
-        throw new XeroOperationRetryError(
+        await throwLostRetryClaim(
+          operation.id,
           "This Xero operation was already claimed by another retry.",
-          409
         );
       }
       const invoiceId = await xero.createXeroInvoiceForBooking(bookingId, {
