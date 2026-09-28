@@ -4,7 +4,7 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { act, cleanup, fireEvent, render, screen, waitFor, ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const mocks = vi.hoisted(() => ({
@@ -33,7 +33,7 @@ import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_com
  * provider supplies is what decides.
  *
  * NOTE THAT THIS CONSTANT PROVES NOTHING ABOUT ZONE AUTHORITY on its own:
- * `Pacific/Auckland` is also what `APP_TIME_ZONE` resolves to under test, so the
+ * `Pacific/Auckland` is also the environment's default zone under test, so the
  * migrated code and the code it replaced agree. The test below that renders
  * under `America/Denver` is the one that can tell them apart.
  */
@@ -58,7 +58,7 @@ const CLUB_TODAY = "2026-07-01";
  * Not needing that rival is a fact about the code, not a convenience: the only
  * zone `clubToday` consults is the one it is handed, so "the panel read the
  * machine's clock" is not a reachable mutation here. The reachable one is "the
- * panel read `APP_TIME_ZONE`" — the adapter call this change removed — and the
+ * panel read the environment's zone" — the adapter call this change removed — and the
  * environment is exactly the rival that excludes it.
  */
 const CLUB_TODAY_CANDIDATES = [
@@ -283,7 +283,7 @@ describe("subscription billing panel", () => {
    * The default decision date is a BUSINESS DECISION derived from "today", and
    * `INV-CONFIG-002` says which today: the club's, from the persisted
    * `ClubTimeSettings.timeZone`. Everything else in this file renders under
-   * `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to under
+   * `Pacific/Auckland`, which is also the environment's default zone under
    * test — so those assertions cannot tell the persisted zone from the
    * environment, and would pass just as happily against the code this change
    * replaced.
@@ -305,7 +305,7 @@ describe("subscription billing panel", () => {
    * proof. `chooseDivergentClubZone` consults the environment, which is the
    * whole difference.
    */
-  it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE", async () => {
+  it("seeds the decision date from the club's PERSISTED zone, not the environment zone", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
       answerKey: "today",
@@ -322,7 +322,7 @@ describe("subscription billing panel", () => {
         }).format(new Date()),
     });
     const environmentToday = new Intl.DateTimeFormat("en-CA", {
-      timeZone: APP_TIME_ZONE,
+      timeZone: ENVIRONMENT_CLUB_ZONE,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",

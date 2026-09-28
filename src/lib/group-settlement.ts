@@ -32,7 +32,6 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
@@ -90,6 +89,12 @@ import {
   type ClearedReplacement,
 } from "@/lib/group-settlement-invoice-replacement";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
+import {
+  PAYMENT_PROCESSING_CODE,
+  PAYMENT_PROCESSING_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
@@ -205,6 +210,21 @@ async function loadSettleableChildren(
  * outstanding PaymentIntent for the same total is returned rather than charged
  * twice.
  */
+/**
+ * #3635: a settlement intent Stripe is still `processing` (a bank debit, say)
+ * is never superseded, whatever the total or currency now is - its cancel
+ * fails, and the fresh intent minted beside it would charge the group twice.
+ * Nor is it handed back: it cannot be confirmed a second time. The organiser is
+ * told to wait, with the body both single-booking card doors send.
+ */
+function refuseProcessingSettlementIntent(intent: { status: string }): void {
+  if (intent.status === "processing") {
+    throw new GroupBookingError(PAYMENT_PROCESSING_MESSAGE, 409, {
+      code: PAYMENT_PROCESSING_CODE,
+    });
+  }
+}
+
 export async function createGroupSettlementIntent(
   rawCode: string,
   sessionUserId: string,
@@ -247,23 +267,38 @@ export async function createGroupSettlementIntent(
   // lock in the commit and attach transactions below.
   refuseChangeToBoundSettlement(group.settlement, { method: "stripe" });
 
+  // #3567: a card settlement is refused here (Internet Banking, above, charges no
+  // card) — before the children are committed to CONFIRMED or a customer exists.
+  if (chargeCurrencyRefusal(format)) throw new GroupBookingError(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE, 409);
+
   const settlementHasRefundHistory =
     group.settlement?.status === PaymentStatus.REFUNDED ||
     group.settlement?.status === PaymentStatus.PARTIALLY_REFUNDED;
   const preLockAmountCents = groupSettlementTotalCents(children);
   let existingIntent: Awaited<ReturnType<typeof getPaymentIntent>> | null = null;
 
+  // #3635: any existing organiser intent is read before anything else, whatever
+  // the totals or its currency, so one Stripe is still processing refuses the
+  // attempt before any bed is claimed, any lock taken or any intent minted. A
+  // settlement with refund history is the exception: its intent is the one
+  // captured and refunded, which is never `processing`, and it is never read
+  // (#1883).
+  if (group.settlement?.stripePaymentIntentId && !settlementHasRefundHistory) {
+    existingIntent = await getPaymentIntent(
+      group.settlement.stripePaymentIntentId
+    );
+    refuseProcessingSettlementIntent(existingIntent);
+  }
+
   // Captured money is reconciled before attempting a new capacity claim. The
   // pre-lock total is not sent to a provider here; the apply path revalidates
   // the capture, settlement, children and total under its own lock.
   if (
+    existingIntent &&
     group.settlement?.stripePaymentIntentId &&
     group.settlement.amountCents === preLockAmountCents &&
     !settlementHasRefundHistory
   ) {
-    existingIntent = await getPaymentIntent(
-      group.settlement.stripePaymentIntentId
-    );
     if (existingIntent.status === "succeeded") {
       const applied = await applyGroupSettlementSucceeded({
         id: existingIntent.id,
@@ -331,7 +366,13 @@ export async function createGroupSettlementIntent(
         childCount: committedChildren.length,
       };
     }
-    if (existing.client_secret && existing.status !== "canceled") {
+    // #3635: the post-lock backstop, for an intent this attempt did not read
+    // before the lock (today every existing intent is read there, so this
+    // re-checks that read): no second intent is minted beside a processing one.
+    refuseProcessingSettlementIntent(existing);
+    // #3567: an intent in another currency is not reused; a fresh one is minted
+    // below and this one voided once superseded.
+    if (existing.client_secret && existing.status !== "canceled" && !intentCurrencyDiffers(existing, format)) {
       return {
         outcome: "ready",
         amountCents,
@@ -351,7 +392,6 @@ export async function createGroupSettlementIntent(
   const paymentIntent = await createPaymentIntent({
     format,
     amountCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
     metadata: {
       type: "group_settlement",

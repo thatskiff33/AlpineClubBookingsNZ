@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import {
   clubCalendarDateOf,
   clubWallTimeOf,
@@ -33,7 +33,7 @@ import { divergentClubZone } from "./helpers/club-time-zone";
  * has a test that states it rather than an integration that implies it.
  *
  * `divergentClubZone` supplies a club zone that answers differently from both
- * `APP_TIME_ZONE` and the host's own resolved zone, so a helper that ignored the
+ * the environment's zone and the host's own resolved zone, so a helper that ignored the
  * `zone` argument could not pass. The DST block pins `America/Denver` instead,
  * because "this zone's clocks change on this date" is not something a
  * zone-agnostic chooser can know; its premise is asserted rather than assumed.
@@ -116,7 +116,7 @@ describe("withClubTimeOfDay", () => {
  * by an hour. A fixed-offset recombination gives 18:00 or 20:00 here.
  *
  * The premise is asserted, not assumed: the club zone must not be the one
- * `APP_TIME_ZONE` already claims (or an implementation reading the environment
+ * the environment already claims (or an implementation reading the environment
  * would pass), and the HOST's offset must not move across the window (or a
  * host-local implementation would shift in step and also pass). A premise
  * failure is a FAILURE, never a skip (owner decision, #2870).
@@ -131,8 +131,8 @@ describe("withClubTimeOfDay across the club zone's DST transition", () => {
 
   beforeEach(() => {
     expect(
-      APP_TIME_ZONE,
-      `This block proves the CLUB's zone drives the recombination, so the club zone must not be the one APP_TIME_ZONE already claims. APP_TIME_ZONE is ${APP_TIME_ZONE} — set TZ to something other than ${CLUB_ZONE}, or unset it. See docs/TESTING.md rule 6.`,
+      ENVIRONMENT_CLUB_ZONE,
+      `This block proves the CLUB's zone drives the recombination, so the club zone must not be the one the environment already claims. The environment zone is ${ENVIRONMENT_CLUB_ZONE} — set TZ to something other than ${CLUB_ZONE}, or unset it. See docs/TESTING.md rule 6.`,
     ).not.toBe(CLUB_ZONE);
     const before = templateTime.getTimezoneOffset();
     const after = occurrence.getTimezoneOffset();

@@ -24,6 +24,53 @@ export const EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY = Object.freeze({
   paymentStatusUnconfirmed: true as const,
 });
 
+// #3567: an intent in the club's previous currency is still `processing` (a bank
+// debit, say), so it is neither handed back nor superseded; the member waits.
+export const PAYMENT_PROCESSING_CODE = "PAYMENT_PROCESSING" as const;
+
+export const PAYMENT_PROCESSING_MESSAGE =
+  "This payment is being processed. Refresh the page in a minute to see it confirmed.";
+
+export const PAYMENT_PROCESSING_BODY = Object.freeze({
+  code: PAYMENT_PROCESSING_CODE,
+  error: PAYMENT_PROCESSING_MESSAGE,
+});
+
+export function isPaymentProcessing(value: unknown): value is { code: typeof PAYMENT_PROCESSING_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === PAYMENT_PROCESSING_CODE && typeof candidate.error === "string";
+}
+
+/**
+ * #3641 / #3635: Stripe already holds an additional (modification) payment —
+ * `succeeded` or `requires_capture` — and our rows have not caught up yet. The
+ * additional-payment-secret route answers this instead of a second form, and
+ * the card shows it as paid. A `processing` intent is NOT this: it can still
+ * fail, so it answers {@link PAYMENT_PROCESSING_BODY} instead.
+ */
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_CODE =
+  "ADDITIONAL_PAYMENT_ALREADY_MADE" as const;
+
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_MESSAGE =
+  "This payment has already been made. Refresh the page to see it.";
+
+export const ADDITIONAL_PAYMENT_ALREADY_MADE_BODY = Object.freeze({
+  code: ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
+  error: ADDITIONAL_PAYMENT_ALREADY_MADE_MESSAGE,
+});
+
+export function isAdditionalPaymentAlreadyMade(
+  value: unknown,
+): value is typeof ADDITIONAL_PAYMENT_ALREADY_MADE_BODY {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.code === ADDITIONAL_PAYMENT_ALREADY_MADE_CODE &&
+    typeof candidate.error === "string"
+  );
+}
+
 export const REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_CODE =
   "REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED" as const;
 

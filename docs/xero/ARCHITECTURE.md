@@ -605,7 +605,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-links`, `xero-record-links`, `xero-record-types` | Deep links into the Xero UI and into local admin pages; shared record-activity types. See "Deep links into Xero" below for why the tenant GUID cannot be used in a Xero URL. |
 | `xero-link-short-code` | `getXeroOrgShortCode()` — the organisation short code for links built on the SERVER (the twin of the `useXeroOrgShortCode` hook). Never throws; null means "build the generic link". |
 | `xero-feature-flags` | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`, `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`, `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS`. |
-| `xero-organisation` | Cached connected-org facts: financial-year-end month, org name, lock dates, and the deep-link **short code**. |
+| `xero-organisation` | Cached connected-org facts: financial-year-end month, org name, lock dates, the deep-link **short code**, and the **base currency** (#3633, read off the same `getOrganisations` response, so no extra call). |
+| `xero-base-currency` | `xeroBaseCurrencyMismatch()` — the one comparison behind the warning shown when the organisation's base currency differs from the club's currency (#3633). Invoices carry no currency, so Xero books them in its base currency. A warning only: it changes no invoice. `xero-base-currency-server.ts` hands the base currency to a server page only for a viewer who may read the organisation summary (finance view). |
 
 ### Reconciliation ledger core
 
@@ -1343,7 +1344,9 @@ Stripe (C4) and Google (C5) reuse the same shell with their own steps:
    `xero-credentials-section`.
 3. **Connect** — the existing OAuth flow, then confirms the connected
    organisation **name** (via `/api/admin/xero/organisation`, extended to return
-   the name and, since #2261, the deep-link short code). The connect route
+   the name and, since #2261, the deep-link short code). Since **#3633** the
+   route also returns the organisation's **base currency**, and the step warns
+   under the confirmation when it differs from the club's currency. The connect route
    accepts a sanitised `?return=/admin/...` so the callback resumes on the
    wizard rather than the Sync page.
 

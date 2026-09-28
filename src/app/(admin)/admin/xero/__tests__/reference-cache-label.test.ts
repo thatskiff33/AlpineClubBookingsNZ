@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { formatReferenceCacheLabel } from "../_components/shared";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
@@ -11,12 +11,12 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
  * so the Xero account/item cache stamps rendered in the admin's own browser
  * locale and zone. CT-4 (#2870) finished the job — the zone is now the club's
  * PERSISTED `ClubTimeSettings.timeZone`, supplied by the caller's binding, and
- * not `APP_TIME_ZONE` (INV-CONFIG-002).
+ * not the environment's zone (INV-CONFIG-002).
  *
  * ## Why the club zone is CHOSEN here rather than hard-coded
  *
- * A test under `Pacific/Auckland` CANNOT TELL THE TWO APART. That is the zone
- * `APP_TIME_ZONE` resolves to under test and the zone the old code used, so the
+ * A test under `Pacific/Auckland` CANNOT TELL THE TWO APART. That is the
+ * environment's default zone under test and the zone the old code used, so the
  * migrated code and the code it replaced return the identical string — "false
  * and green", the trap `CLUB_TIME_KERNEL.md` names. `America/Denver` escapes
  * that, which is why it was the house choice.
@@ -81,7 +81,7 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
    * the very kernel under test would let a kernel-wide defect satisfy both
    * sides at once. And the rivals are not all club zones — the kernel refuses
    * `"UTC"` as a club timezone (`INV-CONFIG-002` bans a fixed offset), while a
-   * runner with `TZ=UTC` makes `APP_TIME_ZONE` exactly that. `Intl` accepts
+   * runner with `TZ=UTC` makes the environment zone exactly that. `Intl` accepts
    * what the pre-CT-4 code accepted, which is the right admissibility rule for
    * a "what would the old code have produced" question.
    */
@@ -114,16 +114,16 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
     // the describe body, where a failure cannot be skipped past. This states it
     // as a named test anyway, so a reader scanning the list can see the
     // assertion below is not vacuous without having to trust the helper.
-    expect(answerFor(chosen.zone)).not.toBe(answerFor(APP_TIME_ZONE));
+    expect(answerFor(chosen.zone)).not.toBe(answerFor(ENVIRONMENT_CLUB_ZONE));
     expect(answerFor(chosen.zone)).not.toBe(answerFor("UTC"));
   });
 
   // The name says "not the host's" and stops there ON PURPOSE. This formatter
-  // is handed a bound `clubTime` and has no path to `APP_TIME_ZONE` at all, so
-  // "not APP_TIME_ZONE" would be unreachable-by-construction rather than
-  // something this test excludes — a claim no mutation could ever falsify. What
-  // the zone-authority premise above DOES establish is that the chosen zone
-  // differs from `APP_TIME_ZONE`'s answer, which is what makes the binding
+  // is handed a bound `clubTime` and has no path to the environment's zone at
+  // all, so "not the environment's" would be unreachable-by-construction rather
+  // than something this test excludes — a claim no mutation could ever falsify.
+  // What the zone-authority premise above DOES establish is that the chosen zone
+  // differs from the environment zone's answer, which is what makes the binding
   // handed in meaningful; proving the plumbing that supplies it is the
   // provider suites' job, not this one's.
   it("renders both stamps in the club's persisted zone, not the host's", () => {

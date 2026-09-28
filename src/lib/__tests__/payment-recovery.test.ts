@@ -185,6 +185,27 @@ vi.mock("@/lib/booking-payment-cleanup", async (importOriginal) => ({
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
 }));
 
+// #3639: the Xero correction a replayed late-capture approval refund queues.
+const mockQueueLateCaptureRefundCreditNote = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(undefined),
+);
+vi.mock("@/lib/late-capture-refund-credit-note", () => ({
+  finishApprovedLateCaptureRefundAfterReplay: (...args: unknown[]) =>
+    mockQueueLateCaptureRefundCreditNote(...args),
+}));
+
+// #3639 review F1: the superseded hand-off asks the late-capture hold. Its own
+// behaviour (the setting, the booking's status, the task) is pinned against
+// its real code in `late-capture-refund-hold.test.ts`; here, what the hand-off
+// does with each answer.
+const mockHoldSupersededLateCapture = vi.hoisted(() =>
+  vi.fn().mockResolvedValue(false),
+);
+vi.mock("@/lib/late-capture-refund-hold", () => ({
+  holdSupersededLateCaptureIfRequired: (...args: unknown[]) =>
+    mockHoldSupersededLateCapture(...args),
+}));
+
 vi.mock("@/lib/xero-operation-outbox", () => ({
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations: (
     ...args: unknown[]
@@ -294,6 +315,23 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (the
+// file-level beforeEach below) is the house fixture, so every other case reads
+// the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+// #3567: when the club format last changed, for the stale-queue alert.
+const mockLoadPersistedClubFormat = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-settings")),
+  loadPersistedClubFormatSettings: (...a: unknown[]) => mockLoadPersistedClubFormat(...a),
+}));
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
+import logger from "@/lib/logger";
 import {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -316,6 +354,10 @@ import {
   buildEditFinancialReviewAdditionalIntentStripeKey,
 } from "@/lib/payment-recovery-keys";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+beforeEach(() => {
+  clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
+});
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -1182,6 +1224,81 @@ describe("payment recovery worker", () => {
     ]);
   });
 
+  it("replays a treasurer-approved late-capture refund under the webhook's own prefix and body, then queues the Xero correction (#3639)", async () => {
+    // The approval persisted this debt inside its claim and the inline refund
+    // did not finish. The replay must send exactly what the webhook's automatic
+    // refund of the same capture sends, so whichever reached Stripe first, the
+    // other is answered with the original refund.
+    const crashed = makeOperation({
+      id: "recovery-late-approval",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 2500,
+      allocationPlan: [{ paymentTransactionId: "txn-late", amountCents: 2500 }],
+      idempotencyKey: "late_capture_approval_refund_recovery_pi_late",
+      stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      // The payment's representative intent, which is not the late capture's.
+      paymentIntentId: "pi_primary",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (isStaleWorkerSweep(args)) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "cancelled_booking_late_capture",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("late_cancel_refund_booking-1_pi_late");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-late", amountCents: 2500 },
+    ]);
+    expect(mockQueueLateCaptureRefundCreditNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+        amountCents: 2500,
+      }),
+    );
+  });
+
+  it("writes the approved refund's record only on the replay that moves it to SUCCEEDED (#3639 delta D6)", async () => {
+    const crashed = makeOperation({
+      id: "recovery-late-approval-2",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 2500,
+      allocationPlan: [{ paymentTransactionId: "txn-late", amountCents: 2500 }],
+      idempotencyKey: "late_capture_approval_refund_recovery_pi_late",
+      stripeKeyPrefix: "late_cancel_refund_booking-1_pi_late",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...crashed, status: "PENDING" }]),
+    );
+    // Someone else (the inline close, late) already moved it.
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      (args: { data?: { status?: unknown } }) =>
+        Promise.resolve({
+          count: args.data?.status === PaymentRecoveryOperationStatus.SUCCEEDED ? 0 : 1,
+        }),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockQueueLateCaptureRefundCreditNote).not.toHaveBeenCalled();
+  });
+
   it("replays a byte-identical refund-request Stripe body after a lost inline recording, so it converges instead of hitting idempotency_error (#1507)", async () => {
     // Regression for #1507 (refund_request half of the #1494 pattern). The admin
     // approve route creates the appeal refund under refund_request_<id>; if it
@@ -1243,6 +1360,10 @@ describe("payment recovery worker", () => {
     expect(
       bookingModificationRefundReasonForKeyPrefix("guest_remove_refund_bk_mod"),
     ).toBe("guest_removed_price_decrease");
+    // #3639: a treasurer-approved late-capture refund replays the webhook's body.
+    expect(
+      bookingModificationRefundReasonForKeyPrefix("late_cancel_refund_bk_pi"),
+    ).toBe("cancelled_booking_late_capture");
     // Legacy rows (pre-#1152, no stored prefix) keep the historical recovery
     // reason — they were never shared-key with the inline refund.
     expect(bookingModificationRefundReasonForKeyPrefix(null)).toBe(
@@ -1987,6 +2108,111 @@ describe("payment recovery worker", () => {
         }),
       }),
     );
+  });
+
+  describe("card charges while the club's currency cannot be charged in (#3567)", () => {
+    // A queue that honours the worker's own `where` and `take`, so a filter
+    // dropped from the query (and moved back into the loop) shows up as the
+    // batch filling with charges it then skips.
+    type TypeWhere = { where?: { type?: string | { not?: string } } };
+    function queueOf(rows: ReturnType<typeof makeOperation>[]) {
+      const matches = (row: ReturnType<typeof makeOperation>, where?: TypeWhere["where"]) =>
+        where?.type === undefined ||
+        (typeof where.type === "string" ? row.type === where.type : row.type !== where.type.not);
+      mockPaymentRecoveryFindMany.mockImplementation(
+        (args?: { take?: number } & TypeWhere) =>
+          Promise.resolve(
+            isStaleWorkerSweep(args) ? [] : rows.filter((r) => matches(r, args?.where)).slice(0, args?.take ?? rows.length),
+          ),
+      );
+      mockPaymentRecoveryFindFirst.mockImplementation((args?: TypeWhere) =>
+        Promise.resolve(rows.find((r) => matches(r, args?.where)) ?? null),
+      );
+    }
+    const stalledAlerts = () =>
+      mockSendAdminPaymentFailureAlert.mock.calls.filter(([a]) => /queue is stalled/.test((a as { errorMessage?: string })?.errorMessage ?? ""));
+    const WAITING_LOG = expect.stringContaining("leaving card charges unclaimed");
+    const charges = Array.from({ length: 12 }, (_, n) =>
+      makeOperation({
+        id: `recovery-charge-${n}`,
+        type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+        status: "PENDING",
+        paymentIntentId: `mod_guest_bk1_mod-${n}`,
+        paymentTransactionId: null,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, n)),
+      }),
+    );
+    const refund = makeOperation({
+      id: "recovery-mod-refund",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      status: "PENDING",
+      amountCents: 4000,
+      idempotencyKey: "payment_recovery_modification_refund_mod-1",
+      paymentTransactionId: null,
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    it("keeps more than a batch of waiting charges out of the query, so the refund queued behind them still runs", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf([...charges, refund]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(refund);
+
+      const result = await processPaymentRecoveryOperations({ limit: 10 });
+
+      expect(result).toMatchObject({ found: 1, processed: 1, succeeded: 1, skipped: 0 });
+      const claimedIds = mockPaymentRecoveryUpdateMany.mock.calls
+        .filter(([call]) => call?.data?.status === PaymentRecoveryOperationStatus.PROCESSING)
+        .map(([call]) => call?.where?.id);
+      expect(claimedIds).toEqual(["recovery-mod-refund"]);
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4000 }));
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not call deliberately waiting charges a stalled queue", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf(charges);
+
+      const result = await processPaymentRecoveryOperations({ limit: 10 });
+
+      expect(result).toMatchObject({ found: 0, processed: 0 });
+      expect(mockPaymentRecoveryFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } }),
+        }),
+      );
+      expect(stalledAlerts()).toHaveLength(0);
+    });
+
+    it("claims charges again once the currency is fixed, without calling the wait a stalled cron", async () => {
+      // The admin fixed the currency ten minutes ago; these charges waited for months.
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 10 * 60 * 1000) });
+      queueOf([charges[0]]);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      const queueRead = mockPaymentRecoveryFindMany.mock.calls.find(([a]) => !isStaleWorkerSweep(a));
+      expect(queueRead?.[0]?.where).not.toHaveProperty("type");
+      expect(stalledAlerts()).toHaveLength(0);
+    });
+
+    it("does alert on a charge still waiting once the club format has been unchanged past the stale window", async () => {
+      mockLoadPersistedClubFormat.mockResolvedValueOnce({ updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) });
+      queueOf([charges[0]]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(null);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(stalledAlerts()).toHaveLength(1);
+    });
+
+    it("says charges are waiting once per run, at warn, and only while one is actually waiting", async () => {
+      clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+      queueOf([refund]);
+      mockPaymentRecoveryFindUnique.mockResolvedValue(refund);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(logger.warn).not.toHaveBeenCalledWith(WAITING_LOG);
+      expect(logger.error).not.toHaveBeenCalledWith(WAITING_LOG);
+
+      queueOf([...charges, refund]);
+      await processPaymentRecoveryOperations({ limit: 10 });
+      expect(vi.mocked(logger.warn).mock.calls.filter(([m]) => typeof m === "string" && m.includes("leaving card charges unclaimed"))).toHaveLength(1);
+    });
   });
 
   describe("additional PaymentIntent recovery (#1096)", () => {
@@ -2883,6 +3109,85 @@ describe("#2262 — deleted-operation coherence (H1/H2)", () => {
     // REFUND_SUPERSEDED_PAYMENT the reversal's disarm never covered.
     expect(mockPaymentTransactionUpdate).not.toHaveBeenCalled();
     expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
+  });
+
+  it("#3639 — a hand-off the club holds for a treasurer moves no money: no superseded refund, the cancel op completes", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(true);
+
+    await expect(
+      queueSupersededPaymentIntentRefundRecovery({
+        paymentIntentId: op.paymentIntentId,
+        amountCents: 6000,
+        paymentMethodId: "pm_1",
+      }),
+    ).resolves.toBe(true);
+
+    expect(mockHoldSupersededLateCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: op.bookingId,
+        paymentIntentId: op.paymentIntentId,
+        paymentTransactionId: op.paymentTransactionId,
+        amountCents: 6000,
+      }),
+    );
+    // Stripe holds the money, so the row says captured; nothing is refunded.
+    expect(mockPaymentTransactionUpdate).toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: op.id }),
+        data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }),
+      }),
+    );
+  });
+
+  it("#3639 — a hand-off the club does NOT hold still queues the superseded refund, as before", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindFirst.mockResolvedValue(op);
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(false);
+
+    await queueSupersededPaymentIntentRefundRecovery({
+      paymentIntentId: op.paymentIntentId,
+      amountCents: 6000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      }),
+    );
+  });
+
+  it("#3639 — the recovery cron's hand-off asks the same question when Stripe reports the intent succeeded", async () => {
+    const op = makeOperation({ status: PaymentRecoveryOperationStatus.PENDING });
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [op]),
+    );
+    mockPaymentRecoveryFindUnique.mockResolvedValue(op);
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: false,
+      paymentIntent: { id: op.paymentIntentId, status: "succeeded", amount: 6000, payment_method: "pm_1" },
+    });
+    mockHoldSupersededLateCapture.mockResolvedValueOnce(true);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockHoldSupersededLateCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: op.paymentIntentId, amountCents: 6000 }),
+    );
+    expect(mockPaymentRecoveryUpsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+        }),
+      }),
+    );
   });
 
   it("H2 — the fenced completion cannot resurrect a deleted operation (count 0 is handled, never a P2025 throw)", async () => {

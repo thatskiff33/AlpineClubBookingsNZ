@@ -122,9 +122,10 @@ function makePolicyDb(options: {
       ),
     },
     membershipType: {
-      findMany: vi.fn(async (args: { where: { key: { in: string[] } } }) =>
+      findMany: vi.fn(async (args: { where: { key: { in: string[] }; isActive?: boolean } }) =>
         (options.membershipTypes ?? []).filter((type) =>
-          args.where.key.in.includes(type.key),
+          args.where.key.in.includes(type.key) &&
+          (args.where.isActive === undefined || type.isActive === args.where.isActive),
         ),
       ),
     },
@@ -183,6 +184,20 @@ describe("membership type booking and subscription policy", () => {
       source: "built_in_default",
       subscriptionBehavior: "NOT_REQUIRED",
       membershipType: { key: "LIFE" },
+    });
+  });
+
+  it("uses an archived stored role default rather than synthesizing the built-in policy", async () => {
+    const db = makePolicyDb({
+      members: [makeMember()],
+      membershipTypes: [{ ...fullType, isActive: false, bookingBehavior: "BLOCK_BOOKING" }],
+    });
+    const policies = await resolveMembershipTypePoliciesForMembers(db, {
+      memberIds: ["member-1"], seasonYear: 2026,
+    });
+    expect(policies.get("member-1")).toMatchObject({
+      source: "role_default", bookingBehavior: "BLOCK_BOOKING",
+      membershipType: { id: "type-full", isActive: false },
     });
   });
 

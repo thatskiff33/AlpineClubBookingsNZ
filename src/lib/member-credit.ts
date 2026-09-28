@@ -32,6 +32,7 @@ import {
   validateCreditApplicationAgainstBalance,
   validateNegativeAdjustmentAgainstBalance,
 } from "@/lib/policies/member-credit";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
 
@@ -140,7 +141,7 @@ export async function createCancellationCredit(
       memberId,
       amountCents,
       type: CreditType.CANCELLATION_REFUND,
-      description: `Cancellation refund for booking ${bookingId.slice(0, 8)}`,
+      description: cancellationCreditDescription(bookingId),
       sourceBookingId: bookingId,
       xeroCreditNoteId: xeroCreditNoteId ?? null,
     },
@@ -400,11 +401,14 @@ export async function clampAppliedCreditToBookingPrice(
     memberId,
     bookingId,
     newFinalPriceCents,
+    format,
   }: {
     /** The booking OWNER, or null when it is owned by an Organisation (#3369). */
     memberId: string | null;
     bookingId: string;
     newFinalPriceCents: number;
+    /** Club format resolved before the caller's transaction or ledger lock. */
+    format: ClubFormat;
   },
   tx: Prisma.TransactionClient
 ): Promise<{ appliedCreditCents: number; refundedExcessCents: number }> {
@@ -449,6 +453,7 @@ export async function clampAppliedCreditToBookingPrice(
       bookingId,
       payment.xeroInvoiceId,
       tx,
+      format,
     );
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },

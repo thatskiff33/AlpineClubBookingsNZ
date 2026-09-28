@@ -68,6 +68,7 @@ export function assertSafeCreditSyncRaceDbUrl(url: string): void {
 let prisma: PrismaClient;
 let credit: typeof import("@/lib/member-credit");
 let resolveManualRefundTask: typeof import("@/lib/manual-refund-task-resolution")["resolveManualRefundTask"];
+let deletedBookingModificationRefundReason: typeof import("@/lib/deleted-booking-modification-payment")["deletedBookingModificationRefundReason"];
 
 async function lines() {
   return prisma.bookingLedgerLine.findMany({
@@ -112,6 +113,9 @@ async function clean(): Promise<void> {
       ({ prisma } = await import("@/lib/prisma"));
       credit = await import("@/lib/member-credit");
       ({ resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution"));
+      ({ deletedBookingModificationRefundReason } = await import(
+        "@/lib/deleted-booking-modification-payment"
+      ));
 
       await clean();
       await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
@@ -164,7 +168,7 @@ async function clean(): Promise<void> {
     it("posts credit applied and a clamp give-back one line per row, summing to what the booking holds applied", async () => {
       await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 8_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
       await prisma.$transaction((tx) =>
-        credit.clampAppliedCreditToBookingPrice({ memberId: MEMBER_ID, bookingId: BOOKING_ID, newFinalPriceCents: 6_000 }, tx),
+        credit.clampAppliedCreditToBookingPrice({ memberId: MEMBER_ID, bookingId: BOOKING_ID, newFinalPriceCents: 6_000, format: CLUB_FORMAT_TEST }, tx),
       );
       const posted = await lines();
       expect(posted.map((l) => [l.kind, l.amountCents, l.settlementMethod, l.anchorKind])).toEqual([
@@ -219,11 +223,18 @@ async function clean(): Promise<void> {
       await prisma.payment.create({
         data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 10_000, source: "STRIPE", status: "SUCCEEDED" },
       });
+      // The shape the #2700 raise really writes (#3639): the late capture is a
+      // Stripe ADDITIONAL transaction with an intent, and the task names that
+      // intent by its frozen reason sentence. Completing the task first checks
+      // that capture is still held, so a task naming no capture is refused.
       await prisma.paymentTransaction.create({
-        data: { id: "race-3599-txn", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: 10_000, status: "SUCCEEDED" },
+        data: { id: "race-3599-txn", paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", amountCents: 8_000, status: "SUCCEEDED" },
+      });
+      await prisma.paymentTransaction.create({
+        data: { id: "race-3599-late-txn", paymentId: PAYMENT_ID, kind: "ADDITIONAL", source: "STRIPE", stripePaymentIntentId: "pi_race_3599_late", amountCents: 2_000, status: "SUCCEEDED" },
       });
       await prisma.manualRefundTask.create({
-        data: { id: TASK_ID, bookingId: BOOKING_ID, paymentId: PAYMENT_ID, amountCents: 2_000, raisedAmountCents: 2_000, kind: "DELETED_BOOKING_LATE_CAPTURE", reason: "race 3599 late capture" },
+        data: { id: TASK_ID, bookingId: BOOKING_ID, paymentId: PAYMENT_ID, amountCents: 2_000, raisedAmountCents: 2_000, kind: "DELETED_BOOKING_LATE_CAPTURE", reason: deletedBookingModificationRefundReason("pi_race_3599_late") },
       });
       await resolveManualRefundTask({
         taskId: TASK_ID,

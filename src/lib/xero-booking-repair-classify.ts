@@ -12,7 +12,6 @@ import {
   partialClearingNoteIsIncomplete,
 } from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
-import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import type {
   BookingClassificationContext,
   BookingXeroRepairAction,
@@ -23,11 +22,13 @@ import {
   getCapturedRepairTransactions,
   getOutstandingCapturedRefundAmountCents,
   getOutstandingRepairTransactions,
+  hasCapturedRepairPayment,
   planEditReviewChargeInvoicePayment,
 } from "./xero-booking-repair-payments";
 import {
   getBlockingOperation,
   isStuckOperation,
+  paymentNoteAnswersInvoice,
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
@@ -59,6 +60,7 @@ import {
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
@@ -776,6 +778,8 @@ export function classifyBookingContext(
       // Captured money via the payment status OR the transaction ledger —
       // ledger-first states (a SUCCEEDED capture row under a still-PENDING
       // aggregate status) must count as captured for the policy split below.
+      // Deliberately Stripe-only in its ledger half, unlike
+      // `hasCapturedRepairPayment` (#3639): this split routes card refunds.
       const paymentHasCapturedMoney =
         hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
       const modificationCreditNote = resolveObjectFromCandidates({
@@ -1280,10 +1284,44 @@ export function classifyBookingContext(
     }
   }
 
+  // #3639 review F6 (the #3535 composition): cash that arrived after an IB hold
+  // was released retires the pending clearing note (`retirePendingClearingNote`
+  // cancels its queued MODIFICATION_CREDIT_NOTE create) and settles the payment,
+  // so the arm below skips the booking - but the operator is still told why no
+  // note exists. The ONE home of this finding (#3535's copy inside the arm was
+  // removed at the sync, delta D2).
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    capturedPaymentTransactions.length === 0 &&
+    primaryInvoice &&
+    (hasCapturedRepairPayment(payment) ||
+      paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations)) &&
+    bookingOperations.some(
+      (operation) =>
+        operation.entityType === "CREDIT_NOTE" &&
+        operation.operationType === "CREATE" &&
+        operation.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE &&
+        operation.status === "CANCELLED"
+    )
+  ) {
+    addFinding(findings, {
+      code: "MANUAL_REVIEW_REQUIRED",
+      severity: "info",
+      summary:
+        "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
+      safeToAutoApply: false,
+      details: { paymentId: payment.id, invoiceId: primaryInvoice.objectId },
+      actionKeys: [],
+    });
+  }
+
+  // #3639: this arm clears an invoice nobody paid; `hasCapturedRepairPayment`
+  // and `paymentNoteAnswersInvoice` are the two things it asks first.
+  if (
+    booking.status === "CANCELLED" &&
+    payment &&
+    !hasCapturedRepairPayment(payment) &&
+    !paymentNoteAnswersInvoice(refundCreditNote, paymentLinks, paymentOperations) &&
     primaryInvoice
   ) {
     const clearingAmountCents = getUnpaidCancellationClearingAmountCents(
@@ -1305,16 +1343,6 @@ export function classifyBookingContext(
           bookingOperations,
           "CREDIT_NOTE",
           "CREATE"
-        );
-        // #3535: a clearing row CANCELLED by the late-cash arm means the
-        // member's cash arrived after the release - no clearing note is owed.
-        // (#3639 makes the arm's own "was it paid" test source-agnostic; this
-        // reads only the retired note.)
-        const clearingNoteRetiredByCash = bookingOperations.some(
-          (operation) =>
-            operation.entityType === "CREDIT_NOTE" &&
-            operation.operationType === "CREATE" &&
-            operation.status === "CANCELLED"
         );
         if (
           blockingOperation &&
@@ -1340,16 +1368,6 @@ export function classifyBookingContext(
               operationStatus: blockingOperation.operation.status,
             },
             actionKeys: [action.key],
-          });
-        } else if (!blockingOperation && clearingNoteRetiredByCash) {
-          addFinding(findings, {
-            code: "MANUAL_REVIEW_REQUIRED",
-            severity: "info",
-            summary:
-              "Cash arrived for this booking after its hold was released, so its invoice-clearing credit note was retired and none is owed - no action.",
-            safeToAutoApply: false,
-            details: { paymentId: payment?.id ?? null, invoiceId: primaryInvoice.objectId },
-            actionKeys: [],
           });
         } else if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
@@ -1584,39 +1602,64 @@ export function classifyBookingContext(
     outstandingCapturedRefundAmountCents > 0
   ) {
     // #1491 (owner decision): a cancel that RECORDED a refund decision
-    // deliberately retained the remainder as the cancellation-policy
-    // penalty. Correct books ⇒ no finding (the #1427 account-credit-settled
-    // precedent: never nag forever on correct books). The decision artifacts,
-    // any of: the CANCELLED event's policy snapshot (written by every
-    // paid-path cancel, including 0%-tier retentions; unpaid-branch cancels
-    // carry no snapshot), a cancellation credit (credit path), or a LIVE
-    // booking-cancel refund recovery operation (card path, frozen inside the
-    // claim transaction — a terminally FAILED op is a decision whose money
-    // never moved, so it does NOT suppress the finding; the recovery
-    // exhaustion alert and this finding both stay loud). Without such a
-    // record the state cannot be distinguished from a genuine late capture,
-    // so the finding stays but is NEVER auto-applied — an operator confirms
-    // which it is before any refund moves. Known residual: a genuine late
-    // capture on a booking that ALSO had a paid-path cancel is masked by
+    // deliberately retained the remainder as the cancellation-policy penalty,
+    // so correct books get no finding (the #1427 precedent). Which artefacts
+    // count is `isCancellationRefundDecisionRecorded`, shared with the Stripe
+    // webhook since #3639. Without one, a late capture and a retention look
+    // alike, so the finding stays but is NEVER auto-applied. Known residual: a
+    // late capture on a booking that ALSO had a paid-path cancel is masked by
     // that cancel's artifact; the #1350 durable intent-cancellation recovery
     // and the webhook superseded-intent hook own that population.
-    // #3638: an admin-only settlement marker (#2262's two, #3638's
-    // second-instrument conflict) is a CANCELLED event WITH a snapshot that
-    // records no refund decision, so it must not mask this finding.
-    const cancellationRefundDecisionRecorded =
-      (booking.events ?? []).some(
-        (event) =>
-          event.snapshot !== null && !isManualSettlementMarkerEvent(event)
-      ) ||
-      getCancellationCreditAmountCents(booking) > 0 ||
-      context.cancellationRefundRecoveryOperations.some(
-        (operation) => operation.status !== "FAILED"
+    // #3638's second-instrument conflict marker is excluded with #2262's two
+    // by `isManualSettlementMarkerEvent`, inside the shared rule.
+    const cancellationRefundDecisionRecorded = isCancellationRefundDecisionRecorded({
+      bookingId: booking.id,
+      cancelledEvents: booking.events ?? [],
+      creditsFromCancellation: booking.creditsFromCancellation,
+      cancellationRefundRecoveryOperations: context.cancellationRefundRecoveryOperations,
+    });
+    // #3639 review F3: a capture a treasurer-approval task owns (held or kept)
+    // is decided, so it is left out; nothing is offered for refund behind it.
+    const heldOutstanding = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.stripePaymentIntentId !== null &&
+        context.lateCaptureApprovalIntentIds.has(transaction.stripePaymentIntentId)
+    );
+    const unheldOutstandingCents =
+      outstandingCapturedRefundAmountCents -
+      heldOutstanding.reduce(
+        (sum, t) => sum + Math.max(t.amountCents - t.refundedAmountCents, 0),
+        0
       );
-    if (!cancellationRefundDecisionRecorded) {
-      const lateCaptureTransactions = capturedPaymentTransactions.filter(
-        (transaction) => transaction.amountCents > transaction.refundedAmountCents
+    const lateCaptureTransactions = capturedPaymentTransactions.filter(
+      (transaction) =>
+        transaction.amountCents > transaction.refundedAmountCents &&
+        !heldOutstanding.includes(transaction)
+    );
+    // #3639 delta D1: the refund is PINNED to the unheld captures, slice by
+    // slice, so no newest-first allocation can ever reach a held capture's money.
+    // A legacy payment (no ledger rows, so no ids) cannot have a held capture —
+    // approval tasks are raised on ledger rows — and keeps the derived refund.
+    const pinnable = lateCaptureTransactions.every((transaction) => transaction.id !== null);
+    const lateCaptureAllocation: { paymentTransactionId: string; amountCents: number }[] = [];
+    let unallocatedCents = Math.max(unheldOutstandingCents, 0);
+    for (const transaction of [...lateCaptureTransactions].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    )) {
+      if (!pinnable || transaction.id === null || unallocatedCents <= 0) break;
+      const sliceCents = Math.min(
+        transaction.amountCents - transaction.refundedAmountCents,
+        unallocatedCents
       );
-      const refundAmountCents = outstandingCapturedRefundAmountCents;
+      lateCaptureAllocation.push({ paymentTransactionId: transaction.id, amountCents: sliceCents });
+      unallocatedCents -= sliceCents;
+    }
+    const refundAmountCents = pinnable
+      ? lateCaptureAllocation.reduce((sum, slice) => sum + slice.amountCents, 0)
+      : heldOutstanding.length === 0
+        ? Math.max(unheldOutstandingCents, 0)
+        : 0;
+    if (!cancellationRefundDecisionRecorded && refundAmountCents > 0) {
       const action = addAction(actionMap, {
         key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
         bookingId: booking.id,
@@ -1628,6 +1671,7 @@ export function classifyBookingContext(
           bookingId: booking.id,
           paymentId: payment.id,
           refundAmountCents,
+          allocation: pinnable ? lateCaptureAllocation : null,
           invoiceId: primaryInvoice?.objectId ?? null,
         },
       });

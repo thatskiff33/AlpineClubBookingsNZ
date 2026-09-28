@@ -460,7 +460,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:201",
   "src/app/(authenticated)/bookings/page.tsx:183",
-  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:52",
+  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:80",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
@@ -480,12 +480,12 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/refund-request/route.ts:43",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
-  "src/app/api/payments/create-payment-intent/route.ts:152",
+  "src/app/api/payments/create-payment-intent/route.ts:156",
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:499",
+  "src/lib/booking-cancel.ts:503",
   "src/lib/booking-date-modification-service.ts:392",
   "src/lib/booking-delete.ts:124",
   "src/lib/booking-delete.ts:73",
@@ -498,7 +498,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:273",
   "src/lib/kiosk-access.ts:232",
-  "src/lib/manual-refund-task-queue-payload.ts:188",
+  "src/lib/manual-refund-task-queue-payload.ts:196",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:342",
   "src/lib/waitlist-cross-lodge.ts:530",
@@ -519,8 +519,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1226",
-  "src/lib/payment-recovery.ts:2484",
-  "src/lib/payment-recovery.ts:2536",
+  "src/lib/payment-recovery.ts:2558",
+  "src/lib/payment-recovery.ts:2610",
   "src/lib/xero-admin-health.ts:324",
 ];
 
@@ -779,7 +779,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/payments/manual-refund-tasks/route.ts:80",
   "src/lib/bed-allocation-removal.ts:144",
   "src/lib/cron-additional-payment-reminders.ts:437",
-  "src/lib/cron-confirm-pending.ts:188",
+  "src/lib/cron-confirm-pending.ts:189",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what

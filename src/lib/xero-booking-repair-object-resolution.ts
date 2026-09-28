@@ -206,3 +206,40 @@ export function isStuckOperation(operation: XeroOperationRecord) {
 
   return Date.now() - operation.createdAt.getTime() >= STUCK_OPERATION_MS;
 }
+
+/**
+ * #3639: has the cancellation already answered the booking's invoice with a
+ * credit note on the PAYMENT? The cancelled-open-invoice arm asks this before
+ * it queues a clearing note, because its own lookup is for the booking-level
+ * `MODIFICATION_CREDIT_NOTE` and sees neither payment-level shape:
+ *
+ * - the ACCOUNT-credit note an internet-banking cancel records on the payment
+ *   (`enqueueXeroAccountCreditNoteOperation`);
+ * - the REFUND note an internet-banking hold released before #3535 raised
+ *   against the payment to answer its unpaid invoice.
+ *
+ * Either means a second, full clearing note would clear the same invoice twice.
+ * A payment-level credit-note operation still queued, running or failed counts
+ * too: it produces that note when it runs, and an operator retries it from the
+ * outbox rather than this tool minting a rival. `refundCreditNote` is the
+ * classifier's own resolution of the refund note, passed in so the two cannot
+ * disagree about it.
+ */
+export function paymentNoteAnswersInvoice(
+  refundCreditNote: ResolvedLocalObject | null,
+  paymentLinks: XeroObjectLinkRecord[],
+  paymentOperations: XeroOperationRecord[]
+): boolean {
+  return (
+    refundCreditNote !== null ||
+    resolveObjectFromCandidates({
+      links: paymentLinks,
+      operations: paymentOperations,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "ACCOUNT_CREDIT_NOTE",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+    }) !== null ||
+    getBlockingOperation(paymentOperations, "CREDIT_NOTE", "CREATE") !== null
+  );
+}

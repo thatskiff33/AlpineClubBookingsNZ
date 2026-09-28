@@ -9,10 +9,11 @@ import {
   Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
+import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import {
   cancelPaymentIntentIfCancellableWithResult,
@@ -44,6 +45,8 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
+import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
+import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -476,7 +479,10 @@ import {
   buildDuplicateCaptureRefundStripeKeyPrefix,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
+  buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
+  buildLateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
+  isLateCaptureRefundStripeKeyPrefix,
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
@@ -564,6 +570,37 @@ export async function markEditFinancialReviewRefundRecoverySucceeded({
       processingStartedAt: null,
       succeededAt: new Date(),
     },
+  });
+}
+
+/** #3639: a treasurer-approved late-capture refund's debt, as the edit-review one above; replayed under the webhook's own prefix. */
+export async function enqueueLateCaptureApprovalRefundRecovery({
+  bookingId,
+  paymentId,
+  paymentIntentId,
+  amountCents,
+  allocationPlan,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  allocationPlan: RefundAllocationSlice[];
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey:
+      buildLateCaptureApprovalRefundRecoveryIdempotencyKey(paymentIntentId),
+    stripeKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(
+      bookingId,
+      paymentIntentId,
+    ),
+    allocationPlan,
+    store,
   });
 }
 
@@ -1736,6 +1773,19 @@ async function handoffSucceededSupersededIntentToRefund({
     paymentMethodId,
   });
 
+  // #3639: on a CANCELLED booking this capture is a late capture, so it follows
+  // the club's setting like every other - held for a treasurer, no refund.
+  if (
+    await holdSupersededLateCaptureIfRequired({
+      ...operation,
+      paymentTransactionId: operation.paymentTransactionId,
+      amountCents,
+    })
+  ) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   await enqueueSupersededPaymentRefundRecovery({
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
@@ -2135,6 +2185,30 @@ async function processBookingModificationRefundOperation(
           duplicateCapturePrefix.length,
         ),
         settledPaymentIntentId: null,
+      });
+    }
+    return;
+  }
+
+  // #3639: a replayed treasurer-approved late-capture refund writes the record
+  // and queues the Xero correction its inline attempt would have - only on the
+  // replay that actually moves the operation to SUCCEEDED (delta D6), so an
+  // inline success whose close was lost is not recorded twice.
+  if (isLateCaptureRefundStripeKeyPrefix(operation.stripeKeyPrefix)) {
+    const transition = await prisma.paymentRecoveryOperation.updateMany({
+      where: { id: operation.id, status: { not: PaymentRecoveryOperationStatus.SUCCEEDED } },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: new Date(),
+      },
+    });
+    if (transition.count > 0) {
+      await finishApprovedLateCaptureRefundAfterReplay({
+        ...operation,
+        amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
       });
     }
     return;
@@ -2743,7 +2817,6 @@ async function processCreateAdditionalPaymentIntentOperation(
   const pi = await createPaymentIntent({
     format,
     amountCents: askCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId,
     metadata: {
       bookingId: operation.bookingId,
@@ -2898,15 +2971,21 @@ const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 // the whole fleet, not once per process.
 const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
 
-async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat) {
+// #3567: card charges are not a stalled cron while card payments are off (the
+// admin banner says so), nor within this window of the club format last changing:
+// charges that waited out a refusal are old, and the next run claims them.
+async function alertStalePaymentRecoveryQueueIfNeeded(format: ClubFormat, chargesRefused: boolean) {
   const now = new Date();
   const staleThreshold = new Date(
     now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
   );
+  const formatChangedAt = chargesRefused ? null : (await loadPersistedClubFormatSettings())?.updatedAt;
+  const quietCharges = chargesRefused || (formatChangedAt != null && formatChangedAt > staleThreshold);
   const oldest = await prisma.paymentRecoveryOperation.findFirst({
     where: {
       status: PaymentRecoveryOperationStatus.PENDING,
       createdAt: { lt: staleThreshold },
+      ...(quietCharges ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {}),
     },
     orderBy: { createdAt: "asc" },
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
@@ -3032,8 +3111,12 @@ export async function processPaymentRecoveryOperations(options?: {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #3567: while the stored currency cannot be charged in, card CHARGES wait,
+  // excluded IN THE QUERY so they never fill the batch and starve refunds.
+  const chargeRefusal = chargeCurrencyRefusal(format);
+  const waitingCharges = chargeRefusal ? { type: { not: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT } } : {};
   await resetStaleProcessingOperations(format);
-  await alertStalePaymentRecoveryQueueIfNeeded(format);
+  await alertStalePaymentRecoveryQueueIfNeeded(format, chargeRefusal !== null);
 
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({
@@ -3041,6 +3124,7 @@ export async function processPaymentRecoveryOperations(options?: {
       status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
       attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       nextRetryAt: { lte: new Date() },
+      ...waitingCharges,
     },
     orderBy: { createdAt: "asc" },
     take: limit,
@@ -3055,6 +3139,10 @@ export async function processPaymentRecoveryOperations(options?: {
     skipped: 0,
   };
 
+  // Said only while a refused charge is actually waiting, not on every run.
+  if (chargeRefusal && (await prisma.paymentRecoveryOperation.findFirst({ where: { status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] }, type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT }, select: { id: true } }))) {
+    logger.warn(`Payment recovery is leaving card charges unclaimed: ${chargeRefusal.message}`);
+  }
   for (const queuedOperation of queuedOperations) {
     const operation = await claimPaymentRecoveryOperation(queuedOperation.id);
     if (!operation) {

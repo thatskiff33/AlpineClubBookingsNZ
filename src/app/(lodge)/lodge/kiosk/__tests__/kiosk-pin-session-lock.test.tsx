@@ -60,13 +60,6 @@ import {
  * events; that is a browser property, and the four were chosen for it.
  */
 
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
-
 vi.mock("@/components/kiosk-lodge-instructions", () => ({
   KioskLodgeInstructions: ({ date }: { date: string }) => (
     <div data-testid="kiosk-instructions">{date}</div>

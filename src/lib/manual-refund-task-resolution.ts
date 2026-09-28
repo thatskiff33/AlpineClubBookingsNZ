@@ -63,6 +63,7 @@ export { MANUAL_PAYMENT_NOTE_MAX };
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
+import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -146,6 +147,10 @@ export async function resolveManualRefundTask(
         // (owner decision D2).
         raisedAmountCents: true,
         kind: true,
+        // #3639: which capture a late-capture approval refunds, and the
+        // sentence that names a #2700 task's capture.
+        lateCaptureApprovalIntentId: true,
+        reason: true,
         status: true,
         // #3032: the settlement route needs three more facts, all read inside
         // the same transaction as the claim. `reviewContext` carries the
@@ -434,6 +439,16 @@ export async function resolveManualRefundTask(
         // frozen slices under the same task-scoped Stripe key prefix the inline
         // call uses, so Stripe answers a repeat with the original refund and the
         // ledger dedupes on refund id.
+        // #3639: the same persist-the-debt-first rule for an approved late
+        // capture, under the webhook's own Stripe prefix.
+        else if (settlementRoute.kind === "late-capture-refund") {
+          await persistLateCaptureApprovalRefundDebt({
+            bookingId: task.bookingId,
+            route: settlementRoute,
+            amountCents: settlement.amountCents,
+            store: tx,
+          });
+        }
         else if (settlementRoute.kind === "stripe-refund") {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,

@@ -452,6 +452,104 @@ describe("Admin membership types API", () => {
     );
   });
 
+  it.each([
+    ["FULL", "MEMBER_RATE", "NON_MEMBER_RATE"],
+    ["NON_MEMBER", "NON_MEMBER_RATE", "MEMBER_RATE"],
+  ] as const)("protects %s from archive and booking-rule changes", async (key, canonical, other) => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ key, bookingBehavior: canonical }),
+    );
+    for (const patch of [{ isActive: false }, { bookingBehavior: other }]) {
+      const response = await updateMembershipType(
+        request("http://localhost/api/admin/membership-types/type-1", patch, "PATCH"),
+        params("type-1"),
+      );
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toContain("INV-LIFE-093");
+    }
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.membershipTypeUpdate).not.toHaveBeenCalled();
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["FULL", "MEMBER_RATE", "NON_MEMBER_RATE"],
+    ["NON_MEMBER", "NON_MEMBER_RATE", "MEMBER_RATE"],
+  ] as const)("allows %s reactivation and repair from old drift", async (key, canonical, wrong) => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ key, isActive: false, bookingBehavior: wrong }),
+    );
+    const response = await updateMembershipType(
+      request("http://localhost/api/admin/membership-types/type-1", {
+        isActive: true,
+        bookingBehavior: canonical,
+      }, "PATCH"),
+      params("type-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ isActive: true, bookingBehavior: canonical }),
+      }),
+    );
+    expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("lets an already archived Full type save unrelated fields without rewriting stale protected values", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ isActive: false, bookingBehavior: "NON_MEMBER_RATE" }),
+    );
+    const response = await updateMembershipType(
+      request("http://localhost/api/admin/membership-types/type-1", {
+        description: "Updated description",
+        isActive: false,
+        bookingBehavior: "NON_MEMBER_RATE",
+      }, "PATCH"),
+      params("type-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { description: "Updated description" } }),
+    );
+  });
+
+  it.each([
+    ["FULL", "MEMBER_RATE"],
+    ["NON_MEMBER", "NON_MEMBER_RATE"],
+  ] as const)("accepts an unchanged %s full-draft save", async (key, bookingBehavior) => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ key, bookingBehavior }),
+    );
+    const response = await updateMembershipType(
+      request("http://localhost/api/admin/membership-types/type-1", {
+        description: "Updated description",
+        isActive: true,
+        bookingBehavior,
+      }, "PATCH"),
+      params("type-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { description: "Updated description" } }),
+    );
+  });
+
+  it("keeps custom types' booking behavior editable", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({ key: "SOCIAL_MEMBER", isBuiltIn: false }),
+    );
+    const response = await updateMembershipType(
+      request("http://localhost/api/admin/membership-types/type-1", {
+        bookingBehavior: "NON_MEMBER_RATE",
+      }, "PATCH"),
+      params("type-1"),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { bookingBehavior: "NON_MEMBER_RATE" } }),
+    );
+  });
+
   it("rejects identifier mutation on update payloads", async () => {
     const response = await updateMembershipType(
       request(

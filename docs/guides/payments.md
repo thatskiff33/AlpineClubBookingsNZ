@@ -179,7 +179,7 @@ no Xero invoice.
 
 When a booking that was paid in cash is cancelled, there is no card charge to
 reverse, so the system raises a task instead of pretending money moved. It
-appears at the top of this page in the **Money to settle by hand** card, and the
+appears at the top of this page in the **Money to settle** card, and the
 member is told the club will arrange their refund.
 
 1. Pay the member back however the club normally does.
@@ -467,7 +467,7 @@ back and go out later at the full amount.
 So the club does not invoice the extra automatically, and that is deliberate
 rather than an oversight. If it did, and the first invoice then went out at the
 full figure after all, the member would be billed twice for the same change.
-Instead the amount becomes a row in the **Money to settle by hand** card for
+Instead the amount becomes a row in the **Money to settle** card for
 somebody to check.
 
 1. Open the booking's invoices in Xero.
@@ -498,7 +498,8 @@ Sometimes a member pays at the same moment the booking is being cancelled — or
 deleted. That happens both for a booking's own payment and for a payment for a
 change to it. The payment goes through against a booking that is on its way out, and
 Stripe hands the money straight back to the member on its own. Nobody decided that,
-and there is nothing for you to pay back.
+and there is nothing for you to pay back. (That is the default. A club can choose to
+have a treasurer approve these refunds instead — see the next section.)
 
 Those refunds appear on this page in a second card, **Refunded automatically —
 nothing to pay back**, above the filters. It lists the member, the amount, the day
@@ -537,6 +538,38 @@ the money went back and the stay, and it covers the last 30 days.
 4. **If it says it could not be loaded, reload.** A line in place of the card means
    the page could not read the record — not that there is nothing to see. The
    hand-back queue above it is unaffected.
+
+### When your club has a treasurer approve these refunds
+
+On the **Cancellation** policy page, **Payments that arrive after a booking was
+cancelled** can be set to **A treasurer approves each refund** (the default is
+**Refund them automatically**; see [Booking Policies](booking-policies.md)). Only
+someone with **finance edit** access can change it. With approval switched on, a
+payment like the ones above — the booking's own payment or a payment for a change
+to it — is **not** refunded. The money
+stays with the club and the payment appears in **Money to settle**, with a
+line saying it went through after the booking was cancelled. It counts towards the
+waiting-items badge in the sidebar like any other refund task.
+
+1. **Refund to card** sends the payment back to the card it came from, through
+   Stripe, straight away. It is exactly the refund the automatic setting would have
+   made, so it can never be paid twice, even if the setting is changed later or
+   Stripe repeats its notice. If Stripe is unreachable, it is retried automatically
+   and you are told so.
+2. **Close without refunding** closes the item and refunds nothing, for example
+   when the cancellation was a mistake and the booking is being put back. A note is
+   required. A closed item can be reopened later, like any other dismissed item.
+3. **If you already refunded it in the Stripe dashboard**, use **Close without
+   refunding** and say so in the note. **Refund to card** refuses a payment that has already
+   been refunded, fully or in part, so it cannot refund it a second time.
+
+Once an item exists for a payment, it decides that payment. Switching the setting
+back to automatic does not refund a payment that is waiting for you, or one you
+chose to keep. Admins who receive payment alerts are emailed once when a payment
+is held (*Late payment held for approval*, naming the booking and the amount), and
+the item and the sidebar badge stay until someone decides it. A Full Admin can find each one in the audit log as a
+`booking.payment.late_capture_refund_held` entry, and each approved refund as
+`booking.payment.refunded_after_cancellation`.
 
 ### When you have already paid a late capture back yourself
 
@@ -597,6 +630,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
 | Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
+| Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
