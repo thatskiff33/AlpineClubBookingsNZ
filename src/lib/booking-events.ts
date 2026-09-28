@@ -86,9 +86,11 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * transaction, so it must commit or roll back with what it describes:
  * #3638's second-instrument conflict marker
  * (`recordSecondInstrumentMarkerInTransaction`, inside the Xero settle
- * transaction, so a failed insert aborts it and the delivery is retried), and
- * the paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
- * `INV-PAY-106`), so the cancel cannot commit without its decision.
+ * transaction, so a failed insert aborts it and the delivery is retried), the
+ * paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
+ * `INV-PAY-106`), so the cancel cannot commit without its decision, and
+ * #3672's group payer-switch marker (`releaseUnpaidJoinersToMemberPaysInTx`,
+ * `INV-PAY-109`), which must commit or roll back with the switch.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

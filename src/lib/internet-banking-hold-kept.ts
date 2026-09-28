@@ -16,6 +16,7 @@
  */
 import { PaymentSource } from "@prisma/client";
 import {
+  ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
   listOwedAlertKeys,
   markAlertOwed,
@@ -24,7 +25,7 @@ import {
 } from "@/lib/alert-cooldown";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
-import type { AdminAlertSendOutcome } from "@/lib/email/admin-alerts-shared";
+import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
@@ -44,8 +45,6 @@ export const UNREADABLE_HOLD_BOUND_DAYS = 7;
  */
 export const HOLD_READS_PER_RUN = 20;
 
-/** One alert per hold per reason, for as long as the hold (its deadline) lasts. */
-const KEPT_HOLD_ALERT_WINDOW_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RUN_SLOT_MS = 15 * 60 * 1000;
 
@@ -199,7 +198,13 @@ export async function alertExpiredHold(
   const key = `internet-banking-hold-kept:${reason}:${hold.id}:${holdUntilLabel}`;
   const context = { bookingId: hold.bookingId, paymentId: hold.id, reason };
 
-  const holdsClaim = await claimAlertCooldown({ key, windowMs: KEPT_HOLD_ALERT_WINDOW_MS }).catch(
+  const claimedAt = new Date();
+  const holdsClaim = await claimAlertCooldown({
+    key,
+    // One alert per hold per reason per deadline (the key carries all three).
+    windowMs: ALERT_ONCE_EVER_WINDOW_MS,
+    now: claimedAt,
+  }).catch(
     (err) => {
       logger.error(
         { err, ...context },
@@ -215,7 +220,7 @@ export async function alertExpiredHold(
 
   if (outcome === "undelivered") {
     if (!afterCommit) {
-      await releaseAlertCooldown({ key }).catch((err) =>
+      await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
         logger.error({ err, ...context }, "Failed to give back an undelivered hold alert's claim"),
       );
       return;

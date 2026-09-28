@@ -47,6 +47,12 @@
  * (never recomputes) the per-child refund mirror. This completes the local
  * booking/capacity/refund-mirror cleanup but does NOT heal the Xero mirror (see
  * resumeInterruptedOrganiserCancels' Xero residual note).
+ *
+ * Fourth phase (#3672, `INV-PAY-109`): a paid organiser-pays group still
+ * holding an organiser-settled joiner its bill did not cover has that joiner
+ * moved to paying for themselves (`releaseJoinersLeftBehindPaidSettlements`),
+ * and any mid-stay switch's treasurer alert that has not yet reached anyone is
+ * sent.
  */
 import {
   BookingEventType,
@@ -69,6 +75,7 @@ import {
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
+import { releaseJoinersLeftBehindPaidSettlements } from "@/lib/group-late-joiner";
 import { abandonGroupSettlementInvoiceInTx } from "@/lib/xero-group-settlement-void-outbox";
 import {
   describeGroupSettlementInvoiceMoney,
@@ -128,6 +135,16 @@ export interface GroupSettlementReapResult {
    * (held until check-in or seven days past the deadline).
    */
   heldForUnreadableInvoice: number;
+  /**
+   * #3672 (`INV-PAY-109`): joiners of a paid organiser-pays group its bill did
+   * not cover, moved to paying for themselves this run.
+   */
+  releasedToMemberPays: number;
+  /**
+   * #3672: groups whose treasurer was alerted this run about such joiners
+   * switched mid-stay (sent, or retried after a send that reached nobody).
+   */
+  startedStayAlerts: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -191,6 +208,8 @@ export async function reapStaleGroupSettlements(
     resumedInterruptedCancels: 0,
     heldForInvoicePayment: 0,
     heldForUnreadableInvoice: 0,
+    releasedToMemberPays: 0,
+    startedStayAlerts: 0,
   };
 
   for (const settlement of candidates) {
@@ -254,6 +273,10 @@ export async function reapStaleGroupSettlements(
   }
 
   await expireReapedChildren(now, result);
+
+  const leftBehind = await releaseJoinersLeftBehindPaidSettlements(now);
+  result.releasedToMemberPays = leftBehind.released;
+  result.startedStayAlerts = leftBehind.startedStayAlerts;
 
   await resumeInterruptedOrganiserCancels(now, result, format);
 

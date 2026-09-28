@@ -206,6 +206,9 @@ export async function loadBookingDetail(id: string) {
                   // than a third copy of its columns.
                   ...BOOKING_MONEY_RECONCILIATION_SELECT,
                   status: true,
+                  // #3672: a joiner of a paid organiser-pays group pays for
+                  // themselves; the card must not count them as owed.
+                  organiserSettled: true,
                   guests: {
                     select: {
                       ...BOOKING_MONEY_RECONCILIATION_SELECT.guests.select,

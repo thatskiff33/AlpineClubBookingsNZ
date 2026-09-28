@@ -62,6 +62,11 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // gated by the adminPaymentFailure notification preference at send time, like
   // its siblings.
   "admin-duplicate-capture-refund",
+  // #3672: paid-group joiners switched to paying for themselves mid-stay, for
+  // the treasurer to collect by hand. sendToAdmins on the adminPaymentFailure
+  // preference like its reconcile-by-hand siblings; not delivery-locked,
+  // because no money moved.
+  "admin-group-joiner-started-stay",
   // #3663: an expired internet banking hold left alone because the stay has
   // started. sendToAdmins on the adminPaymentFailure preference like its
   // reconcile-by-hand siblings; not delivery-locked, because no money moved.
@@ -539,6 +544,13 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  // #3672: the organiser's booking, and each waiting joiner linked to the
+  // booking whose admin tools record their payment.
+  "admin-group-joiner-started-stay": [
+    "bookingReference",
+    "joinerBookingLinks",
+    "organiserBookingUrl",
+  ],
   // #3663: the booking and the payments board are what the treasurer acts on.
   "admin-internet-banking-hold-started-stay": ["bookingReference", "memberName", "reviewUrl"],
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
@@ -821,7 +833,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "An internet banking hold reached its deadline unpaid, but the booking's check-in had already arrived, so the booking was left alone for the treasurer to reconcile by hand",
     frequency:
-      "At most once per payment, guarded by a cross-instance claim, from the 15-minute payments cycle",
+      "Once per payment, from the 15-minute payments cycle, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "admin-manual-settlement-conflict": {
     triggerSummary:
@@ -1111,6 +1123,17 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "Organiser settled a joiner's spot as part of a combined group payment",
     frequency: "One email per joiner booking covered by the settled payment",
+  },
+  "admin-group-joiner-started-stay": {
+    triggerSummary:
+      "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
+    frequency:
+      "Once per group, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
+  },
+  "group-join-pay-self": {
+    triggerSummary:
+      "Organiser-pays group settlement was paid without a joiner on it, so the joiner now pays for their own place (#3672). Only a joiner awaiting payment whose stay has not started",
+    frequency: "At most once per joiner booking the paid settlement did not cover; the booking's payer-switch event is the record",
   },
   "group-settlement-expired": {
     triggerSummary:
@@ -1836,6 +1859,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueCategoryCount",
   "issueReportUrl",
   "issueTotalCount",
+  "joinerBookingLinks",
   "joinerCount",
   "latestErrorMessage",
   "latestErrorNote",
@@ -1878,6 +1902,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // the pre-arrival reminder; empty when nothing is owed, so the body never
   // carries a dangling claim (the {{doorCodeNote}} convention).
   "outstandingAdditionalNote",
+  // #3672: the organiser's booking detail page, for the mid-stay joiner alert.
+  "organiserBookingUrl",
   "organiserName",
   "originalRecipient",
   "originalTemplateName",

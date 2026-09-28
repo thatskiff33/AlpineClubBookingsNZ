@@ -1691,7 +1691,9 @@ note it queues is created only once the builder can read the invoices and they
 owe it. An email that reached nobody is retried on the next run: for a kept
 hold its claim is given back; for a released one it is marked owed (an
 `AlertCooldown` row keyed `internet-banking-hold-alert-owed:`) and the next run
-delivers it, and the release's audit entry is written either way. At most 20
+delivers it, and the release's audit entry is written either way. A copy that
+failed but that the email retry cron will re-send counts as reached, so it is
+not sent twice (`adminAlertSendOutcome`, #3672). At most 20
 holds are read per run, rotating, and 400 a day club-wide (the
 `ib-hold-xero-reads` limiter); the result counts `kept` and `deferred`.
 

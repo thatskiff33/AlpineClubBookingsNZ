@@ -3777,6 +3777,30 @@ check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
 any transaction. No lock key, order or site is added; the realdb proof is
 `group-settlement-invoice-binding-races.realdb.test.ts`.
 
+A joiner's payer is decided under the same `lock(1)` (`INV-PAY-109`, #3672):
+the booking create re-reads the group's settlement before writing an
+organiser-settled child, and the paid apply switches every organiser-settled
+joiner the paid bill missed to member-pays, with a payer-switch booking event
+each, in the transaction that marks it SUCCEEDED. Whichever commits first, the
+other sees it. The switch is one guarded `updateManyAndReturn`, so exactly the
+rows it changed are recorded and emailed. The reaper's self-heal
+(`releaseJoinersLeftBehindPaidSettlements`) takes `lock(1)` alone per group,
+re-reads the group, settlement and organiser booking, and applies the same
+switch; a switched joiner no longer matches its scan. Emails and the
+treasurer's once-per-group alert are sent after commit; the alert pass reads
+the events of stays not yet ended and takes no lock. Its `AlertCooldown` claim
+is kept once a copy is sent or queued for the email retry cron, so the two never
+both send it; the release and the one-day hold match the claimant's own stamp.
+
+An organiser's close or reopen (`setGroupBookingJoinStatus`, #3672 review)
+takes `lock(1)` too, re-reads the status under it and writes with a
+not-CANCELLED guard. Before, it wrote from a stale read with no lock, so a
+reopen racing the organiser-pays cancel fence could write OPEN over the
+CANCELLED that the paid apply, the reaper and the switch rely on. The two
+sites add registered `lock(1)` entries and no new key or order. The realdb
+race proof for the join-versus-paid orders is a stated limit: they are pinned
+by mock call order only.
+
 The opt-in PostgreSQL race harness is wired into the migration-drift job against
 its own `postgres:16-alpine` service on loopback port `55442`, database
 `concurrency_race_1881`. Its dedicated-URL, loopback, high-port, and name-marker

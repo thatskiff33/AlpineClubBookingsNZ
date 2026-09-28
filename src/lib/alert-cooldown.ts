@@ -47,19 +47,61 @@ export async function claimAlertCooldown({
 }
 
 /**
- * Give a claimed window back (#3643). For a caller whose window is "once, ever"
- * and whose send can fail: a claim kept after an undelivered send would make
- * the one notification disappear for good, so the caller releases it and the
- * next run tries again.
+ * A window no stay outlives: claiming with it means "alert once, ever" for its
+ * key (#3672). One named constant so every once-only alert shares it.
+ */
+export const ALERT_ONCE_EVER_WINDOW_MS = 36_500 * 86_400_000;
+
+/**
+ * How long a claim whose alert nobody could receive (no admin opted in, the
+ * template switched off, every recipient suppressed) is held before the next
+ * run may try again (#3672): daily, not every run.
+ */
+export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
+
+/**
+ * Give back a claim this caller took at `claimedAt` and could not use — the
+ * send threw before reaching anyone, or (#3643) reached nobody for a hold that
+ * stays a candidate — so the next run can claim and send again (#3672).
+ * Deletes only a row still stamped with this caller's own claim, so a newer
+ * claim by another sender is never released.
  */
 export async function releaseAlertCooldown({
   key,
+  claimedAt,
   store = prisma,
 }: {
   key: string;
+  claimedAt: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
-  await store.alertCooldown.deleteMany({ where: { key } });
+  await store.alertCooldown.deleteMany({ where: { key, lastAlertedAt: claimedAt } });
+}
+
+/**
+ * Hold a claim this caller took at `claimedAt` for `retryAfterMs` only, rather
+ * than the whole `windowMs` (#3672): the stamp is moved back so the row falls
+ * out of the window, and `claimAlertCooldown` with the same `windowMs` succeeds
+ * again, exactly `retryAfterMs` after the claim. Same own-stamp guard as
+ * `releaseAlertCooldown`, so a newer claim by another sender is never touched.
+ */
+export async function deferAlertCooldown({
+  key,
+  claimedAt,
+  windowMs,
+  retryAfterMs,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt: Date;
+  windowMs: number;
+  retryAfterMs: number;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.updateMany({
+    where: { key, lastAlertedAt: claimedAt },
+    data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs) },
+  });
 }
 
 /**

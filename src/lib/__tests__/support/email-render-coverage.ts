@@ -234,6 +234,8 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   // groups
   "group-booking-join-verification": "bookingRequestVerificationTemplate",
   "group-join-cancelled": "groupJoinCancelledTemplate",
+  "group-join-pay-self": "groupJoinPaySelfTemplate",
+  "admin-group-joiner-started-stay": "adminGroupJoinerStartedStayTemplate",
   "group-join-released": "groupJoinReleasedTemplate",
   "group-join-settled": "groupJoinSettledTemplate",
   "group-settlement-expired": "groupSettlementExpiredTemplate",

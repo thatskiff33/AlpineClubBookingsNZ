@@ -92,7 +92,15 @@ describe("#2320 review — senders supply the composed notes their defaults rend
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sendEmail.mockResolvedValue(undefined);
-    mocks.sendToAdmins.mockResolvedValue(undefined);
+    // What `sendToAdmins` really returns (#3672); a sender that reads it,
+    // like #3643's hold-kept alert, needs the shape rather than undefined.
+    mocks.sendToAdmins.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 1,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
     mocks.sendUnmuteableAdminAlert.mockResolvedValue(undefined);
   });
 

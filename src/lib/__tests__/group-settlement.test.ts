@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
+  bookingSwitchPayer: vi.fn(),
+  bookingEventCreateMany: vi.fn(),
   paymentUpsert: vi.fn(),
   settlementUpsert: vi.fn(),
   settlementFindUnique: vi.fn(),
@@ -36,6 +38,9 @@ const mocks = vi.hoisted(() => ({
   loadModuleFlags: vi.fn(),
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
+  sendJoinPaySelf: vi.fn(),
+  sendStartedStayAlert: vi.fn(),
+  claimAlertCooldown: vi.fn(),
   lodgeFindFirst: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   // #2576 §9: committing a group child CONFIRMED records the bounded same-owner
@@ -64,7 +69,10 @@ const txClient = {
     findMany: mocks.bookingFindMany,
     update: mocks.bookingUpdate,
     updateMany: mocks.bookingUpdateMany,
+    // #3672: the payer switch returns the rows it changed.
+    updateManyAndReturn: mocks.bookingSwitchPayer,
   },
+  bookingEvent: { createMany: mocks.bookingEventCreateMany },
   payment: { upsert: mocks.paymentUpsert },
   groupBookingSettlement: {
     upsert: mocks.settlementUpsert,
@@ -149,9 +157,23 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
+vi.mock("@/lib/alert-cooldown", () => ({
+  ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  claimAlertCooldown: mocks.claimAlertCooldown,
+  releaseAlertCooldown: vi.fn().mockResolvedValue(undefined),
+  deferAlertCooldown: vi.fn().mockResolvedValue(undefined),
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
+}));
+// #3672: the club's day for the started-stay rule, pinned so a joiner's
+// check-in is judged against a fixed today.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
+}));
 vi.mock("@/lib/email", () => ({
   sendGroupSettlementReceiptEmail: mocks.sendSettlementReceipt,
   sendGroupJoinSettledEmail: mocks.sendJoinSettled,
+  sendGroupJoinPaySelfEmail: mocks.sendJoinPaySelf,
+  sendAdminGroupJoinerStartedStayAlert: mocks.sendStartedStayAlert,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -213,6 +235,10 @@ function organiserPaysGroup(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // #3672: `clearAllMocks` keeps queued `mockResolvedValueOnce` values, so a
+  // test that stops short of consuming its queue leaks the rest into the next
+  // one. Reset every hoisted mock; the defaults below are re-applied.
+  for (const mock of Object.values(mocks)) mock.mockReset();
   clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
   // The transaction callback runs against the shared txClient by default.
   mocks.transaction.mockImplementation(async (cb: (tx: typeof txClient) => unknown) =>
@@ -251,6 +277,18 @@ beforeEach(() => {
   });
   mocks.sendSettlementReceipt.mockResolvedValue(undefined);
   mocks.sendJoinSettled.mockResolvedValue(undefined);
+  mocks.sendJoinPaySelf.mockResolvedValue(undefined);
+  mocks.sendStartedStayAlert.mockResolvedValue({
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  });
+  mocks.claimAlertCooldown.mockResolvedValue(true);
+  // #3672: by default the paid bill left nobody behind.
+  mocks.bookingSwitchPayer.mockResolvedValue([]);
+  mocks.bookingEventCreateMany.mockResolvedValue({ count: 0 });
   mocks.cancelPaymentIntent.mockResolvedValue(null);
 });
 
@@ -1562,9 +1600,12 @@ describe("applyGroupSettlementSucceeded", () => {
         },
       })
       .mockResolvedValueOnce(cardLockRow("pi_1"));
-    mocks.bookingFindMany.mockResolvedValueOnce([
-      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
-      { id: "child-2", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
+    // Both the pre-lock lodge discovery and the in-lock re-read see the grown
+    // child. (This used to queue one value and read the second from a value an
+    // earlier test had left queued; #3672 resets the queues between tests.)
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      { id: "child-2", lodgeId: "lodge-1", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
     ]);
 
     const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 }, CLUB_FORMAT_TEST);
@@ -1695,6 +1736,188 @@ describe("applyGroupSettlementSucceeded", () => {
     // Notifications: one organiser receipt + one confirmation per joiner.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
+  });
+
+  // #3672 (`INV-PAY-109`, owner option B, orchestrator decision 3): a joiner
+  // who joined while the bill was open but is not on the one the organiser
+  // paid is never billed to the organiser and never left unsettleable: the
+  // same transaction switches them to member-pays — started stay or not — and
+  // records it. One who can pay before their stay is told to pay; for a
+  // started stay the treasurer is told instead.
+  function paidSettlementRow() {
+    return {
+      id: "s1",
+      status: PaymentStatus.PENDING,
+      amountCents: 4500,
+      stripeCustomerId: "cus_123",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          id: ORGANISER,
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    };
+  }
+
+  it("switches every joiner the paid bill did not cover, never bills the organiser, and tells each the right person", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(paidSettlementRow())
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", lodgeId: "lodge-1" }])
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      // After commit: the settled booking, for its confirmation.
+      .mockResolvedValueOnce([
+        {
+          id: "child-1",
+          memberId: "m1",
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j1@example.com", firstName: "Jo" },
+          organisation: null,
+          _count: { guests: 1 },
+        },
+      ])
+      // After commit: the joiner who can pay, for their pay-for-yourself email.
+      .mockResolvedValueOnce([
+        {
+          id: "late-1",
+          memberId: "m-late",
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "late@example.com", firstName: "Lee" },
+          organisation: null,
+        },
+      ])
+      // After commit: the started joiner, named in the treasurer's alert.
+      .mockResolvedValueOnce([
+        {
+          id: "started-1",
+          memberId: "m-started",
+          member: { email: "s@example.com", firstName: "Sam", lastName: "Started" },
+          organisation: null,
+        },
+      ]);
+    // Inside the lock, after SUCCEEDED: the rows the guarded switch changed —
+    // one yet to arrive, one whose stay has started, one under review.
+    mocks.bookingSwitchPayer.mockResolvedValueOnce([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: new Date("2999-01-01T00:00:00.000Z") },
+      { id: "started-1", status: BookingStatus.PAYMENT_PENDING, checkIn: new Date("2000-01-01T00:00:00.000Z") },
+      { id: "review-1", status: BookingStatus.AWAITING_REVIEW, checkIn: new Date("2999-01-01T00:00:00.000Z") },
+    ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 4500 }, CLUB_FORMAT_TEST);
+
+    expect(result.outcome).toBe("settled");
+    expect(result.settledBookingIds).toEqual(["child-1"]);
+    // The organiser paid for child-1 only: no Payment and no PAID flip for the
+    // switched joiners.
+    expect(mocks.paymentUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { bookingId: "late-1" } })
+    );
+    expect(mocks.bookingSwitchPayer).toHaveBeenCalledWith({
+      where: {
+        parentBookingId: ORG_BOOKING,
+        organiserSettled: true,
+        deletedAt: null,
+        status: {
+          in: [
+            BookingStatus.PENDING,
+            BookingStatus.PAYMENT_PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.AWAITING_REVIEW,
+          ],
+        },
+      },
+      data: { organiserSettled: false },
+      select: { id: true, status: true, checkIn: true },
+    });
+    // Switched after the settlement is marked paid, in the same transaction,
+    // with one payer-switch record each.
+    expect(mocks.bookingSwitchPayer.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.settlementUpdateMany.mock.invocationCallOrder[0]
+    );
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.bookingEventCreateMany.mock.calls[0][0].data.map((e: { bookingId: string }) => e.bookingId)
+    ).toEqual(["late-1", "started-1", "review-1"]);
+    // Only the joiner who can pay before their stay is emailed.
+    expect(mocks.sendJoinPaySelf).toHaveBeenCalledTimes(1);
+    expect(mocks.sendJoinPaySelf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingContext: { bookingId: "late-1", recipientMemberId: "m-late" },
+        email: "late@example.com",
+        organiserName: "Olive Organiser",
+      })
+    );
+    // The started joiner is switched but not emailed; the treasurer is told
+    // once for the group.
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: `group-joiner-started-stay:${GROUP_ID}` })
+    );
+    expect(mocks.sendStartedStayAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendStartedStayAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organiserBookingId: ORG_BOOKING,
+        joiners: [{ name: "Sam Started", bookingId: "started-1" }],
+      })
+    );
+    // The receipt counts only the joiner the organiser paid for.
+    expect(mocks.sendSettlementReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ joinerCount: 1, totalCents: 4500 }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  // Concurrency review F2: the switch has committed with the settlement; a
+  // failure emailing the joiner must not fail the webhook, whose redelivery
+  // would be a no-op and could never re-send it anyway.
+  it("still reports the settlement paid when loading the switched joiner's email fails", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(paidSettlementRow())
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", lodgeId: "lodge-1" }])
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("db blip"));
+    mocks.bookingSwitchPayer.mockResolvedValueOnce([
+      { id: "late-1", status: BookingStatus.PAYMENT_PENDING, checkIn: new Date("2999-01-01T00:00:00.000Z") },
+    ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 4500 }, CLUB_FORMAT_TEST);
+
+    expect(result.outcome).toBe("settled");
+    expect(mocks.sendJoinPaySelf).not.toHaveBeenCalled();
+  });
+
+  it("switches nobody and sends no pay-for-yourself email when the paid bill covered everyone", async () => {
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(paidSettlementRow())
+      .mockResolvedValueOnce(cardLockRow("pi_1"));
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "child-1", lodgeId: "lodge-1" }])
+      .mockResolvedValueOnce([
+        { id: "child-1", lodgeId: "lodge-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      .mockResolvedValueOnce([]);
+
+    await applyGroupSettlementSucceeded({ id: "pi_1", amount: 4500 }, CLUB_FORMAT_TEST);
+
+    expect(mocks.bookingSwitchPayer).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingEventCreateMany).not.toHaveBeenCalled();
+    expect(mocks.sendJoinPaySelf).not.toHaveBeenCalled();
+    expect(mocks.sendStartedStayAlert).not.toHaveBeenCalled();
   });
 });
 

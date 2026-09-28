@@ -159,6 +159,42 @@ export function asSecondInstrumentSettlementConflictSnapshot(
 }
 
 /**
+ * #3672 (`INV-PAY-109`): the payer switch. An organiser-pays group's
+ * settlement was paid without this joiner on the bill, so the booking now pays
+ * for itself. Written inside the switch transaction, so every switched joiner
+ * has a durable record; it cancels nothing. `stayStarted` records whether the
+ * stay had begun, which is what the treasurer's once-per-group alert is
+ * re-driven from until it reaches someone.
+ */
+export const GROUP_JOINER_PAYS_OWN_EVENT_KIND = "group_joiner_pays_own" as const;
+
+export const GROUP_JOINER_PAYS_OWN_EVENT_REASON =
+  "The group organiser had already paid without this joiner on the bill, so this booking now pays for itself. The booking was not cancelled.";
+
+export interface GroupJoinerPaysOwnEventSnapshot {
+  kind: typeof GROUP_JOINER_PAYS_OWN_EVENT_KIND;
+  groupBookingId: string;
+  organiserBookingId: string;
+  /** The joiner's status when switched. */
+  bookingStatus: string;
+  /** Whether the joiner's stay had started (check-in on or before the club's today). */
+  stayStarted: boolean;
+}
+
+export function asGroupJoinerPaysOwnSnapshot(
+  value: unknown
+): GroupJoinerPaysOwnEventSnapshot | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    (value as { kind?: unknown }).kind === GROUP_JOINER_PAYS_OWN_EVENT_KIND
+  ) {
+    return value as GroupJoinerPaysOwnEventSnapshot;
+  }
+  return null;
+}
+
+/**
  * THE ONE LIST of admin-only settlement markers (#3638, `INV-SSOT`). Each is a
  * CANCELLED BookingEvent that cancels nothing, so every consumer that
  * pattern-matches CANCELLED events must exclude all of them, and the staff
@@ -191,6 +227,12 @@ export const SETTLEMENT_MARKERS = [
     adminTitle: "May have been paid twice (card and Xero)",
     tone: "danger",
   },
+  {
+    kind: GROUP_JOINER_PAYS_OWN_EVENT_KIND,
+    reason: GROUP_JOINER_PAYS_OWN_EVENT_REASON,
+    adminTitle: "Now pays for their own place (group already paid)",
+    tone: "warning",
+  },
 ] as const satisfies readonly {
   kind: string;
   reason: string;
@@ -210,7 +252,7 @@ const SETTLEMENT_MARKERS_BY_KIND = new Map<string, SettlementMarker>(
 
 /**
  * The registry entry a durable event is, or null when it is not a settlement
- * marker. The three `as*Snapshot` narrowers above are typed views of one
+ * marker. The `as*Snapshot` narrowers above are typed views of one
  * marker's snapshot; membership is decided here.
  */
 export function settlementMarkerOf(event: {

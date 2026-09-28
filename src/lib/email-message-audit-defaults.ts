@@ -510,6 +510,16 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
   },
+  // #3672 (`INV-PAY-109`): paid-group joiners switched to paying for
+  // themselves mid-stay, for the treasurer to collect by hand.
+  "admin-group-joiner-started-stay": {
+    "defaultSubject": "Group joiners mid-stay now pay for themselves",
+    "defaultBody": "Group Joiners Mid-Stay Now Pay for Themselves\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Each booking is now the joiner's own to pay. Their stay has already started, so they were not emailed about it. Collect payment from them by hand, then open each joiner's booking below and record it with Record manual payment under Admin tools. They can also pay by card from their own booking.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nGroup check-in: {{checkIn}}\n\nJoiners:\n{{joinerBookingLinks}}\n\nOpen the organiser's booking: {{organiserBookingUrl}}"
+  },
+  "group-join-pay-self": {
+    "defaultSubject": "Please pay for your place — {{CLUB_NAME}}",
+    "defaultBody": "Please Pay For Your Place\n\nHi {{firstName}}, {{organiserName}} has paid for their group's stay at {{CLUB_NAME}}'s lodge. You joined after that payment was prepared, so your place was not included in it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nYour place is not confirmed until you pay for it yourself. Open your booking to pay.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
   "group-settlement-expired": {
     "defaultSubject": "Your group payment expired — {{CLUB_NAME}}",
     "defaultBody": "Your Group Settlement Has Expired\n\nHi {{firstName}}, the combined payment you started for your group's stay at {{CLUB_NAME}}'s lodge was not completed in time, so the beds held for your joiners have been released.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nJoiners affected: {{joinerCount}}\nAmount not charged: {{total}}\n\nNo money has been taken. If your group still plans to come, restart the payment from your group booking page — the beds are subject to availability.\n\nIf anything looks wrong, contact the club at {{SUPPORT_EMAIL}}."

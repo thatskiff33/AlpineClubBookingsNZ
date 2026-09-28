@@ -30,9 +30,10 @@ import {
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
 import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
+import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
 import {
   InvoiceBlockedNotice,
-  NotPaidForYetNotice,
+  PaidGroupSummary,
   PendingGroupInvoice,
 } from "@/components/group-booking/pending-group-invoice";
 
@@ -54,6 +55,12 @@ interface JoinerRow {
    */
   moneyReconciliation: BookingMoneyReconciliationView;
   isMember: boolean;
+  /**
+   * #3672 (`INV-PAY-109`): this joiner pays for their own place — every joiner
+   * of an each-pays group, and a joiner of an organiser-pays group who arrived
+   * after the settlement was paid. Never on the organiser's bill.
+   */
+  paysOwn: boolean;
 }
 
 interface SettlementState {
@@ -375,8 +382,8 @@ export function OrganiserGroupBookingCard({
   const activeJoiners = group.joiners.filter(
     (j) => j.status !== "CANCELLED" && j.status !== "BUMPED"
   );
-  const settledAlready =
-    settleComplete || group.settlement?.status === "SUCCEEDED";
+  // #3672: the shared "organiser has paid" (server and card agree).
+  const settledAlready = settleComplete || organiserHasPaidSettlement(group.settlement);
   // #3642: the pending invoice this session just asked for, or the one the
   // server says is still outstanding — never forgotten on a reload.
   const pendingReference = settleReference ?? group.settlement?.internetBankingReference ?? null;
@@ -387,19 +394,25 @@ export function OrganiserGroupBookingCard({
   const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
     ? "preparing"
     : (group.settlement?.invoiceDisplay ?? "preparing");
+  // #3672: joiners on the organiser's bill. One who joined after it was paid
+  // pays for themselves and is never counted as owed by the organiser.
+  const organiserPaidJoiners = activeJoiners.filter((j) => !j.paysOwn);
+  const paysOwnJoiners = activeJoiners.filter((j) => j.paysOwn);
   // #3642: joiners the organiser has not paid for — while an invoice is
-  // outstanding, the ones not on it (PAYMENT_PENDING); after payment, the ones
-  // who joined afterwards. Never hidden behind "everyone is confirmed".
-  const unsettledJoiners = activeJoiners.filter(
+  // outstanding, the ones not on it (PAYMENT_PENDING). Never hidden behind
+  // "everyone is confirmed".
+  const unsettledJoiners = organiserPaidJoiners.filter(
     (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
   );
   // Not after a settle this session, which just committed them.
-  const notOnInvoice = settleReference ? [] : activeJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  const notOnInvoice = settleReference
+    ? []
+    : organiserPaidJoiners.filter((j) => j.status === "PAYMENT_PENDING");
   const sumCents = (rows: JoinerRow[]) => rows.reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
   const invoiceTotalChanged =
     !settleReference &&
     pendingInvoiceCents != null &&
-    sumCents(activeJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
+    sumCents(organiserPaidJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
   const outstandingCents = sumCents(unsettledJoiners);
 
   return (
@@ -536,28 +549,16 @@ export function OrganiserGroupBookingCard({
           )}
         </div>
 
-        {isOrganiserPays ? (
+        {isOrganiserPays && !isCancelled /* nothing to settle once cancelled */ ? (
           <div className="space-y-3 rounded-md border border-border p-3">
             <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (
-              <div className="space-y-2">
-                <div className="flex items-start gap-2 text-success-11">
-                  <Check className="h-5 w-5 shrink-0" />
-                  <p className="text-sm font-medium">
-                    Paid
-                    {group.settlement
-                      ? ` — ${formatCents(group.settlement.amountCents, format)}`
-                      : ""}
-                    .
-                    {settleComplete || unsettledJoiners.length === 0
-                      ? " Everyone in your group is confirmed."
-                      : ""}
-                  </p>
-                </div>
-                {!settleComplete && unsettledJoiners.length > 0 ? (
-                  <NotPaidForYetNotice names={unsettledJoiners.map((j) => j.name)} />
-                ) : null}
-              </div>
+              <PaidGroupSummary
+                amountCents={group.settlement?.amountCents ?? null}
+                settleComplete={settleComplete}
+                notPaidFor={unsettledJoiners.map((j) => j.name)}
+                paysOwn={paysOwnJoiners.map((j) => j.name)}
+              />
             ) : pendingReference ? (
               <PendingGroupInvoice
                 reference={pendingReference}

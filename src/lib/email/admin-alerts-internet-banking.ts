@@ -4,7 +4,11 @@ import {
   type InternetBankingHoldKeptReason,
 } from "../email-message-notes";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { type AdminAlertSendOutcome, sendToAdmins } from "./admin-alerts-shared";
+import { sendToAdmins } from "./admin-alerts-shared";
+import {
+  adminAlertSendOutcome,
+  type AdminAlertSendOutcome,
+} from "./admin-alert-send-result";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
 import { renderEmailHtml } from "@/lib/email-theme";
 import {
@@ -42,7 +46,7 @@ export async function sendAdminInternetBankingHoldKeptAlert(data: {
   const xeroInvoiceUrl = await stampXeroOrganisation(data.xeroInvoiceUrl);
   const unknown = "unknown";
 
-  return sendToAdmins({
+  const result = await sendToAdmins({
     subject: `Internet banking hold needs attention: ${data.memberName}`,
     html: await renderEmailHtml(() => adminInternetBankingHoldKeptTemplate({
       ...data,
@@ -70,4 +74,5 @@ export async function sendAdminInternetBankingHoldKeptAlert(data: {
     },
     preferenceKey: "adminPaymentFailure",
   });
+  return adminAlertSendOutcome(result);
 }

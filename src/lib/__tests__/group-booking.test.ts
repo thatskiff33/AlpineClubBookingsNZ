@@ -6,6 +6,7 @@ import {
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
+  PaymentStatus,
 } from "@prisma/client";
 
 // #2919 only: the pure helpers below touch no database. The verification-token
@@ -209,6 +210,7 @@ describe("toGroupBookingSummary", () => {
     joinCode: "ABCD2345",
     status: GroupBookingStatus.OPEN,
     paymentMode: GroupBookingPaymentMode.EACH_PAYS_OWN,
+    settlement: null,
     joinDeadline: null,
     organiserBooking: {
       checkIn: new Date("2026-07-01T00:00:00Z"),
@@ -226,6 +228,7 @@ describe("toGroupBookingSummary", () => {
       code: "ABCD2345",
       status: GroupBookingStatus.OPEN,
       paymentMode: GroupBookingPaymentMode.EACH_PAYS_OWN,
+      joinerPaymentMode: GroupBookingPaymentMode.EACH_PAYS_OWN,
       organiserFirstName: "Andy",
       // The group's actual lodge (organiser booking's lodge), so public join
       // copy names the right property in a multi-lodge club (#11).
@@ -241,6 +244,31 @@ describe("toGroupBookingSummary", () => {
     // The lodge id (internal) is never exposed — only the display name.
     expect(summary).not.toHaveProperty("lodgeId");
   });
+
+  // #3672 (`INV-PAY-109`): the join page describes how a member joining NOW
+  // pays — the organiser only until their settlement is paid.
+  it.each([
+    [GroupBookingPaymentMode.ORGANISER_PAYS, null, GroupBookingPaymentMode.ORGANISER_PAYS],
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.PENDING, GroupBookingPaymentMode.ORGANISER_PAYS],
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.FAILED, GroupBookingPaymentMode.ORGANISER_PAYS],
+    [GroupBookingPaymentMode.ORGANISER_PAYS, PaymentStatus.SUCCEEDED, GroupBookingPaymentMode.EACH_PAYS_OWN],
+    [GroupBookingPaymentMode.EACH_PAYS_OWN, null, GroupBookingPaymentMode.EACH_PAYS_OWN],
+  ])(
+    "a %s group with a %s settlement tells a new joiner %s",
+    (paymentMode, settlementStatus, expected) => {
+      const summary = toGroupBookingSummary(
+        {
+          ...baseRecord,
+          paymentMode,
+          settlement: settlementStatus ? { status: settlementStatus } : null,
+        },
+        clubToday,
+        now
+      );
+      expect(summary.paymentMode).toBe(paymentMode);
+      expect(summary.joinerPaymentMode).toBe(expected);
+    }
+  );
 
   it("reflects joinability for a closed group", () => {
     const summary = toGroupBookingSummary(

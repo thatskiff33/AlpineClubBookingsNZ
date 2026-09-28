@@ -101,8 +101,60 @@ export function PendingGroupInvoice({
   );
 }
 
-/** #3642: joiners who joined after the group was paid, never hidden. */
-export function NotPaidForYetNotice({ names }: { names: string[] }) {
+/**
+ * The organiser's group once their settlement is paid. Split from
+ * `organiser-group-booking-card.tsx`. Never says "everyone is confirmed" while
+ * a joiner is unpaid for (#3642), and names the joiners who pay for
+ * themselves (#3672, `INV-PAY-109`) rather than asking the organiser to act.
+ */
+export function PaidGroupSummary({
+  amountCents,
+  settleComplete,
+  notPaidFor,
+  paysOwn,
+}: {
+  amountCents: number | null;
+  /** Paid in this session: the server's joiner list predates it. */
+  settleComplete: boolean;
+  /** Organiser-settled joiners the payment did not cover. */
+  notPaidFor: string[];
+  /** Joiners who joined after the payment and pay for their own places. */
+  paysOwn: string[];
+}) {
+  const format = useClubFormat();
+  const allPaidFor = settleComplete || notPaidFor.length === 0;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start gap-2 text-success-11">
+        <Check className="h-5 w-5 shrink-0" />
+        <p className="text-sm font-medium">
+          Paid{amountCents != null ? ` — ${formatCents(amountCents, format)}` : ""}.
+          {allPaidFor
+            ? paysOwn.length > 0
+              ? " Everyone you paid for is confirmed."
+              : " Everyone in your group is confirmed."
+            : ""}
+        </p>
+      </div>
+      {allPaidFor ? null : <NotPaidForYetNotice names={notPaidFor} />}
+      {paysOwn.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Paying for themselves: {paysOwn.join(", ")}. They joined after your payment, so they pay
+          for their own places. You don&apos;t need to do anything.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * #3642: organiser-settled joiners left unpaid behind a paid settlement. Since
+ * #3672 the paid apply switches every such live, unpaid joiner to paying for
+ * themselves, started stay or not, so this shows only for one left before that
+ * change until the group-settlement cycle next heals it, or for a status the
+ * switch does not cover (a draft or waitlisted child, which no path writes).
+ */
+function NotPaidForYetNotice({ names }: { names: string[] }) {
   return (
     <p className="text-sm text-warning-11">
       Not paid for yet: {names.join(", ")}. They joined after your payment, so their places are
