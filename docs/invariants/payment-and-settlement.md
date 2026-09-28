@@ -708,8 +708,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   unpaid cancel with no note, a repair finding and an alert (DECISION 2). The
   preview asks the same reader, rate-limited and cached a minute.
 - The repair tool raises manual review, never a queued or retried full
-  clearing note, over a recorded part payment. One the cancel path recognised
-  still reaches that arm, past [INV-PAY-106]'s captured-money skip.
+  clearing note, over a recorded part payment, even one the cancel path
+  recognised, which bypasses [INV-PAY-106]'s captured-money skip.
 - Pinned by `internet-banking-payment-cron.test.ts`,
   `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
   and `xero-booking-repair.test.ts`.
