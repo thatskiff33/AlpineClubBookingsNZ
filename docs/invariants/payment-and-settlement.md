@@ -808,23 +808,25 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **A late capture a treasurer keeps is recorded in Xero by the app** (owner
   decision 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
-  an invoice for the kept amount, paid from the Stripe account, the way a
-  normal card payment is. Keeping is dismissing the #3639 task
-  (`late-capture-kept-xero.ts`); a capture refunded in full since keeps nothing.
+  an invoice for the kept amount, paid from the Stripe account. Keeping is
+  dismissing the #3639 task (`late-capture-kept-xero.ts`); a capture refunded in
+  full since keeps nothing.
 - **A change payment** already has its document: the dismissal releases the
-  change's supplementary invoice after commit, or re-queues the row the reaper
-  retired.
-- **The booking's own payment** gets its ordinary booking invoice, queued inside
-  the dismissal's status-fenced claim, so a replay queues nothing. Only when that
-  invoice bills exactly the kept cash (`keptPrimaryCaptureInvoiceRefusal`): no
-  invoice already exists (one a cancellation cleared would count twice), no
-  applied credit, no manual settle, price equals net capture. Otherwise nothing
-  is queued and an officer is told.
-- **The repair tool** reports a kept booking payment with no booking invoice
-  asked for since its task was raised (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`),
-  queuing it automatically only under the same rule, and retries a failed one.
-- Pinned by `late-capture-kept-xero.test.ts`, `manual-refund-task.test.ts`,
-  `xero-operation-outbox.test.ts` and `xero-booking-repair.test.ts`.
+  change's supplementary invoice after commit, or re-queues the retired row.
+- **The booking's own payment** gets its own `KEPT_LATE_CAPTURE_INVOICE`
+  (`xero-kept-late-capture-invoice.ts`), queued inside the dismissal's
+  status-fenced claim, anchored on and keyed by the task: exactly the kept
+  cents on the hut-fees income mapping, paid from `stripeBankAccount`. It
+  needs no primary invoice and touches neither the booking's invoice nor its
+  clearing note, so every case is recorded and counted once.
+- **An approval after a reopen** cancels a still-PENDING record in its claim;
+  one sent is credited back by the ordinary refund note, which accepts the
+  kept invoice where the payment has no primary one.
+- **The repair tool** queues a missing one automatically
+  (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`) and retries a failed one.
+- Pinned by `xero-kept-late-capture-invoice.test.ts`,
+  `late-capture-kept-xero.test.ts`, `manual-refund-task.test.ts`,
+  `xero-refund-method-documents.test.ts` and `xero-booking-repair.test.ts`.
 
 ## INV-PAY-019
 

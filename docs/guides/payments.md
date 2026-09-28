@@ -587,14 +587,14 @@ waiting-items badge in the sidebar like any other refund task.
    **The club keeps the money, and the app records it in Xero** the way it records
    any card payment: an invoice for the kept amount, paid from the Stripe bank
    account. For a payment for a change to the booking, that is the change's own
-   invoice, sent now. For the booking's own payment it is the booking's invoice,
-   raised only when it would bill exactly what the card paid. If it would not —
-   the booking already has a Xero invoice (for example one cleared when it was
-   cancelled), account credit was used on it, its price has changed since, or it
-   was marked paid by hand — nothing is raised, admins who receive Xero sync
-   errors are told, and the Xero repair tool lists it
-   as *kept late payment without a Xero invoice* until you record it in Xero
-   yourself.
+   invoice, sent now. For the booking's own payment it is a separate invoice
+   reading *Payment kept after cancellation*, billed to the member's usual Xero
+   contact on your hut-fees income account, for exactly what the card paid. The
+   booking's original invoice, and any note that cleared it when the booking was
+   cancelled, are left as they are, so the money is counted once. You do not need
+   to record anything in Xero yourself. If you reopen the item and then refund it,
+   an invoice not yet sent is withdrawn, and one already sent is credited back by
+   the refund.
 3. **If you already refunded it in the Stripe dashboard**, use **Close without
    refunding** and say so in the note. Once Stripe has told the app about that
    refund, closing it records nothing in Xero, because nothing was kept.
