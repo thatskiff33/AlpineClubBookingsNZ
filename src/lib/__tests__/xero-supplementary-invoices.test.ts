@@ -29,7 +29,11 @@ vi.mock("@/lib/prisma", () => ({
     bookingModification: {
       findUnique: mocks.bookingModificationFindUnique,
     },
-    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
+    manualRefundTask: {
+      findMany: mocks.manualRefundTaskFindMany,
+      // #3635 round-3 R2: no kept late capture unless a test says so.
+      findUnique: async () => null,
+    },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
       findUnique: mocks.xeroSyncOperationFindUnique,

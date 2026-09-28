@@ -160,6 +160,9 @@ const fakePrisma = vi.hoisted(() => {
           _count: { _all: bucket.count },
         }));
       },
+      // #3635 round-3 R1: the note-eligible cash reads which refunds name a
+      // late capture; these fixtures carry no intent, so none do.
+      findMany: async () => [],
     },
     payment: {
       findMany: async (args: { where: Record<string, unknown> }) => {

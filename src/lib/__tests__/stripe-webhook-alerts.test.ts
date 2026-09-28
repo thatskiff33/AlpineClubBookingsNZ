@@ -61,7 +61,9 @@ const {
   mockSendAdminLateCaptureHeldAlert,
   mockClaimAlertCooldown,
   mockBookingDefaultsFindUnique,
+  mockPaymentRefundFindMany,
 } = vi.hoisted(() => ({
+  mockPaymentRefundFindMany: vi.fn().mockResolvedValue([]),
   mockPaymentRecoveryOperationFindFirst: vi.fn().mockResolvedValue(null),
   // #3639: the treasurer-approval task and the club's setting. Null is "no task
   // owns this capture" and "the club never saved the setting", which is the
@@ -292,6 +294,14 @@ vi.mock("@/lib/prisma", () => ({
     manualRefundTask: {
       findUnique: (...args: unknown[]) => mockManualRefundTaskFindUnique(...args),
     },
+    // #3635 round-3 R4: a late capture's refunds are noted per capture, from
+    // its refund rows less the notes already raised for it.
+    paymentRefund: {
+      findMany: (...args: unknown[]) => mockPaymentRefundFindMany(...args),
+    },
+    xeroSyncOperation: {
+      findMany: async () => [],
+    },
     bookingDefaults: {
       findUnique: (...args: unknown[]) => mockBookingDefaultsFindUnique(...args),
     },
@@ -324,7 +334,8 @@ vi.mock("@/lib/xero-token-store", () => ({
 vi.mock("@/lib/late-capture-xero-receipt", () => ({
   hasXeroReceiptForLateCapture: (paymentIntentId: string) =>
     mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(paymentIntentId),
-  stripeRefundNeedsXeroNoteNow: async () => true,
+  // #3635 round-3: no charge.refunded here is of a late capture.
+  findLateCapturePaymentIntents: async () => new Set<string>(),
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -391,6 +402,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 describe("Stripe webhook Xero alerting", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPaymentRefundFindMany.mockResolvedValue([]);
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
@@ -2268,6 +2280,15 @@ describe("Stripe webhook Xero alerting", () => {
       mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(
         true,
       );
+      // The inline refund recorded its ledger row before the note is sized.
+      mockPaymentRefundFindMany.mockResolvedValue([
+        {
+          amountCents: 2500,
+          status: "succeeded",
+          stripeCreatedAt: new Date("2026-06-30T22:00:00.000Z"),
+          createdAt: new Date("2026-06-30T22:00:00.000Z"),
+        },
+      ]);
 
       const response = await POST(makeRequest());
 
@@ -2275,6 +2296,7 @@ describe("Stripe webhook Xero alerting", () => {
       expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
         "payment-9",
         2500,
+        expect.objectContaining({ refundMethod: "card", documentDate: "2026-07-01" }),
       );
     });
 

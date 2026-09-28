@@ -50,6 +50,10 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    // #3635 round-3 R1: no refund row names a late capture unless a test says so.
+    paymentRefund: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     paymentTransaction: {
       updateMany: vi.fn(),
     },

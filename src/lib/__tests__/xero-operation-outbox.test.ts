@@ -86,6 +86,10 @@ vi.mock("@/lib/prisma", () => {
     payment: {
       findUnique: mocks.findUniquePayment,
     },
+    // #3635 round-3 R1: no refund row names a late capture unless a test says so.
+    paymentRefund: {
+      findMany: async () => [],
+    },
     groupBookingSettlement: {
       findUnique: mocks.findUniqueGroupSettlement,
     },
@@ -2496,7 +2500,10 @@ describe("processQueuedXeroOutboxOperations", () => {
       "op_entrance_1",
       expect.objectContaining({
         message: "Queued Xero outbox payload is incomplete.",
-      })
+      }),
+      undefined,
+      // #3635 round-3 N5: a row withdrawn in the meantime stays CANCELLED.
+      { keepCancelled: true }
     );
   });
 

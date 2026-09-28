@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   sendRepeatedFailureAlert: vi.fn(),
   sendReconciliationReportAlert: vi.fn(),
   resolveStripeCashRefundEvidence: vi.fn(),
+  paymentRefundFindMany: vi.fn(),
 }));
 
 // #2902: the over-coverage drift class compares coverage against the
@@ -41,6 +42,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findMany: mocks.paymentFindMany,
+    },
+    paymentRefund: {
+      findMany: mocks.paymentRefundFindMany,
     },
     memberSubscription: {
       findMany: mocks.subscriptionFindMany,
@@ -250,6 +254,10 @@ describe("buildXeroReconciliationReport", () => {
     vi.clearAllMocks();
     mocks.inboundEventCount.mockResolvedValue(0);
     mocks.inboundEventFindMany.mockResolvedValue([]);
+    // #3635: no resolved refund note, and no refund row naming a late capture,
+    // unless a test says so.
+    mocks.operationFindMany.mockResolvedValue([]);
+    mocks.paymentRefundFindMany.mockResolvedValue([]);
     mocks.resolveStripeCashRefundEvidence.mockImplementation(
       async (payment: { refundedAmountCents: number }) => ({
         cashRefundCents: payment.refundedAmountCents,
@@ -838,7 +846,7 @@ describe("buildXeroReconciliationReport", () => {
       (issueSection) => issueSection.id === "stripe-refund-over-coverage"
     );
     expect(section?.items?.[0]?.detail).toContain(
-      "cash refund target of $0.00"
+      "cash target of $0.00"
     );
     expect(section?.items?.[0]?.detail).toContain("legacy-mirror");
   });

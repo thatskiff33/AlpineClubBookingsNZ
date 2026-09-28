@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   transactionFindUnique: vi.fn(),
   taskFindUnique: vi.fn(),
   paymentFindUnique: vi.fn(),
-  linkCount: vi.fn(),
+  linkFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
@@ -53,7 +53,8 @@ const store = {
   paymentTransaction: { findUnique: (...a: unknown[]) => mocks.transactionFindUnique(...a) },
   manualRefundTask: { findUnique: (...a: unknown[]) => mocks.taskFindUnique(...a) },
   payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
-  xeroObjectLink: { count: (...a: unknown[]) => mocks.linkCount(...a) },
+  // The payment's active PRIMARY_INVOICE links (`bookingHasPrimaryXeroInvoice`).
+  xeroObjectLink: { findMany: (...a: unknown[]) => mocks.linkFindMany(...a) },
 };
 
 function plan() {
@@ -77,7 +78,7 @@ beforeEach(() => {
   });
   mocks.taskFindUnique.mockResolvedValue({ createdAt: new Date("2026-06-10T01:00:00Z") });
   mocks.paymentFindUnique.mockResolvedValue({ xeroInvoiceId: null });
-  mocks.linkCount.mockResolvedValue(0);
+  mocks.linkFindMany.mockResolvedValue([]);
   mocks.enqueueXeroKeptLateCaptureInvoiceOperation.mockResolvedValue({
     queueOperationId: "op_kept",
     message: "queued",

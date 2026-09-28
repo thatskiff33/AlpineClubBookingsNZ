@@ -274,7 +274,7 @@ describe("reannounceHeldLateCaptures (the payments cron's sweep)", () => {
           status: "OPEN",
           lateCaptureApprovalIntentId: { not: null },
         }),
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
     );
     expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
@@ -284,6 +284,32 @@ describe("reannounceHeldLateCaptures (the payments cron's sweep)", () => {
       expect.objectContaining({ bookingId: "booking-9", amountCents: 2500 }),
       expect.anything(),
     );
+  });
+
+  // #3635 round-3 N4: with more OPEN held tasks than one batch, the batch
+  // rotates each cron step, so the 51st task is reached rather than the first
+  // fifty being tried for ever.
+  it("rotates its batch past the first fifty from one cron step to the next", async () => {
+    const open = Array.from({ length: 60 }, (_, index) => ({
+      bookingId: `booking-${index}`,
+      paymentId: `payment-${index}`,
+      amountCents: 2500,
+      raisedAmountCents: 2500,
+      lateCaptureApprovalIntentId: `pi_${index}`,
+    }));
+    mocks.taskFindMany.mockResolvedValue(open);
+    const announcedKeys = () =>
+      mocks.claimAlertCooldown.mock.calls.map((call: unknown[]) => (call[0] as { key: string }).key);
+
+    const step = 15 * 60 * 1000;
+    await reannounceHeldLateCaptures(new Date(step * 0));
+    expect(announcedKeys()).toHaveLength(50);
+    expect(announcedKeys()).not.toContain("late-capture-held:pi_55");
+
+    mocks.claimAlertCooldown.mockClear();
+    await reannounceHeldLateCaptures(new Date(step * 1));
+    expect(announcedKeys()).toHaveLength(50);
+    expect(announcedKeys()).toContain("late-capture-held:pi_55");
   });
 
   it("sends nothing once the claim is kept, and counts nothing announced", async () => {

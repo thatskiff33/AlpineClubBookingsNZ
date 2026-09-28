@@ -249,7 +249,9 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
     // membership-cancellation types were failed); now it is replayable.
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
       "op_refund_1",
-      expect.objectContaining({ message: "Xero token refresh failed" })
+      expect.objectContaining({ message: "Xero token refresh failed" }),
+      undefined,
+      { keepCancelled: true }
     );
     expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
   });
