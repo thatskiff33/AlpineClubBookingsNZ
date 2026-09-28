@@ -1795,6 +1795,8 @@ export function classifyBookingContext(
         continue;
       }
       const keptCents = Math.max(transaction.amountCents - transaction.refundedAmountCents, 0);
+      // Refunded in full since (a Stripe dashboard refund): nothing was kept.
+      if (keptCents === 0) continue;
       const refusal = keptPrimaryCaptureInvoiceRefusal({
         keptCents,
         finalPriceCents: booking.finalPriceCents,

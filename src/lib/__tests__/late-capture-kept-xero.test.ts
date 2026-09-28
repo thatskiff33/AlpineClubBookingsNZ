@@ -231,6 +231,19 @@ describe("planKeptLateCaptureXeroRecord", () => {
     mocks.transactionFindUnique.mockResolvedValue(null);
     await expect(plan()).resolves.toEqual({ kind: "none" });
   });
+
+  it("does nothing, and tells nobody, for a capture already refunded in full in the Stripe dashboard", async () => {
+    for (const kind of ["PRIMARY", "ADDITIONAL"]) {
+      mocks.transactionFindUnique.mockResolvedValue({
+        kind,
+        status: "REFUNDED",
+        amountCents: 24000,
+        refundedAmountCents: 24000,
+      });
+      await expect(plan()).resolves.toEqual({ kind: "none" });
+    }
+    expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
 });
 
 describe("finishKeptLateCaptureXeroRecord", () => {

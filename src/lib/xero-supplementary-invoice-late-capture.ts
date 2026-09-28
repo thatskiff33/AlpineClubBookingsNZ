@@ -109,7 +109,8 @@ type CapturedTransaction = { status: PaymentStatus; amountCents: number } | null
  * released or retired while the treasurer decides), COMPLETED is `refunded`
  * (the approval is the refund), DISMISSED is `kept` (owner decision 29 Sep
  * 2026, #3635: the kept money is invoiced and paid from the Stripe account like
- * any card payment).
+ * any card payment) unless the capture has since been refunded in full (a
+ * dashboard refund, closed without refunding as the payments guide says).
  *
  * With no task, the webhook's own routing decides, exactly as before. Two
  * populations are refunded by design and their waiting invoice must retire,
@@ -136,7 +137,17 @@ export async function lateCaptureRefundState(params: {
   });
   if (task) {
     if (task.status === "OPEN") return "awaiting-decision";
-    return task.status === "DISMISSED" ? "kept" : "refunded";
+    if (task.status !== "DISMISSED") return "refunded";
+    // Closed without refunding - but the payments guide tells a treasurer who
+    // already refunded it in the Stripe dashboard to close it that way too. A
+    // capture fully refunded since is not kept money.
+    const capture = await prisma.paymentTransaction.findFirst({
+      where: { source: "STRIPE", stripePaymentIntentId: params.paymentIntentId },
+      select: { amountCents: true, refundedAmountCents: true },
+    });
+    return capture && capture.refundedAmountCents >= capture.amountCents
+      ? "refunded"
+      : "kept";
   }
   if (isLateCaptureRefundedBookingStatus(params.bookingStatus)) return "refunded";
   const supersede = await prisma.paymentRecoveryOperation.findFirst({

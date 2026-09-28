@@ -87,7 +87,11 @@ export async function planKeptLateCaptureXeroRecord(params: {
     where: { stripePaymentIntentId: params.paymentIntentId },
     select: { kind: true, status: true, amountCents: true, refundedAmountCents: true },
   });
-  if (!transaction) return { kind: "none" };
+  // Nothing kept: no capture, or one refunded in full since (a treasurer who
+  // refunded it in the Stripe dashboard closes the task without refunding).
+  if (!transaction || transaction.refundedAmountCents >= transaction.amountCents) {
+    return { kind: "none" };
+  }
   if (transaction.kind !== PaymentTransactionKind.PRIMARY) {
     return { kind: "change-payment", paymentIntentId: params.paymentIntentId };
   }

@@ -3786,6 +3786,23 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(result.outcome).toBe("left-retired");
   });
 
+  it("#3635: a capture closed without refunding AFTER a full dashboard refund is refunded, not kept", async () => {
+    retired = [retiredOperation()];
+    mocks.findFirstPaymentTransaction.mockResolvedValue({
+      status: "REFUNDED",
+      amountCents: 12000,
+      refundedAmountCents: 12000,
+      payment: { booking: { status: "CANCELLED" } },
+    });
+    mocks.findUniqueManualRefundTask.mockResolvedValue({ status: "DISMISSED" });
+
+    const result =
+      await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent("pi_late");
+
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("left-retired");
+  });
+
   it("#3635: a KEPT capture on a cancelled booking (task DISMISSED) revives the retired row itself", async () => {
     retired = [retiredOperation()];
     mocks.findFirstPaymentTransaction.mockResolvedValue({

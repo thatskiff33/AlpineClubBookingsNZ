@@ -3582,7 +3582,10 @@ describe("runBookingXeroRepair", () => {
    */
   describe("a kept late capture of the booking's own payment (#3635)", () => {
     const RAISED_AT = new Date("2026-05-01T00:05:00Z");
-    const keptBooking = (payment: Record<string, unknown> = {}) =>
+    const keptBooking = (
+      payment: Record<string, unknown> = {},
+      capture: Record<string, unknown> = {},
+    ) =>
       makeBooking({
         status: "CANCELLED",
         payment: {
@@ -3607,6 +3610,7 @@ describe("runBookingXeroRepair", () => {
               reason: "cancelled_booking_late_capture",
               createdAt: new Date("2026-05-01T00:00:00Z"),
               updatedAt: new Date("2026-05-01T00:00:00Z"),
+              ...capture,
             },
           ],
           ...payment,
@@ -3665,6 +3669,12 @@ describe("runBookingXeroRepair", () => {
       for (const status of ["OPEN", "COMPLETED"]) {
         expect(keptFinding(await run(keptBooking(), status))).toBeUndefined();
       }
+      // Kept, but refunded in full in the Stripe dashboard since.
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      expect(keptFinding(await run(refunded, "DISMISSED"))).toBeUndefined();
       const queued = await run(keptBooking(), "DISMISSED", [
         {
           id: "op_kept_invoice",
