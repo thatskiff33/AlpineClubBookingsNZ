@@ -197,7 +197,9 @@ export async function enqueueXeroKeptLateCaptureInvoiceOperation(params: {
  *    check sends, and its worker credits the refund back; a SUCCEEDED one is
  *    answered by the refund note.
  *  - A row an officer resolved in Xero is left as it is: recorded by hand,
- *    never re-run, and answered by the refund note (`INV-INT-025`).
+ *    never re-run (`INV-INT-025`). Its refund gets no automatic note: the
+ *    officer records that by hand too, and the repair tool asks them to
+ *    (`KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`, round-3 R5).
  * The change's released supplementary invoice for the same capture, still
  * PENDING, is withdrawn too.
  */
