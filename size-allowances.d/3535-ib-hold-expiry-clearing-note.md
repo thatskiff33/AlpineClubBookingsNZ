@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2080
+lines: 2081
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -62,13 +62,23 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   manual-review answer when none is recorded. The owner's 28 Sep 2026
   decision adds one predicate: a closed DECISION 2 hand-back task ends that
   arm's finding, read from the loader's context. #3635 (same epic, owner
-  decision 29 Sep 2026) adds the kept-late-capture arm beside the late-capture
-  arm it follows: a treasurer-kept booking payment with no kept-payment
-  invoice asked for is queued, and a failed one retried, under the rule the
-  dismissal uses, which lives in `late-capture-kept-xero-rules.ts`.
+  decision 28 Sep 2026): every retry arm answers `getBlockingOperation`'s
+  "resolved in Xero" case as done, one branch per arm, beside the retry and
+  blocked branches it must sit between; the pick and the predicate live in
+  `xero-booking-repair-object-resolution.ts` and `xero-operation-resolution.ts`.
+  Its fix round has the clearing-allocation branch report a live allocation as
+  blocked instead of queueing a second one beside it, as its siblings do; its
+  third review round reports a resolved operation at info level from each arm
+  (the finding's builder lives in `xero-booking-repair-findings.ts`), passes
+  the queue type at the two payment-level credit-note lookups, and lets a
+  resolved PARTIAL note still show a separate live allocation. #3635 (same
+  epic, owner decision 29 Sep 2026) adds the kept-late-capture arm beside the
+  late-capture arm it follows: a treasurer-kept booking payment with no
+  kept-payment invoice asked for is queued, and a failed one retried, under the
+  rule the dismissal uses, which lives in `late-capture-kept-xero-rules.ts`.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1769
+lines: 1695
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
@@ -76,9 +86,16 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
   #3642 (same epic) returns a failed group-settlement invoice row (CREATE or
   VOID) to the outbox, rebuilding the CREATE's queued payload, in the existing
-  outbox-requeue branch beside the applied-credit one. #3635 (same epic) adds
-  the kept late-capture invoice's retry beside it: its meta and payload
-  reader, with the two requeues now one status-guarded helper.
+  outbox-requeue branch beside the applied-credit one. #3635 (same epic): the
+  retry helper refuses an operation resolved in Xero, with its 409 error and
+  refusal beside `XeroOperationRetryError`, which it extends, and each of the
+  three retry claims loses to a resolve landing after the read, saying so
+  with the resolved error from one helper beside them, and applied-credit
+  rows stay retry-only through one named reading of the mark; the predicate
+  lives in `xero-operation-resolution.ts`, and the payment credit-note payload
+  reader moved out to `xero-payment-credit-note-payload.ts`. #3635 also adds
+  the kept late-capture invoice's retry beside the group one: its meta and
+  payload reader, with the two requeues now one status-guarded helper.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1894

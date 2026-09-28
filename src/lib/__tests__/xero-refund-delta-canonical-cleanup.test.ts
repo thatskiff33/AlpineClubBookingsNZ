@@ -295,6 +295,9 @@ const fakePrisma = vi.hoisted(() => {
         const row = rows[0];
         return row ? { requestPayload: row.requestPayload, xeroObjectId: row.xeroObjectId, xeroObjectNumber: null } : null;
       },
+      // #3635 round 4: the resolved-in-Xero coverage read. No operation in
+      // these fixtures is resolved by an officer.
+      findMany: async () => [],
     },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(client),
   };

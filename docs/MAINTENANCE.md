@@ -1680,6 +1680,36 @@ owe less than it (part of the booking was paid) is never retried
 automatically: resolve it by hand, then mark the failed operation **resolved**
 on the Xero operations panel and the finding stops.
 
+**"Resolved" on the Xero operations panel means done (#3635,
+`INV-INT-025`).** Mark a failed or partial operation resolved only once you have
+made the fix in Xero yourself. From then on nothing re-runs it automatically:
+
+- the Retry and Requeue buttons are gone, and the server refuses a stale tab's
+  retry with a 409; a retry already queued is skipped, not run;
+- the repair tool neither retries it nor queues a new document beside it, and
+  shows it as an information-only "resolved in Xero by an officer" finding;
+- a refund credit note you raised by hand counts for the amount its operation
+  recorded: the nightly credit reconciliation stops asking for it, and a later
+  refund on the same payment still gets its own note for the rest. If the
+  resolved operation's amount cannot be read, no further note is queued for
+  that payment and the log says so: raise any later refund's note by hand;
+- **Queue all** on the missing-invoices list leaves that booking out, and a
+  copy queued before your resolve is cancelled before it reaches Xero;
+- it stops blocking the Stripe refund-note link repair.
+
+Two limits. You cannot resolve an operation while a retry of it is running, or
+while a new copy of the same document is queued; wait for it to finish, then
+check Xero. A retry that looks stuck has to be cleared with **Reset stale
+running operations** first. And an applied-credit allocation
+or deallocation cannot be resolved at all, because a hand fix in Xero does not
+bring the club's own credit ledger back in line; retry it instead. One marked
+resolved before this release can still be retried.
+
+There is no undo on the panel. If you marked one by mistake, fix the Xero side
+by hand, or use **Targeted force sync** for that one booking's invoice: it
+raises the invoice anyway, and its audit entry records that it overrode the
+officer's mark. Check Xero for the invoice raised by hand before you do.
+
 **A part-paid hold is kept, not released (#3643, `INV-PAY-107`).** Before
 releasing a hold the job reads the booking's primary and supplementary invoices
 from Xero, outside the release transaction. Any cash keeps the hold: no cancel,

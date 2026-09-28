@@ -9,6 +9,10 @@ import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoic
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
+  findResolvedBookingInvoiceCreate,
+  readResolvedRefundCreditNoteCoverage,
+} from "@/lib/xero-resolved-in-xero-fences";
+import {
   STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
   STALE_RUNNING_XERO_OPERATION_MINUTES,
   countStaleProcessingXeroInboundEvents,
@@ -227,8 +231,21 @@ export async function getMissingXeroInvoiceBookings(options?: {
   */
   const evidence = await readBookingInvoiceEvidenceForPayments(payments);
 
-  const missingBookings = candidates.flatMap((booking) => {
-    if (!booking.payment?.id || evidence.get(booking.payment.id)?.exists) {
+  const unevidenced = candidates.filter(
+    (booking) => booking.payment?.id && !evidence.get(booking.payment.id)?.exists,
+  );
+  // #3635 (`INV-INT-025`): an officer raised the invoice by hand in Xero and
+  // resolved the create. "Queue all" from this list would bill the member
+  // twice; the enqueue refuses it too, and the repair tool reports it.
+  const resolvedPaymentIds = new Set<string>();
+  for (const booking of unevidenced) {
+    if (await findResolvedBookingInvoiceCreate(booking.payment!.id)) {
+      resolvedPaymentIds.add(booking.payment!.id);
+    }
+  }
+
+  const missingBookings = unevidenced.flatMap((booking) => {
+    if (!booking.payment?.id || resolvedPaymentIds.has(booking.payment.id)) {
       return [];
     }
 
@@ -267,6 +284,42 @@ export async function getMissingXeroInvoiceBookings(options?: {
  * self-heal minted a fictitious refund note plus a Stripe-bank payment.
  * Account-credit-only payments now resolve to zero cash and are excluded.
  */
+/**
+ * How much of a Stripe payment's CASH refund no refund credit note covers
+ * (#2902 cash evidence, #3635 round 4). Covered is the active refund-note links
+ * PLUS the recorded amounts of notes an officer raised by hand in Xero and
+ * resolved (`INV-INT-025`), so a hand-made note is not asked for twice and a
+ * later refund beyond it still shows. One home for the self-heal list and the
+ * booking page. A resolved note whose amount cannot be read covers nothing
+ * here, so the gap stays visible and the enqueue refuses it loudly.
+ */
+export async function readRefundCreditNoteGap(payment: {
+  id: string;
+  bookingId: string;
+  refundedAmountCents: number;
+}): Promise<{
+  cashRefundCents: number;
+  coveredCents: number;
+  resolvedInXeroCents: number;
+  uncoveredCents: number;
+}> {
+  // #2902: cash evidence first — an account-credit-only cancellation resolves
+  // to zero cash and is excluded before any coverage query runs.
+  const evidence = await resolveStripeCashRefundEvidence(payment);
+  if (evidence.cashRefundCents <= 0) {
+    return { cashRefundCents: 0, coveredCents: 0, resolvedInXeroCents: 0, uncoveredCents: 0 };
+  }
+  const linkedCents = await sumCoveredRefundCreditNoteCents(payment.id);
+  const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
+  const coveredCents = linkedCents + resolved.coveredCents;
+  return {
+    cashRefundCents: evidence.cashRefundCents,
+    coveredCents,
+    resolvedInXeroCents: resolved.coveredCents,
+    uncoveredCents: Math.max(0, evidence.cashRefundCents - coveredCents),
+  };
+}
+
 export async function getRefundsMissingXeroCreditNotes(options?: {
   limit?: number;
   now?: Date;
@@ -303,14 +356,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
 
   const formatted: RefundMissingCreditNote[] = [];
   for (const payment of payments) {
-    // #2902: cash evidence first — an account-credit-only cancellation
-    // resolves to zero cash and is excluded before any coverage query runs.
-    const evidence = await resolveStripeCashRefundEvidence(payment);
-    if (evidence.cashRefundCents <= 0) {
-      continue;
-    }
-    const coveredCents = await sumCoveredRefundCreditNoteCents(payment.id);
-    if (evidence.cashRefundCents <= coveredCents) {
+    const gap = await readRefundCreditNoteGap(payment);
+    if (gap.uncoveredCents <= 0) {
       continue;
     }
     formatted.push({
@@ -324,8 +371,8 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
         ? (bookingOwner(payment.booking).member?.email ?? "")
         : "",
       refundedAmountCents: payment.refundedAmountCents,
-      cashRefundedCents: evidence.cashRefundCents,
-      uncoveredCents: evidence.cashRefundCents - coveredCents,
+      cashRefundedCents: gap.cashRefundCents,
+      uncoveredCents: gap.uncoveredCents,
       refundedAt: payment.updatedAt.toISOString(),
     });
   }

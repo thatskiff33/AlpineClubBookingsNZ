@@ -3,12 +3,14 @@
 // xero-booking-repair.ts (#1208 item 2).
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import {
   getOperationQueueTypeHint,
   isSuccessfulXeroOperation,
 } from "./xero-booking-repair-utils";
 import type {
   BlockingOperationMatch,
+  RetryableOperationMatch,
   ResolvedLocalObject,
   XeroObjectLinkRecord,
   XeroOperationRecord,
@@ -155,6 +157,22 @@ export function resolveObjectFromCandidates(params: {
   };
 }
 
+/**
+ * #3635 (`INV-INT-025`): the one way to turn an operation into a repair
+ * retry offer. A row the retry helper refuses - including one an officer
+ * resolved in Xero, which `getXeroOperationRetryMeta` refuses first - gives
+ * null, so `buildRetryAction`, which accepts only this shape, can never
+ * auto-apply a re-run of it.
+ */
+export function toRetryableOperationMatch(
+  operation: XeroOperationRecord
+): RetryableOperationMatch | null {
+  const retryMeta = getXeroOperationRetryMeta(operation);
+  return retryMeta.supported
+    ? { kind: "retryable", operation, retryMeta: { ...retryMeta, supported: true } }
+    : null;
+}
+
 export function getBlockingOperation(
   operations: XeroOperationRecord[],
   entityType: string,
@@ -176,27 +194,34 @@ export function getBlockingOperation(
       payloadQueueTypeCompatible(operation, options?.payloadQueueType)
   );
 
-  // The first relevant operation is read here: it is the fallback below, and
-  // its absence is the "nothing blocking" answer (#2800).
-  const [firstRelevant] = relevant;
-  if (firstRelevant === undefined) {
-    return null;
+  // #3635 (`INV-INT-025`): a row an officer resolved in Xero is done. It never
+  // outranks a live row - an old resolved FAILED row picked ahead of a newer
+  // live failure would hide that failure - and it is never dropped either:
+  // when it is all there is, "nothing blocking" would send the caller on to
+  // mint a rival to the document the officer made by hand.
+  const live = relevant.filter((operation) => !isResolvedInXero(operation));
+
+  // The first live operation is read here: it is the fallback below, and its
+  // absence is the "nothing live" answer (#2800).
+  const [firstLive] = live;
+  if (firstLive === undefined) {
+    const [firstResolved] = relevant;
+    return firstResolved === undefined
+      ? null
+      : { kind: "resolved", resolvedOperation: firstResolved };
   }
 
-  const failedOrPartial = relevant.find((operation) =>
+  const failedOrPartial = live.find((operation) =>
     ["FAILED", "PARTIAL"].includes(operation.status)
   );
-  if (failedOrPartial) {
-    return {
-      operation: failedOrPartial,
-      retryMeta: getXeroOperationRetryMeta(failedOrPartial),
-    };
-  }
-
-  return {
-    operation: firstRelevant,
-    retryMeta: getXeroOperationRetryMeta(firstRelevant),
-  };
+  const chosen = failedOrPartial ?? firstLive;
+  return (
+    toRetryableOperationMatch(chosen) ?? {
+      kind: "blocked",
+      operation: chosen,
+      retryMeta: getXeroOperationRetryMeta(chosen),
+    }
+  );
 }
 
 export function isStuckOperation(operation: XeroOperationRecord) {

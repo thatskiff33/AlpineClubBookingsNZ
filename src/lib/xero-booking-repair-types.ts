@@ -28,6 +28,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // action — that action would mint (and email) an awaiting-payment invoice for
   // money the club already holds.
   "MANUALLY_SETTLED_NO_XERO_EXPECTED",
+  // #3635 (orchestrator decision 2): informational, never actionable. An
+  // officer resolved the operation in Xero and the club's records hold no
+  // document for it: done, never re-run, but still seen.
+  "RESOLVED_IN_XERO_BY_OFFICER",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -337,9 +341,10 @@ export const xeroOperationSelect = Prisma.validator<Prisma.XeroSyncOperationSele
   createdAt: true,
   updatedAt: true,
   replayable: true,
-  // #3643 F1: an officer's "resolved in Xero" mark answers a recognised part
-  // payment's unpaid-rest note.
+  // #3643 F1 / #3635 (`INV-INT-025`): an officer's "resolved in Xero" mark
+  // means the operation is done - never retried, and never re-minted beside.
   manuallyResolvedAt: true,
+  manuallyResolvedReason: true,
 });
 
 export type XeroOperationRecord = Prisma.XeroSyncOperationGetPayload<{
@@ -356,9 +361,37 @@ export interface ResolvedLocalObject {
   conflicts: string[];
 }
 
-export interface BlockingOperationMatch {
+/**
+ * What `getBlockingOperation` found (#3635, `INV-INT-025`). A discriminated
+ * union so that every call site has to say what it does with each case:
+ *
+ * - `retryable`: a live FAILED/PARTIAL row the retry helper can replay. The
+ *   only shape `buildRetryAction` accepts, so a repair offer can never be
+ *   built from anything else.
+ * - `blocked`: a live row that must not be retried or minted beside - PENDING,
+ *   RUNNING, WAITING_PAYMENT, or a FAILED/PARTIAL row the helper refuses.
+ * - `resolved`: the only matching rows are ones an officer marked resolved in
+ *   Xero. The object was made by hand, so the answer is "done": nothing is
+ *   retried and nothing new is queued (a new document would be a rival to the
+ *   officer's). It deliberately carries no `operation` field, so a site that
+ *   reads `.operation` without first excluding it fails to compile.
+ */
+export type BlockingOperationMatch =
+  | RetryableOperationMatch
+  | {
+      kind: "blocked";
+      operation: XeroOperationRecord;
+      retryMeta: XeroOperationRetryMeta;
+    }
+  | {
+      kind: "resolved";
+      resolvedOperation: XeroOperationRecord;
+    };
+
+export interface RetryableOperationMatch {
+  kind: "retryable";
   operation: XeroOperationRecord;
-  retryMeta: XeroOperationRetryMeta;
+  retryMeta: XeroOperationRetryMeta & { supported: true };
 }
 
 export interface XeroAmountEvidence {

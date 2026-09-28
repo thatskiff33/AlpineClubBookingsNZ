@@ -11,6 +11,7 @@ import {
   type XeroInvoiceEmailFailureCause,
 } from "@/lib/xero-booking-invoice-outcome";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import {
   isStaleRunningXeroOperation,
   XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
@@ -330,7 +331,7 @@ export function classifyBookingInvoiceSyncFault(
     exclude these rows; a warning on the booking that kept shouting after the
     override would make the override useless exactly where it is most needed.
   */
-  if (operation.manuallyResolvedAt) return null;
+  if (isResolvedInXero(operation)) return null;
 
   /*
     A RUNNING row is the outbox working normally — until it is not. The worker

@@ -680,6 +680,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     xeroObjectId: null,
     xeroObjectNumber: null,
     queueType: "SUPPLEMENTARY_INVOICE",
+    manuallyResolvedAt: null,
   });
 
   beforeEach(() => {

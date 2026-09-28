@@ -79,6 +79,11 @@ idempotent — retrying the same work never double-charges.
    cron, and only linked members are refreshed.
 3. **Xero Operations** lists outbound sync attempts; retry active failures, reset
    stale running jobs, or mark an individual operation non-replayable / resolved.
+   Mark one **resolved** only after you have fixed it in Xero yourself: it is
+   then treated as done and is never retried or recreated automatically,
+   though the repair tool still lists it for information. You cannot resolve
+   one while a retry of it is running, or an applied-credit allocation at all
+   (retry those).
    **Inbound Events** lists stored webhooks with a per-event **Replay**. Each
    queue has its own **Reset** for filters and page; it keeps the current section,
    the sibling queue's URL state, and unrelated URL context.

@@ -897,7 +897,7 @@ sequenceDiagram
     OP->>CLI: run scoped repair
     CLI->>REP: runBookingXeroRepair(scope, {apply})
     REP->>DB: loadAuditData: bookings + payments +<br/>modifications + XeroSyncOperations + XeroObjectLinks
-    REP->>REP: classify findings (13 codes:<br/>MISSING_PRIMARY_INVOICE, STALE_PRIMARY_INVOICE_DETAILS,<br/>CANCELLED_BOOKING_OPEN_INVOICE, XERO_AMOUNT_MISMATCH,<br/>BLOCKED_BY_XERO_OPERATION, ...)
+    REP->>REP: classify findings (15 codes:<br/>MISSING_PRIMARY_INVOICE, STALE_PRIMARY_INVOICE_DETAILS,<br/>CANCELLED_BOOKING_OPEN_INVOICE, XERO_AMOUNT_MISMATCH,<br/>BLOCKED_BY_XERO_OPERATION, ...)
     REP->>REP: plan actions (15 types; safe-to-auto-apply flag:<br/>QUEUE_* invoice/credit-note ops, REQUEUE_XERO_OPERATION,<br/>SYNC_*_LINK/FIELD, MARK_MANUAL_REVIEW)
     opt --apply
         loop up to 3 passes
@@ -909,6 +909,68 @@ sequenceDiagram
     end
     REP-->>CLI: pass reports + human summary
 ```
+
+**An operation resolved in Xero is done (#3635, `INV-INT-025`).** The
+operations panel's **Resolve** records that an officer fixed a failed or
+partial operation by hand in Xero. It leaves the row `FAILED`/`PARTIAL` and
+replayable, so status alone would still read it as live; every reader asks
+`isResolvedInXero` (`xero-operation-resolution.ts`) or its query-side spelling
+on `manuallyResolvedAt`.
+
+- **Retries.** The retry helper refuses the row before anything else. Manual
+  retry and requeue answer 409, and a retry queued before the resolve is closed
+  `CANCELLED` by the drain, not run - also when its claim loses to a resolve,
+  which throws the resolved error rather than "claimed by another retry".
+- **Enqueues.** A new row does not carry the old row's mark, so the enqueues
+  are fenced too (`xero-resolved-in-xero-fences.ts`). A resolved refund-note
+  create counts its RECORDED amount as covered
+  (`readResolvedRefundCreditNoteCoverage`, read by the same
+  `parsePaymentCreditNoteRetryInput` the retry replays with): never a
+  per-payment block, so a later refund beyond it gets its own note, sized from
+  the same coverage, and the hand-made note is never covered twice. A resolved
+  row whose amount cannot be read makes the enqueue refuse loudly (error log,
+  "raise it by hand"). `readRefundCreditNoteGap` is the one reader of the gap
+  for the self-heal list and the booking page. No new booking invoice is queued
+  while the payment's latest invoice create is resolved, and the
+  missing-invoices list behind **Queue all** leaves those out. Single-booking
+  force-sync is the one override: it passes `overrideResolvedInXero`, and its
+  audit row names the operation whose mark it overrode.
+- **The outbox.** After it claims a row and before any Xero call, the outbox
+  asks `findResolvedSiblingSince`: was a sibling for the same document (same
+  correlation key) resolved after this copy was queued? If so the copy is
+  closed `CANCELLED`, because the hand-made document stands for it.
+- **Resolve against a running retry.** The route refuses while the operation is
+  RUNNING (a claiming retry), while a live copy of the same document is queued,
+  or while a queued retry of it is RUNNING or started at or before the mark and
+  completed at or after it (`findRetryOverlappingMark`,
+  `xero-operation-resolve-guards.ts`). The queued-retry check runs after the
+  mark is written, and a mark that finds one is withdrawn: a drain that read
+  the row before the mark had already claimed its queued row, so the check sees
+  it whether it is still running or has just finished, and a drain that reads
+  after the mark refuses to run. A second officer is told "already resolved"
+  only when the same check would keep the first mark. What remains: clock skew
+  between the instance that wrote the mark and the one that stamped the retry,
+  and a caller of `retryXeroSyncOperation` that bypassed the drain (none today).
+  A queued retry that stood down because it read a mark later withdrawn records
+  that nothing ran and the operation may be unresolved. A stuck running retry
+  points the officer at **Reset stale running operations**.
+- **Applied-credit allocations and deallocations cannot be resolved.** Fixing
+  Xero by hand does not converge the local credit-slice ledger, and an
+  unconverged deallocation fences cancels, the hold-expiry cron and credit
+  writes (`findAppliedCreditDeallocationFence`); a resolved one would hold them
+  for good. They are retry-only: the route refuses them, and a mark on one
+  written before this release is void on the retry path
+  (`isResolvedInXeroForRetry`), so it can still be retried to convergence.
+- **Repair tool.** `getBlockingOperation` returns a discriminated result:
+  `retryable`, `blocked` (live, or refused by the retry helper) or `resolved`.
+  A resolved row never outranks a newer live failure, and it is never dropped,
+  because then every arm would read "nothing blocking" and queue a new document
+  beside the one the officer made. `buildRetryAction` accepts only the
+  `retryable` case. Resolved means "never re-run", not "never reported": where
+  no document is recorded the arm reports `RESOLVED_IN_XERO_BY_OFFICER` at info
+  level with no action, the booking page shows the same, and the reconciliation
+  report data counts resolved rows (`resolvedInXeroOperations`) without calling
+  them failures; the emailed digest does not show that count. The repeated-failure alert leaves them out too.
 
 Scheduled hardening (cron tasks, all idempotent):
 
@@ -998,15 +1060,15 @@ document automatically** — that judgement stays with the operator.
    admin panel's manual retry, which execute the same mint. The script
    refuses any payment with a credit-note operation that could still
    execute — a CREATE that is queued, running, awaiting payment
-   confirmation, **or FAILED/PARTIAL while still marked replayable** (that
-   combination is exactly what manual retry and requeue accept, and the
-   credit-note retry runs while its row still reads FAILED), or a
-   queued/running REQUEUE of one — re-checked inside each transaction. To
-   clear a failed credit-note operation's block, retry it to completion or
-   **mark it non-replayable** in the admin Xero panel; a non-replayable
-   failed operation is terminally dead and does not block (and marking one
-   "resolved" alone changes neither its status nor its replayability, so
-   that by itself clears nothing). The apply transactions also re-sum
+   confirmation, **or FAILED/PARTIAL while still marked replayable and not
+   resolved in Xero** (that combination is exactly what manual retry and
+   requeue accept, and the credit-note retry runs while its row still reads
+   FAILED), or a queued/running REQUEUE of one — re-checked inside each
+   transaction. To clear a failed credit-note operation's block, retry it to
+   completion, **mark it non-replayable**, or **mark it resolved in Xero** in
+   the admin Xero panel. Either mark makes it terminally dead: since #3635
+   (`INV-INT-025`) no retry path re-runs a resolved operation, so it no longer
+   blocks. The apply transactions also re-sum
    coverage after their claims and roll back on any divergence — but not
    racing the executor at all is the cheap, certain option.
 5. **Apply, bound to the payments you reviewed** (local ledger writes only,

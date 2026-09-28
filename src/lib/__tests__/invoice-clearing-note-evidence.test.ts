@@ -56,7 +56,10 @@ describe("hasInvoiceClearingNote (#3535)", () => {
         where: expect.objectContaining({
           localModel: "Booking",
           localId: "b1",
-          status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] },
+          OR: [
+            { status: { in: ["PENDING", "RUNNING", "SUCCEEDED", "PARTIAL"] } },
+            { status: "FAILED", manuallyResolvedAt: { not: null } },
+          ],
         }),
       }),
     );
@@ -67,5 +70,34 @@ describe("hasInvoiceClearingNote (#3535)", () => {
     await expect(
       hasInvoiceClearingNote(none.client, { bookingId: "b1", xeroRefundCreditNoteId: null }),
     ).resolves.toBe(false);
+  });
+
+  it("counts a failed note an officer raised by hand and resolved, and not an unresolved failure (#3635)", async () => {
+    // A tiny evaluator of the query's OR, so the test reads what the where
+    // clause would match rather than what a stub was told to return.
+    type Row = { status: string; manuallyResolvedAt: Date | null };
+    const matches = (row: Row, clause: Record<string, unknown>) => {
+      const status = clause.status as string | { in: string[] };
+      const statusOk =
+        typeof status === "string" ? row.status === status : status.in.includes(row.status);
+      const resolvedOk =
+        !("manuallyResolvedAt" in clause) || row.manuallyResolvedAt !== null;
+      return statusOk && resolvedOk;
+    };
+    const answer = async (row: Row) => {
+      const operationFindFirst = vi.fn(async (args: { where: { OR: Record<string, unknown>[] } }) =>
+        args.where.OR.some((clause) => matches(row, clause)) ? { id: "op_1" } : null,
+      );
+      const client = {
+        xeroObjectLink: { findFirst: vi.fn().mockResolvedValue(null) },
+        xeroSyncOperation: { findFirst: operationFindFirst },
+      } as unknown as Prisma.TransactionClient;
+      return hasInvoiceClearingNote(client, { bookingId: "b1", xeroRefundCreditNoteId: null });
+    };
+
+    await expect(
+      answer({ status: "FAILED", manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z") }),
+    ).resolves.toBe(true);
+    await expect(answer({ status: "FAILED", manuallyResolvedAt: null })).resolves.toBe(false);
   });
 });
