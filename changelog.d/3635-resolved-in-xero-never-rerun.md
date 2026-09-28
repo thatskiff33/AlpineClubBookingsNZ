@@ -10,7 +10,9 @@
 
   Now every retry path refuses a resolved operation, a queued retry is skipped
   rather than run, and nothing queues a new refund credit note or booking
-  invoice beside the one the officer made. The one deliberate exception is a
+  invoice beside the one the officer made. A refund credit note raised by hand
+  counts for the amount it covered, so a later refund on the same payment still
+  gets its own credit note for the rest. The one deliberate exception is a
   targeted force sync of a single booking's invoice, which still raises it and
   records in the audit log that it overrode the officer's mark. The repair tool
   and the booking page still show a resolved operation, as information only, so
@@ -18,8 +20,9 @@
   Stripe refund-note link repair, and a newer failure is no longer hidden behind
   an older resolved one.
 
-  Two things cannot be resolved: an operation while a retry of it is running
-  (wait for it to finish), and an applied-credit allocation or deallocation,
+  Two things cannot be resolved: an operation while a retry of it is running or
+  a new copy of it is queued (wait for it to finish), and an applied-credit
+  allocation or deallocation,
   because a hand fix in Xero does not bring the club's own credit ledger back in
   line. Retry those instead.
 

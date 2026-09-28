@@ -493,11 +493,11 @@ const EXECUTOR_LIFECYCLE_CREATE_STATUSES = [
  * mirrored here, the same way (#3635, `INV-INT-025`): an operation an officer
  * resolved in Xero is done, `getXeroOperationRetryMeta` refuses it, and the
  * retry claims and the queued-retry drain refuse it too, so it can never mint
- * again and must not fence the payment's link repair. The one window left is a
- * credit-note retry already past its checks and inside its provider call when
- * the officer resolves the row; that retry's own completion writes the note's
- * link, which this repair then reads like any other. SUCCEEDED and CANCELLED
- * rows cannot re-execute and never block.
+ * again and must not fence the payment's link repair. The resolve route
+ * refuses while a queued retry of the row overlaps its mark, so a credit-note
+ * retry inside its provider call is not resolved under it; the window that
+ * remains is the one `INV-INT-025` states. SUCCEEDED and CANCELLED rows cannot
+ * re-execute and never block.
  */
 const RETRYABLE_CREATE_STATUSES = ["FAILED", "PARTIAL"];
 
