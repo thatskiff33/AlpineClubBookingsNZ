@@ -236,6 +236,15 @@ beforeEach(() => {
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
+  // #3635: every existing organiser intent is now read before the lock. Unless a
+  // case says otherwise it is an ordinary unpaid intent the attempt leaves behind.
+  mocks.getPaymentIntent.mockResolvedValue({
+    id: "pi_existing",
+    status: "requires_payment_method",
+    client_secret: null,
+    currency: "nzd",
+    amount: 0,
+  });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
     client_secret: "cs_settle_1",
@@ -853,6 +862,46 @@ describe("createGroupSettlementIntent", () => {
       code: PAYMENT_PROCESSING_CODE,
       message: PAYMENT_PROCESSING_MESSAGE,
     });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  // #3635: the same double charge when the TOTAL moved, in the club's own
+  // currency. The early read used to run only for a matching total, so a changed
+  // total skipped it and minted beside the processing intent.
+  it("refuses, and mints nothing, while the old intent is processing and the total has changed (#3635)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_old_total",
+          amountCents: 4500,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_old_total",
+      status: "processing",
+      client_secret: "cs_old_total",
+      currency: "nzd",
+      amount: 4500,
+    });
+
+    const refusal = createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      code: PAYMENT_PROCESSING_CODE,
+      message: PAYMENT_PROCESSING_MESSAGE,
+    });
+    expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_old_total");
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
     expect(mocks.findOrCreateCustomer).not.toHaveBeenCalled();
