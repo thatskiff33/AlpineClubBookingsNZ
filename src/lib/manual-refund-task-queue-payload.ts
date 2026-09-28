@@ -179,7 +179,7 @@ export function toOpenManualRefundTaskPayload(
     raisedAmountCents: task.raisedAmountCents,
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
-    partPaymentReview: task.partPaymentReviewPaymentId !== null,
+    partPaymentReview: Boolean(task.partPaymentReviewPaymentId),
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

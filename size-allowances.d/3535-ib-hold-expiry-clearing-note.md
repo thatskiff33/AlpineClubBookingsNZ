@@ -11,7 +11,7 @@ out of `xero-operation-outbox.ts`, so the composed file (3205 lines) is below
 its base length and needs no allowance.
 
 file: src/lib/booking-cancel.ts
-lines: 2535
+lines: 2546
 reason: the never-captured cancel path's existing clearing-note enqueue gains
   the one flag that makes its wording say the invoice was cleared, with a
   two-line note on why; the call is the rule, and moving it out of the cancel
@@ -26,10 +26,12 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   gate and the no-note unpaid cancel of DECISION 2, and the throw that rolls a
   refused claim back, at the same points.
   #3639 (same epic) shrank the file, so the composed length is #3643's share
-  alone.
+  alone. The owner's 28 Sep 2026 decision adds the one call that raises the
+  DECISION 2 hand-back task inside the unpaid claim, beside the status flip it
+  must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1976
+lines: 1982
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -55,7 +57,9 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   predicates beside the gate they decide. One predicate says an officer's
   resolved-in-Xero mark ends a clearing note's finding, and a rest note's
   missing allocation is sized from the note's own recorded amount, with a
-  manual-review answer when none is recorded.
+  manual-review answer when none is recorded. The owner's 28 Sep 2026
+  decision adds one predicate: a closed DECISION 2 hand-back task ends that
+  arm's finding, read from the loader's context.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1689

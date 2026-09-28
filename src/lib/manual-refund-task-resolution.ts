@@ -219,7 +219,7 @@ export async function resolveManualRefundTask(
     const refusal = manualRefundTaskSettlementRefusal(
       task.kind,
       resolution,
-      task.partPaymentReviewPaymentId !== null,
+      Boolean(task.partPaymentReviewPaymentId),
     );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
@@ -551,7 +551,7 @@ export async function resolveManualRefundTask(
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
       /** #3643: a part-payment review, for the dismissal's wording. */
-      partPaymentReview: task.partPaymentReviewPaymentId !== null,
+      partPaymentReview: Boolean(task.partPaymentReviewPaymentId),
       /**
        * #3191: how many of this booking's blank nights this decision filled in,
        * so the operator's receipt can say it happened. Zero when none were sent,
