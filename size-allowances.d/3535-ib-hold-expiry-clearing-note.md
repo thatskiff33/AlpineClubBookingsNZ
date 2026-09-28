@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2064
+lines: 2080
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -68,7 +68,7 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   dismissal uses, which lives in `late-capture-kept-xero-rules.ts`.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1768
+lines: 1769
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving

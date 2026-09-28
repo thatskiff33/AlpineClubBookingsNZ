@@ -524,12 +524,8 @@ export async function resolveManualRefundTask(
       }
     }
 
-    // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a DISMISSED late-capture
-    // approval task means the treasurer KEPT the money, and the app records it
-    // in Xero. A kept-capture invoice is queued here, inside the claim, so it
-    // commits with the decision and a replayed dismissal (which loses the claim
-    // above) queues nothing; a change payment's own invoice is released after
-    // the commit. `late-capture-kept-xero.ts` owns both.
+    // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
+    // inside this claim, so a replayed dismissal queues nothing.
     const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
       resolution === "dismissed" && task.lateCaptureApprovalIntentId
         ? await planKeptLateCaptureXeroRecord({
@@ -541,10 +537,7 @@ export async function resolveManualRefundTask(
             store: tx,
           })
         : { kind: "none" };
-    // #3635: an APPROVAL of a task kept earlier and reopened settles what that
-    // keep queued, inside this same claim: an unsent record is withdrawn (and
-    // so needs no refund note), a raised one gets its payment recorded and is
-    // credited back by the refund note (`settleKeptLateCaptureRecordOnApproval`).
+    // #3635: approving a reopened keep settles what that keep queued, here.
     if (resolution === "completed" && task.lateCaptureApprovalIntentId) {
       await settleKeptLateCaptureRecordOnApproval({
         manualRefundTaskId: task.id,
@@ -693,9 +686,7 @@ export async function resolveManualRefundTask(
       format,
     });
 
-  // #3635: the kept late capture's Xero record, after the commit. Never throws.
-  // The plan is internal bookkeeping, so it is not part of what the route
-  // hands the screen.
+  // #3635: the kept capture's Xero record, after the commit; never returned.
   const { keptLateCaptureXeroPlan, ...closed } = result;
   await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
 
