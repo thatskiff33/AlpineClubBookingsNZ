@@ -1480,6 +1480,123 @@ describe("runBookingXeroRepair", () => {
     }
   });
 
+  // #3643: an officer's "resolved in Xero" mark on a refused clearing note
+  // counts for an ordinary (unrecognised) cancelled unpaid booking too - the
+  // same rule the recognised rest note follows. #3535's shortfall finding goes
+  // quiet, and the booking never falls through to a retry or a re-queue.
+  it("honours the resolved-in-Xero mark on a shortfall-refused clearing note (#3643)", async () => {
+    const shortfallNote = (overrides: Record<string, unknown> = {}) =>
+      restNoteOperation({
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_1",
+          refundAmountCents: 10000,
+          clearsUnpaidInvoice: true,
+        },
+        lastErrorMessage:
+          "The booking's open Xero invoices owe $0.00, less than this $100.00 invoice-clearing credit note; nothing was created.",
+        ...overrides,
+      });
+    const classify = async (operations: any[]) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            operations,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const resolved = await classify([
+      shortfallNote({ manuallyResolvedAt: new Date("2026-05-05T00:00:00Z") }),
+    ]);
+    expect(
+      resolved.findings.filter((finding) => finding.severity === "manual_review")
+    ).toEqual([]);
+    expect(resolved.findings.map((finding) => finding.code)).not.toContain(
+      "BLOCKED_BY_XERO_OPERATION"
+    );
+    expect(resolved.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+    const resolvedTypes = resolved.actions.map((action) => action.type);
+    expect(resolvedTypes).not.toContain("REQUEUE_XERO_OPERATION");
+    expect(resolvedTypes).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+
+    // Control: the same refused note, unmarked, is still #3535's manual review.
+    const unresolved = await classify([shortfallNote()]);
+    expect(unresolved.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        summary: expect.stringContaining("owe less than it"),
+      })
+    );
+  });
+
+  // #3643: a recognised booking's clearing note covers only the unpaid rest,
+  // so its missing allocation is sized from the note's own recorded amount -
+  // the figure the cancel queued - never the booking's full clearing amount.
+  it("sizes a recognised rest note's missing allocation from the note itself (#3643)", async () => {
+    const createdRestNote = (requestPayload: unknown) =>
+      restNoteOperation({
+        status: "SUCCEEDED",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_rest",
+        requestPayload,
+        responsePayload: null,
+      });
+    const classify = async (operations: any[]) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [recognisedPartPaymentBooking()],
+            operations,
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const sized = await classify([
+      createdRestNote({
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        refundAmountCents: 4000,
+        clearsUnpaidInvoice: true,
+        clearsUnpaidBalance: true,
+      }),
+    ]);
+    const allocation = sized.actions.find(
+      (action) => action.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(allocation?.payload).toMatchObject({ creditNoteId: "cn_rest", amountCents: 4000 });
+    expect(sized.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MISSING_CREDIT_NOTE_ALLOCATION",
+        details: expect.objectContaining({ amountCents: 4000 }),
+      })
+    );
+
+    // No recorded amount at all: a person allocates it, never a full-size guess.
+    const unsized = await classify([createdRestNote(null)]);
+    expect(unsized.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(unsized.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        safeToAutoApply: false,
+      })
+    );
+  });
+
   // #3535 (`INV-PAY-017`): the arm sizes the note with the release's and the
   // cancel path's own helper — applied credit already allocated to the invoice
   // is not cleared twice, and a fully allocated invoice needs no note at all.
