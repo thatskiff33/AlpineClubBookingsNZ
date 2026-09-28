@@ -308,7 +308,10 @@ describe("OBS-08: Webhook logging", () => {
 // OBS-03: Cron job run recording tests
 // ============================================================================
 
-describe("OBS-03: cron job run recording", () => {
+// Each test cold-imports instrumentation.node after vi.resetModules(): 1,829 ms
+// isolated on Windows 11, past the 5,000 ms default under a loaded census chunk,
+// and a timed-out register() then leaks its jobs into the next test (#3663).
+describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
   const ENV_KEYS = [
     "NEXT_RUNTIME",
     "CRON_ENABLED",
