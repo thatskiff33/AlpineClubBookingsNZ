@@ -1351,11 +1351,13 @@ books are correct.
 A late capture a treasurer-approval task owns is never offered for refund
 (#3639). One the treasurer **kept** (the task was closed without refunding) is
 recorded in Xero by the app (#3635, `INV-PAY-110`): for the booking's own
-payment, `KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE` fires when no
+payment, and for a change payment on a booking Xero never invoiced,
+`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE` fires when no
 `KEPT_LATE_CAPTURE_INVOICE` row is queued or sent for its approval task. Its
 `QUEUE_KEPT_LATE_CAPTURE_INVOICE` action is always safe to auto-apply: the
-invoice bills exactly the kept cents and touches nothing of the booking's own.
-A failed or partial one is offered for retry instead.
+invoice bills the gross capture, dated the capture day, touches nothing of the
+booking's own, and the pass re-reads the task under its row lock before it
+queues. A failed or partial one is offered for retry instead.
 
 ### Backfill cancel-flattened payment statuses (#1473 / #1506)
 

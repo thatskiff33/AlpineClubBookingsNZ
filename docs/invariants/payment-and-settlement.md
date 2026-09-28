@@ -806,27 +806,26 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 **Related: `INV-PAY-106`** (who decides a late capture) **and `INV-PAY-104`**
 (the change payment's waiting invoice).
 
-- **A late capture a treasurer keeps is recorded in Xero by the app** (owner
-  decision 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
-  an invoice for the kept amount, paid from the Stripe account. Keeping is
-  dismissing the #3639 task (`late-capture-kept-xero.ts`); a capture refunded in
-  full since keeps nothing.
-- **A change payment** already has its document: the dismissal releases the
-  change's supplementary invoice after commit, or re-queues the retired row.
-- **The booking's own payment** gets its own `KEPT_LATE_CAPTURE_INVOICE`
-  (`xero-kept-late-capture-invoice.ts`), queued inside the dismissal's
-  status-fenced claim, anchored on and keyed by the task: exactly the kept
-  cents on the hut-fees income mapping, paid from `stripeBankAccount`. It
-  needs no primary invoice and touches neither the booking's invoice nor its
-  clearing note, so every case is recorded and counted once.
-- **An approval after a reopen** cancels a still-PENDING record in its claim;
-  one sent is credited back by the ordinary refund note, which accepts the
-  kept invoice where the payment has no primary one.
-- **The repair tool** queues a missing one automatically
-  (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`) and retries a failed one.
-- Pinned by `xero-kept-late-capture-invoice.test.ts`,
-  `late-capture-kept-xero.test.ts`, `manual-refund-task.test.ts`,
-  `xero-refund-method-documents.test.ts` and `xero-booking-repair.test.ts`.
+- **A kept late capture is recorded as a card receipt** (owner and
+  orchestrator decisions 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
+  an invoice for the GROSS capture, dated the capture day, paid from
+  `stripeBankAccount` that day. Keeping is dismissing the #3639 task; one pure
+  `decideLateCapture` (`late-capture-kept-xero-rules.ts`) answers for the
+  reaper, release, dismissal, worker and repair tool.
+- **Which document**: a change payment on an invoiced booking keeps its
+  supplementary invoice; anything else gets a `KEPT_LATE_CAPTURE_INVOICE`
+  anchored on and keyed by the task, touching neither the booking's invoice
+  nor its clearing note.
+- **Refunds** are the ordinary refund note, naming the kept invoice. It is
+  owed only once the capture has its own Xero receipt
+  (`hasXeroReceiptForLateCapture`), never because `payment.xeroInvoiceId`
+  exists; the worker credits back a refund taken before its receipt.
+- **The task row is the lock**: the enqueue and the worker's send-time check
+  take it `FOR UPDATE`; a withdrawal commits with the check. A raised
+  invoice always gets its payment. An approval withdraws an unsent row.
+- **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case),
+  `xero-kept-late-capture-invoice.test.ts` and `late-capture-kept-xero.test.ts`.
 
 ## INV-PAY-019
 
@@ -1147,7 +1146,7 @@ it was).
   rows never recorded alerts once after three days.
 - **Only a kept capture is invoiced.** `lateCaptureRefundState` answers from
   the #3639 task owning the capture (OPEN undecided, COMPLETED refunded,
-  DISMISSED kept unless since refunded in full), else from the booking
+  DISMISSED kept, recorded gross: `INV-PAY-110`), else from the booking
   (CANCELLED or a supersede recovery refunds; #3403 unchanged). The reaper and
   `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
   refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover

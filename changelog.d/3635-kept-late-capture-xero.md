@@ -7,14 +7,20 @@
   could never come back.
 
   Now the change's invoice waits until the treasurer decides. Keeping the
-  money raises a Xero invoice for it, paid from the Stripe bank account, the
-  same way any card payment is recorded: the change's own invoice, or for the
-  booking's own payment a separate "Payment kept after cancellation" invoice
-  for exactly what the card paid. The booking's original invoice and any note
-  that cleared it are left alone, so the money is counted once, and nothing has
-  to be recorded by hand. Refunding it, or closing it after refunding it in the
-  Stripe dashboard, records nothing; reopening a kept one and then refunding it
-  withdraws an invoice not yet sent, or credits back one already sent.
+  money records it in Xero the same way any card payment is recorded: an
+  invoice for what the card paid, dated the day Stripe took it, paid from the
+  Stripe bank account that day. For a change to a booking Xero had invoiced
+  that is the change's own invoice; otherwise a separate "Payment kept after
+  cancellation" invoice. The booking's original invoice and any note that
+  cleared it are left alone, so the money is counted once, and any refund of it
+  (including one made in the Stripe dashboard) is recorded as an ordinary refund
+  credit note against it. A refund of a late payment Xero never recorded no
+  longer raises a refund note against the booking's old, already-cleared
+  invoice, which used to show money leaving the Stripe account that never came
+  in. Reopening a kept one and then refunding it withdraws an invoice not yet
+  sent, or credits back one already sent. The Xero repair tool records any kept
+  payment Xero is missing.
 
   The email telling admins a late payment is held for approval is now tried
-  again a day later if nobody could receive it, instead of being lost.
+  again a day later by the payments cron if nobody could receive it, while the
+  payment is still waiting for a decision.

@@ -432,7 +432,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     });
   });
 
-  it("runs recovery, hold release and the waiting-invoice reaper every 15 minutes through the shared runner (#3663)", async () => {
+  it("runs recovery, hold release, the waiting-invoice reaper and the held late-capture alert every 15 minutes through the shared runner (#3663)", async () => {
     await registerCronJobs();
     // The payments cycle is the first 15-minute job registered (the Xero
     // 15-minute jobs follow, behind their integration flag). Picking the wrong
