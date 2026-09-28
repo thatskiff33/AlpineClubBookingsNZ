@@ -369,10 +369,22 @@ export async function loadAuditData(
             bookingId: { in: bookingIds },
             lateCaptureApprovalIntentId: { not: null },
           },
-          select: { bookingId: true, lateCaptureApprovalIntentId: true },
+          // #3635: the status and raise time say which were KEPT, and from when
+          // their booking invoice counts as asked for.
+          select: {
+            bookingId: true,
+            lateCaptureApprovalIntentId: true,
+            status: true,
+            createdAt: true,
+          },
         })
       : Promise.resolve(
-          [] as { bookingId: string; lateCaptureApprovalIntentId: string | null }[],
+          [] as {
+            bookingId: string;
+            lateCaptureApprovalIntentId: string | null;
+            status: string;
+            createdAt: Date;
+          }[],
         ),
     // #3643 F2: the organisation late-cash arm's hand-back, any status - it is
     // the evidence that cash arrived after a retired clearing note.
@@ -497,11 +509,17 @@ export async function loadAuditData(
   }
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
+  const keptApprovalsByBookingId = new Map<string, Map<string, Date>>();
   for (const task of lateCaptureApprovalTasks) {
     if (!task.lateCaptureApprovalIntentId) continue;
     const ids = approvalIntentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
     ids.add(task.lateCaptureApprovalIntentId);
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
+    if (task.status === "DISMISSED") {
+      const kept = keptApprovalsByBookingId.get(task.bookingId) ?? new Map<string, Date>();
+      kept.set(task.lateCaptureApprovalIntentId, task.createdAt);
+      keptApprovalsByBookingId.set(task.bookingId, kept);
+    }
   }
 
   const handBackPaymentIdsByBookingId = new Map<string, Set<string>>();
@@ -566,6 +584,8 @@ export async function loadAuditData(
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
     lateCaptureApprovalIntentIds:
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    keptLateCaptureRaisedAtByIntentId:
+      keptApprovalsByBookingId.get(booking.id) ?? new Map<string, Date>(),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     closedPartPaymentReviewPaymentIds:

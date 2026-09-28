@@ -67,6 +67,11 @@ export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
 import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
+import {
+  finishKeptLateCaptureXeroRecord,
+  planKeptLateCaptureXeroRecord,
+  type KeptLateCaptureXeroPlan,
+} from "@/lib/late-capture-kept-xero";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -515,6 +520,22 @@ export async function resolveManualRefundTask(
       }
     }
 
+    // #3635 (owner decision 29 Sep 2026, `INV-PAY-106`): a DISMISSED late-capture
+    // approval task means the treasurer KEPT the money, and the app records it
+    // in Xero. The booking's own payment gets its booking invoice queued here,
+    // inside the claim, so it commits with the decision and a replayed
+    // dismissal (which loses the claim above) queues nothing; a change payment
+    // is released after the commit. `late-capture-kept-xero.ts` owns both.
+    const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
+      resolution === "dismissed" && task.lateCaptureApprovalIntentId
+        ? await planKeptLateCaptureXeroRecord({
+            bookingId: task.bookingId,
+            paymentIntentId: task.lateCaptureApprovalIntentId,
+            actingMemberId,
+            store: tx,
+          })
+        : { kind: "none" };
+
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
     // re-prices on EVERY parked review closing. Why, and why the KIND is the
     // condition, is `recordReviewClosurePricing`'s docblock.
@@ -620,6 +641,7 @@ export async function resolveManualRefundTask(
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
           : ManualRefundTaskStatus.DISMISSED,
+      keptLateCaptureXeroPlan,
     };
   });
 
@@ -653,6 +675,9 @@ export async function resolveManualRefundTask(
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
       format,
     });
+
+  // #3635: the kept late capture's Xero record, after the commit. Never throws.
+  await finishKeptLateCaptureXeroRecord(result.keptLateCaptureXeroPlan);
 
   return { ...result, stripeRefundId, additionalPaymentIntentId };
 }

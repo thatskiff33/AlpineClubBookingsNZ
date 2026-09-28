@@ -12,21 +12,21 @@
  * group cancelled after the reaper held it, say) is never swallowed by the
  * first one's cooldown.
  *
- * CONVERGENCE WITH #3638: `claimGroupSettlementInvoiceAlert` is the cooldown
- * half of #3638's settlement-conflict alert (`src/lib/xero-inbound/
- * settlement-conflicts.ts`) — the same 24-hour window and the same rule that a
- * failed claim sends anyway rather than staying silent about unreconciled
- * money. When that module exports its claim, this function's body becomes a
- * call to it and the window constant here is deleted.
+ * CONVERGED WITH #3638 (#3635): `claimGroupSettlementInvoiceAlert` claims
+ * through `claimAlertCooldownFailOpen`, the one home of #3638's rule, with the
+ * shared 24-hour `SETTLEMENT_MONEY_ALERT_REPEAT_MS`: a failed claim sends anyway
+ * rather than staying silent about unreconciled money, because the next Xero
+ * event about this invoice may never come.
  */
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import {
+  SETTLEMENT_MONEY_ALERT_REPEAT_MS,
+  claimAlertCooldownFailOpen,
+} from "@/lib/alert-cooldown";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type { ClubFormat } from "@/lib/club-format";
-
-const GROUP_SETTLEMENT_INVOICE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * What an alert asks a person to do. Two alerts of one kind about one invoice
@@ -69,15 +69,12 @@ export function groupSettlementInvoiceAlertKey(
 
 /** True when this caller holds the alert for `key`; fails open. */
 export async function claimGroupSettlementInvoiceAlert(key: string): Promise<boolean> {
-  return claimAlertCooldown({
+  return claimAlertCooldownFailOpen({
     key,
-    windowMs: GROUP_SETTLEMENT_INVOICE_ALERT_COOLDOWN_MS,
-  }).catch((err) => {
-    logger.error(
-      { err, key },
-      "Failed to claim the group settlement invoice alert cooldown; sending anyway rather than staying silent about unreconciled money"
-    );
-    return true;
+    windowMs: SETTLEMENT_MONEY_ALERT_REPEAT_MS,
+    context: {},
+    logMessage:
+      "Failed to claim the group settlement invoice alert cooldown; sending anyway rather than staying silent about unreconciled money",
   });
 }
 

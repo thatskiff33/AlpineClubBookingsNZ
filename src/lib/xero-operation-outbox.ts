@@ -10,7 +10,10 @@ import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
-import { findActivePrimaryInvoiceLink } from "@/lib/xero-booking-invoice-evidence";
+import {
+  findActivePrimaryInvoiceLink,
+  type BookingInvoiceEvidenceDependencies,
+} from "@/lib/xero-booking-invoice-evidence";
 import {
   buildXeroSupplementaryInvoiceKey,
   type XeroSupplementaryInvoiceAnchorModel,
@@ -382,8 +385,9 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 async function inheritedBookingInvoiceEmailInstruction(params: {
   correlationKey: string;
   paymentId: string;
+  store: Prisma.TransactionClient | typeof prisma;
 }): Promise<XeroInvoiceEmailInstruction | null> {
-  const previous = await prisma.xeroSyncOperation.findFirst({
+  const previous = await params.store.xeroSyncOperation.findFirst({
     where: {
       correlationKey: params.correlationKey,
       direction: "OUTBOUND",
@@ -430,9 +434,17 @@ export async function enqueueXeroBookingInvoiceOperation(
      * operator retry later still.
      */
     invoiceEmailDelivery: XeroInvoiceEmailInstruction | null;
+    /**
+     * #3635: enqueue inside the caller's transaction, so the operation commits
+     * atomically with the decision that asked for it (a treasurer keeping a
+     * late capture). Every read and the write below use it; absent, the global
+     * client, exactly as before.
+     */
+    store?: Prisma.TransactionClient;
   }
 ) {
-  const booking = await prisma.booking.findUnique({
+  const db = options.store ?? prisma;
+  const booking = await db.booking.findUnique({
     where: { id: bookingId },
     select: {
       id: true,
@@ -506,7 +518,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   // Xero?" — here to refuse a second mint, there to refuse to tell an officer
   // that no invoice exists. Two spellings of one question is how those two
   // answers drift apart.
-  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id);
+  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id, {
+    deps: { db: db as unknown as BookingInvoiceEvidenceDependencies["db"] },
+  });
 
   if (existingLink) {
     return {
@@ -517,7 +531,7 @@ export async function enqueueXeroBookingInvoiceOperation(
 
   const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -559,8 +573,10 @@ export async function enqueueXeroBookingInvoiceOperation(
       (await inheritedBookingInvoiceEmailInstruction({
         correlationKey,
         paymentId: booking.payment.id,
+        store: db,
       })),
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: options.store,
   });
 
   return {
