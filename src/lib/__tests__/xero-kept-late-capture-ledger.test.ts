@@ -524,6 +524,18 @@ describe("a kept late capture is counted once in Xero", () => {
     expect(books().stripe).toBe(24000);
   });
 
+  it("keep -> reopen -> the worker claims the row -> re-keep before its locked check: the re-keep reuses the row, which is sent once", async () => {
+    seed({});
+    await keep();
+    reopen();
+    const row = h.table("xeroSyncOperation").find((r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE")!;
+    row.status = "RUNNING"; // claimed, not yet at its locked check
+    await keep(); // the re-keep waits on the task row, then finds the live RUNNING row
+    expect(h.table("xeroSyncOperation").filter((r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(1);
+    await createXeroKeptLateCaptureInvoice({ syncOperationId: row.id }); // its check now reads DISMISSED
+    expect(books()).toEqual({ income: 24000, stripe: 24000, receivable: 0 });
+  });
+
   it("a replayed keep, and a re-keep after the worker withdrew a reopened row, each leave exactly one receipt", async () => {
     seed({});
     await keep();
