@@ -3263,7 +3263,8 @@ transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
 paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold. The first version of this writer took the transaction row and then the
+fold (earlier still when #3643's part-payment recognition writes the receipt:
+`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by

@@ -3135,6 +3135,11 @@ describe("cancelBooking credit refunds", () => {
           reason: "xero_part_payment_recognised_at_cancel",
         }),
       });
+      // #3640's order: the Payment row is locked before the receipt row is written.
+      expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(mocks.lastTx, "payment_ib");
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.txPaymentTransactionUpdate.mock.invocationCallOrder[0],
+      );
       expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(10000, 30, expect.anything(), "credit");
       expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(
         expect.objectContaining({ data: { status: "FAILED" } }),

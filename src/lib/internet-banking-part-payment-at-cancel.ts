@@ -41,6 +41,7 @@ import logger from "@/lib/logger";
 import type { ClubFormat } from "@/lib/club-format";
 import { alertExpiredHold, type ExpiredHoldView } from "@/lib/internet-banking-hold-kept";
 import {
+  lockPaymentForRefundedTotal,
   reconcilePaymentAggregates,
   recordInternetBankingPaymentTransaction,
 } from "@/lib/payment-transactions";
@@ -177,6 +178,10 @@ export async function recordPartPaymentInClaim(
   ) {
     throw new PartPaymentChangedError();
   }
+  // #3640's order for the refunded total: the Payment row before any
+  // transaction row. The receipt write below touches a transaction row and
+  // then the aggregate, ahead of the claim's own lock of the same row.
+  await lockPaymentForRefundedTotal(tx, paymentId);
   const payment = await tx.payment.findUnique({
     where: { id: paymentId },
     include: { transactions: true },
