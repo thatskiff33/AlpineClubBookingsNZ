@@ -382,9 +382,8 @@ export function OrganiserGroupBookingCard({
   const activeJoiners = group.joiners.filter(
     (j) => j.status !== "CANCELLED" && j.status !== "BUMPED"
   );
-  // #3672: "the organiser has paid" is the shared definition the server uses.
-  const settledAlready =
-    settleComplete || organiserHasPaidSettlement(group.settlement);
+  // #3672: the shared "organiser has paid" (server and card agree).
+  const settledAlready = settleComplete || organiserHasPaidSettlement(group.settlement);
   // #3642: the pending invoice this session just asked for, or the one the
   // server says is still outstanding — never forgotten on a reload.
   const pendingReference = settleReference ?? group.settlement?.internetBankingReference ?? null;
@@ -550,8 +549,7 @@ export function OrganiserGroupBookingCard({
           )}
         </div>
 
-        {/* A cancelled group has nothing to settle: no pay controls (#3672 review). */}
-        {isOrganiserPays && !isCancelled ? (
+        {isOrganiserPays && !isCancelled /* nothing to settle once cancelled */ ? (
           <div className="space-y-3 rounded-md border border-border p-3">
             <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (

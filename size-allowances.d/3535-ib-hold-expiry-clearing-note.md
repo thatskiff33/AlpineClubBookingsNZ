@@ -47,7 +47,7 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   outbox-requeue branch beside the applied-credit one.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1843
+lines: 1845
 reason: the already-cancelled credit arm retires a still-pending
   booking-anchored clearing note when cash arrives, beside the refund-note
   retirement it mirrors in the same transaction, and the organisation arm the
@@ -56,6 +56,9 @@ reason: the already-cancelled credit arm retires a still-pending
   #3638 (same epic) writes its second-instrument marker inside this settle
   transaction, beside the receipt it describes; the detection, the writer and
   the alert live in `settlement-conflicts.ts`.
+  #3672 (same epic): the group arm's already-settled guard says, in two
+  comment lines, why it stays SUCCEEDED-only rather than the shared "organiser
+  has paid" predicate.
   #3642 (same epic): the paid group invoice arm hands the invoice's cash to
   the settle and recognises a payment on an abandoned invoice (by its link,
   with the cancelled-group wording) and a card double payment; all read the

@@ -16,21 +16,23 @@ arm it guards. The growth of `xero-inbound/invoice-paid-effects.ts` and
 file across the epic).
 
 file: src/lib/group-settlement.ts
-lines: 1595
+lines: 1605
 reason: the bound-invoice checks run inside the lock(1) transactions whose
   re-read they depend on — the child-commit, the Internet Banking settle (which
   retires the old invoice and asks for the next attempt), the card attach and
   the paid-invoice and card applies. Moving them out would separate each check
   from the transaction that makes it safe; the rule itself already lives in
   group-settlement-invoice-replacement.ts. #3672 (same epic) adds its share:
-  the paid apply releases the joiners its bill missed to member-pays inside the
+  the paid apply switches the joiners its bill missed to member-pays inside the
   same lock(1) transaction that marks the settlement paid, and hands them to
   the notice after commit, or, for a joiner whose stay has started, to the
-  treasurer's once-per-group alert; the rule, the release, the notice and the
-  alert live in group-late-joiner.ts.
+  treasurer's once-per-group alert; the rule, the switch, the notice and the
+  alert live in group-late-joiner.ts. Its three replay guards each carry one
+  line saying why they stay SUCCEEDED-only rather than the shared "organiser
+  has paid" predicate.
 
 file: src/lib/cron-group-settlement-reaper.ts
-lines: 1001
+lines: 1003
 reason: the reaper reads an Internet Banking settlement's invoice in Xero
   before releasing it: it keeps and alerts on a group whose invoice has started
   being paid, holds (with an alert, bounded by check-in or seven days) one Xero

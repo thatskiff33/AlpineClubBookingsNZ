@@ -38,7 +38,7 @@ superseded-payment refund moved onto the one card-refund writer, and the file is
 shorter than its base.
 
 file: src/lib/email-message-registry.ts
-lines: 2129
+lines: 2130
 reason: the new admin alert's registry entries — admin audience, delivery
   lock, required tokens, trigger metadata, approved token and preview value —
   each belong in the table that already holds every other template's, with

@@ -16,8 +16,11 @@ reason: the joiner's payer is re-decided under lock(1) inside the create
   a settlement paid in between would be missed.
 
 file: src/lib/group-booking.ts
-lines: 1935
+lines: 1955
 reason: the join reads its group's settlement and asks the shared rule who
   pays, the public summary tells a prospective joiner the same answer, and the
   join result reports the payer the booking was written with. Each is a line
-  or two at the read it belongs to, with the comment saying why.
+  or two at the read it belongs to, with the comment saying why. The review
+  round made close and reopen share one helper that takes lock(1), re-reads
+  and writes with a not-CANCELLED guard; it belongs beside the ownership check
+  and the two writers it serves.
