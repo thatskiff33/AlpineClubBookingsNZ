@@ -61,6 +61,7 @@ import {
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
   BookingRequestError,
   buildMemberWholeLodgePlaceholderGuests,
+  getBookingRequestSettings,
   isMemberWholeLodgeRequest,
   linkedGuestMemberMap,
   parseBookingRequestGuests,
@@ -709,6 +710,8 @@ type ApproveSchoolBookingRequestOutcome =
       priceCents: number;
       invoiceMode: "xero" | "manual";
       teacherCount: number;
+      teacherHutLeaderAssignmentsCreated: boolean;
+      alreadyConverted: boolean;
       /**
        * Existing capacity-holding bookings that overlap the approved booking's
        * nights when an exclusive whole-lodge hold was set at approval
@@ -723,8 +726,8 @@ type ApproveSchoolBookingRequestOutcome =
 interface TeacherCreationPlan {
   teacher: StoredTeacher;
   email: string;
-  pin: string;
-  hutLeaderPin: string;
+  pin: string | null;
+  hutLeaderPin: string | null;
 }
 
 /**
@@ -732,10 +735,11 @@ interface TeacherCreationPlan {
  * the lodge capacity lock (and, when converting an existing hold, the global
  * lifecycle lock first): create the non-login school Member, a CONFIRMED
  * Booking that holds capacity, a PENDING INTERNET_BANKING Payment, the bulk
- * guests, and a non-login Member + HutLeaderAssignment per teacher. After the
- * commit, queue the Xero invoice (emailed to the school) or, when the Xero
- * module is off, notify admins to invoice manually; PIN emails are sent to the
- * teachers.
+ * guests, and a non-login Member per teacher. The booking-policy setting
+ * sampled for this conversion decides whether those teacher records also get
+ * HutLeaderAssignments and PIN emails. After the commit, queue the Xero invoice
+ * (emailed to the school) or, when the Xero module is off, notify admins to
+ * invoice manually.
  */
 export async function approveSchoolBookingRequest(input: {
   requestId: string;
@@ -781,6 +785,14 @@ export async function approveSchoolBookingRequest(input: {
       409
     );
   }
+
+  // A policy edit affects later approvals, never one conversion halfway through.
+  // Read outside the transaction: this transaction holds global -> lodge locks
+  // and must not add a settings read on a second connection while they are held
+  // (INV-LOCK-001, INV-LOCK-002).
+  const assignTeachersAsHutLeaders = (
+    await getBookingRequestSettings()
+  ).assignSchoolTeachersAsHutLeaders;
 
   // A held booking has already materialised the request's null/default lodge
   // semantics into an immutable concrete Booking.lodgeId. Read only that lock
@@ -859,12 +871,12 @@ export async function approveSchoolBookingRequest(input: {
   const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const teacherPlans: TeacherCreationPlan[] = await Promise.all(
     teachers.map(async (teacher) => {
-      const pin = generateHutLeaderPin();
+      const pin = assignTeachersAsHutLeaders ? generateHutLeaderPin() : null;
       return {
         teacher,
         email: teacher.email || request.contactEmail,
         pin,
-        hutLeaderPin: await hashHutLeaderPin(pin),
+        hutLeaderPin: pin ? await hashHutLeaderPin(pin) : null,
       };
     })
   );
@@ -913,6 +925,7 @@ export async function approveSchoolBookingRequest(input: {
       firstName: string;
       pin: string;
     }>;
+    teacherContactMemberIds: string[];
     memberGuestNotificationRows: MemberGuestAddNotificationRow[];
     displacedMemberGuestIds: string[];
     ownerSubstitution:
@@ -985,6 +998,7 @@ export async function approveSchoolBookingRequest(input: {
           // school and queued its invoice.
           organisation: null,
           teacherAssignments: [],
+          teacherContactMemberIds: [],
           ownerSubstitution: null,
           alreadyConverted: true as const,
           // A replay wrote no rows and owes no mail.
@@ -1506,6 +1520,7 @@ export async function approveSchoolBookingRequest(input: {
         firstName: string;
         pin: string;
       }> = [];
+      const teacherContactMemberIds: string[] = [];
       for (const plan of teacherPlans) {
         const teacherMember = await tx.member.create({
           data: {
@@ -1522,24 +1537,26 @@ export async function approveSchoolBookingRequest(input: {
           select: { id: true, firstName: true, email: true },
         });
 
-        const teacherAssignment = await tx.hutLeaderAssignment.create({
-          data: {
-            memberId: teacherMember.id,
-            startDate: request.checkIn,
-            endDate: request.checkOut,
-            hutLeaderPin: plan.hutLeaderPin,
-            // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
-            // lodge so school-created assignments are lodge-scoped like the
-            // manual and cron paths, not left null.
-            lodgeId: bookingLodgeId,
-            // #2926: the stamp that keeps teacher rows out of the hut-leader
-            // overlap predicate. Written once, here, and never updated — why
-            // that has to be the row and not the member is in
-            // `findHutLeaderOverlapRefusal`'s docblock.
-            source: HutLeaderAssignmentSource.SCHOOL_BOOKING,
-          },
-          select: { id: true },
-        });
+        const teacherAssignment = assignTeachersAsHutLeaders
+          ? await tx.hutLeaderAssignment.create({
+              data: {
+                memberId: teacherMember.id,
+                startDate: request.checkIn,
+                endDate: request.checkOut,
+                hutLeaderPin: plan.hutLeaderPin!,
+                // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
+                // lodge so school-created assignments are lodge-scoped like the
+                // manual and cron paths, not left null.
+                lodgeId: bookingLodgeId,
+                // #2926: the stamp that keeps teacher rows out of the hut-leader
+                // overlap predicate. Written once, here, and never updated — why
+                // that has to be the row and not the member is in
+                // `findHutLeaderOverlapRefusal`'s docblock.
+                source: HutLeaderAssignmentSource.SCHOOL_BOOKING,
+              },
+              select: { id: true },
+            })
+          : null;
 
         /*
           #3367: the REAL TEACHER, recorded against the school as a person
@@ -1590,13 +1607,16 @@ export async function approveSchoolBookingRequest(input: {
           update: { role: OrganisationContactRole.TEACHER },
         });
 
-        teacherAssignments.push({
-          memberId: teacherMember.id,
-          assignmentId: teacherAssignment.id,
-          email: teacherMember.email,
-          firstName: teacherMember.firstName,
-          pin: plan.pin,
-        });
+        teacherContactMemberIds.push(teacherMember.id);
+        if (teacherAssignment && plan.pin) {
+          teacherAssignments.push({
+            memberId: teacherMember.id,
+            assignmentId: teacherAssignment.id,
+            email: teacherMember.email,
+            firstName: teacherMember.firstName,
+            pin: plan.pin,
+          });
+        }
       }
 
       /*
@@ -1621,7 +1641,7 @@ export async function approveSchoolBookingRequest(input: {
       */
       const reconciledTeachers = await reconcileOrganisationTeachers(tx, {
         organisationId: organisation.id,
-        teacherMemberIds: teacherAssignments.map((row) => row.memberId),
+        teacherMemberIds: teacherContactMemberIds,
       });
       if (reconciledTeachers.removedCount > 0) {
         await createAuditLog(
@@ -1683,6 +1703,7 @@ export async function approveSchoolBookingRequest(input: {
         schoolMemberId: schoolMember.id,
         organisation,
         teacherAssignments,
+        teacherContactMemberIds,
         ownerSubstitution,
         alreadyConverted: false as const,
         memberGuestNotificationRows,
@@ -1854,7 +1875,8 @@ export async function approveSchoolBookingRequest(input: {
         organisationCreated: conversion.organisation?.created ?? false,
         priceCents: totalPriceCents,
         guestCount: guests.length,
-        teacherCount: conversion.teacherAssignments.length,
+        teacherCount: teachers.length,
+        teacherHutLeaderAssignmentsCreated: conversion.teacherAssignments.length > 0,
         invoiceMode,
         exclusivityRequested: Boolean(request.exclusivityRequested),
         wholeLodgeHold: Boolean(request.exclusivityRequested),
@@ -1995,7 +2017,9 @@ export async function approveSchoolBookingRequest(input: {
     schoolMemberId: conversion.schoolMemberId,
     priceCents: totalPriceCents,
     invoiceMode,
-    teacherCount: conversion.teacherAssignments.length,
+    teacherCount: teachers.length,
+    teacherHutLeaderAssignmentsCreated: conversion.teacherAssignments.length > 0,
+    alreadyConverted: conversion.alreadyConverted,
     exclusiveHoldConflicts,
   };
 }

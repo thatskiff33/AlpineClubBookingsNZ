@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       update: vi.fn(),
     },
+    bookingRequestSettings: { findUnique: vi.fn() },
     member: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // #2364: the hosting review is reconciled inside the approving/holding
     // transaction, so every prisma/tx double a booking-writing path runs
@@ -252,6 +253,7 @@ import {
 // real reader and the real engine rather than described in a comment.
 import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
 import { calculateBookingPrice } from "@/lib/policies/pricing";
+import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 
 import { sendMemberGuestAddNotifications } from "@/lib/member-guest-consent-notifications";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -286,6 +288,8 @@ const mockedKickOutbox = vi.mocked(kickQueuedXeroOutboxOperationsIfConnected);
 const mockedSendOwnerSubstitution = vi.mocked(sendAdminOwnerSubstitutionAlert);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedLogAudit = vi.mocked(logAudit);
+const mockedGenerateHutLeaderPin = vi.mocked(generateHutLeaderPin);
+const mockedHashHutLeaderPin = vi.mocked(hashHutLeaderPin);
 
 /*
  * The #2619 hosting participant fence.
@@ -698,6 +702,12 @@ describe("approveSchoolBookingRequest", () => {
     mockedModuleEnabled.mockResolvedValue(true);
     mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
     mockedGroupDiscount.mockResolvedValue(null as never);
+    // Existing conversion tests specify the legacy enabled policy. Each OFF
+    // case below overrides this explicitly, so the setting is part of the
+    // behaviour under test rather than ambient mock state.
+    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
+      assignSchoolTeachersAsHutLeaders: true,
+    } as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
     // #3369: keyed on the DATA rather than on the call index. Approval no
@@ -1012,6 +1022,7 @@ describe("approveSchoolBookingRequest", () => {
       schoolMemberId: null,
       invoiceMode: "xero",
       teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: true,
     });
     // 1 adult @ 5000 x2 nights + 2 children @ 2500 x2 nights = 20000.
     expect(result).toMatchObject({ priceCents: 20000 });
@@ -1066,6 +1077,43 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  it("keeps teacher guests and school contact people without hut-leader PINs when the policy is off (#3416)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
+      assignSchoolTeachersAsHutLeaders: false,
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: false,
+    });
+    // Teacher Member and OrganisationContact creation remain the Xero contact
+    // path; only the optional hut-leader side effect is suppressed.
+    expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    expect(prisma.organisationContact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ role: "TEACHER" }),
+      }),
+    );
+    expect(prisma.organisationContact.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organisationId: "org-1",
+        role: "TEACHER",
+        memberId: { notIn: ["teacher-member-2"] },
+      },
+    });
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+    expect(mockedGenerateHutLeaderPin).not.toHaveBeenCalled();
+    expect(mockedHashHutLeaderPin).not.toHaveBeenCalled();
+    expect(mockedSendPin).not.toHaveBeenCalled();
   });
 
   /*
