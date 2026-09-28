@@ -418,7 +418,7 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
 
   it("allows one treasurer-approval marker per late capture, and only on the #2700 late-capture kind (#3639)", async () => {
     await withManualRefundTaskSchema(async (client) => {
-      const approval = (id: string, kind: string, intent: string) =>
+      const approval = (id: string, kind: string | null, intent: string) =>
         client.query(
           `INSERT INTO "ManualRefundTask"
              ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
@@ -439,6 +439,13 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         code: "23514",
         constraint: "ManualRefundTask_late_capture_approval_kind",
       });
+      // #3643 (migration review F1): nor on a row with NO kind. "kind" is
+      // nullable, and #3639's plain "=" was NULL there, which a CHECK accepts;
+      // 20261014010000 restates it IS NOT DISTINCT FROM.
+      await expect(approval("late-no-kind", null, "pi_null")).rejects.toMatchObject({
+        code: "23514",
+        constraint: "ManualRefundTask_late_capture_approval_kind",
+      });
       // And every unmarked row is untouched: many NULLs, any kind.
       await insert(client, { id: "legacy-a", kind: "DELETED_BOOKING_LATE_CAPTURE" });
       await insert(client, { id: "legacy-b", kind: "DELETED_BOOKING_LATE_CAPTURE" });
@@ -450,25 +457,30 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
       const review = (
         id: string,
         overrides: {
-          kind?: string;
+          kind?: string | null;
           amountCents?: number | null;
           paymentId?: string | null;
           status?: string;
-          marker?: string;
+          marker?: string | null;
+          recordedCents?: number | null;
         } = {},
       ) =>
         client.query(
           `INSERT INTO "ManualRefundTask"
              ("id", "bookingId", "paymentId", "amountCents", "raisedAmountCents",
-              "kind", "partPaymentReviewPaymentId", "reason", "status")
+              "kind", "partPaymentReviewPaymentId", "partPaymentReviewRecordedCents",
+              "reason", "status")
            VALUES ($1, 'booking-1', $2, $3, NULL,
-                   $4::"ManualRefundTaskKind", $5, 'settle in Xero', $6::"ManualRefundTaskStatus")`,
+                   $4::"ManualRefundTaskKind", $5, $6, 'settle in Xero',
+                   $7::"ManualRefundTaskStatus")`,
           [
             id,
             overrides.paymentId ?? null,
             overrides.amountCents ?? null,
-            overrides.kind ?? "CANCELLED_BOOKING_HAND_BACK",
-            overrides.marker ?? "payment-1",
+            // `in`, not `??`: a NULL kind is a case under test (migration review F1).
+            "kind" in overrides ? overrides.kind : "CANCELLED_BOOKING_HAND_BACK",
+            "marker" in overrides ? overrides.marker : "payment-1",
+            overrides.recordedCents ?? null,
             overrides.status ?? "OPEN",
           ],
         );
@@ -481,6 +493,12 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         ["review-wrong-kind", { kind: "DELETED_BOOKING_LATE_CAPTURE", marker: "payment-2" }],
         ["review-with-amount", { amountCents: 5000, marker: "payment-3" }],
         ["review-with-payment", { paymentId: "payment-4", marker: "payment-4" }],
+        // A NULL kind: a plain "=" would be NULL here, which a CHECK accepts.
+        ["review-no-kind", { kind: null, marker: "payment-7" }],
+        // The recorded figure: positive when known (0 never means unknown), and
+        // only on a marked row.
+        ["review-zero-recorded", { recordedCents: 0, marker: "payment-8" }],
+        ["unmarked-with-recorded", { marker: null, recordedCents: 5000, amountCents: 5000 }],
       ] as const) {
         await expect(review(id, overrides)).rejects.toMatchObject({
           code: "23514",
@@ -492,6 +510,8 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         review("review-completed", { status: "COMPLETED", marker: "payment-5" }),
       ).rejects.toMatchObject({ code: "23514" });
       await review("review-dismissed", { status: "DISMISSED", marker: "payment-6" });
+      // A review that recorded the cash it covers.
+      await review("review-recorded", { recordedCents: 5000, marker: "payment-9" });
       // The widening is for marked rows only: an unmarked hand-back still needs an amount.
       await expect(
         insert(client, { id: "legacy-no-amount", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, raisedAmountCents: null }),

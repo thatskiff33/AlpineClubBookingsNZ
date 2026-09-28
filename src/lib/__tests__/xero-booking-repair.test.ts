@@ -1428,8 +1428,10 @@ describe("runBookingXeroRepair", () => {
 
   // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2 cancel
   // raised a hand-back task for the payment. The manual-review finding stays
-  // while the task is open and goes quiet once a treasurer has completed or
-  // dismissed it - and a quiet booking never falls through to a full note.
+  // while the task is open and goes quiet once a treasurer has closed it (a
+  // review closes only as DISMISSED; COMPLETED is kept here as the loader's
+  // status test covers it) - and a quiet booking never falls through to a full
+  // note.
   it("quiets the part-payment finding once its hand-back task is closed (#3643)", async () => {
     const report = async (status?: "OPEN" | "COMPLETED" | "DISMISSED") =>
       (
@@ -1478,6 +1480,52 @@ describe("runBookingXeroRepair", () => {
         "QUEUE_MODIFICATION_CREDIT_NOTE",
       );
     }
+  });
+
+  // #3643 (task-queue review F2): an OPEN review is the cancel's own proof
+  // that money was recorded against the invoice. With NO local PAYMENT link (an
+  // over/prepayment allocation, or a link the inbound sync has not written yet)
+  // the booking must still be manual review, never the critical full-size
+  // clearing note offered for auto-apply.
+  it("treats an open part-payment review as a recorded payment when the local link is absent (#3643)", async () => {
+    const report = async (reviewOpen: boolean) =>
+      (
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+          dependencies: createDependencies({
+            bookings: [
+              makeBooking({
+                status: "CANCELLED",
+                payment: { ...makeBooking().payment, status: "FAILED" },
+              }),
+            ],
+            partPaymentReviewTasks: reviewOpen
+              ? [{ bookingId: "booking_1", partPaymentReviewPaymentId: "payment_1", status: "OPEN" }]
+              : [],
+          }),
+          scope: { all: true },
+        })
+      ).passes[0].bookings[0];
+
+    const open = await report(true);
+    expect(open.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        severity: "manual_review",
+        safeToAutoApply: false,
+        summary: expect.stringContaining("has a payment recorded against it"),
+      }),
+    );
+    expect(open.findings.filter((finding) => finding.severity === "critical")).toEqual([]);
+    expect(open.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE",
+    );
+
+    // The control: with no review and no link, the ordinary full-size note is
+    // what the tool offers, so the review is what changed the answer.
+    const none = await report(false);
+    expect(none.actions.map((action) => action.type)).toContain(
+      "QUEUE_MODIFICATION_CREDIT_NOTE",
+    );
   });
 
   // #3643 F2: the ORGANISATION late-cash arm retires the pending clearing note
