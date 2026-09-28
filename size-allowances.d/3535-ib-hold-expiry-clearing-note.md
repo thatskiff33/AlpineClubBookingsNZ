@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2081
+lines: 2174
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -75,10 +75,11 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   epic, owner decision 29 Sep 2026) adds the kept-late-capture arm beside the
   late-capture arm it follows: a treasurer-kept booking payment with no
   kept-payment invoice asked for is queued, and a failed one retried, under the
-  rule the dismissal uses, which lives in `late-capture-kept-xero-rules.ts`.
+  rule the dismissal uses, which lives in `late-capture-kept-xero-rules.ts`,
+  and a resolved one answered by the info finding, as its siblings are.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1695
+lines: 1778
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
