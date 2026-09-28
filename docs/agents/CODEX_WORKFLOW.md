@@ -275,8 +275,9 @@ place). Before deleting anything it refuses:
 
 - the main checkout, a path that is not a registered worktree, or a locked one;
 - a path that is itself a link to the worktree (pass the worktree's own path);
-- a registered worktree whose directory is already gone (run
-  `git worktree prune`), or one with no `.git` left in it;
+- a registered worktree whose directory is already gone (the message names the
+  `git worktree remove <path>` that forgets just it), or one with no `.git` left
+  in it;
 - another registered worktree inside the target, main checkout included, and
   any `.git` file or folder below its root: another worktree or clone whose
   uncommitted work the lane's own `git status` cannot see. A Claude Code
@@ -296,7 +297,22 @@ place). Before deleting anything it refuses:
   plain directories). The refusal lists them; delete the links, not their
   targets, and run it again;
 - any folder it cannot read, since it could hide a link;
-- uncommitted or untracked work, and an unmerged HEAD without `--allow-unmerged`.
+- uncommitted or untracked work, read with every setting that could hide some
+  overridden (`git status --porcelain=v1 -z --untracked-files=all
+  --ignore-submodules=none`, so `status.showUntrackedFiles=no` hides nothing);
+  the one change allowed is an unstaged deletion (` D`) of a tracked file that
+  is really absent from disk, which is what a removal that stopped part way
+  leaves. A `D` for a path that is on disk again (git reports that when a
+  folder replaces the file) is refused;
+- files marked `--skip-worktree` or `--assume-unchanged` (a lowercase or `S` tag
+  in `git ls-files -v`), whose edits `git status` does not show. A sparse
+  checkout uses `--skip-worktree` too, so a sparse lane is refused as well;
+- an unmerged HEAD without `--allow-unmerged`.
+
+The `.git` search also walks the top-level `node_modules` and `.next` (without
+following their links), compares names case-insensitively on Windows, and on a
+full pnpm `node_modules` takes a few seconds. `GIT_DIR`, `GIT_WORK_TREE` and the
+other variables that point git elsewhere are removed from its environment.
 
 What is then guaranteed: the worktree is resolved to its real path, and that
 is what is deleted and checked afterwards. Node's `fs.rmSync` deletes every
@@ -307,9 +323,12 @@ after the checks). If anything is left on disk the registration is **kept** and
 the tool says so, so the lane stays visible to git; because `.git` goes last,
 the retry can run every check again (a tracked file already deleted does not
 count as a change, since its content is in HEAD). Only when the directory is
-gone does it run `git worktree prune` and
-check that git no longer lists it. (`prune` also forgets any other registration
-whose directory is already missing; locked ones are kept.)
+gone does it unregister the lane with `git worktree remove <path>`, which on a
+missing folder forgets that one registration and nothing else, and then check
+that git no longer lists it. It never runs `git worktree prune`, which would
+also forget every other worktree whose folder is missing at that moment (a
+moved folder, an unmounted drive), and with it that worktree's index and
+staged work.
 
 ### 4. Preserve progress while lanes run
 

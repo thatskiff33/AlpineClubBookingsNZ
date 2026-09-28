@@ -484,13 +484,13 @@ describe("remove-worktree: other repositories inside the lane, part-way removals
     const { repo, lane } = fixture();
     fs.rmSync(path.join(lane, ".git"));
     expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
-      /has no \.git[\s\S]*git worktree prune/,
+      /has no \.git[\s\S]*git worktree remove <this path>/,
     );
     expect(fs.existsSync(lane)).toBe(true);
 
     fs.rmSync(lane, { recursive: true, force: true });
     expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
-      /already gone[\s\S]*git worktree prune/,
+      /already gone[\s\S]*`git worktree remove [^`]*wt-lane` to make git forget just this one/,
     );
   });
 
@@ -508,7 +508,9 @@ describe("remove-worktree: other repositories inside the lane, part-way removals
     expect(fs.existsSync(path.join(lane, "README.md"))).toBe(true);
   });
 
-  it("reports a failing prune, and a prune that leaves the lane listed", () => {
+  const isUnregister = (args) => args[0] === "worktree" && args[1] === "remove";
+
+  it("reports a failing unregister, and one that leaves the lane listed", () => {
     const failing = fixture();
     expect(() =>
       removeWorktree({
@@ -516,11 +518,9 @@ describe("remove-worktree: other repositories inside the lane, part-way removals
         worktree: failing.lane,
         base: "main",
         runGit: (cwd, args) =>
-          args[0] === "worktree" && args[1] === "prune"
-            ? { status: 128, stdout: "", stderr: "simulated prune failure" }
-            : realGit(cwd, args),
+          isUnregister(args) ? { status: 128, stdout: "", stderr: "simulated failure" } : realGit(cwd, args),
       }),
-    ).toThrow(/git worktree prune failed: simulated prune failure/);
+    ).toThrow(/git worktree remove \(to unregister it\) failed: simulated failure/);
 
     const noop = fixture();
     expect(() =>
@@ -528,9 +528,226 @@ describe("remove-worktree: other repositories inside the lane, part-way removals
         repoDir: noop.repo,
         worktree: noop.lane,
         base: "main",
-        runGit: (cwd, args) =>
-          args[0] === "worktree" && args[1] === "prune" ? { status: 0, stdout: "", stderr: "" } : realGit(cwd, args),
+        runGit: (cwd, args) => (isUnregister(args) ? { status: 0, stdout: "", stderr: "" } : realGit(cwd, args)),
       }),
-    ).toThrow(/still lists it after git worktree prune/);
+    ).toThrow(/still lists it after unregistering it/);
+  });
+
+  // git registers a worktree under its real path, but the check after
+  // unregistering must also catch the spelling git listed if that ever differs.
+  // This stub lists the lane through a linked parent folder and never forgets it.
+  it("checks git's own spelling of the lane after unregistering, not only the real path", () => {
+    const { root, repo, lane } = fixture();
+    const linkedParent = path.join(path.dirname(root), `${path.basename(root)}-via`);
+    fs.symlinkSync(root, linkedParent, DIR_LINK);
+    ROOTS.add(linkedParent);
+    const spelled = path.join(linkedParent, path.basename(lane));
+    const toPorcelain = (p) => p.split(path.sep).join("/");
+    const runGit = (cwd, args) => {
+      if (isUnregister(args)) return { status: 0, stdout: "", stderr: "" };
+      const result = realGit(cwd, args);
+      if (args[0] === "worktree" && args[1] === "list") {
+        result.stdout = result.stdout.split(toPorcelain(lane)).join(toPorcelain(spelled));
+      }
+      return result;
+    };
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main", runGit })).toThrow(
+      /still lists it after unregistering it/,
+    );
+    fs.rmSync(linkedParent, { recursive: false, force: true });
+  });
+});
+
+describe("remove-worktree: work git status can hide, scoped unregistering, spellings", () => {
+  /** A fixture with a second tracked file, `a.txt`, committed and merged. */
+  function withTrackedFile() {
+    const f = fixture();
+    fs.writeFileSync(path.join(f.lane, "a.txt"), "a\n");
+    git(f.lane, "add", "a.txt");
+    git(f.lane, "commit", "-q", "-m", "a");
+    git(f.repo, "merge", "-q", "--ff-only", "lane");
+    return f;
+  }
+
+  // Review round 6: only a plain unstaged deletion of a file that is really
+  // gone may pass. Every other deletion code carries work or intent.
+  it.each([
+    ["' D', the file really gone", (l) => fs.rmSync(path.join(l, "a.txt")), true],
+    ["'D ', a staged deletion", (l) => git(l, "rm", "-q", "a.txt"), false],
+    [
+      "'AD', added then deleted",
+      (l) => {
+        fs.writeFileSync(path.join(l, "new.txt"), "x\n");
+        git(l, "add", "new.txt");
+        fs.rmSync(path.join(l, "new.txt"));
+      },
+      false,
+    ],
+    [
+      "'MD', a staged edit then deleted",
+      (l) => {
+        fs.writeFileSync(path.join(l, "a.txt"), "staged edit\n");
+        git(l, "add", "a.txt");
+        fs.rmSync(path.join(l, "a.txt"));
+      },
+      false,
+    ],
+    ["'R ', a staged rename", (l) => git(l, "mv", "a.txt", "b.txt"), false],
+    ["' D' plus '??', an unstaged rename", (l) => fs.renameSync(path.join(l, "a.txt"), path.join(l, "b.txt")), false],
+    [
+      "' D' where a folder of new work replaced the file",
+      (l) => {
+        fs.rmSync(path.join(l, "a.txt"));
+        fs.mkdirSync(path.join(l, "a.txt"));
+        fs.writeFileSync(path.join(l, "a.txt", "w"), "work\n");
+      },
+      false,
+    ],
+  ])("deletion codes: %s", (_label, change, removable) => {
+    const { repo, lane } = withTrackedFile();
+    change(lane);
+    const attempt = () => removeWorktree({ repoDir: repo, worktree: lane, base: "main" });
+    if (removable) {
+      attempt();
+      expect(fs.existsSync(lane)).toBe(false);
+    } else {
+      expect(attempt).toThrow(/uncommitted or untracked changes/);
+      expect(fs.existsSync(lane)).toBe(true);
+    }
+  });
+
+  // Review round 6 (reproduced): default porcelain shows only ` D a.txt` here,
+  // and the tool deleted `a.txt/w`. Plain `git worktree remove` refuses it.
+  it("keeps new work in a folder that replaced a deleted tracked file", () => {
+    const { repo, lane } = withTrackedFile();
+    fs.rmSync(path.join(lane, "a.txt"));
+    fs.mkdirSync(path.join(lane, "a.txt"));
+    fs.writeFileSync(path.join(lane, "a.txt", "w"), "work\n");
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(/a\.txt/);
+    expect(fs.readFileSync(path.join(lane, "a.txt", "w"), "utf8")).toBe("work\n");
+  });
+
+  // git reports only ` D a.txt` when the folder now at that path holds nothing
+  // but ignored files, so "really gone" has to be checked on disk.
+  it("refuses a ' D' whose path is on disk again, even holding only ignored files", () => {
+    const { repo, lane } = withTrackedFile();
+    ignoreInLane(repo, lane, "*.local");
+    fs.rmSync(path.join(lane, "a.txt"));
+    fs.mkdirSync(path.join(lane, "a.txt"));
+    fs.writeFileSync(path.join(lane, "a.txt", "settings.local"), "work\n");
+    expect(git(lane, "status", "--porcelain", "--untracked-files=all")).toBe("D a.txt");
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /uncommitted[\s\S]* D a\.txt/,
+    );
+    expect(fs.existsSync(path.join(lane, "a.txt", "settings.local"))).toBe(true);
+  });
+
+  // A rename's source path is its own NUL-separated record; it must be read as
+  // part of the rename, not as a second change with a garbled status code.
+  it("lists a staged rename as exactly one change", () => {
+    const { repo, lane } = withTrackedFile();
+    git(lane, "mv", "a.txt", "b.txt");
+    let message = "";
+    try {
+      removeWorktree({ repoDir: repo, worktree: lane, base: "main" });
+    } catch (error) {
+      message = error.message;
+    }
+    expect(message).toMatch(/Commit or discard them first:\n {2}R {2}b\.txt$/);
+  });
+
+  it("sees an untracked file even when status.showUntrackedFiles=no", () => {
+    const { repo, lane } = fixture();
+    git(repo, "config", "status.showUntrackedFiles", "no");
+    fs.writeFileSync(path.join(lane, "precious.txt"), "work\n");
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(/precious\.txt/);
+    expect(fs.existsSync(path.join(lane, "precious.txt"))).toBe(true);
+  });
+
+  it.each([["--skip-worktree"], ["--assume-unchanged"]])(
+    "refuses a file marked %s, whose edit git status does not show",
+    (flag) => {
+      const { repo, lane } = withTrackedFile();
+      git(lane, "update-index", flag, "a.txt");
+      fs.writeFileSync(path.join(lane, "a.txt"), "LOCAL EDIT\n");
+      expect(git(lane, "status", "--porcelain")).toBe(""); // the premise
+      expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+        /--skip-worktree or --assume-unchanged[\s\S]*a\.txt/,
+      );
+      expect(fs.readFileSync(path.join(lane, "a.txt"), "utf8")).toBe("LOCAL EDIT\n");
+    },
+  );
+
+  it.each([["node_modules"], [".next"]])("finds a repository inside the top-level %s", (dir) => {
+    const { repo, lane } = fixture();
+    ignoreInLane(repo, lane, ".next");
+    const clone = path.join(lane, dir, "debug-clone");
+    fs.mkdirSync(clone, { recursive: true });
+    git(clone, "init", "-q");
+    fs.writeFileSync(path.join(clone, "work.txt"), "w\n");
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /another git repository[\s\S]*debug-clone/,
+    );
+    expect(fs.existsSync(path.join(clone, "work.txt"))).toBe(true);
+  });
+
+  it.runIf(process.platform === "win32")("finds a repository whose .git is spelled .GIT", () => {
+    const { repo, lane } = fixture();
+    ignoreInLane(repo, lane, "vendor");
+    const clone = path.join(lane, "vendor");
+    fs.mkdirSync(clone);
+    git(clone, "init", "-q");
+    fs.renameSync(path.join(clone, ".git"), path.join(clone, ".GIT"));
+    fs.writeFileSync(path.join(clone, "work.txt"), "w\n");
+    expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(
+      /another git repository[\s\S]*\.GIT/,
+    );
+  });
+
+  // Review round 6 (reproduced): the global `git worktree prune` also forgot a
+  // second worktree whose folder was briefly elsewhere, and its staged work.
+  it("unregisters only the lane, not another worktree whose folder is away", () => {
+    const { root, repo, lane } = fixture();
+    const other = path.join(root, "wt-other");
+    git(repo, "worktree", "add", "-q", "-b", "other", other, "main");
+    fs.writeFileSync(path.join(other, "staged.txt"), "s\n");
+    git(other, "add", "staged.txt");
+    fs.renameSync(other, `${other}-offline`);
+
+    removeWorktree({ repoDir: repo, worktree: lane, base: "main" });
+
+    fs.renameSync(`${other}-offline`, other);
+    expect(git(repo, "worktree", "list")).toContain("wt-other");
+    expect(git(other, "status", "--porcelain")).toBe("A  staged.txt");
+  });
+
+  // The path given is only a spelling. Everything, including what the tool
+  // reports it removed, is the real path.
+  it("resolves a lane given through a linked parent folder to its real path", () => {
+    const { root, repo, lane } = fixture();
+    const linkedParent = path.join(path.dirname(root), `${path.basename(root)}-alias`);
+    fs.symlinkSync(root, linkedParent, DIR_LINK);
+    ROOTS.add(linkedParent);
+    const removed = removeWorktree({ repoDir: repo, worktree: path.join(linkedParent, "wt-lane"), base: "main" });
+    expect(removed).toBe(fs.realpathSync.native(root) + path.sep + "wt-lane");
+    expect(fs.existsSync(lane)).toBe(false);
+    expect(git(repo, "worktree", "list")).not.toContain("wt-lane");
+    fs.rmSync(linkedParent, { recursive: false, force: true });
+  });
+
+  it("ignores a GIT_DIR inherited from the caller's shell", () => {
+    const { repo, lane } = fixture();
+    fs.writeFileSync(path.join(lane, "change.txt"), "new\n");
+    git(lane, "add", ".");
+    git(lane, "commit", "-q", "-m", "unmerged");
+    const saved = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(repo, ".git");
+    try {
+      expect(() => removeWorktree({ repoDir: repo, worktree: lane, base: "main" })).toThrow(/not merged/);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = saved;
+    }
+    expect(fs.existsSync(lane)).toBe(true);
   });
 });
