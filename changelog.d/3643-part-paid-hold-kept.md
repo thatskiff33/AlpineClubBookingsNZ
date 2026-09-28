@@ -20,6 +20,9 @@
   note for an invoice with a payment recorded against it; it asks for a person
   to review instead, and stops asking once nothing is owed: a booking paid in
   full before its cancel is not listed, and a rest you cleared by hand drops
-  off once its failed operation is marked resolved. A cancelled organisation
+  off once its failed operation is marked resolved - as does a clearing note
+  refused because part of the booking was paid. A clearing note that was
+  created but not allocated is allocated for its own amount, not the full
+  booking. A cancelled organisation
   booking whose late payment became a hand-back task is shown as needing no
   clearing note.

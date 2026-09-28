@@ -29,7 +29,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   alone.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1914
+lines: 1976
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -52,7 +52,10 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   part payment still enters that arm past its captured-money gate, only while
   the rest note its cancel queued is outstanding; and the one "cash retired"
   home also reads the organisation arm's hand-back task, so both are single
-  predicates beside the gate they decide.
+  predicates beside the gate they decide. One predicate says an officer's
+  resolved-in-Xero mark ends a clearing note's finding, and a rest note's
+  missing allocation is sized from the note's own recorded amount, with a
+  manual-review answer when none is recorded.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1689

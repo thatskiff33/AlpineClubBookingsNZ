@@ -1666,7 +1666,8 @@ repair CLI). A FAILED note replays its recorded amount and wording and plans
 its allocations again from what the invoices owe now; only a PARTIAL note
 replays its recorded allocation plan. A note that failed because the invoices
 owe less than it (part of the booking was paid) is never retried
-automatically: resolve it by hand.
+automatically: resolve it by hand, then mark the failed operation **resolved**
+on the Xero operations panel and the finding stops.
 
 **A part-paid hold is kept, not released (#3643, `INV-PAY-107`).** Before
 releasing a hold the job reads the booking's primary and supplementary invoices
@@ -1719,6 +1720,8 @@ recorded payment. A recognised booking is only reported while that rest note is
 outstanding: once you have cleared the rest by hand in Xero, mark the failed
 operation **resolved** on the Xero operations panel and the finding stops. A
 booking paid in full before its cancel has no rest note and is never reported.
+A rest note that was created but not allocated is allocated for its own amount,
+never the booking's full clearing amount.
 
 Note: because Internet-Banking bed-holding is off by default
 (`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either
