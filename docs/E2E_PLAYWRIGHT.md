@@ -707,15 +707,22 @@ So a spec never asks the machine what day it is:
 const d = new Date();
 const today = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 
-// RIGHT — the club's calendar, one clock read for the whole suite.
+// RIGHT — the club's calendar, anchored once for this prepared E2E stack.
 import { relDateOnly, shiftDateOnly } from "./helpers/fixtures";
 const today = relDateOnly(0);
 const inAFortnight = shiftDateOnly(today, 14);
 ```
 
+`scripts/e2e-stack.sh prepare` captures the club date before seeding and saves
+it in an ignored `.artifacts/e2e-fixture-date-*` file. Its separate `run` command
+passes that date as `E2E_FIXTURE_TODAY_NZ` to Playwright. This keeps the seed and
+specs on the same relative date even if the job crosses club midnight; a
+Monday-aligned fixture would otherwise move a whole week (#3702). A direct
+import without that environment variable still reads the current club date.
+
 `E2E_TODAY_NZ` / `relDateOnly` (in `prisma/e2e-fixtures.ts`, re-exported by
-`e2e/helpers/fixtures.ts`) is **the** clock read, frozen once per process and
-formatted through `Intl` with an explicit zone. `shiftDateOnly` is the only
+`e2e/helpers/fixtures.ts`) is the one fixture date authority. Its fallback
+clock read uses `Intl` with an explicit zone. `shiftDateOnly` is the only
 date arithmetic. `src/lib/__tests__/e2e-club-day-census.test.ts` sweeps `e2e/`
 and fails a second one; `docs/TESTING.md` → "The browser suite's clock
 discipline" is the full rule, and
