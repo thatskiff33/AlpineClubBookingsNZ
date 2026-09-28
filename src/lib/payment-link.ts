@@ -45,8 +45,8 @@ export class PaymentLinkError extends Error {
   status: number;
   /**
    * A machine-readable refusal code, when the refusal has one a client
-   * recognises (#3638: `SWITCHED_TO_INTERNET_BANKING`). The route sends it
-   * beside the message.
+   * recognises (#3567: `PAYMENT_PROCESSING`; #3638: `SWITCHED_TO_INTERNET_BANKING`).
+   * The route sends it beside the message.
    */
   code?: string;
 
@@ -54,7 +54,7 @@ export class PaymentLinkError extends Error {
     super(message);
     this.name = "PaymentLinkError";
     this.status = status;
-    this.code = code;
+    if (code) this.code = code;
   }
 }
 

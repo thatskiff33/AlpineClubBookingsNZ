@@ -289,7 +289,7 @@ export async function kickClearingNoteForUnpaidRest(
  *
  * While it exists, a later PAID event for the invoice credits and hands back
  * nothing and is written onto it instead (`part-payment-review-cover.ts`,
- * `INV-PAY-109`).
+ * `INV-PAY-108`).
  */
 export async function raisePartPaymentReviewTask(
   tx: Prisma.TransactionClient,

@@ -270,7 +270,7 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
     expect(JSON.stringify(body)).not.toContain("payment-secret");
   });
 
-  // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the inbound sync's note that
+  // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): the inbound sync's note that
   // Xero reported a reviewed invoice paid reaches the card, because it - not the
   // best-effort email - is the record.
   it("carries the sync's Xero-paid note on a part-payment review, and on nothing else (#3643)", async () => {

@@ -1146,7 +1146,7 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **98 components render a banner, and
-311 of the 365 `ViewOnlyActionButton` call sites opt out** of the per-button
+ 311 of the 366 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 311 split by WHICH rule
@@ -1156,13 +1156,13 @@ pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
-remaining **54 controls across 30 files deliberately keep the per-button
+remaining **55 controls across 30 files deliberately keep the per-button
 default** (`describeReason` left at `true`), in three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
   a separate accessibility container — focus is trapped and the page behind is
   commonly inert — so a banner rendered in the page body does not reach them.
-  (10 controls across 5 files, including the confirmed bed-allocation move
+  (11 controls across 5 files, including the confirmed bed-allocation move
   dialog, which the test enumerates by name; three further
   controls of this shape live in files counted under the next bucket, see
   there.)
@@ -3134,7 +3134,7 @@ reference):
 ```mermaid
 flowchart TD
     Leader["app cron-leader<br/>(CRON_ENABLED=true)"]
-    Leader --> Q15["Every 15 min<br/>payment-recovery, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
+    Leader --> Q15["Every 15 min<br/>payment-recovery, internet-banking-hold-release,<br/>xero-waiting-invoice-reaper, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
     Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
     Leader --> Q3h["Every 3 h<br/>additional-payment-reminders, confirm-pending,<br/>placeholder-guest-name-reminders, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper,<br/>policy-exception-hold-reaper, hosting-coverage-reevaluation"]
     Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, email-inheritance-reconcile,<br/>capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>member-guest-consent-expiry,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-reconciliation-report,<br/>xero-credit-sync-check"]
@@ -3153,7 +3153,9 @@ flowchart TD
 | `school-attendee-confirmations` | Every 3 hours | Prompt school contacts to confirm their attendee list before check-in (#1101): first email `attendeeConfirmationLeadDays` before arrival, re-sent every `attendeeConfirmationReminderDays` with a fresh tokenized link until confirmed or check-in |
 | `placeholder-guest-name-reminders` | Every 3 hours | Chase a member whole-lodge booking whose party is still "Guest 1..N" (#2550). Uses the same `attendeeConfirmationLeadDays` / `attendeeConfirmationReminderDays` settings as the school prompt, escalating to a DAILY final reminder from two days before check-in through the morning of arrival (the window deliberately includes the arrival day), and stops as soon as every guest is named. No token and no public page — the member edits their own guests behind their login. Visibility only: it never withholds check-in, confirmation, or roster generation |
 | `hosting-coverage-reevaluation` | Every 3 hours | Drain the bounded hosting-coverage queue (#2576). Every path that can change adult-member qualification records the owner, lodge and exact nights to re-examine inside its own transaction, and drains that inline right after committing; this sweep is the BACKSTOP and authority on completion. Each claimed item re-reads committed facts inside a short transaction so its transaction-scoped owner lock protects incident reconciliation, never a lodge-wide sweep; email runs after that commit under an expiring delivery lease, is stamped only after success, and failed delivery is retryable. It opens, updates or resolves one urgent compliance incident per booking, never changes booking status, and exposes unresolved rows in the Booking Officer's `/admin/bookings` queue. |
-| `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents |
+| `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents. First task of the payments cycle (`src/lib/payments-cron-runner.ts`), which the cron leader and `POST /api/cron/payments` both call (#3663); each of its three tasks is error-isolated and records its own run |
+| `internet-banking-hold-release` | Every 15 minutes | Release an Internet Banking booking whose payment hold deadline has passed unpaid: cancel the booking, free its beds, fail the pending payment and clear its unpaid invoice. A stay that has started (check-in on or before the club's today) is never cancelled: it is counted `skippedStarted` and finance is alerted once (`INV-PAY-016`). A hold that throws is retried next run and the run records a `warning` admin cron health shows. Second task of the payments cycle |
+| `xero-waiting-invoice-reaper` | Every 15 minutes | Settle a booking change's `WAITING_PAYMENT` Xero invoice that has waited past 14 days: keep it while the payment can still be made, release it if the payment was captured, retire it only once closed. Third task of the payments cycle |
 | `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |
 | `xero-outbox` | Every 15 minutes | Process queued Xero outbox operations |
@@ -3474,6 +3476,6 @@ maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot aft
 an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
 registered as **not** requiring a primary `config/club.json`, because the value it
 copies comes from the environment rather than from that file. The
-`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
-#2988's later children migrate the display call sites off it and CT-6 retires
-it.
+transitional `APP_TIME_ZONE` constant is gone: #3567 deleted
+`src/config/operational.ts` once its last readers (the AI metering month keys)
+moved onto the stored zone.

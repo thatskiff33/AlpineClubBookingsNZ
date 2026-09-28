@@ -22,6 +22,8 @@ function readInstrumentationRecordedJobNames(): string[] {
   const sources = [
     "src/instrumentation.node.ts",
     "src/lib/general-cron-runner.ts",
+    // #3663: the 15-minute payments cycle records its three tasks' job names.
+    "src/lib/payments-cron-runner.ts",
     "src/lib/xero-cron-runner.ts",
     // #2501: the credit-sync checker owns its recorded job-name constant
     // (XERO_CREDIT_SYNC_JOB_NAME), which the Xero cron runner maps to and

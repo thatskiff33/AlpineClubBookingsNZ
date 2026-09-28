@@ -21,6 +21,7 @@ import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -28,9 +29,11 @@ import {
 // migration carried this file past its 500-line route-page budget. See that
 // file's header for why an allowance was not the answer.
 import {
+  CardPaymentUnavailableNotice,
   FinancialReviewNotice,
   formatLinkExpiry,
   formatStayDay,
+  internetBankingHeading,
   NarrativeCard,
   toneForState,
   type Narrative,
@@ -173,6 +176,10 @@ export default function PayByLinkPage() {
             heading: "Card transaction found - check payment status",
             message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
           });
+          return;
+        }
+        if (res.status === 409 && isPaymentProcessing(data)) {
+          setPaymentRecovery({ heading: "Payment being processed", message: data.error });
           return;
         }
         throw new Error(data.error || "Unable to start payment");
@@ -456,11 +463,7 @@ export default function PayByLinkPage() {
                 {intentLoading ? "Preparing..." : "Pay by card"}
               </Button>
             ) : (
-              // #3638 (`INV-PAY-102`): switched to Internet Banking; the card door would refuse.
-              <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
-                This booking is being paid by internet banking, so it can&apos;t be paid by
-                card here. Use the bank-transfer details below.
-              </p>
+              <CardPaymentUnavailableNotice />
             )}
             {intentError ? (
               <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -470,9 +473,7 @@ export default function PayByLinkPage() {
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">
-                <p className="font-medium text-foreground">
-                  {payable.cardPaymentAvailable !== false ? "Or pay by internet banking" : "Pay by internet banking"}
-                </p>
+                <p className="font-medium text-foreground">{internetBankingHeading(payable)}</p>
                 <p className="mt-1 text-muted-foreground">
                   {/* #2919 review: every token this body may carry, not just the
                       payment reference — and the lodge is THIS booking's. */}

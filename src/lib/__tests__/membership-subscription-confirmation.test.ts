@@ -118,6 +118,31 @@ describe("membership subscription confirmation", () => {
     expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("rechecks an archived stored role default during confirm and snapshots one charge", async () => {
+    mocks.memberFindMany.mockResolvedValue([{
+      id: "member-1", firstName: "Member", lastName: "One", email: "member@example.test",
+      role: "USER", ageTier: "ADULT", seasonalMembershipAssignments: [], familyGroupMemberships: [],
+    }]);
+    mocks.typeFindMany.mockImplementation(async ({ where }: { where: { key: { in: string[] }; isActive?: boolean } }) =>
+      where.key.in.includes("FULL") && where.isActive !== true
+        ? [{ id: "type-full", key: "FULL", name: "Full", isActive: false, subscriptionBehavior: "REQUIRED" }]
+        : []);
+    const preview = await buildSubscriptionBillingPreview({
+      seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+    });
+    expect(preview.entries).toHaveLength(1);
+    expect(preview.entries[0]).toMatchObject({ membershipTypeId: "type-full", membershipAnnualFeeId: "fee-1" });
+    const result = await confirmSubscriptionBillingPreview({
+      preview, expectedConfirmationToken: preview.confirmationToken, source: "ANNUAL_BATCH",
+    });
+    expect(result.chargeIds).toEqual(["charge-1"]);
+    expect(mocks.typeFindMany).toHaveBeenCalledTimes(2);
+    expect(mocks.chargeUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.chargeUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ membershipTypeId: "type-full", membershipAnnualFeeId: "fee-1" }),
+    }));
+  });
+
   it("checks only ACTIVE coverage and mints a NEW idempotency key after a void (#2147)", async () => {
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: 2026,

@@ -5,7 +5,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
 
 /**
- * #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the inbound Xero sync's note
+ * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): the inbound Xero sync's note
  * on a part-payment review in the hand-back queue. While a review exists the
  * app credits and hands back nothing for the invoice, so this line is how the
  * treasurer learns there may be more to settle - the email is best-effort, this

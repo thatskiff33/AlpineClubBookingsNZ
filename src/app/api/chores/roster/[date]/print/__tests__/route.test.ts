@@ -21,11 +21,10 @@ import { withTimeZoneAsync as withHostTimeZone } from "@/lib/__tests__/helpers/t
  * night it was asked for and only its own lodge's roster.
  *
  * The zone cases run the same request with the process clock in two zones and
- * require an identical result. Note the two zones are deliberately independent
- * concepts: `APP_TIME_ZONE` is mocked to New Zealand below so that moving
- * `process.env.TZ` simulates a differently-zoned HOST for a club that is always
- * in NZ — without the mock, `src/config/operational.ts` reads `process.env.TZ`
- * first and the club would move with the host, hiding the mismatch.
+ * require an identical result. Moving `process.env.TZ` simulates a
+ * differently-zoned HOST; the environment-zone constant this file used to pin
+ * to New Zealand was deleted in #3567 and nothing reads the environment's zone
+ * any more, so the host's `TZ` cannot move the club.
  */
 
 const ROSTER_NIGHT = "2026-07-10";
@@ -33,12 +32,6 @@ const NIGHT_UTC_MIDNIGHT = "2026-07-10T00:00:00.000Z";
 const THIS_LODGE = "lodge-1";
 const OTHER_LODGE = "lodge-2";
 
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
 
 const { mockPrisma, mockAuth } = vi.hoisted(() => ({
   mockPrisma: {

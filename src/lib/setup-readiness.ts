@@ -11,6 +11,9 @@ import {
   classifyEnvironmentClubTimeZoneSeed,
   type EnvironmentClubTimeZoneSeed,
 } from "@/lib/club-time-zone-env";
+import { usableClubCurrencyCode } from "@/lib/club-format";
+import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
+import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -53,6 +56,7 @@ export const SETUP_STEP_IDS = [
   "membership-cancellation",
   "age-tiers",
   "seasons-rates",
+  "key-rate-holders",
   "stripe",
   "email-ses",
   "sentry",
@@ -108,6 +112,16 @@ export interface SetupDatabaseSnapshot {
   // secret changed). Optional/undefined for older callers or when no DB snapshot
   // was taken — the Stripe check then reports "not checked".
   stripeSecretKeySet?: boolean;
+  clubFormatCurrencyCode?: string | null; // stored, raw; an unchargeable one blocks Stripe (#3567)
+  /**
+   * The currency cards are actually charged in (#3633): the stored currency
+   * resolved through the same fallback every reader uses
+   * (`resolveStoredClubFormat`, then `clubChargeCurrencyCode`), or null when no
+   * card can be charged because the stored one is unusable. The Xero
+   * base-currency warning compares against this, never the raw value above, so
+   * it agrees with the Club Currency & Locale page and the Xero wizard.
+   */
+  clubChargeCurrencyCode?: string | null;
   stripePublishableKeySet?: boolean;
   stripeWebhookSecretSet?: boolean;
   stripeNeedsReentry?: boolean;
@@ -136,6 +150,9 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // `INV-LIFE-093`: already archived key-resolved types, or types with a
+  // changed booking rule, require an officer's explicit repair.
+  keyResolvedRateHolderWarnings?: string[];
   // Public {{hut-fees}} embed readiness (#2129). The embed renders one nightly
   // -rate column per publicly-listed active membership type that carries rates
   // for the season (identically-priced types share one collapsed column). This
@@ -1619,6 +1636,30 @@ function buildSeasonRateCheck(
   );
 }
 
+function buildKeyRateHolderCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const warnings = db?.keyResolvedRateHolderWarnings ?? [];
+  return applyProgress(
+    {
+      id: "key-rate-holders",
+      title: "Built-in Membership Types",
+      description: "Full and Non-Member must remain active with their built-in booking rules.",
+      status: !db || warnings.length > 0 ? "warning" : "complete",
+      required: true,
+      message: !db
+        ? "Database membership types were not checked."
+        : warnings.length > 0
+          ? "A built-in membership type needs repair. Open Membership Types to reactivate it or restore its booking behavior."
+          : "Full and Non-Member membership types are ready.",
+      details: db ? warnings : ["Check membership types after connecting the database."],
+      href: "/admin/membership-types",
+    },
+    progress,
+  );
+}
+
 /**
  * Stripe readiness, DB-only (#2082). Credentials are captured in-app (encrypted
  * store) — no STRIPE_* env vars are read for operation. Any legacy Stripe env
@@ -1674,6 +1715,11 @@ function buildStripeCheck(
     );
   }
 
+  const stored = db.clubFormatCurrencyCode ?? null;
+  if (stored !== null && usableClubCurrencyCode(stored) === null) {
+    const message = `The club's recorded currency, "${stored}", is not usable, so no card can be charged (card payments follow it, #3567). Set a three-letter currency with two decimal places at /admin/club-format.`;
+    return applyProgress({ ...base, status: "blocked", message, details: legacyDetails }, progress);
+  }
   const secretSet = Boolean(db.stripeSecretKeySet);
   const publishableSet = Boolean(db.stripePublishableKeySet);
   const webhookSet = Boolean(db.stripeWebhookSecretSet);
@@ -1807,6 +1853,7 @@ function buildOperationalXeroCheck(
   env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
+  xeroBaseCurrency: string | null,
 ): SetupStepCheck {
   const moduleState = buildModuleLayerState(db, "xeroIntegration");
   const enabled = moduleState.effectiveEnabled;
@@ -1825,6 +1872,20 @@ function buildOperationalXeroCheck(
           `Legacy env vars detected (no longer used): ${legacyXeroVars.join(", ")}. Re-enter these in-app, then remove them from the environment.`,
         ]
       : [];
+  // #3633: Xero books every invoice in the organisation's base currency, and
+  // card payments are charged in the club's. A WARNING only — it never blocks
+  // and changes no invoice — and only while Xero is on and connected; an
+  // unknown base currency (null) says nothing.
+  const currencyMismatch =
+    enabled && connected && !needsReentry
+      ? xeroBaseCurrencyMismatch(xeroBaseCurrency, db?.clubChargeCurrencyCode)
+      : null;
+  const currencyMismatchSentence = currencyMismatch
+    ? clubFormatXeroBaseCurrencyMismatch(
+        currencyMismatch.xeroBaseCurrency,
+        currencyMismatch.clubCurrencyCode,
+      )
+    : null;
 
   return applyProgress(
     {
@@ -1838,7 +1899,7 @@ function buildOperationalXeroCheck(
           ? "warning"
           : needsReentry
             ? "warning"
-            : legacyXeroVars.length > 0
+            : legacyXeroVars.length > 0 || currencyMismatchSentence !== null
               ? "warning"
               : connected
                 ? "complete"
@@ -1850,11 +1911,16 @@ function buildOperationalXeroCheck(
           ? "Operational Xero credentials are captured in-app; connection state was not checked."
           : needsReentry
             ? "Xero tokens can no longer be read (the auth secret changed) — reconnect Xero from the in-app setup (Admin > Xero > Setup)."
-            : legacyXeroVars.length > 0
-              ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
-              : connected
-                ? "Operational Xero is connected."
-                : "Connect Xero from the in-app setup (Admin > Xero > Setup).",
+            : currencyMismatchSentence
+              ? // Ahead of the legacy-variable message: that one is tidying
+                // (the variables are ignored, and `legacyDetails` still lists
+                // them), while this one is about the books.
+                currencyMismatchSentence
+              : legacyXeroVars.length > 0
+                ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
+                : connected
+                  ? "Operational Xero is connected."
+                  : "Connect Xero from the in-app setup (Admin > Xero > Setup).",
       details: [
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
@@ -2054,6 +2120,15 @@ export function buildSetupReadiness(
     database?: SetupDatabaseSnapshot;
     progress?: Partial<SetupProgressState> | null;
     now?: Date;
+    /**
+     * The connected Xero organisation's base currency, for the base-currency
+     * warning on the Operational Xero step (#3633). Not part of the database
+     * snapshot: it comes from Xero, and only for a viewer who may read the
+     * organisation summary (`readXeroBaseCurrencyForViewer`). Omitted — the
+     * `setup:check` CLI, which makes no Xero call — means unknown, and unknown
+     * gives no warning.
+     */
+    xeroBaseCurrency?: string | null;
   } = {},
 ): SetupReadiness {
   const env = input.env ?? process.env;
@@ -2076,13 +2151,19 @@ export function buildSetupReadiness(
       buildMembershipCancellationCheck(input.database, progress),
       buildAgeTierCheck(club, input.database, progress),
       buildSeasonRateCheck(input.database, progress),
+      buildKeyRateHolderCheck(input.database, progress),
     ],
     integrations: [
       buildStripeCheck(env, input.database, progress),
       buildEmailCheck(env, progress),
       buildSentryCheck(env, progress),
       buildAddressAutocompleteCheck(env, input.database, progress),
-      buildOperationalXeroCheck(env, input.database, progress),
+      buildOperationalXeroCheck(
+        env,
+        input.database,
+        progress,
+        input.xeroBaseCurrency ?? null,
+      ),
     ],
     finance: [
       buildFinanceDashboardCheck(input.database, progress),

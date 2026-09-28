@@ -1,4 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /**
  * #3123: the Internet Banking cutoff is decided on the CLUB's day.
@@ -6,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `checkInternetBankingLeadTime` refuses Internet Banking when a check-in is
  * closer than `minimumDaysBeforeCheckIn`, and it quotes the day it used back to
  * the payer as `cutoff.today`. That day used to default to
- * `getTodayDateOnly()`, which reads `APP_TIME_ZONE` — the ENVIRONMENT's claim.
+ * `getTodayDateOnly()`, which read `APP_TIME_ZONE` — the ENVIRONMENT's claim.
  * For a club configured behind its container's zone that pushed the cutoff a day
  * early: Internet Banking disappeared from the payment options while the club
  * would still have accepted it, and the payer was shown the wrong date while it
@@ -15,8 +28,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ## What makes this file discriminating
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — both the answer the replaced
- * helper gave AND this codebase's own fallback, so it is the one value a wrong
+ * The environment's zone (`ENVIRONMENT_CLUB_ZONE`: `TZ`, else `Pacific/Auckland`;
+ * the constant once pinned here was deleted in #3567) is both the answer the
+ * replaced helper gave AND this codebase's own fallback, so it is the one value a wrong
  * fix could still pass under. The PERSISTED club zone is `America/Denver`, which
  * is behind Greenwich. Under the repository's frozen clock
  * (`2026-07-01T00:00:00.000Z`) the club's day is 30 June while the environment
@@ -30,15 +44,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * out.
  */
 
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-const ENVIRONMENT_ZONE = "Pacific/Auckland";
+const ENVIRONMENT_ZONE = ENVIRONMENT_CLUB_ZONE;
 const PERSISTED_ZONE = "America/Denver";
 
 const mocks = vi.hoisted(() => ({
@@ -73,7 +79,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
 import { GET } from "@/app/api/payments/options/route";
 
@@ -120,7 +125,6 @@ beforeEach(() => {
 
 describe("the Internet Banking cutoff is decided on club time (#3123)", () => {
   it("PREMISE: the persisted zone and the environment's disagree about the day", () => {
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(dayIn(PERSISTED_ZONE)).toBe("2026-06-30");
     expect(dayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
   });

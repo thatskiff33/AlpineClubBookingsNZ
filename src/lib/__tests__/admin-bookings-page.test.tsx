@@ -15,8 +15,8 @@ vi.mock("@/lib/prisma", () => ({
     // CT-4 (#2870): the page renders `updatedAt` through the club's PERSISTED
     // timezone. `loadPersistedClubTimeSettings` is fail-soft in three places
     // and a MISSING DELEGATE is one of them — so without this entry the reader
-    // silently answers "nothing persisted" and the page falls back to
-    // `APP_TIME_ZONE`, which is the very defect CT-4 removes. Every test in
+    // silently answers "nothing persisted" and the page falls back to the
+    // environment's zone, which is the very defect CT-4 removes. Every test in
     // this file bar one leaves it resolving `null`, which reproduces exactly
     // that fallback and keeps their expectations unchanged; the zone-authority
     // test at the bottom is the one that supplies a row.
@@ -60,7 +60,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 import AdminBookingsPage, {
   formatAdminBookingGuestCount,
 } from "@/app/(admin)/admin/bookings/page";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import {
   adminBookingsQuerySchema,
@@ -76,7 +76,7 @@ import {
 /**
  * The club's day and zone these cases mean, stated rather than read (#3123).
  * `listAdminBookings` and its `where` builders take them as data instead of
- * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * projecting through the environment's zone; that the value comes from the PERSISTED
  * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
  */
 const TEST_CLUB_DAY: AdminBookingsClubDay = {
@@ -909,7 +909,7 @@ describe("AdminBookingsPage", () => {
   /**
    * CT-4 (#2870): "Last updated" is a real INSTANT, so it has no civil date
    * until a zone is chosen, and `INV-CONFIG-002` says which — the PERSISTED
-   * `ClubTimeSettings.timeZone`, read on the server, never `APP_TIME_ZONE`.
+   * `ClubTimeSettings.timeZone`, read on the server, never the environment's.
    *
    * ## Why this test had to exist before the claim could be believed
    *
@@ -918,7 +918,7 @@ describe("AdminBookingsPage", () => {
    * persisted", and every one of them then falls back to the environment. Unit
    * tests run with a deliberately unreachable `DATABASE_URL`, so before the
    * delegate was added to this file's mock EVERY date on this page rendered
-   * through `APP_TIME_ZONE` here — and nothing could tell, because that is also
+   * through the environment's zone here — and nothing could tell, because that is also
    * what the code being replaced did. A whole page's worth of assertions was
    * agreeing with the defect.
    *
@@ -929,10 +929,10 @@ describe("AdminBookingsPage", () => {
    * are `@db.Date` calendar days and must NOT move with it — they are the
    * control, and a formatter that projected them would fail here too.
    */
-  it("renders Last updated in the PERSISTED club zone, not APP_TIME_ZONE", async () => {
+  it("renders Last updated in the PERSISTED club zone, not the environment zone", async () => {
     const UPDATED_AT = new Date("2026-06-01T00:00:00.000Z");
     const dayIn = (zone: string) =>
-      new Intl.DateTimeFormat(APP_LOCALE, {
+      new Intl.DateTimeFormat("en-NZ", {
         timeZone: zone,
         dateStyle: "medium",
       }).format(UPDATED_AT);
@@ -945,7 +945,7 @@ describe("AdminBookingsPage", () => {
       ],
       answerFor: dayIn,
     });
-    const environmentDay = dayIn(APP_TIME_ZONE);
+    const environmentDay = dayIn(ENVIRONMENT_CLUB_ZONE);
     expect(chosen.day).not.toBe(environmentDay);
 
     vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({

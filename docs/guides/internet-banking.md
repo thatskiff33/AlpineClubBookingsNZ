@@ -82,6 +82,9 @@ hold itself once Xero shows the invoice unpaid. If it still cannot be read by
 the check-in date or seven days after the hold deadline, whichever comes first,
 the hold is released and a second email goes out; the invoice-clearing credit
 note is only created once Xero can be read and shows the invoice still owes it.
+If it is the check-in date that arrives first, the stay has started, so the
+hold is not cancelled at all: it is left for you to reconcile by hand, with one
+email saying so.
 The email goes to admins with the **payment failure** notification switched on,
 and a send that reaches nobody is retried on a later run.
 

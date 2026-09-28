@@ -647,6 +647,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Internet Banking defaults are non-holding and no-cutoff. If bed holding is
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
+- Never once the stay has started (#3663): check-in on or before the club's
+  today is skipped, counted `skippedStarted` and alerted to finance once, for
+  reconciliation by hand. Pinned by `internet-banking-payment-cron.test.ts`.
 
 ## INV-PAY-017
 
@@ -686,21 +689,21 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-107
 
 - **An expired internet-banking hold with any payment against its invoices is
-  kept, not released** (#3643; owner decision, 26 September 2026, option A).
+  kept, not released** (#3643; owner option A, 26 September 2026).
   Xero is read live before any transaction (primary and supplementary
   invoices; cash by `classifyXeroInvoiceCashEvidence`). A clean read wins; the
   inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
   with the #3535 audit) count only when Xero cannot answer, and, for links newer
   than the read, in the release's re-check, narrowing, not closing, the race;
   the builder's shortfall refusal backs it.
-- **An unreadable invoice is kept only to a bound** (orchestrator decision):
-  check-in or seven days past the deadline, whichever is first, then released
-  (a 404 counts). Its clearing note is created only once the builder reads
+- **An unreadable invoice is kept only to a bound**: check-in or seven days
+  past the deadline, whichever is first, then released (a 404 counts) unless
+  its stay started ([INV-PAY-016]). Its clearing note is created only once the builder reads
   what the invoices owe.
 - **One admin alert per hold per reason**, claim-guarded; an undelivered one
   is retried (given back, or marked owed once the hold is gone) and a release's
   audit row is written regardless. Live reads: 20 a run, 400 holds a day.
-- **The cancel path recognises the part payment** (same decision): the claim
+- **The cancel path recognises the part payment**: the claim
   re-checks for payments recorded since its read, records Xero's exact cash as
   captured, so the policy tiers it as credit, and queues a note for
   the unpaid rest (*Unpaid balance cleared - booking cancelled*, [INV-PAY-101]).
@@ -715,7 +718,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
   and `xero-booking-repair.test.ts`.
 
-## INV-PAY-109
+## INV-PAY-108
 
 - **A part payment under review is never handed back twice** (#3643,
   orchestrator decision 3 within the owner's 28 September 2026 decision).
@@ -1106,8 +1109,9 @@ it was).
   (`additional-payment-chase.ts`): `closed` when the booking no longer names
   the intent, the intent SUCCEEDED, the booking is deleted or not payable, or
   Stripe says `canceled` or missing; `captured-at-provider` when Stripe has
-  the money; else `payable`. The secret route serves only `payable` (404, 409);
-  the page card asks its booking half. The reaper
+  the money; else `payable`. The secret route serves only `payable` (404, 409;
+  a `processing` intent answers `PAYMENT_PROCESSING`, not paid, #3635); the
+  page card asks its booking half. The reaper
   (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
   only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
   rows never recorded alerts once after three days.

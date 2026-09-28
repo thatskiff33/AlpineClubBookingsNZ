@@ -100,7 +100,7 @@ interface ManualRefundTask {
   /** #3643: a part payment the club settles in Xero. Optional, as above. */
   partPaymentReview?: boolean;
   /**
-   * #3643 (`INV-PAY-109`): Xero reported the review's invoice paid after the
+   * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
    * cancel, and the invoice's cash then. Optional, as above.
    */
   partPaymentReviewXeroPaid?: { reportedAt: string; cashCents: number } | null;

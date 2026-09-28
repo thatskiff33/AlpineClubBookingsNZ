@@ -33,6 +33,12 @@ export async function queueSupersededPrimaryIntentCancellations(
     bookingId: string;
     paymentId: string;
     newFinalPriceCents: number;
+    /**
+     * #3567: a pending intent minted in a currency the club no longer charges
+     * in. It is superseded whatever its amount — an equal amount is no reason to
+     * keep an intent that would charge the old currency.
+     */
+    wrongCurrencyPaymentIntentId?: string | null;
   },
 ): Promise<SupersededPrimaryPaymentIntent[]> {
   const pendingPrimaryTransactions = await tx.paymentTransaction.findMany({
@@ -47,7 +53,15 @@ export async function queueSupersededPrimaryIntentCancellations(
       // at the old amount, and capturing it charges the member the wrong
       // total (#1161). Price->0 supersedes every positive pending intent,
       // which is the pre-#1161 behaviour unchanged.
-      amountCents: { gt: 0, not: options.newFinalPriceCents },
+      ...(options.wrongCurrencyPaymentIntentId
+        ? {
+            amountCents: { gt: 0 },
+            OR: [
+              { amountCents: { not: options.newFinalPriceCents } },
+              { stripePaymentIntentId: options.wrongCurrencyPaymentIntentId },
+            ],
+          }
+        : { amountCents: { gt: 0, not: options.newFinalPriceCents } }),
     },
     select: {
       id: true,

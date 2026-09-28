@@ -156,6 +156,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   // admin-alerts-finance
   "admin-credit-sync-drift": "adminCreditSyncDriftTemplate",
   "admin-duplicate-capture-refund": "adminDuplicateCaptureRefundTemplate",
+  "admin-internet-banking-hold-started-stay": "adminInternetBankingHoldStartedStayTemplate",
   "admin-superseded-payment-refund": "adminSupersededPaymentRefundTemplate",
   "admin-internet-banking-hold-kept": "adminInternetBankingHoldKeptTemplate",
   "admin-late-capture-auto-refund": "adminLateCaptureAutoRefundTemplate",

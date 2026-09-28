@@ -40,6 +40,14 @@ vi.mock("@/components/stripe/PaymentForm", () => ({
 }));
 
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
+import {
+  ADDITIONAL_PAYMENT_ALREADY_MADE_BODY,
+  PAYMENT_PROCESSING_BODY,
+} from "@/lib/payment-recovery-contract";
+import {
+  UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY,
+  UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+} from "@/lib/stripe-charge-currency";
 
 /*
   #3340 acceptance criterion 4 — THE RENDERED AMOUNT AND THE CONFIRMED INTENT ARE
@@ -237,17 +245,19 @@ describe("AdditionalPaymentCard amount source", () => {
   });
 
   /*
-    #3641: the route answers 409 when Stripe already holds this payment. The
-    card says so plainly: not "still owing", not a red error, no form.
+    #3641 / #3635: THE CARD TELLS THE ROUTE'S 409s APART BY `code`.
+
+    The card used to read every 409 as "Stripe already holds this payment".
+    After the sync with main, the route's currency refusal is a 409 too, so a
+    member whose club cannot be charged by card saw a green "paid" panel and no
+    "still owing" sentence. Each code gets its own treatment.
   */
-  it("says the payment has been made, and nothing contradicting it, on a 409", async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({
-        error: "This payment has already been made. Refresh the page to see it.",
-      }),
-    });
+  function conflict(body: Record<string, unknown>) {
+    return { ok: false, status: 409, json: async () => body };
+  }
+
+  it("says the payment has been made, and nothing contradicting it, on ADDITIONAL_PAYMENT_ALREADY_MADE", async () => {
+    fetchMock.mockResolvedValue(conflict({ ...ADDITIONAL_PAYMENT_ALREADY_MADE_BODY }));
 
     render(
       <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
@@ -256,8 +266,60 @@ describe("AdditionalPaymentCard amount source", () => {
     await waitFor(() =>
       expect(screen.getByText(/already been made/)).toBeVisible(),
     );
+    expect(screen.getByRole("status")).toHaveClass("bg-success-3");
     expect(screen.queryByText(/according to our records/)).toBeNull();
     expect(screen.queryByText(/still owing/)).toBeNull();
     expect(screen.queryByTestId("elements")).toBeNull();
+  });
+
+  it("tells the member to wait, not that it is paid, on PAYMENT_PROCESSING", async () => {
+    fetchMock.mockResolvedValue(conflict({ ...PAYMENT_PROCESSING_BODY }));
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/being processed/)).toBeVisible(),
+    );
+    expect(screen.getByRole("status")).not.toHaveClass("bg-success-3");
+    expect(screen.queryByText(/already been made/)).toBeNull();
+    expect(screen.queryByText(/still owing/)).toBeNull();
+    expect(screen.queryByTestId("elements")).toBeNull();
+  });
+
+  it("shows the currency refusal as an error, with the ask still owing", async () => {
+    fetchMock.mockResolvedValue(conflict({ ...UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY }));
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE),
+      ).toBeVisible(),
+    );
+    expect(screen.getByText(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE)).toHaveClass(
+      "bg-danger-3",
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText(/according to our records/)).toBeVisible();
+    expect(screen.getByText(/\$365\.00/)).toBeVisible();
+    expect(screen.queryByTestId("elements")).toBeNull();
+  });
+
+  it("treats an uncoded 409 as an error, never as paid", async () => {
+    fetchMock.mockResolvedValue(conflict({ error: "Something conflicted" }));
+
+    render(
+      <AdditionalPaymentCard bookingId="booking_1" additionalAmountCents={36500} />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Something conflicted")).toBeVisible(),
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText(/according to our records/)).toBeVisible();
   });
 });

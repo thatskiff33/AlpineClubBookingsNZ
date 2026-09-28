@@ -691,7 +691,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -721,12 +721,12 @@ describe("member-credit helpers", () => {
       tx.memberCreditNoteAllocation.aggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
       const { clampAppliedCreditToBookingPrice } = await import("@/lib/member-credit");
       await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any
       );
       expect(
         mockRepairLegacyAppliedCreditNoteAllocationsForBooking,
-      ).toHaveBeenCalledWith("booking-ib", "inv-1", tx);
+      ).toHaveBeenCalledWith("booking-ib", "inv-1", tx, CLUB_FORMAT_TEST);
       expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
         operationType: "UPDATE",
         correlationKey: "booking:booking-ib:applied-credit-deallocation:3000:v1",
@@ -749,7 +749,7 @@ describe("member-credit helpers", () => {
 
       await expect(
         clampAppliedCreditToBookingPrice(
-          { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000 },
+          { memberId: "member-1", bookingId: "booking-ib", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
           tx as any,
         ),
       ).rejects.toThrow("dealloc-pending is PENDING");
@@ -767,7 +767,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-y", newFinalPriceCents: 5000 },
+        { memberId: "member-1", bookingId: "booking-y", newFinalPriceCents: 5000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -785,7 +785,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-z", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-z", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 
@@ -805,7 +805,7 @@ describe("member-credit helpers", () => {
       );
 
       const result = await clampAppliedCreditToBookingPrice(
-        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000 },
+        { memberId: "member-1", bookingId: "booking-x", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
         tx as any,
       );
 

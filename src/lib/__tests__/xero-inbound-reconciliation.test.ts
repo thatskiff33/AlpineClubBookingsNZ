@@ -2623,7 +2623,7 @@ describe("processStoredXeroInboundEvents", () => {
   }
 
   /*
-    #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): a cancel that raised a
+    #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): a cancel that raised a
     part-payment review has told the treasurer to settle the recorded cash in
     Xero. While that review exists, open or closed, a later PAID event sizes
     nothing and mints nothing: it is written onto the review, in the same
@@ -5813,6 +5813,7 @@ describe("processStoredXeroInboundEvents", () => {
       "bk234567890",
       "inv_booking_1",
       expect.anything(),
+      CLUB_FORMAT_TEST,
       {
         providerTarget: {
           xeroCreditNoteId: "cn_credit_delete_alloc",
@@ -5960,6 +5961,7 @@ describe("processStoredXeroInboundEvents", () => {
       "bk234567890",
       "inv_booking_1",
       expect.anything(),
+      CLUB_FORMAT_TEST,
       {
         providerTarget: {
           xeroCreditNoteId: "cn_credit_clamp",

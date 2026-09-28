@@ -711,7 +711,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             otherMintedCents,
           );
 
-        // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): while a part-payment
+        // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): while a part-payment
         // review names this payment, open or closed, neither arm below sizes
         // or mints anything. The event is written onto the review instead, in
         // this transaction, and the treasurer decides the cash.
@@ -1426,7 +1426,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           )
         );
       } else if (outcome.partPaymentReviewRouted) {
-        // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): a part-payment review
+        // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): a part-payment review
         // names this payment, so this event moved no money and was written
         // onto the review. The email is best-effort; the note on the review is
         // the record. Sent only when this event wrote the note, so a replay

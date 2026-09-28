@@ -112,7 +112,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
-| `INV-MONEY-016` | Membership type alone decides subscription liability; access role grants no exemption |
+| `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
@@ -293,7 +293,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
 | `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
 | `INV-PAY-107` | An expired hold with money against its invoice is kept, not released |
-| `INV-PAY-109` | A part payment under review is never handed back or credited twice |
+| `INV-PAY-108` | A part payment under review is never handed back or credited twice |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
 | `INV-PAY-106` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |
@@ -766,6 +766,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
 | `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
+| `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
 | `INV-LIFE-021` | A `FamilyGroup` with no `FamilyGroupMember` rows is inert everywhere |
 | `INV-LIFE-022` | Family-group facts: the guest-eligibility correction, billing recipients, and memberless groups |

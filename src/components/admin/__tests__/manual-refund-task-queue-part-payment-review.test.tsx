@@ -106,7 +106,7 @@ describe("#3643 - a part payment the club settles in Xero", () => {
     expect(within(dialog).getByRole("button", { name: "Close as settled in Xero" })).toBeDisabled();
   });
 
-  // #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3): the sync's note is the
+  // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): the sync's note is the
   // record that Xero reported the invoice paid, so the card prints it.
   it("prints the sync's note that Xero reported the invoice paid, with the date and the cash", async () => {
     const queue = await renderQueue([

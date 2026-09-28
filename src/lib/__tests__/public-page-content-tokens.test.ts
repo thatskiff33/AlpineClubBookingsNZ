@@ -1,16 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-// The whole module, not just the export this file names. `dateRange` now reaches
-// the kernel's declared `HOUSE_SHAPES.date` formatter instead of a hand-rolled
-// `Intl.DateTimeFormat` (#3123), which reads `APP_LOCALE` at import — and a
-// partial factory throws there before a single test runs.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
 
 const mocks = vi.hoisted(() => ({
   settings: vi.fn(),
@@ -98,8 +88,8 @@ describe("public PageContent token view models", () => {
     expect(mocks.membershipTypes).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true, publiclyListed: true } }));
   });
 
-  // The module used to build its own `Intl.NumberFormat("en-NZ", ...)` while the
-  // mock above set `APP_LOCALE` that nothing read, so every label pin passed
+  // The module used to build its own `Intl.NumberFormat("en-NZ", ...)` while a
+  // config mock (since deleted, #3567) set a locale that nothing read, so every label pin passed
   // for a configuration the code ignored. `money()` now renders through
   // `formatCents` (#3325) with the club's format passed in (#3565); a second
   // locale/currency pair is what proves the argument reaches the label.

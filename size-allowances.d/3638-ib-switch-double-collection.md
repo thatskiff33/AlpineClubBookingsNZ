@@ -20,12 +20,13 @@ reason: the refusal has to run in this route, before its locked transaction,
   The retirement rule itself is shared (`card-intent-retirement.ts`).
 
 file: src/app/api/payments/create-payment-intent/route.ts
-lines: 834
+lines: 844
 reason: the reverse race closes where the intent is attached. The attach
   itself moved into the shared `attachMintedCardIntent`; what stays is the
   call, the refusal responses for an Internet Banking or no-longer-payable
   booking (one body for both Internet Banking refusals) and the comment
   saying why.
+  Re-measured at the #3635 main sync, composed with main's #3567 currency refusal.
 
 file: src/lib/booking-delete.ts
 lines: 738
@@ -46,4 +47,6 @@ reason: the new admin alert's registry entries — admin audience, delivery
   allowance) adds its held late-capture alert's name, required tokens and
   trigger summary beside the hand-back task alert it mirrors. #3643 (same epic)
   registers its admin-internet-banking-hold-kept alert the same way, in the
-  same tables.
+  same tables. #3663 (same epic) adds its share: the started-stay hold alert's
+  admin-audience entry, required tokens and trigger metadata, beside its
+  siblings in the same tables.

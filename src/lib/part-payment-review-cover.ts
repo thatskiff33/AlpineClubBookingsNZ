@@ -1,5 +1,5 @@
 /**
- * #3643 (`INV-PAY-109`, ORCHESTRATOR DECISION 3 on the thread): a later PAID
+ * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3 on the thread): a later PAID
  * invoice event for a payment whose cancel raised a part-payment review.
  *
  * The review is the treasurer's instruction to settle, in Xero, the cash

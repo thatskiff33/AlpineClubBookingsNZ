@@ -1,5 +1,5 @@
 -- #3643 (owner decision 28 Sep 2026, on the issue's DECISION RECORD comment).
--- INV-PAY-107 and INV-PAY-109.
+-- INV-PAY-107 and INV-PAY-108.
 --
 -- An officer may cancel an internet banking booking as unpaid while Xero records
 -- a payment against its invoice that the app cannot hand back as credit: the
@@ -20,7 +20,7 @@
 --      review only, when the inbound Xero sync learned the booking's invoice
 --      was reported PAID, and the invoice's cash in cents at that read. While a
 --      review exists, that sync credits and hands back NOTHING for the invoice
---      (ORCHESTRATOR DECISION 3 on #3643, INV-PAY-109); it writes these two
+--      (ORCHESTRATOR DECISION 3 on #3643, INV-PAY-108); it writes these two
 --      columns once, in its own transaction, and reopens a dismissed review, so
 --      the treasurer's task - not a best-effort email - carries the fact.
 --      Neither is an amount to hand back.

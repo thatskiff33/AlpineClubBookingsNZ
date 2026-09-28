@@ -20,8 +20,9 @@
   nothing for it by itself: the item records the date and the invoice's cash,
   comes back onto the queue if it had been closed, and the club decides.
   A hold whose invoice cannot be read from Xero is kept, with one
-  email, until the check-in date or seven days after its deadline, then released
-  with a second email. A fully unpaid hold is released exactly as before. The
+  email, until seven days after its deadline, then released with a second
+  email; if its check-in date comes first, the stay has started and it is left
+  for the treasurer to reconcile by hand instead (#3663). A fully unpaid hold is released exactly as before. The
   Xero repair tool no longer offers to queue or retry a full clearing credit
   note for an invoice with a payment recorded against it; it asks for a person
   to review instead, and stops asking once nothing is owed: a booking paid in

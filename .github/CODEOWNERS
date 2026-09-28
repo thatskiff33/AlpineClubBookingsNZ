@@ -18,6 +18,7 @@
 /src/lib/booking-date-modification-*.ts        @thatskiff33
 /src/lib/booking-payment-*.ts                  @thatskiff33
 /src/lib/additional-payment-*.ts               @thatskiff33
+/src/lib/additional-intent-currency.ts         @thatskiff33
 /src/lib/*refund*.ts                           @thatskiff33
 /src/lib/*credit*.ts                           @thatskiff33
 /src/lib/manual-*payment*.ts                   @thatskiff33

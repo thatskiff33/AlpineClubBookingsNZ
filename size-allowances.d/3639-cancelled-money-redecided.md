@@ -7,13 +7,14 @@ cancellation already settled before they refund. The rule itself lives in
 call each, its early return, and the provenance mark on the primary's own write.
 
 file: src/lib/payment-recovery.ts
-lines: 3224
+lines: 3239
 reason: the approval's refund debt has to be persisted through the module's
   private ledger-recovery writer, the superseded-intent hand-off has to ask the
   late-capture hold before it refunds a change payment on a cancelled booking
   (the hold itself lives in `late-capture-refund-hold.ts`), exactly as the edit-review debt beside it is,
   and the replay has to hand a late-capture prefix to the Xero correction; the
   correction itself and the close live outside this file.
+  Re-measured at the #3635 main sync, composed with main's #3567 and #3589 changes.
 
 file: src/components/admin/manual-refund-task-queue.tsx
 lines: 2132
@@ -40,9 +41,10 @@ reason: the confirm route's #2700 raise must see the webhook's approval task
 The review round (27 Sep 2026) moved three more files, each by the minimum.
 
 file: src/lib/member-credit.ts
-lines: 1029
+lines: 1033
 reason: one import, so the cancellation credit's description comes from the
   one builder its reader matches on (`cancellationCreditDescription`).
+  Re-measured at the #3635 main sync, composed with main's #3589 operator money messages.
 
 file: src/lib/xero-credit-notes.ts
 lines: 1098

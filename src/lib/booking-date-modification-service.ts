@@ -989,7 +989,7 @@ export async function modifyBookingDates({
       : 0;
     if (appliedBeforeClamp > 0) {
       const clampedCredit = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents },
+        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
         tx,
       );
       const effectivePriceCents =

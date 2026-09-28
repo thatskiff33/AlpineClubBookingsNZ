@@ -497,7 +497,7 @@ describeWithDatabase("ManualRefundTask database constraints (#3030)", () => {
         ["review-with-payment", { paymentId: "payment-4", marker: "payment-4" }],
         // A NULL kind: a plain "=" would be NULL here, which a CHECK accepts.
         ["review-no-kind", { kind: null, marker: "payment-7" }],
-        // The sync's Xero-paid note (INV-PAY-109): both halves together, never
+        // The sync's Xero-paid note (INV-PAY-108): both halves together, never
         // negative cents, and only on a marked row.
         ["review-paid-at-only", { xeroPaidAt: "2026-07-01T00:00:00Z", marker: "payment-8" }],
         ["review-paid-cents-only", { xeroPaidCents: 5000, marker: "payment-10" }],

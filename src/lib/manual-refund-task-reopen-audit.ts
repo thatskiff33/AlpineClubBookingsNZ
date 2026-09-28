@@ -7,7 +7,7 @@ import { createAuditLog } from "@/lib/audit";
  * place that entry is composed (`INV-SSOT`). Two doors reopen a task: an
  * officer (`manual-refund-task-reopen.ts`, #3498) and the inbound Xero sync
  * when a later PAID event reaches a part-payment review whose covered cash is
- * not known (`part-payment-review-cover.ts`, #3643, `INV-PAY-109`). Both write
+ * not known (`part-payment-review-cover.ts`, #3643, `INV-PAY-108`). Both write
  * this entry, so "who undid which dismissal, and why" reads the same way
  * whoever did it; the sync's has no acting member.
  *

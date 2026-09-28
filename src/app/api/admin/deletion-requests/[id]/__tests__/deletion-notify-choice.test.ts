@@ -1,4 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import { NextRequest } from "next/server";
 
 // Route-level gating for the admin member-email choice on account-deletion
@@ -122,7 +135,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/deletion-requests/[id]/route";
-import { APP_TIME_ZONE } from "@/config/operational";
 import { getTodayDateOnly } from "@/lib/date-only";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
@@ -1531,7 +1543,8 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
     // different zone names can still name the same day (`America/Chicago` gives
     // Denver's answer at this instant), and then the bound below proves nothing.
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * THE ENVIRONMENT'S ZONE PASSED ON PURPOSE (#3123; the `APP_TIME_ZONE`
+     * constant it used to be was deleted in #3567). Everywhere else an explicit
      * zone exists to get OFF the environment; here the environment IS the
      * subject of the assertion — the line measures what the environment
      * authority answers so it can prove the persisted zone answers differently.
@@ -1539,7 +1552,7 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
      * and the premise would stop tracking the environment it is guarding.
      */
     expect(
-      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      getTodayDateOnly(ENVIRONMENT_CLUB_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell the two apart.",
     ).not.toBe("2026-06-30T00:00:00.000Z");
