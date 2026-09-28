@@ -377,6 +377,44 @@ describe("payment refund ledger", () => {
     );
   });
 
+  // #3635: main's assertion that the REFRESH of an already-recorded refund also
+  // takes Stripe's currency, restored through the sync (#3640 made the writer
+  // private and turned its upsert into insert-or-refresh).
+  it("refreshes an already-recorded refund to the currency Stripe refunded in", async () => {
+    const { store, transaction, refunds } = createRefundStore();
+    transaction.refundedAmountCents = 1200;
+    transaction.status = "PARTIALLY_REFUNDED";
+    refunds.set("re_aud_1", {
+      id: "payment_refund_1",
+      paymentId: "payment_1",
+      paymentTransactionId: "txn_1",
+      stripeRefundId: "re_aud_1",
+      stripeChargeId: "ch_1",
+      stripePaymentIntentId: "pi_1",
+      amountCents: 1200,
+      currency: "nzd",
+      status: "succeeded",
+      reason: null,
+      stripeCreatedAt: null,
+    });
+
+    await syncRefundsFromStripeCharge({
+      paymentIntentId: "pi_1",
+      stripeChargeId: "ch_1",
+      refundedAmountCents: 1200,
+      refunds: [{ id: "re_aud_1", amount: 1200, currency: "AUD", status: "succeeded" }],
+      store: store as any,
+    });
+
+    expect(store.paymentRefund.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ stripeRefundId: "re_aud_1" }),
+        data: expect.objectContaining({ currency: "aud" }),
+      }),
+    );
+    expect(refunds.get("re_aud_1")?.currency).toBe("aud");
+  });
+
   it.each(["", "   "])(
     "refuses to record a refund whose currency is %j, rather than inventing one",
     async (currency) => {
