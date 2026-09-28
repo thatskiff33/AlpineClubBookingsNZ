@@ -14,7 +14,7 @@ import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_STATUS,
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/member-guest-refusal";
-import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
+import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   peekSubscriptionLockoutMode,
@@ -343,7 +343,7 @@ export async function resolveMembershipTypePoliciesForMembers(
   ];
   const fallbackTypes = fallbackKeys.length > 0
     ? await db.membershipType.findMany({
-        where: { key: { in: fallbackKeys } },
+        where: storedRoleDefaultMembershipTypeWhere(fallbackKeys),
         select: {
           id: true,
           key: true,
