@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+
 /**
  * NO npm COMMAND IS PUBLISHED AS THE WAY TO DO SOMETHING HERE (#3673).
  *
@@ -23,8 +25,12 @@ import { describe, expect, it } from "vitest";
  * records what was run then, and a migration's text must never be edited.
  */
 
+// A flag is `-` followed by one or more of `[\w-]`: exactly the tokens the
+// earlier `--?[\w-]+` matched, written so each one can be matched only one way.
+// With `--?`, the second hyphen of `--x` could go to either part, so a line of
+// repeated `-- -` backtracked exponentially (CodeQL js/redos, #3673).
 const NPM_COMMAND =
-  /(?<![\w/.@-])npm (?:--?[\w-]+(?:=\S+)? )*(?:run|test|ci|install|i|exec|start|audit|update|up)\b|(?<![\w-])npx(?:\s|$)/g;
+  /(?<![\w/.@-])npm (?:-[\w-]+(?:=\S+)? )*(?:run|test|ci|install|i|exec|start|audit|update|up)\b|(?<![\w-])npx(?:\s|$)/g;
 
 const SCOPE = [
   "AGENTS.md",
@@ -89,6 +95,60 @@ function isAllowed(file: string, line: string): boolean {
       (entry.file === "*" || entry.file === file) && (entry.line === undefined || entry.line.test(line.trim())),
   );
 }
+
+function matchesNpmCommand(line: string): boolean {
+  NPM_COMMAND.lastIndex = 0;
+  return NPM_COMMAND.test(line);
+}
+
+describe("the npm-command pattern itself", () => {
+  it("catches npm and npx commands, with flags before the subcommand", () => {
+    for (const line of [
+      "npm run build",
+      "npm test",
+      "npm ci",
+      "npm i",
+      "run `npm install` first",
+      "npm --silent run lint",
+      "npm --if-present --silent run x",
+      "npm --prefix=web run build",
+      "npm -- run x",
+      "npm update",
+      "npx tsx scripts/x.ts",
+      "npx",
+    ]) {
+      expect(matchesNpmCommand(line), line).toBe(true);
+    }
+  });
+
+  it("leaves pnpm, package names and prose alone", () => {
+    for (const line of [
+      "pnpm run build",
+      "pnpm exec tsx x.ts",
+      "pnpx tsx",
+      "@scope/npm run",
+      "node_modules/.bin/npm run",
+      "npm-run-all build",
+      "the npm registry",
+      "npm - run x",
+      "npm runner",
+      "npxtool",
+    ]) {
+      expect(matchesNpmCommand(line), line).toBe(false);
+    }
+  });
+
+  it("stays linear on a long run of hyphen tokens (CodeQL js/redos)", () => {
+    // The earlier `--?[\w-]+` took about ten seconds on this line, and each
+    // extra `-- -` roughly doubled it; each flag can now be matched only one
+    // way, so it takes microseconds. The bound is generous on purpose: it
+    // separates linear from exponential, not fast from slow. (Thirty repeats,
+    // not more, so that a regression fails here instead of hanging the run.)
+    const startedAt = process.hrtime.bigint();
+    expect(matchesNpmCommand(`npm ${"-- -".repeat(30)}!`)).toBe(false);
+    expect(realElapsedMs(startedAt)).toBeLessThan(1000);
+  });
+});
 
 describe("published commands name pnpm, not npm (#3673)", () => {
   const files = trackedFilesInScope();
