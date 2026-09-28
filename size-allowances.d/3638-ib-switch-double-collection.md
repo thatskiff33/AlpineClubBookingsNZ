@@ -20,12 +20,13 @@ reason: the refusal has to run in this route, before its locked transaction,
   The retirement rule itself is shared (`card-intent-retirement.ts`).
 
 file: src/app/api/payments/create-payment-intent/route.ts
-lines: 834
+lines: 844
 reason: the reverse race closes where the intent is attached. The attach
   itself moved into the shared `attachMintedCardIntent`; what stays is the
   call, the refusal responses for an Internet Banking or no-longer-payable
   booking (one body for both Internet Banking refusals) and the comment
   saying why.
+  Re-measured at the #3635 main sync, composed with main's #3567 currency refusal.
 
 file: src/lib/booking-delete.ts
 lines: 738
