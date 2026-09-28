@@ -275,6 +275,12 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
     "defaultBody": "Duplicate Card Capture Auto-Refunded\n\n{{refundOutcomeNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nDuplicate Stripe PI: {{paymentIntentId}}\nRecovery operation: {{operation}}\n\nView Payments: {{reviewUrl}}"
   },
+  // #3663 (`INV-PAY-016`): an expired internet banking hold left alone
+  // because the stay has started - reconcile by hand.
+  "admin-internet-banking-hold-started-stay": {
+    "defaultSubject": "Overdue internet-banking hold on a stay that has started",
+    "defaultBody": "Overdue Internet Banking Hold on a Stay That Has Started\n\nThis booking's internet banking payment deadline passed unpaid, but its check-in has already arrived, so it was NOT cancelled automatically. Check the bank account for the member's transfer and record it, or cancel the booking by hand.\n\nBooking: {{bookingReference}} ({{bookingId}})\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nHold deadline: {{holdUntil}}\nAmount owing: {{amountOwing}}\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-superseded-payment-refund": {
     "defaultSubject": "Superseded payment auto-refunded: {{memberName}}",
     "defaultBody": "Superseded Payment Auto-Refunded\n\nA member paid a charge that a later booking change had already replaced. The capture has been refunded in full automatically - no action is needed unless the amount owing below looks wrong.\n\nThe member has been emailed an explanation naming the refund and the corrected amount owing.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{refundedAmount}}\nStill owing: {{amountOwing}}\nSuperseded Stripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}"

@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
   reconcileHostingReviewForSystemCancellation: vi.fn(),
   settleHostingCoverageAfterCommit: vi.fn(),
+  claimAlertCooldown: vi.fn(),
+  sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -62,6 +64,16 @@ vi.mock("@/lib/booking-events", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendBookingCancelledEmail: mocks.sendBookingCancelledEmail,
+  sendAdminInternetBankingHoldStartedStayAlert: mocks.sendAdminInternetBankingHoldStartedStayAlert,
+}));
+
+vi.mock("@/lib/alert-cooldown", () => ({
+  claimAlertCooldown: mocks.claimAlertCooldown,
+}));
+
+// #3663: the started-stay rule reads the club's day in the club's zone.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -218,6 +230,82 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
       undefined,
     );
     mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
+    mocks.claimAlertCooldown.mockResolvedValue(true);
+    mocks.sendAdminInternetBankingHoldStartedStayAlert.mockResolvedValue(undefined);
+  });
+
+  // #3663 (INV-PAY-016): NOW is 2026-07-06 20:00 in Pacific/Auckland, so the
+  // club's today is 2026-07-06. A stay that has started is never cancelled.
+  function withCheckIn(checkIn: string) {
+    const payment = makeExpiredPayment({
+      booking: { ...makeExpiredPayment().booking, checkIn: new Date(checkIn) },
+    });
+    mocks.paymentFindMany.mockResolvedValue([payment]);
+    mocks.txPaymentFindUnique.mockResolvedValue(payment);
+  }
+
+  it.each([
+    ["past", "2026-07-05"],
+    ["today", "2026-07-06"],
+  ])(
+    "leaves an expired hold alone and alerts the treasurer once when check-in is %s",
+    async (_label, checkIn) => {
+      withCheckIn(checkIn);
+
+      const result = await releaseExpiredInternetBankingHolds(NOW);
+
+      expect(result).toMatchObject({ released: 0, skippedStarted: 1, skipped: 0 });
+      expect(mocks.txBookingUpdate).not.toHaveBeenCalled();
+      expect(mocks.txPaymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "internet-banking-hold-started-stay:pay_ib_1" }),
+      );
+      expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).toHaveBeenCalledTimes(1);
+      expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).toHaveBeenCalledWith(
+        {
+          memberName: expect.stringContaining("Alice"),
+          bookingId: "booking_ib_1",
+          checkIn: new Date(checkIn),
+          holdUntil: new Date("2026-07-05T08:00:00Z"),
+          amountOwingCents: 12345,
+        },
+        expect.anything(),
+      );
+    },
+  );
+
+  it("does not repeat the started-stay alert once another run holds the claim", async () => {
+    withCheckIn("2026-07-05");
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.skippedStarted).toBe(1);
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
+  });
+
+  it("still releases an expired hold whose check-in is tomorrow", async () => {
+    withCheckIn("2026-07-07");
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result).toMatchObject({ released: 1, skippedStarted: 0 });
+    expect(mocks.sendAdminInternetBankingHoldStartedStayAlert).not.toHaveBeenCalled();
+  });
+
+  it("judges 'started' by the club's day, not the UTC day", async () => {
+    // 13:00 UTC on 6 July is 01:00 on 7 July in Auckland: check-in on the 7th
+    // has started for the club although the UTC date is still the 6th.
+    withCheckIn("2026-07-07");
+
+    const result = await releaseExpiredInternetBankingHolds(
+      new Date("2026-07-06T13:00:00Z"),
+    );
+
+    expect(result).toMatchObject({ released: 0, skippedStarted: 1 });
   });
 
   it("enqueues the invoice-clearing credit note through the release transaction client", async () => {

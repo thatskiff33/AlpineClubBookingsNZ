@@ -50,6 +50,28 @@ describe("email message registry", () => {
     }
   });
 
+  it("registers the #3663 started-stay hold alert as its own admin alert, not \"Payment Failed\"", () => {
+    const definition = getEmailTemplateDefinition(
+      "admin-internet-banking-hold-started-stay",
+    );
+    if (!definition) throw new Error("missing admin-internet-banking-hold-started-stay");
+
+    // Admin audience, admin-system, NOT delivery-locked (no money moved; the
+    // booking is still visibly held). The subject names the event itself.
+    expect(definition.audience).toBe("admin");
+    expect(isAdminSystemTemplate("admin-internet-banking-hold-started-stay")).toBe(true);
+    expect(definition.deliveryEditable).toBe(true);
+    expect(definition.defaultSubject).toBe(
+      "Overdue internet-banking hold on a stay that has started",
+    );
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["bookingReference", "memberName", "reviewUrl"]),
+    );
+    for (const token of ["checkIn", "holdUntil", "amountOwing", ...definition.requiredTokens]) {
+      expect(definition.defaultBody).toContain(`{{${token}}}`);
+    }
+  });
+
   it("has editor-safe defaults for every registered template", () => {
     // Kept for the checks that are NOT circular — raw HTML, unsafe links,
     // subject line breaks, sensitive subject tokens. The token half of this

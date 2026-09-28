@@ -1,8 +1,8 @@
 /**
- * THE WAITING-INVOICE REAPER (#3641, `INV-PAY-104`, `INV-PAY-029`), run by
- * `POST /api/cron/payments` (task `recovery`). That route is its only caller
- * today: the in-process cron leader's payment-recovery tick does not call it,
- * which #3663 exists to wire. Split from `xero-operation-outbox.ts` so it can
+ * THE WAITING-INVOICE REAPER (#3641, `INV-PAY-104`, `INV-PAY-029`), run every
+ * 15 minutes by the payments cycle (`payments-cron-runner.ts`, #3663), which
+ * the cron leader and `POST /api/cron/payments` both call. Split from
+ * `xero-operation-outbox.ts` so it can
  * hand a waiting invoice whose payment already arrived to the late-capture
  * release, which itself imports the outbox.
  *
