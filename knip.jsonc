@@ -20,6 +20,9 @@
     // Invoked from scripts/e2e-stack.sh (shell) to seed test-mode Stripe keys
     // into the encrypted credential store (#2082), never imported.
     "e2e/setup/seed-stripe-credentials.ts",
+    // Invoked from scripts/e2e-stack.sh (shell) to capture the shared fixture
+    // club date before seeding (#3702), never imported by a TypeScript caller.
+    "scripts/e2e-fixture-today.ts",
     // Invoked by hand (node scripts/branding/generate-calendar-icons.mjs) to
     // regenerate the committed add-to-calendar email icons under
     // public/branding/calendar/ (fork #41); never imported.
