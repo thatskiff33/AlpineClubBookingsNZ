@@ -33,6 +33,11 @@ import { bookingHasCapacityOverride, isPaidLikeBookingStatus } from "@/lib/booki
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { createAuditLog } from "@/lib/audit";
+import {
+  coveredActionableCents,
+  readPartPaymentReviewCover,
+  type PartPaymentReviewCover,
+} from "@/lib/part-payment-review-cover";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
@@ -710,6 +715,24 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             otherMintedCents,
           );
 
+        // #3643 (`INV-PAY-107`, task-queue review F1): a part-payment review
+        // covers the cash recorded when the booking was cancelled, and the
+        // treasurer settles that in Xero. Both arms below act only on cash
+        // beyond it, or on nothing when either figure is unknown.
+        const reviewCover: PartPaymentReviewCover =
+          invoiceHasCashPayment && paymentNeverSettled && mintableCents > 0
+            ? await readPartPaymentReviewCover(tx, {
+                paymentId: settlementPayment.id,
+                bookingId: settlementPayment.bookingId,
+                paymentInvoiceId: fresh.xeroInvoiceId,
+                eventInvoiceId: invoiceId,
+                cash: invoiceCash,
+                mintableCents,
+              })
+            : { kind: "none" };
+        const actionableCents = coveredActionableCents(reviewCover, mintableCents);
+        const partPaymentReviewRouted = reviewCover.kind === "route";
+
         if (!creditMemberId) {
           // The same three conditions the member arm mints under: cash really
           // arrived, the payment never settled, and there are cents to hand
@@ -717,7 +740,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // on status, so a replay after an officer has CLOSED the task does
           // not raise a second one — a webhook may be delivered any number of
           // times, and this is money.
-          const handBackCents = mintableCents;
+          const handBackCents = actionableCents;
           const shouldHandBack =
             invoiceHasCashPayment && paymentNeverSettled && handBackCents > 0;
           const alreadyRaised = shouldHandBack
@@ -763,6 +786,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               organisationId: settlementPayment.booking.organisationId,
               handBackCents,
               taskRaised: shouldHandBack && !alreadyRaised,
+              partPaymentReview: reviewCover.kind,
             },
             "Internet Banking payment on a cancelled organisation-owned booking: no member account to credit, so a manual hand-back task carries the money instead (#3369)."
           );
@@ -785,6 +809,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             // back — a replay, an allocation-cleared invoice — and stays silent
             // exactly as the member arm does in the same states.
             organisationHandBackCents: shouldHandBack ? handBackCents : 0,
+            partPaymentReviewRouted,
+            partPaymentReviewReopened: reviewCover.kind === "route" && reviewCover.reopened,
             // #3535: either note shape, not only the old refund note's field.
             clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
           };
@@ -811,7 +837,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           invoiceHasCashPayment &&
           paymentNeverSettled &&
           !existingCredit &&
-          mintableCents > 0;
+          actionableCents > 0;
 
         // A partial mint's remainder never auto-credits: a later PAID event
         // for this invoice lands here with a settled payment (or the dedup
@@ -835,6 +861,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // that quantifies to nothing), or the invoice's cash was already fully
         // minted for the other payments matched to it (#1505 aggregate cap).
         const zeroCashAnomaly =
+          reviewCover.kind === "none" &&
           invoiceHasCashPayment &&
           paymentNeverSettled &&
           !existingCredit &&
@@ -870,7 +897,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await tx.memberCredit.create({
             data: {
               memberId: creditMemberId,
-              amountCents: mintableCents,
+              amountCents: actionableCents,
               type: CreditType.CANCELLATION_REFUND,
               description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
               sourceBookingId: settlementPayment.bookingId,
@@ -903,7 +930,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           await retirePendingClearingNote(tx, settlementPayment.bookingId);
           await enqueueXeroAccountCreditNoteOperation(
             settlementPayment.id,
-            mintableCents,
+            actionableCents,
             { store: tx },
           );
         }
@@ -913,7 +940,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           payment: settlementPayment,
           paymentWasPending,
           credited,
-          creditedCents: mintableCents,
+          creditedCents: actionableCents,
           creditedPartial: mintPartial,
           cashUnverified,
           aggregateCapped,
@@ -923,6 +950,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // construction — it only runs when there IS a member. Stated rather
           // than left to the union, so both arms return the same shape.
           organisationHandBackCents: 0,
+          partPaymentReviewRouted,
+          partPaymentReviewReopened: reviewCover.kind === "route" && reviewCover.reopened,
           // #3535: either note shape, not only the old refund note's field.
           clearingNoteAlreadyIssued: await hasInvoiceClearingNote(tx, settlementPayment),
         };
@@ -1397,6 +1426,23 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
             "Failed to alert admins about an Internet Banking payment on a cancelled organisation-owned booking"
+          )
+        );
+      } else if (outcome.partPaymentReviewRouted) {
+        // #3643 (`INV-PAY-107`): the cancel raised a part-payment review whose
+        // figure is not known exactly, so this event moved no money and was
+        // sent to the review instead. Never silent: cash moved in Xero.
+        sendAdminPaymentFailureAlert({
+          memberName: `${bookingOwner(outcome.payment.booking).member.firstName} ${bookingOwner(outcome.payment.booking).member.lastName}`.trim(),
+          checkIn: outcome.payment.booking.checkIn,
+          checkOut: outcome.payment.booking.checkOut,
+          amountCents: outcome.payment.amountCents,
+          errorMessage: `Xero reports the invoice of a cancelled booking as paid. When the booking was cancelled, a payment was already recorded against that invoice and a review was raised in the hand-back queue for the treasurer to settle it in Xero. The app cannot tell how much of this invoice's cash that review already covers, so nothing has been credited or handed back automatically. ${outcome.partPaymentReviewReopened ? "The review had been closed, so it has been put back on the queue." : "The review is still open on the queue."} Check the invoice in Xero, settle any cash beyond what the review covers, then close the review with a note saying what you did.`,
+          paymentIntentId: invoiceId,
+        }, format).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to alert admins about a paid invoice on a cancelled booking under part-payment review"
           )
         );
       } else if (outcome.zeroCashAnomaly) {

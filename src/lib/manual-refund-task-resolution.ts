@@ -33,7 +33,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
-import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  isPartPaymentReviewTask,
+  manualRefundTaskSettlementRefusal,
+} from "@/lib/manual-refund-task-settlement-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -219,7 +222,7 @@ export async function resolveManualRefundTask(
     const refusal = manualRefundTaskSettlementRefusal(
       task.kind,
       resolution,
-      Boolean(task.partPaymentReviewPaymentId),
+      isPartPaymentReviewTask(task),
     );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
@@ -551,7 +554,7 @@ export async function resolveManualRefundTask(
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
       /** #3643: a part-payment review, for the dismissal's wording. */
-      partPaymentReview: Boolean(task.partPaymentReviewPaymentId),
+      partPaymentReview: isPartPaymentReviewTask(task),
       /**
        * #3191: how many of this booking's blank nights this decision filled in,
        * so the operator's receipt can say it happened. Zero when none were sent,

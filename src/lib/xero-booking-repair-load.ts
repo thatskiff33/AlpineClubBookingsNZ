@@ -43,6 +43,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
 type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
@@ -511,12 +512,21 @@ export async function loadAuditData(
     handBackPaymentIdsByBookingId.set(task.bookingId, ids);
   }
 
+  // #3643: split by status. A CLOSED review quiets the booking's finding; an
+  // OPEN one is still the durable local proof the cancel had that money was
+  // recorded against the invoice (task-queue review F2), so the classifier
+  // never offers a full clearing note over it.
   const closedPartPaymentReviewIdsByBookingId = new Map<string, Set<string>>();
+  const openPartPaymentReviewIdsByBookingId = new Map<string, Set<string>>();
   for (const task of partPaymentReviewTasks) {
-    if (!task.partPaymentReviewPaymentId || task.status === ManualRefundTaskStatus.OPEN) continue;
-    const ids = closedPartPaymentReviewIdsByBookingId.get(task.bookingId) ?? new Set<string>();
+    if (!isPartPaymentReviewTask(task)) continue;
+    const byBooking =
+      task.status === ManualRefundTaskStatus.OPEN
+        ? openPartPaymentReviewIdsByBookingId
+        : closedPartPaymentReviewIdsByBookingId;
+    const ids = byBooking.get(task.bookingId) ?? new Set<string>();
     ids.add(task.partPaymentReviewPaymentId);
-    closedPartPaymentReviewIdsByBookingId.set(task.bookingId, ids);
+    byBooking.set(task.bookingId, ids);
   }
 
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
@@ -560,6 +570,8 @@ export async function loadAuditData(
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     closedPartPaymentReviewPaymentIds:
       closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    openPartPaymentReviewPaymentIds:
+      openPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
       editReviewChargeSharesByBookingId.get(booking.id) ?? []
     ),

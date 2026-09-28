@@ -286,6 +286,11 @@ export async function kickClearingNoteForUnpaidRest(
  * late-cash arm's own sized hand-back, which dedupes on (booking, payment,
  * kind). One per payment, in any status: the lookup here under the lock, and
  * the unique marker behind it. Returns whether a task was raised.
+ *
+ * It records the cash the review covers (`partPaymentReviewRecordedCents`) when
+ * Xero gave it exactly for the booking's one invoice, so a later PAID event for
+ * that invoice acts only on cash beyond it; otherwise NULL, and such an event
+ * is sent to the review (`part-payment-review-cover.ts`, task-queue review F1).
  */
 export async function raisePartPaymentReviewTask(
   tx: Prisma.TransactionClient,
@@ -306,14 +311,26 @@ export async function raisePartPaymentReviewTask(
     data: {
       bookingId,
       partPaymentReviewPaymentId: paymentId,
+      partPaymentReviewRecordedCents: reviewedCashCents(manual.evidence),
       kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-      reason: `Booking ${bookingId} was cancelled as unpaid, but Xero records a payment against its invoice. ${why} Nothing has been refunded, credited or cleared here: settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then dismiss this item with a note saying what you did. Do not mark it paid back.`.slice(
+      reason: `Booking ${bookingId} was cancelled as unpaid, but Xero records a payment against its invoice. ${why} Nothing has been refunded, credited or cleared here: settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then close this item with a note saying what you did.`.slice(
         0,
         MANUAL_REFUND_TASK_REASON_MAX,
       ),
     },
   });
   return true;
+}
+
+/**
+ * The cash a review covers, when Xero gave it exactly: every figure quantified
+ * and the booking has one invoice, the one a later PAID event is matched on.
+ * NULL otherwise - never 0 for unknown.
+ */
+function reviewedCashCents(evidence: PaidEvidence): number | null {
+  return evidence.cashComplete && evidence.invoices.length === 1 && evidence.paidCents > 0
+    ? evidence.paidCents
+    : null;
 }
 
 /**

@@ -1399,11 +1399,19 @@ export function classifyBookingContext(
           ...paymentLinks,
           ...[...context.modificationLinksById.values()].flat(),
         ].filter(isRecordedBookingInvoicePayment);
+        // #3643 (task-queue review F2): an OPEN part-payment review is the
+        // cancel's own durable proof that money was recorded against the
+        // invoice, even with no local PAYMENT link.
+        const openPartPaymentReview = Boolean(
+          payment && context.openPartPaymentReviewPaymentIds.has(payment.id)
+        );
         const invoicePaymentRecorded =
-          recordedInvoicePayments.length > 0 || partPaymentRecognised;
+          recordedInvoicePayments.length > 0 ||
+          partPaymentRecognised ||
+          openPartPaymentReview;
         // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): a DECISION 2
         // cancel raised a hand-back task for the payment, and a treasurer has
-        // completed or dismissed it - settled in Xero by hand.
+        // dismissed it (the only way a review closes) - settled in Xero by hand.
         const partPaymentReviewClosed = Boolean(
           payment && context.closedPartPaymentReviewPaymentIds.has(payment.id)
         );

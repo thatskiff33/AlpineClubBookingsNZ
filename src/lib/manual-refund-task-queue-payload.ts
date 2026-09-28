@@ -4,6 +4,7 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -179,7 +180,7 @@ export function toOpenManualRefundTaskPayload(
     raisedAmountCents: task.raisedAmountCents,
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
-    partPaymentReview: Boolean(task.partPaymentReviewPaymentId),
+    partPaymentReview: isPartPaymentReviewTask(task),
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

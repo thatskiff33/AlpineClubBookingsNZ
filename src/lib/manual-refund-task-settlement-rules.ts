@@ -25,6 +25,21 @@ import type { ManualRefundTaskKind } from "@prisma/client";
  */
 
 /**
+ * #3643 (`INV-PAY-107`): IS THIS TASK A PART-PAYMENT REVIEW? The one spelling of
+ * that question for every server reader - the resolution door, the audit, the
+ * queue payload, the repair loader and the inbound Xero sync - so a new door
+ * asks it here rather than inventing a sixth test of the marker. A review is a
+ * `CANCELLED_BOOKING_HAND_BACK` like any other hand-back, so its kind cannot
+ * say it; only the marker can. The browser reads the payload's boolean, which
+ * this computes.
+ */
+export function isPartPaymentReviewTask<
+  T extends { partPaymentReviewPaymentId: string | null },
+>(task: T): task is T & { partPaymentReviewPaymentId: string } {
+  return task.partPaymentReviewPaymentId !== null;
+}
+
+/**
  * May a task of this kind be closed as money that moved?
  *
  * FALSE FOR EXACTLY ONE KIND. `UNCOLLECTED_EDIT_REVIEW_SHARE` is a notice that
@@ -48,8 +63,10 @@ export function manualRefundTaskKindAllowsSettlement(
    * it records money the club settles in Xero rather than here; a review is
    * closed by DISMISSED only, and the database refuses a COMPLETED one
    * (`ManualRefundTask_part_payment_review_shape`). `INV-PAY-107`.
+   * REQUIRED, never defaulted: a caller that forgot it would be told a review
+   * may be settled (`isPartPaymentReviewTask` answers it).
    */
-  partPaymentReview = false,
+  partPaymentReview: boolean,
 ): boolean {
   return kind !== "UNCOLLECTED_EDIT_REVIEW_SHARE" && !partPaymentReview;
 }
@@ -70,12 +87,13 @@ export function manualRefundTaskKindAllowsSettlement(
 export function manualRefundTaskSettlementRefusal(
   kind: ManualRefundTaskKind | string | null | undefined,
   resolution: "completed" | "dismissed",
-  partPaymentReview = false,
+  /** #3643: required, as on `manualRefundTaskKindAllowsSettlement`. */
+  partPaymentReview: boolean,
 ): string | null {
   if (resolution !== "completed") return null;
   if (manualRefundTaskKindAllowsSettlement(kind, partPaymentReview)) return null;
   if (partPaymentReview) {
-    return "This item records a payment the club settles in Xero, so it cannot be closed as an amount settled here - nothing about it moves money. Settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then dismiss it with a note saying what you did.";
+    return "This item records a payment the club settles in Xero, so it cannot be closed as an amount settled here - nothing about it moves money. Settle the payment in Xero (refund it or apply it), clear what the invoice still owes, then close this item with a note saying what you did.";
   }
   return "This item records money the club may not have asked for, so it cannot be closed as an amount settled here - nothing about it moves money. Check the booking's Xero invoices, bill any shortfall by hand, then close it with a note saying what you found and what you billed.";
 }
