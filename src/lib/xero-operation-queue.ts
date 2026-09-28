@@ -237,12 +237,17 @@ export async function processQueuedXeroOperationRetries(
         // operation in Xero. `retryXeroSyncOperation` re-read the row and
         // refused it, so nothing ran; the queued row is closed as skipped, not
         // failed, because nothing went wrong and nothing is left to do.
+        // Recorded as what this retry SAW (review N6): the mark it read may
+        // have been withdrawn afterwards, because this very retry was running
+        // when the resolve checked - in which case the operation is unresolved
+        // and nothing ran.
         await completeXeroSyncOperation(queuedOperation.id, {
           status: "CANCELLED",
           responsePayload: {
             originalOperationId,
             skipped: "resolved-in-xero",
             reason: error.message,
+            note: "Nothing ran. The operation read as resolved in Xero when this retry started; if that mark was then withdrawn because this retry was running, the operation is unresolved and can be retried or resolved again.",
           },
         });
         result.skipped += 1;

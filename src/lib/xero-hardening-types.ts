@@ -109,8 +109,8 @@ export interface XeroReconciliationReport {
     /**
      * #3635 (`INV-INT-025`): failed or partial operations in the lookback
      * window that an officer resolved in Xero. Not an issue and not counted in
-     * the failure figures above - the repair tool reports each at info level -
-     * but kept so a run of resolves stays visible.
+     * the failure figures above; the repair tool reports each at info level.
+     * Report data only: the emailed digest does not show it.
      */
     resolvedInXeroOperations: number;
     issueCategoryCount: number;
