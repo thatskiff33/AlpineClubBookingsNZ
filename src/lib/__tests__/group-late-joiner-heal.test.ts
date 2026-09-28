@@ -225,7 +225,12 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
   it("does not alert the treasurer again once the group's alert is claimed", async () => {
     mocks.groupFindMany.mockResolvedValue([liveGroup("g1")]);
     mocks.groupFindUnique.mockResolvedValue(lockedRow());
-    mocks.bookingFindMany.mockResolvedValueOnce([{ id: "past-1", checkIn: PAST }]);
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([{ id: "past-1", checkIn: PAST }])
+      // The joiner the alert would name, so only the claim can stop it.
+      .mockResolvedValueOnce([
+        { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
+      ]);
     mocks.claimAlertCooldown.mockResolvedValue(false);
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
