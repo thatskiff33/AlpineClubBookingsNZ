@@ -44,7 +44,6 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
-// #3635: the real booking page - `/admin/bookings/<id>` does not exist.
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;

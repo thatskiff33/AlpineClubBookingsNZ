@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1990
+lines: 2017
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -61,10 +61,14 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   missing allocation is sized from the note's own recorded amount, with a
   manual-review answer when none is recorded. The owner's 28 Sep 2026
   decision adds one predicate: a closed DECISION 2 hand-back task ends that
-  arm's finding, read from the loader's context.
+  arm's finding, read from the loader's context. #3635 (same epic, owner
+  decision 28 Sep 2026): every retry arm answers `getBlockingOperation`'s
+  "resolved in Xero" case as done, one branch per arm, beside the retry and
+  blocked branches it must sit between; the pick and the predicate live in
+  `xero-booking-repair-object-resolution.ts` and `xero-operation-resolution.ts`.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1689
+lines: 1729
 reason: the retry screen admits a FAILED booking-anchored clearing note and
   replays a PARTIAL one across its recorded invoices; the parsing and the
   already-allocated filter live in `xero-clearing-allocations.ts`, leaving
@@ -72,7 +76,11 @@ reason: the retry screen admits a FAILED booking-anchored clearing note and
   recorded plan with a redacted invoice id at the two places it is read.
   #3642 (same epic) returns a failed group-settlement invoice row (CREATE or
   VOID) to the outbox, rebuilding the CREATE's queued payload, in the existing
-  outbox-requeue branch beside the applied-credit one.
+  outbox-requeue branch beside the applied-credit one. #3635 (same epic): the
+  retry helper refuses an operation resolved in Xero, with its 409 error and
+  refusal beside `XeroOperationRetryError`, which it extends, and each of the
+  three retry claims loses to a resolve landing after the read; the predicate
+  lives in `xero-operation-resolution.ts`.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
 lines: 1894

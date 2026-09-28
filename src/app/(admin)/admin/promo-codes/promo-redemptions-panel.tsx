@@ -32,7 +32,6 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
-// #3635: the real booking page - `/admin/bookings/<id>` does not exist.
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 
 /**
