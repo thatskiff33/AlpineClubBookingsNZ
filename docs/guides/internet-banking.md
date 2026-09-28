@@ -69,7 +69,10 @@ to an organisation, or Xero cannot give the amount paid exactly, the app cannot
 credit the payment: the email says so, an officer's cancel treats the booking as
 unpaid (no refund, no credit, invoice left open) and the treasurer is emailed to
 settle the payment by hand in Xero, and a member cancelling online is asked to
-contact the club.
+contact the club. That cancel also puts one item with no amount in **Money to
+settle** on the admin payments page. Once you have settled the payment in Xero
+and cleared what the invoice still owes, close the item with a note saying what
+you did; the Xero repair tool then stops listing the booking for review.
 
 If Xero shows the invoice **paid in full** but the app has not caught up, the
 email says so; the next Xero sync marks the booking paid. If the invoice

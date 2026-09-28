@@ -1713,10 +1713,17 @@ up, a supplementary invoice that could not be read) — follows DECISION 2 on
 #3643: the hold stays kept; an officer may cancel, which takes the unpaid path
 with no clearing note and sends the treasurer a "cancelled as unpaid" email
 (audit `booking.internet_banking_cancelled_payment_recorded`); a member is told
-to contact the club. The repair CLI never queues or retries a full clearing note
+to contact the club. The same cancel raises one item in the hand-back queue
+(**Money to settle** on the admin payments page) with no amount — a
+`CANCELLED_BOOKING_HAND_BACK` task marked by `partPaymentReviewPaymentId`
+(migration `20261014010000`). Settle the payment in Xero, clear what the invoice
+still owes, then close the item with a note; it cannot be marked paid back,
+because nothing in the app moves money for it. Once it is closed the repair CLI
+stops reporting the booking; putting the item back on the queue re-arms the
+finding. The repair CLI never queues or retries a full clearing note
 over a recorded or recognised part payment, including a recognised booking whose
 unpaid-rest note failed; it reports `MANUAL_REVIEW_REQUIRED`, naming the
-recorded payment. A recognised booking is only reported while that rest note is
+recorded payment, until the hand-back item above is closed. A recognised booking is only reported while that rest note is
 outstanding: once you have cleared the rest by hand in Xero, mark the failed
 operation **resolved** on the Xero operations panel and the finding stops. A
 booking paid in full before its cancel has no rest note and is never reported.

@@ -687,29 +687,30 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
 - **An expired internet-banking hold with any payment against its invoices is
   kept, not released** (#3643; owner decision, 26 September 2026, option A).
-  Evidence is Xero read live before any transaction — primary and supplementary
-  invoices, cash by `classifyXeroInvoiceCashEvidence`. A clean read wins; the
+  Xero is read live before any transaction (primary and supplementary
+  invoices; cash by `classifyXeroInvoiceCashEvidence`). A clean read wins; the
   inbound sync's `PAYMENT` links (`isRecordedBookingInvoicePayment`, one rule
   with the #3535 audit) count only when Xero cannot answer, and, for links newer
-  than the read, in the release's re-check, which narrows the race without
-  closing it; the builder's shortfall refusal and repair manual review back it.
-- **An unreadable invoice is kept only to a bound** (orchestrator decision on
-  #3643): the club's check-in date or seven days past the deadline, whichever
-  comes first, then released (a 404 counts). Its clearing note is created only
-  once the builder reads what the invoices owe.
+  than the read, in the release's re-check, narrowing, not closing, the race;
+  the builder's shortfall refusal backs it.
+- **An unreadable invoice is kept only to a bound** (orchestrator decision):
+  check-in or seven days past the deadline, whichever is first, then released
+  (a 404 counts). Its clearing note is created only once the builder reads
+  what the invoices owe.
 - **One admin alert per hold per reason**, claim-guarded; an undelivered one
   is retried (given back, or marked owed once the hold is gone) and a release's
   audit row is written regardless. Live reads: 20 a run, 400 holds a day.
 - **The cancel path recognises the part payment** (same decision): the claim
   re-checks for payments recorded since its read, records Xero's exact cash as
-  captured money, so the policy tiers on it as credit, and queues a note for
+  captured, so the policy tiers it as credit, and queues a note for
   the unpaid rest (*Unpaid balance cleared - booking cancelled*, [INV-PAY-101]).
   Money it cannot credit (an organisation's, or unsizable) is an officer's
-  unpaid cancel with no note, a repair finding and an alert (DECISION 2). The
-  preview asks the same reader, rate-limited and cached a minute.
+  unpaid cancel with no note and an alert (DECISION 2); the claim raises one
+  amountless, dismiss-only hand-back task per payment (owner decision, 28
+  September 2026). The preview shares the reader, cached a minute.
 - The repair tool raises manual review, never a queued or retried full
-  clearing note, over a recorded part payment; a recognised one bypasses
-  [INV-PAY-106]'s skips until its rest note resolves.
+  clearing note, over a recorded part payment, until that task is closed; a
+  recognised one bypasses [INV-PAY-106]'s skips until its rest note resolves.
 - Pinned by `internet-banking-payment-cron.test.ts`,
   `internet-banking-hold-payment-evidence.test.ts`, `booking-cancel.test.ts`
   and `xero-booking-repair.test.ts`.

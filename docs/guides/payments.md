@@ -189,6 +189,21 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
+### Settle a part payment an officer cancelled as unpaid
+
+When an officer cancels an internet banking booking while Xero shows a payment
+against its invoice that the club cannot hold as account credit — the booking
+belongs to an organisation, or Xero could not give the exact amount — the
+booking is cancelled as unpaid and a row with no amount appears in **Money to
+settle**, with its own paragraph explaining it
+([Internet Banking](internet-banking.md)).
+
+1. Settle the payment in Xero: refund it, or apply it where the club decides.
+2. Clear whatever the invoice still owes in Xero.
+3. Click **Close this item** and say what you did. A note is required. There is
+   no **Mark paid back** on this row, because nothing in the app moves money for
+   it. Closing it also stops the Xero repair tool listing the booking for review.
+
 The card holds three kinds of row and says which is which. The paragraph about
 cash and bank transfers only appears when there is a cash hand-back waiting; the
 one below only appears when there is a booking change to price; and the third,

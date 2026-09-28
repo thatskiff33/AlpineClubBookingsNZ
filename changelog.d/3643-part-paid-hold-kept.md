@@ -13,7 +13,10 @@
   cancelled". The cancel dialog shows that same credit before you confirm. An
   organisation's booking, or a payment Xero cannot give exactly, cannot be
   credited: an officer can still cancel it as unpaid, and the treasurer is
-  emailed to settle the payment by hand. A hold whose invoice cannot be read from Xero is kept, with one
+  emailed to settle the payment by hand. That cancel also puts one item with
+  no amount in **Money to settle**; closing it with a note, once the payment is
+  settled in Xero, stops the Xero repair tool listing the booking for review.
+  A hold whose invoice cannot be read from Xero is kept, with one
   email, until the check-in date or seven days after its deadline, then released
   with a second email. A fully unpaid hold is released exactly as before. The
   Xero repair tool no longer offers to queue or retry a full clearing credit
