@@ -165,17 +165,6 @@ describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
     ["a failed booking invoice", {}],
     ["a failed booking invoice update", { operationType: "UPDATE" }],
     [
-      "a failed applied-credit allocation",
-      {
-        entityType: "ALLOCATION",
-        operationType: "ALLOCATE",
-        requestPayload: {
-          queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
-          bookingId: "book_1",
-        },
-      },
-    ],
-    [
       "a failed group settlement invoice",
       {
         localModel: "GroupBookingSettlement",
@@ -193,6 +182,36 @@ describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
       reason: RESOLVED_IN_XERO_RETRY_REASON,
     });
   });
+
+  it.each([
+    ["allocation", XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE, "ALLOCATE"],
+    ["deallocation", XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, "UPDATE"],
+  ])(
+    "an applied-credit %s resolved before this release stays retryable, so its fence can converge (#3635 N2)",
+    async (_label, queueType, operationType) => {
+      const resolvedBeforeRelease = makeOperation({
+        entityType: "ALLOCATION",
+        operationType,
+        localModel: "Payment",
+        localId: "pay_1",
+        queueType,
+        requestPayload: { queueType, bookingId: "book_1", paymentId: "pay_1" },
+        manuallyResolvedAt: RESOLVED_AT,
+      });
+      expect(getXeroOperationRetryMeta(resolvedBeforeRelease)).toEqual({
+        supported: true,
+        reason: null,
+      });
+      mocks.findUniqueOperation.mockResolvedValue(resolvedBeforeRelease);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: expect.stringContaining("Queued applied-credit"),
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) })
+      );
+    }
+  );
 
   it("retryXeroSyncOperation re-reads the row and 409s a resolved one without claiming it or calling Xero", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation({ manuallyResolvedAt: RESOLVED_AT }));
@@ -2273,10 +2292,10 @@ describe("retryXeroSyncOperation", () => {
     ).resolves.toEqual({ message: "Queued applied-credit allocation retry." });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      // No resolved guard: applied-credit rows are retry-only (#3635 N2).
       where: {
         id: "op_123",
         status: { in: ["FAILED", "PARTIAL"] },
-        manuallyResolvedAt: null,
       },
       data: {
         status: "PENDING",

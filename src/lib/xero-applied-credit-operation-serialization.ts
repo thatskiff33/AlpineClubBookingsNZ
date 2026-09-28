@@ -18,12 +18,23 @@ export function isAppliedCreditLedgerOperation(operation: {
   queueType: string | null;
   requestPayload: unknown;
 }): boolean {
+  return readAppliedCreditLedgerQueueType(operation) !== null;
+}
+
+/** Which of the two applied-credit ledger types a row is, or null (#3635 N9). */
+export function readAppliedCreditLedgerQueueType(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+}):
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+  | null {
   const queueType =
     operation.queueType ?? readString(asRecord(operation.requestPayload)?.queueType);
-  return (
-    queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE ||
+  return queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE ||
     queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
-  );
+    ? queueType
+    : null;
 }
 
 /**

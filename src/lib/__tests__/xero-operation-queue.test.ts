@@ -155,6 +155,23 @@ describe("enqueueXeroSyncOperationRetry", () => {
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
+
+  it("queues a retry of an applied-credit row resolved before this release (#3635 N2)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "ALLOCATION",
+        operationType: "UPDATE",
+        queueType: "APPLIED_CREDIT_DEALLOCATION",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "b1", paymentId: "pay_123" },
+        manuallyResolvedAt: new Date("2026-06-20T00:00:00.000Z"),
+      })
+    );
+    mocks.findFirstQueued.mockResolvedValue(null);
+
+    await expect(
+      enqueueXeroSyncOperationRetry("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toMatchObject({ queueOperationId: "queue_1" });
+  });
 });
 
 describe("parseXeroOperationRequeueOriginalId", () => {

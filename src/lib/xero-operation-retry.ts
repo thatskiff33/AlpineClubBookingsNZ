@@ -18,6 +18,10 @@ import {
   isResolvedInXero,
   RESOLVED_IN_XERO_RETRY_REASON,
 } from "@/lib/xero-operation-resolution";
+import {
+  isAppliedCreditLedgerOperation,
+  readAppliedCreditLedgerQueueType,
+} from "@/lib/xero-applied-credit-operation-serialization";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   parsePaymentCreditNoteRetryInput,
@@ -148,18 +152,68 @@ export class XeroOperationResolvedInXeroError extends XeroOperationRetryError {
 async function throwLostRetryClaim(operationId: string, message: string): Promise<never> {
   const current = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
-    select: { manuallyResolvedAt: true },
+    select: { manuallyResolvedAt: true, queueType: true, requestPayload: true },
   });
   if (current) refuseRetryIfResolvedInXero(current);
   throw new XeroOperationRetryError(message, 409);
 }
 
-export function refuseRetryIfResolvedInXero(operation: {
+type ResolvedMarkReadable = {
   manuallyResolvedAt: Date | null;
-}): void {
-  if (isResolvedInXero(operation)) {
+  queueType?: string | null;
+  requestPayload: unknown;
+};
+
+/**
+ * #3635 round 4 (review N2): "resolved in Xero" as the RETRY path reads it.
+ * Applied-credit allocations and deallocations are retry-only (orchestrator
+ * decision 1): a hand fix in Xero does not converge the local credit ledger,
+ * and their fences read status only. The resolve route refuses them now, but a
+ * mark written before this release is VOID here, so it cannot strand a booking
+ * behind a fence nothing can retry.
+ */
+function isResolvedInXeroForRetry(operation: ResolvedMarkReadable): boolean {
+  return (
+    isResolvedInXero(operation) &&
+    !isAppliedCreditLedgerOperation({
+      queueType: operation.queueType ?? null,
+      requestPayload: operation.requestPayload,
+    })
+  );
+}
+
+export function refuseRetryIfResolvedInXero(operation: ResolvedMarkReadable): void {
+  if (isResolvedInXeroForRetry(operation)) {
     throw new XeroOperationResolvedInXeroError();
   }
+}
+
+/**
+ * #3635 round 4 (review N9): the applied-credit rows the retry hands back to the
+ * outbox. "Is this an applied-credit operation" has one answer,
+ * `isAppliedCreditLedgerOperation` (queue-type column, then payload); this adds
+ * only the shape the requeue arm handles - a Payment allocation, ALLOCATE for
+ * the allocation and UPDATE for the deallocation.
+ */
+function appliedCreditRequeueType(
+  operation: Pick<RetryableOperation, "entityType" | "localModel" | "operationType" | "requestPayload"> & {
+    queueType?: string | null;
+  },
+) {
+  if (operation.entityType !== "ALLOCATION" || operation.localModel !== "Payment") {
+    return null;
+  }
+  const queueType = readAppliedCreditLedgerQueueType({
+    queueType: operation.queueType ?? null,
+    requestPayload: operation.requestPayload,
+  });
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE && operation.operationType === "ALLOCATE") {
+    return queueType;
+  }
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE && operation.operationType === "UPDATE") {
+    return queueType;
+  }
+  return null;
 }
 
 function readAppliedCreditAllocationChildContext(payload: unknown): {
@@ -683,7 +737,7 @@ function parseModificationCreditNoteRepairInput(
 }
 
 export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOperationRetryMeta {
-  if (isResolvedInXero(operation)) {
+  if (isResolvedInXeroForRetry(operation)) {
     return { supported: false, reason: RESOLVED_IN_XERO_RETRY_REASON };
   }
 
@@ -701,18 +755,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
-  const queuedAppliedCredit = readQueuedOutboxPayload(operation.requestPayload);
-  const isQueuedAppliedCreditOperation =
-    operation.entityType === "ALLOCATION" &&
-    operation.localModel === "Payment" &&
-    ((queuedAppliedCredit?.queueType ===
-      XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE &&
-      operation.operationType === "ALLOCATE") ||
-      (queuedAppliedCredit?.queueType ===
-        XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE &&
-        operation.operationType === "UPDATE"));
   if (
-    isQueuedAppliedCreditOperation &&
+    appliedCreditRequeueType(operation) &&
     (operation.status === "FAILED" || operation.status === "PARTIAL")
   ) {
     return { supported: true, reason: null };
@@ -1015,27 +1059,18 @@ export async function retryXeroSyncOperation(
     throw new XeroOperationRetryError(retryMeta.reason ?? "This Xero operation cannot be retried.");
   }
 
-  const queuedAppliedCredit = readQueuedOutboxPayload(operation.requestPayload);
-  const isQueuedAppliedCreditOperation =
-    operation.entityType === "ALLOCATION" &&
-    operation.localModel === "Payment" &&
-    ((queuedAppliedCredit?.queueType ===
-      XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE &&
-      operation.operationType === "ALLOCATE") ||
-      (queuedAppliedCredit?.queueType ===
-        XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE &&
-        operation.operationType === "UPDATE"));
-  if (isQueuedAppliedCreditOperation) {
+  const appliedCreditType = appliedCreditRequeueType(operation);
+  if (appliedCreditType) {
     // These handlers make multi-step provider calls and have their own durable
     // checkpoint/fencing protocol. Manual retry must never execute them inline:
     // atomically return exactly one failed/partial row to the outbox, whose
     // PENDING -> RUNNING claim is the sole provider-execution authority.
     const queued = await prisma.xeroSyncOperation.updateMany({
+      // No `manuallyResolvedAt` guard here, deliberately (#3635 N2): these
+      // rows are retry-only, and a mark on one is void for the retry path.
       where: {
         id: operation.id,
         status: { in: ["FAILED", "PARTIAL"] },
-        // #3635: a resolve landing after the read above makes this claim lose.
-        manuallyResolvedAt: null,
       },
       data: {
         status: "PENDING",
@@ -1053,7 +1088,7 @@ export async function retryXeroSyncOperation(
     }
     return {
       message:
-        queuedAppliedCredit.queueType ===
+        appliedCreditType ===
         XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
           ? "Queued applied-credit allocation retry."
           : "Queued applied-credit deallocation retry.",
