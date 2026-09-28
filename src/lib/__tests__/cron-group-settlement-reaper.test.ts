@@ -548,7 +548,7 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.alertInvoice).not.toHaveBeenCalled();
   });
 
-  // #3672 (`INV-PAY-108`): every run re-applies the paid-group release, so a
+  // #3672 (`INV-PAY-109`): every run re-applies the paid-group release, so a
   // joiner left behind before the rule existed is moved on the first run.
   it("runs the paid-group self-heal every cycle and reports how many joiners it moved", async () => {
     mocks.settlementFindMany.mockResolvedValue([]);

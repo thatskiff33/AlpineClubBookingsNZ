@@ -510,7 +510,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",
     "defaultBody": "Your Spot Is Confirmed\n\nHi {{firstName}}, {{organiserName}} has settled the cost of your stay at {{CLUB_NAME}}'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nIf you have any questions about your stay, contact the club at {{SUPPORT_EMAIL}}."
   },
-  // #3672 (`INV-PAY-108`): paid-group joiners switched to paying for
+  // #3672 (`INV-PAY-109`): paid-group joiners switched to paying for
   // themselves mid-stay, for the treasurer to collect by hand.
   "admin-group-joiner-started-stay": {
     "defaultSubject": "Group joiners mid-stay now pay for themselves",

@@ -3777,7 +3777,7 @@ check, the reaper's pre-release check, the VOID worker's pre-read) runs outside
 any transaction. No lock key, order or site is added; the realdb proof is
 `group-settlement-invoice-binding-races.realdb.test.ts`.
 
-A joiner's payer is decided under the same `lock(1)` (`INV-PAY-108`, #3672):
+A joiner's payer is decided under the same `lock(1)` (`INV-PAY-109`, #3672):
 the booking create re-reads the group's settlement before writing an
 organiser-settled child, and the paid apply switches every organiser-settled
 joiner the paid bill missed to member-pays, with a payer-switch booking event

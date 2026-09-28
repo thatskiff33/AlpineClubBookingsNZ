@@ -7,7 +7,7 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import { buildBookingDetailUrl } from "@/lib/booking-email-contract";
 
 /**
- * #3672 (`INV-PAY-108`): a paid group's left-behind joiners whose stay has
+ * #3672 (`INV-PAY-109`): a paid group's left-behind joiners whose stay has
  * started were switched to paying for themselves without an email, so the
  * treasurer collects by hand. Admin audience through `sendToAdmins` on the
  * `adminPaymentFailure` preference. It links the organiser's booking and each

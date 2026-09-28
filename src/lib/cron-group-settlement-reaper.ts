@@ -48,7 +48,7 @@
  * booking/capacity/refund-mirror cleanup but does NOT heal the Xero mirror (see
  * resumeInterruptedOrganiserCancels' Xero residual note).
  *
- * Fourth phase (#3672, `INV-PAY-108`): a paid organiser-pays group still
+ * Fourth phase (#3672, `INV-PAY-109`): a paid organiser-pays group still
  * holding an organiser-settled joiner its bill did not cover has that joiner
  * moved to paying for themselves (`releaseJoinersLeftBehindPaidSettlements`),
  * and any mid-stay switch's treasurer alert that has not yet reached anyone is
@@ -136,7 +136,7 @@ export interface GroupSettlementReapResult {
    */
   heldForUnreadableInvoice: number;
   /**
-   * #3672 (`INV-PAY-108`): joiners of a paid organiser-pays group its bill did
+   * #3672 (`INV-PAY-109`): joiners of a paid organiser-pays group its bill did
    * not cover, moved to paying for themselves this run.
    */
   releasedToMemberPays: number;

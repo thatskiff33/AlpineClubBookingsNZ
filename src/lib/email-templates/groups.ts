@@ -61,7 +61,7 @@ export function groupJoinSettledTemplate(data: {
 }
 
 /**
- * #3672 (`INV-PAY-108`): the organiser paid the group's bill before this
+ * #3672 (`INV-PAY-109`): the organiser paid the group's bill before this
  * joiner was on it, so the joiner now pays for their own place. The booking
  * link (added for every booking-scoped message) takes them to the pay step.
  */

@@ -1,5 +1,5 @@
 /**
- * #3672 (`INV-PAY-108`, owner option B): once an organiser-pays group's
+ * #3672 (`INV-PAY-109`, owner option B): once an organiser-pays group's
  * settlement is PAID, the organiser has paid the bill they were shown, and
  * nobody else is ever added to it. A member who joins afterwards gets an
  * ordinary member-pays booking — exactly an each-pays-own joiner's — and pays

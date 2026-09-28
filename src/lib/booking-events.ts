@@ -90,7 +90,7 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
  * `INV-PAY-106`), so the cancel cannot commit without its decision, and
  * #3672's group payer-switch marker (`releaseUnpaidJoinersToMemberPaysInTx`,
- * `INV-PAY-108`), which must commit or roll back with the switch.
+ * `INV-PAY-109`), which must commit or roll back with the switch.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,

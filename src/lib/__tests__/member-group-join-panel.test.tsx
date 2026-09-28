@@ -138,7 +138,7 @@ describe("MemberGroupJoinPanel", () => {
     expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining("/bookings/b1"));
   });
 
-  // #3672 (`INV-PAY-108`): the organiser has already paid, so a member
+  // #3672 (`INV-PAY-109`): the organiser has already paid, so a member
   // joining now pays for their own beds, like any each-pays joiner.
   it("tells a joiner after the organiser has paid that they pay for themselves, and sends them to pay", async () => {
     const fetchMock = stubFetch({

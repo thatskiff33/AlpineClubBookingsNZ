@@ -8,7 +8,7 @@ import {
 } from "@prisma/client";
 
 /*
- * #3672 (`INV-PAY-108`, orchestrator decision 3): the group-settlement
+ * #3672 (`INV-PAY-109`, orchestrator decision 3): the group-settlement
  * reaper's self-heal. A paid organiser-pays group still holding an
  * organiser-settled joiner its bill did not cover (one left before the rule
  * existed) has that joiner switched to paying for themselves, under `lock(1)`

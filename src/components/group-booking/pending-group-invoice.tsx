@@ -105,7 +105,7 @@ export function PendingGroupInvoice({
  * The organiser's group once their settlement is paid. Split from
  * `organiser-group-booking-card.tsx`. Never says "everyone is confirmed" while
  * a joiner is unpaid for (#3642), and names the joiners who pay for
- * themselves (#3672, `INV-PAY-108`) rather than asking the organiser to act.
+ * themselves (#3672, `INV-PAY-109`) rather than asking the organiser to act.
  */
 export function PaidGroupSummary({
   amountCents,

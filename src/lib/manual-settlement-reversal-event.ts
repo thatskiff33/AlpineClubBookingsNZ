@@ -159,7 +159,7 @@ export function asSecondInstrumentSettlementConflictSnapshot(
 }
 
 /**
- * #3672 (`INV-PAY-108`): the payer switch. An organiser-pays group's
+ * #3672 (`INV-PAY-109`): the payer switch. An organiser-pays group's
  * settlement was paid without this joiner on the bill, so the booking now pays
  * for itself. Written inside the switch transaction, so every switched joiner
  * has a durable record; it cancels nothing. `stayStarted` records whether the

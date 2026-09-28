@@ -583,7 +583,7 @@ describe("group join roster writes (#1039 items 2 and 3)", () => {
     expect(lockOrder).toBeLessThan(rosterCheckOrder);
   });
 
-  // #3672 (`INV-PAY-108`): the join decides the payer before the lock; a
+  // #3672 (`INV-PAY-109`): the join decides the payer before the lock; a
   // settlement paid in between must make this an ordinary member-pays booking,
   // decided here, under lock(1), where the paid apply also runs.
   describe("organiser-pays payer re-decided under the lock (#3672)", () => {

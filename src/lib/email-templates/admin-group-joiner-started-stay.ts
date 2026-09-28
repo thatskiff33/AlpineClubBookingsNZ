@@ -1,5 +1,5 @@
 /**
- * #3672 (`INV-PAY-108`): the admin alert for joiners of a paid organiser-pays
+ * #3672 (`INV-PAY-109`): the admin alert for joiners of a paid organiser-pays
  * group whose bill did not cover them and whose stay has started. They were
  * switched to paying for themselves like every such joiner, but not emailed
  * mid-stay, so the treasurer collects by hand and records it on each joiner's

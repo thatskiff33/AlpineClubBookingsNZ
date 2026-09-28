@@ -1,6 +1,6 @@
 /**
  * "The organiser has paid" for an organiser-pays group — defined ONCE
- * (#3672, `INV-PAY-108`, `INV-SSOT`), for the server rule and the organiser's
+ * (#3672, `INV-PAY-109`, `INV-SSOT`), for the server rule and the organiser's
  * card alike.
  *
  * Paid is a settlement that took the organiser's money and did not hand all of

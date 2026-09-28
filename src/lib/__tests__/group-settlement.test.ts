@@ -1738,7 +1738,7 @@ describe("applyGroupSettlementSucceeded", () => {
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
   });
 
-  // #3672 (`INV-PAY-108`, owner option B, orchestrator decision 3): a joiner
+  // #3672 (`INV-PAY-109`, owner option B, orchestrator decision 3): a joiner
   // who joined while the bill was open but is not on the one the organiser
   // paid is never billed to the organiser and never left unsettleable: the
   // same transaction switches them to member-pays — started stay or not — and

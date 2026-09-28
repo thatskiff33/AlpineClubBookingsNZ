@@ -347,7 +347,7 @@ describe("OrganiserGroupBookingCard settlement", () => {
     expect(screen.queryByText(/Everyone in your group is confirmed/)).toBeNull();
   });
 
-  // #3672 (`INV-PAY-108`, owner option B): a joiner who arrived after the
+  // #3672 (`INV-PAY-109`, owner option B): a joiner who arrived after the
   // organiser paid pays for themselves. The card says so, and never tells the
   // organiser to contact the club or pay for them.
   it("says a joiner after the payment pays for themselves, not that the organiser must sort them out", async () => {

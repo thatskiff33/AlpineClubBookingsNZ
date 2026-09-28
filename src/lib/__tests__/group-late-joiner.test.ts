@@ -7,7 +7,7 @@ import {
 } from "@prisma/client";
 
 /*
- * #3672 (`INV-PAY-108`, owner option B): once an organiser-pays group's
+ * #3672 (`INV-PAY-109`, owner option B): once an organiser-pays group's
  * settlement is paid, a member who joins gets an ordinary member-pays booking
  * and is sent to pay; the organiser is never billed for them. Per-member-pays
  * groups are unchanged. The in-lock half (the booking create re-deciding the

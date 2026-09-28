@@ -56,7 +56,7 @@ interface JoinerRow {
   moneyReconciliation: BookingMoneyReconciliationView;
   isMember: boolean;
   /**
-   * #3672 (`INV-PAY-108`): this joiner pays for their own place — every joiner
+   * #3672 (`INV-PAY-109`): this joiner pays for their own place — every joiner
    * of an each-pays group, and a joiner of an organiser-pays group who arrived
    * after the settlement was paid. Never on the organiser's bill.
    */

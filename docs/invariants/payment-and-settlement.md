@@ -650,7 +650,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Never once the stay has started (#3663): check-in on or before the club's
   today (`bookingStayHasStarted`) is skipped, counted `skippedStarted` and
   alerted to finance once, for reconciliation by hand, under the same claim
-  rule as `INV-PAY-108` (`sendAdminAlertOnceEver`). Pinned by
+  rule as `INV-PAY-109` (`sendAdminAlertOnceEver`). Pinned by
   `internet-banking-payment-cron.test.ts`.
 
 ## INV-PAY-017
@@ -1264,7 +1264,7 @@ one, check the other.
   `organiser-group-booking-card.test.tsx` and
   `group-settlement-invoice-binding-races.realdb.test.ts`.
 
-## INV-PAY-108
+## INV-PAY-109
 
 **Related: `INV-PAY-105`** (the bound invoice) and **`INV-PAY-031`** (children
 total at apply).
