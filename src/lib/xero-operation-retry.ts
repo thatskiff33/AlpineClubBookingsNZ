@@ -6,6 +6,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -126,6 +127,35 @@ function groupSettlementInvoiceRequeuePayload(
     return { ...queued };
   }
   return null;
+}
+
+/**
+ * #3635: a kept late capture's invoice is replayed from its queued payload,
+ * which its worker keeps: back to PENDING, where the worker re-uses an invoice
+ * already raised (the task's link) and records only a missing payment. FAILED
+ * or PARTIAL (the payment failed); null for any other row.
+ */
+function keptLateCaptureInvoiceRequeuePayload(
+  operation: RetryableOperation,
+): Record<string, unknown> | null {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "INVOICE" ||
+    operation.operationType !== "CREATE" ||
+    operation.localModel !== "ManualRefundTask"
+  ) {
+    return null;
+  }
+  const queued = readQueuedOutboxPayload(operation.requestPayload);
+  return queued?.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
+    ? {
+        queueType: queued.queueType,
+        bookingId: queued.bookingId,
+        manualRefundTaskId: queued.manualRefundTaskId,
+        paymentIntentId: queued.paymentIntentId,
+        keptCents: queued.keptCents,
+      }
+    : null;
 }
 
 export interface XeroOperationRetryMeta {
@@ -755,6 +785,21 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   ) {
     return { supported: true, reason: null };
   }
+  if (
+    operation.localModel === "ManualRefundTask" &&
+    (operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE ||
+      readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
+        XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE)
+  ) {
+    return keptLateCaptureInvoiceRequeuePayload(operation) &&
+      (operation.status === "FAILED" || operation.status === "PARTIAL")
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason:
+            "Only a failed or partial kept-payment invoice with its queued amount can be retried.",
+        };
+  }
   if (groupSettlementInvoiceRequeuePayload(operation)) {
     return operation.status === "FAILED"
       ? { supported: true, reason: null }
@@ -1093,6 +1138,33 @@ export async function retryXeroSyncOperation(
           ? "Queued applied-credit allocation retry."
           : "Queued applied-credit deallocation retry.",
     };
+  }
+
+  const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
+  if (keptLateCapturePayload) {
+    const queued = await prisma.xeroSyncOperation
+      .updateMany({
+        where: { id: operation.id, status: { in: ["FAILED", "PARTIAL"] } },
+        data: {
+          status: "PENDING",
+          requestPayload: keptLateCapturePayload as Prisma.InputJsonValue,
+          startedAt: null,
+          completedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      })
+      .catch((error: unknown) => {
+        if (isPrismaUniqueConstraintError(error)) return { count: 0 };
+        throw error;
+      });
+    if (queued.count !== 1) {
+      throw new XeroOperationRetryError(
+        "This kept-payment invoice operation was already queued or claimed by another retry.",
+        409,
+      );
+    }
+    return { message: "Queued the kept-payment Xero invoice for retry." };
   }
 
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);

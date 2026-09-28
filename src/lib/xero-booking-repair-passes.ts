@@ -413,6 +413,19 @@ async function applyQueuedAction(
       action.resultMessage = result.message;
       return;
     }
+    case "QUEUE_KEPT_LATE_CAPTURE_INVOICE": {
+      // #3635: re-read nothing - the enqueue returns the task's existing row
+      // rather than queue a second one.
+      const result = await deps.enqueueXeroKeptLateCaptureInvoiceOperation({
+        manualRefundTaskId: String(action.payload.manualRefundTaskId),
+        bookingId: String(action.payload.bookingId),
+        paymentIntentId: String(action.payload.paymentIntentId),
+        keptCents: Number(action.payload.keptCents),
+      });
+      action.status = result.queueOperationId ? "queued" : "skipped";
+      action.resultMessage = result.message;
+      return;
+    }
     case "QUEUE_PRIMARY_INVOICE_UPDATE": {
       const result = await deps.enqueueXeroBookingInvoiceUpdateOperation(
         String(action.payload.bookingId)

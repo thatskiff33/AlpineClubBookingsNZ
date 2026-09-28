@@ -39,6 +39,11 @@ export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE =
   "GROUP_SETTLEMENT_INVOICE_VOID";
 export const XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE =
   "MEMBERSHIP_SUBSCRIPTION_INVOICE";
+// #3635: the invoice, paid from the Stripe account, that records a late card
+// capture on a cancelled booking a treasurer KEPT. Anchored on the #3639
+// approval task (`xero-kept-late-capture-invoice.ts`).
+export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE =
+  "KEPT_LATE_CAPTURE_INVOICE";
 
 /**
  * The complete set of outbox queue types the pending scan dispatches (#1272,
@@ -66,6 +71,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -200,6 +206,21 @@ interface QueuedSubscriptionInvoiceOutboxPayload {
   chargeId: string;
 }
 
+/**
+ * #3635: exactly the kept cents, frozen when the treasurer kept them, and the
+ * capture they came from. `paymentIntentId` is what makes the refund path's
+ * "was an invoice for this capture released?" read
+ * (`hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent`) see this
+ * row, so an approval after a reopen credits it back.
+ */
+interface QueuedKeptLateCaptureInvoiceOutboxPayload {
+  queueType: typeof XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE;
+  bookingId: string;
+  manualRefundTaskId: string;
+  paymentIntentId: string;
+  keptCents: number;
+}
+
 export type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
@@ -216,7 +237,8 @@ export type QueuedOutboxPayload =
   | QueuedMembershipCancellationContactOutboxPayload
   | QueuedGroupSettlementInvoiceOutboxPayload
   | QueuedGroupSettlementInvoiceVoidOutboxPayload
-  | QueuedSubscriptionInvoiceOutboxPayload;
+  | QueuedSubscriptionInvoiceOutboxPayload
+  | QueuedKeptLateCaptureInvoiceOutboxPayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT";
@@ -491,6 +513,24 @@ export function readQueuedOutboxPayload(
     return { queueType, chargeId };
   }
 
+  if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    const manualRefundTaskId = readString(payload.manualRefundTaskId);
+    const paymentIntentId = readString(payload.paymentIntentId);
+    const keptCents = readNumber(payload.keptCents);
+    if (
+      !bookingId ||
+      !manualRefundTaskId ||
+      !paymentIntentId ||
+      keptCents === null ||
+      !Number.isInteger(keptCents) ||
+      keptCents <= 0
+    ) {
+      return null;
+    }
+    return { queueType, bookingId, manualRefundTaskId, paymentIntentId, keptCents };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -628,6 +668,9 @@ export function getQueuedOutboxExpectedOperation(
             ? ["GroupBookingSettlement"]
             : queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
               ? ["MembershipSubscriptionCharge"]
+            : queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
+              ? // #3635: the approval task that owns the kept capture.
+                ["ManualRefundTask"]
             : ["Member"],
   };
 }

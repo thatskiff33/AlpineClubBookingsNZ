@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
   planKeptLateCaptureXeroRecord: vi.fn(),
   finishKeptLateCaptureXeroRecord: vi.fn(),
+  withdrawQueuedKeptLateCaptureRecord: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -93,6 +94,10 @@ vi.mock("@/lib/late-capture-kept-xero", () => ({
     mocks.planKeptLateCaptureXeroRecord(...a),
   finishKeptLateCaptureXeroRecord: (...a: unknown[]) =>
     mocks.finishKeptLateCaptureXeroRecord(...a),
+}));
+vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
+  withdrawQueuedKeptLateCaptureRecord: (...a: unknown[]) =>
+    mocks.withdrawQueuedKeptLateCaptureRecord(...a),
 }));
 vi.mock("@/lib/late-capture-refund-credit-note", () => ({
   finishApprovedLateCaptureRefund: (...a: unknown[]) =>
@@ -364,6 +369,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.planKeptLateCaptureXeroRecord.mockResolvedValue({ kind: "none" });
   mocks.finishKeptLateCaptureXeroRecord.mockResolvedValue(undefined);
+  mocks.withdrawQueuedKeptLateCaptureRecord.mockResolvedValue(0);
   mocks.transaction.mockImplementation(
     async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx)
   );
@@ -3200,6 +3206,7 @@ describe("#3639 - approving a held late-capture refund", () => {
     await keep();
 
     expect(mocks.planKeptLateCaptureXeroRecord).toHaveBeenCalledWith({
+      manualRefundTaskId: "task-late",
       bookingId: "booking-1",
       paymentIntentId: "pi_late",
       actingMemberId: "treasurer-1",
@@ -3209,6 +3216,8 @@ describe("#3639 - approving a held late-capture refund", () => {
       mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.planKeptLateCaptureXeroRecord.mock.invocationCallOrder[0]);
     expect(mocks.finishKeptLateCaptureXeroRecord).toHaveBeenCalledWith(plan);
+    // Keeping withdraws nothing.
+    expect(mocks.withdrawQueuedKeptLateCaptureRecord).not.toHaveBeenCalled();
   });
 
   it("#3635: a replayed keep loses the claim and records nothing in Xero", async () => {
@@ -3228,6 +3237,34 @@ describe("#3639 - approving a held late-capture refund", () => {
 
     expect(mocks.planKeptLateCaptureXeroRecord).not.toHaveBeenCalled();
     expect(mocks.finishKeptLateCaptureXeroRecord).toHaveBeenCalledWith({ kind: "none" });
+  });
+
+  it("#3635: approving a reopened keep withdraws its unsent record INSIDE the claim, before the refund", async () => {
+    armHeldLateCapture();
+
+    await approve();
+
+    expect(mocks.withdrawQueuedKeptLateCaptureRecord).toHaveBeenCalledWith({
+      manualRefundTaskId: "task-late",
+      paymentIntentId: "pi_late",
+      store: tx,
+    });
+    expect(
+      mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.withdrawQueuedKeptLateCaptureRecord.mock.invocationCallOrder[0]);
+    // The refund leaves after the commit, so the credit-note check it feeds
+    // already sees the withdrawal.
+    expect(
+      mocks.withdrawQueuedKeptLateCaptureRecord.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]);
+  });
+
+  it("#3635: a replayed approval loses the claim and withdraws nothing", async () => {
+    armHeldLateCapture();
+    mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(approve()).rejects.toMatchObject({ status: 409 });
+    expect(mocks.withdrawQueuedKeptLateCaptureRecord).not.toHaveBeenCalled();
   });
 });
 

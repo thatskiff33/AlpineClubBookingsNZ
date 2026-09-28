@@ -63,6 +63,24 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     );
   });
 
+  it("summarizes a queued invoice for a kept late payment (#3635)", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      requestPayload: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        bookingId: "booking-abcdefghijklmno",
+        manualRefundTaskId: "task-abcdefghijklmno",
+        paymentIntentId: "pi_kept",
+        keptCents: 24000,
+      },
+      responsePayload: null,
+    }, CLUB_FORMAT_TEST);
+    expect(summary?.title).toBe("Queued: invoice a kept late payment");
+    expect(factValue(summary!, "Kept")).toBe("$240.00");
+    expect(factValue(summary!, "Payment intent")).toBe("pi_kept");
+  });
+
   it("summarizes a queued group-settlement invoice void", () => {
     const summary = summarizeXeroOperation({
       entityType: "INVOICE",

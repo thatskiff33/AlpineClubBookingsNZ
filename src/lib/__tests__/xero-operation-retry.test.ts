@@ -2086,6 +2086,51 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3635: a kept late capture's invoice goes back to the outbox from its
+  // queued payload, which its worker keeps beside the request it sent.
+  it("returns a failed or partial kept late-capture invoice to the outbox with its queued payload", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      keptCents: 24000,
+    };
+    for (const status of ["FAILED", "PARTIAL"] as const) {
+      mocks.updateManyOperation.mockReset();
+      const operation = makeOperation({
+        status,
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+      });
+      expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+      mocks.findUniqueOperation.mockResolvedValue(operation);
+      mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Queued the kept-payment Xero invoice for retry.",
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+        data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+      });
+    }
+
+    // Unreadable cents are never guessed.
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          localModel: "ManualRefundTask",
+          localId: "task_kept",
+          queueType: "KEPT_LATE_CAPTURE_INVOICE",
+          requestPayload: { ...queued, keptCents: null },
+        }),
+      ).supported,
+    ).toBe(false);
+  });
+
   // #3642: the combined group invoice's rows go back to the outbox; a failed
   // abandon VOID used to be terminal, with no Retry and no alert.
   it("returns a failed group settlement VOID to the outbox with its queued payload", async () => {

@@ -21,6 +21,7 @@ import {
   processQueuedXeroOperationRetries,
 } from "@/lib/xero-operation-queue";
 import { prisma } from "@/lib/prisma";
+import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
@@ -32,6 +33,8 @@ export type RepairDependencies = {
   prisma: typeof prisma;
   enqueueXeroBookingInvoiceOperation: typeof enqueueXeroBookingInvoiceOperation;
   enqueueXeroBookingInvoiceUpdateOperation: typeof enqueueXeroBookingInvoiceUpdateOperation;
+  // #3635: a kept late capture's own invoice, anchored on its approval task.
+  enqueueXeroKeptLateCaptureInvoiceOperation: typeof enqueueXeroKeptLateCaptureInvoiceOperation;
   enqueueXeroSupplementaryInvoiceOperation: typeof enqueueXeroSupplementaryInvoiceOperation;
   enqueueXeroModificationCreditNoteOperation: typeof enqueueXeroModificationCreditNoteOperation;
   enqueueXeroAccountCreditNoteOperation: typeof enqueueXeroAccountCreditNoteOperation;
@@ -59,6 +62,7 @@ const defaultDependencies: RepairDependencies = {
   prisma,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
+  enqueueXeroKeptLateCaptureInvoiceOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroAccountCreditNoteOperation,

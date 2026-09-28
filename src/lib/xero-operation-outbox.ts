@@ -10,10 +10,7 @@ import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
-import {
-  findActivePrimaryInvoiceLink,
-  type BookingInvoiceEvidenceDependencies,
-} from "@/lib/xero-booking-invoice-evidence";
+import { findActivePrimaryInvoiceLink } from "@/lib/xero-booking-invoice-evidence";
 import {
   buildXeroSupplementaryInvoiceKey,
   type XeroSupplementaryInvoiceAnchorModel,
@@ -54,6 +51,7 @@ import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-alloc
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -79,6 +77,7 @@ import {
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -385,9 +384,8 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 async function inheritedBookingInvoiceEmailInstruction(params: {
   correlationKey: string;
   paymentId: string;
-  store: Prisma.TransactionClient | typeof prisma;
 }): Promise<XeroInvoiceEmailInstruction | null> {
-  const previous = await params.store.xeroSyncOperation.findFirst({
+  const previous = await prisma.xeroSyncOperation.findFirst({
     where: {
       correlationKey: params.correlationKey,
       direction: "OUTBOUND",
@@ -434,17 +432,9 @@ export async function enqueueXeroBookingInvoiceOperation(
      * operator retry later still.
      */
     invoiceEmailDelivery: XeroInvoiceEmailInstruction | null;
-    /**
-     * #3635: enqueue inside the caller's transaction, so the operation commits
-     * atomically with the decision that asked for it (a treasurer keeping a
-     * late capture). Every read and the write below use it; absent, the global
-     * client, exactly as before.
-     */
-    store?: Prisma.TransactionClient;
   }
 ) {
-  const db = options.store ?? prisma;
-  const booking = await db.booking.findUnique({
+  const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     select: {
       id: true,
@@ -518,9 +508,7 @@ export async function enqueueXeroBookingInvoiceOperation(
   // Xero?" — here to refuse a second mint, there to refuse to tell an officer
   // that no invoice exists. Two spellings of one question is how those two
   // answers drift apart.
-  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id, {
-    deps: { db: db as unknown as BookingInvoiceEvidenceDependencies["db"] },
-  });
+  const existingLink = await findActivePrimaryInvoiceLink(booking.payment.id);
 
   if (existingLink) {
     return {
@@ -531,7 +519,7 @@ export async function enqueueXeroBookingInvoiceOperation(
 
   const correlationKey = buildXeroBookingInvoiceCorrelationKey(bookingId);
 
-  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -573,10 +561,8 @@ export async function enqueueXeroBookingInvoiceOperation(
       (await inheritedBookingInvoiceEmailInstruction({
         correlationKey,
         paymentId: booking.payment.id,
-        store: db,
       })),
     createdByMemberId: options?.createdByMemberId ?? null,
-    store: options.store,
   });
 
   return {
@@ -2894,6 +2880,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,
+        });
+      } else if (payload?.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
+        // #3635: a late capture a treasurer kept, invoiced and paid in Xero.
+        await createXeroKeptLateCaptureInvoice({
+          syncOperationId: queuedOperation.id,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
         });
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({

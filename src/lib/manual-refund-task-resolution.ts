@@ -67,6 +67,7 @@ export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
 import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
+import { withdrawQueuedKeptLateCaptureRecord } from "@/lib/xero-kept-late-capture-invoice";
 import {
   finishKeptLateCaptureXeroRecord,
   planKeptLateCaptureXeroRecord,
@@ -529,12 +530,24 @@ export async function resolveManualRefundTask(
     const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
       resolution === "dismissed" && task.lateCaptureApprovalIntentId
         ? await planKeptLateCaptureXeroRecord({
+            manualRefundTaskId: task.id,
             bookingId: task.bookingId,
             paymentIntentId: task.lateCaptureApprovalIntentId,
             actingMemberId,
             store: tx,
           })
         : { kind: "none" };
+    // #3635: an APPROVAL of a task kept earlier and reopened withdraws what
+    // that keep queued and has not sent, inside this same claim, so the refund
+    // path's credit note (which counts only a sent or in-flight record) is
+    // right; one already sent is credited back by that path.
+    if (resolution === "completed" && task.lateCaptureApprovalIntentId) {
+      await withdrawQueuedKeptLateCaptureRecord({
+        manualRefundTaskId: task.id,
+        paymentIntentId: task.lateCaptureApprovalIntentId,
+        store: tx,
+      });
+    }
 
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
     // re-prices on EVERY parked review closing. Why, and why the KIND is the

@@ -246,6 +246,42 @@ function configureInvoicesDue(dueByInvoiceId: Record<string, number>) {
 }
 
 describe("the cash refund note (createXeroCreditNote)", () => {
+  /**
+   * #3635 (`INV-PAY-110`): a late capture a treasurer kept, then reopened and
+   * refunded, was recorded on its OWN invoice (anchored on its approval task),
+   * and a booking paid only late has no primary one. The refund note answers
+   * that invoice and settles from Stripe, so the kept $50.00 nets to zero.
+   */
+  it("#3635: a refund after a reopened keep credits back the kept invoice when there is no primary one", async () => {
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...paymentRow(PaymentSource.STRIPE),
+      xeroInvoiceId: null,
+    });
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ id: "task_kept" }]);
+    mocks.xeroObjectLinkFindFirst.mockImplementation(async ({ where }: { where: { role?: string } }) =>
+      where.role === "KEPT_LATE_CAPTURE_INVOICE" ? { xeroObjectId: "inv_kept" } : null,
+    );
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" });
+
+    expect(builtCreditNote().lineItems?.[0]?.unitAmount).toBe(50);
+    expect(settlingPayment()).toMatchObject({ account: { code: "606" } });
+    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
+      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
+      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
+  });
+
+  it("#3635: still refuses a payment with neither a primary nor a kept invoice", async () => {
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...paymentRow(PaymentSource.STRIPE),
+      xeroInvoiceId: null,
+    });
+    await expect(createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" })).rejects.toThrow(
+      /No Xero invoice linked to payment/,
+    );
+  });
+
   it("a card refund says so and settles from the Stripe account", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 

@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   createXeroMembershipSubscriptionInvoice: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
+  createXeroKeptLateCaptureInvoice: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
   syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
@@ -222,6 +223,9 @@ vi.mock("@/lib/xero-modification-credit-notes", () => ({
 
 vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
+}));
+vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
+  createXeroKeptLateCaptureInvoice: mocks.createXeroKeptLateCaptureInvoice,
 }));
 
 vi.mock("@/lib/xero-token-store", () => ({
@@ -426,28 +430,6 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
-  it("#3635: reads and writes through the caller's transaction when handed one", async () => {
-    const store = {
-      booking: { findUnique: vi.fn().mockResolvedValue({ id: "booking_1", payment: { id: "payment_1", xeroInvoiceId: null } }) },
-      xeroObjectLink: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn() },
-      payment: { findUnique: vi.fn() },
-      xeroSyncOperation: { findFirst: vi.fn().mockResolvedValue(null) },
-    };
-
-    await enqueueXeroBookingInvoiceOperation("booking_1", {
-      invoiceEmailDelivery: null,
-      store: store as never,
-    });
-
-    expect(store.booking.findUnique).toHaveBeenCalled();
-    expect(store.xeroObjectLink.findFirst).toHaveBeenCalled();
-    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalled();
-    expect(mocks.findUniqueBooking).not.toHaveBeenCalled();
-    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ store }),
-    );
-  });
-
   it("skips queueing when the booking payment is already linked to Xero", async () => {
     mocks.findUniqueBooking.mockResolvedValue({
       id: "booking_1",
@@ -496,11 +478,10 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     );
   });
 
-  it("records no instruction for the sixteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
-    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Eighteen call sites reach
+  it("records no instruction for the fifteen enqueuers with no choice to express, when nothing was recorded before (#2929)", async () => {
+    // THE ONE PLACE THE LIVE POPULATION IS COUNTED. Seventeen call sites reach
     // this function; the two in `booking-create` carry the officer's answer and
-    // the other SIXTEEN pass an explicit null — the kept late capture (#3635,
-    // `late-capture-kept-xero.ts`), confirm-draft, waitlist-confirm,
+    // the other FIFTEEN pass an explicit null — confirm-draft, waitlist-confirm,
     // charge-saved-method, switch-to-internet-banking, confirm-pending-guests,
     // cron-confirm-pending, group settlement, the school-booking-request
     // conversion (`approveSchoolBookingRequest`), the member whole-lodge request
@@ -1735,7 +1716,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
     });
-    expect(args.where.queueType.in).toHaveLength(16);
+    expect(args.where.queueType.in).toHaveLength(17);
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
@@ -2640,6 +2621,23 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         },
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
+    },
+    // #3635: a late capture a treasurer kept, anchored on its approval task.
+    KEPT_LATE_CAPTURE_INVOICE: {
+      op: {
+        id: "op_kept_late_capture_1",
+        localId: "task_kept_1",
+        localModel: "ManualRefundTask",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "KEPT_LATE_CAPTURE_INVOICE",
+          bookingId: "booking_1",
+          manualRefundTaskId: "task_kept_1",
+          paymentIntentId: "pi_kept",
+          keptCents: 24000,
+        },
+      },
+      handler: mocks.createXeroKeptLateCaptureInvoice,
     },
   };
 

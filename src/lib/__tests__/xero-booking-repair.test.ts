@@ -281,9 +281,9 @@ function createDependencies(state: {
   lateCaptureApprovalTasks?: {
     bookingId: string;
     lateCaptureApprovalIntentId: string;
-    // #3635: which were kept, and from when their invoice counts as asked for.
+    // #3635: which were kept, and the id their invoice anchors on.
+    id?: string;
     status?: string;
-    createdAt?: Date;
   }[];
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
@@ -551,6 +551,10 @@ function createDependencies(state: {
     }),
     enqueueXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_booking_update",
+      message: "queued",
+    }),
+    enqueueXeroKeptLateCaptureInvoiceOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_kept_late_capture",
       message: "queued",
     }),
     enqueueXeroSupplementaryInvoiceOperation,
@@ -3576,12 +3580,13 @@ describe("runBookingXeroRepair", () => {
   });
 
   /**
-   * #3635 (owner decision 29 Sep 2026): the booking's own payment, captured after
-   * the cancel and KEPT by a treasurer, is recorded in Xero by the ordinary
-   * booking invoice. The dismissal queues it; this reports one nobody queued.
+   * #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): the booking's own
+   * payment, captured after the cancel and KEPT by a treasurer, is recorded by
+   * its own invoice for the kept cents, anchored on the approval task. The
+   * dismissal queues it; this queues one nobody queued, always automatically,
+   * because that document bills the kept cash whatever the booking's invoice did.
    */
   describe("a kept late capture of the booking's own payment (#3635)", () => {
-    const RAISED_AT = new Date("2026-05-01T00:05:00Z");
     const keptBooking = (
       payment: Record<string, unknown> = {},
       capture: Record<string, unknown> = {},
@@ -3590,9 +3595,6 @@ describe("runBookingXeroRepair", () => {
         status: "CANCELLED",
         payment: {
           ...makeBooking().payment,
-          source: "STRIPE",
-          xeroInvoiceId: null,
-          xeroInvoiceNumber: null,
           amountCents: 10000,
           refundedAmountCents: 0,
           status: "SUCCEEDED",
@@ -3616,82 +3618,119 @@ describe("runBookingXeroRepair", () => {
           ...payment,
         },
       });
+    const keptOperation = (status: string) => ({
+      id: "op_kept_invoice",
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      status,
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        bookingId: "booking_1",
+        manualRefundTaskId: "task_kept",
+        paymentIntentId: "pi_kept",
+        keptCents: 10000,
+      },
+      replayable: true,
+      manuallyResolvedAt: null,
+      createdAt: new Date("2026-05-02T00:00:00Z"),
+      updatedAt: new Date("2026-05-02T00:00:00Z"),
+    });
     const run = async (
       booking: ReturnType<typeof makeBooking>,
       status: string,
       operations: unknown[] = [],
     ) => {
+      const deps = createDependencies({
+        bookings: [booking],
+        operations,
+        lateCaptureApprovalTasks: [
+          {
+            id: "task_kept",
+            bookingId: booking.id,
+            lateCaptureApprovalIntentId: "pi_kept",
+            status,
+          },
+        ],
+      });
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
-        dependencies: createDependencies({
-          bookings: [booking],
-          operations,
-          lateCaptureApprovalTasks: [
-            {
-              bookingId: booking.id,
-              lateCaptureApprovalIntentId: "pi_kept",
-              status,
-              createdAt: RAISED_AT,
-            },
-          ],
-        }),
+        dependencies: deps,
         scope: { all: true },
       });
-      return report.passes[0].bookings[0];
+      return { bookingReport: report.passes[0].bookings[0], deps };
     };
-    const keptFinding = (bookingReport: Awaited<ReturnType<typeof run>>) =>
+    const keptFinding = (bookingReport: { findings: { code: string }[] }) =>
       bookingReport.findings.find(
         (finding) => finding.code === "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
       );
 
-    it("reports it and queues the booking invoice automatically when that invoice bills exactly the kept money", async () => {
-      const bookingReport = await run(keptBooking(), "DISMISSED");
+    it("queues the kept invoice automatically, for the kept cents, anchored on the task", async () => {
+      const { bookingReport } = await run(keptBooking(), "DISMISSED");
 
       expect(keptFinding(bookingReport)).toMatchObject({
         safeToAutoApply: true,
-        details: expect.objectContaining({ paymentIntentId: "pi_kept", keptCents: 10000 }),
+        details: expect.objectContaining({
+          manualRefundTaskId: "task_kept",
+          paymentIntentId: "pi_kept",
+          keptCents: 10000,
+        }),
       });
       expect(
-        bookingReport.actions.find((a) => a.type === "QUEUE_PRIMARY_INVOICE"),
-      ).toMatchObject({ safeToAutoApply: true, payload: { bookingId: "booking_1" } });
-    });
-
-    it("reports it for an officer, never auto-applied, when the booking invoice would bill something else", async () => {
-      const bookingReport = await run(keptBooking({ creditAppliedCents: 2000 }), "DISMISSED");
-
-      expect(keptFinding(bookingReport)).toMatchObject({
-        safeToAutoApply: false,
-        details: expect.objectContaining({ refusal: "credit-applied" }),
+        bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE"),
+      ).toMatchObject({
+        safeToAutoApply: true,
+        payload: {
+          manualRefundTaskId: "task_kept",
+          bookingId: "booking_1",
+          paymentIntentId: "pi_kept",
+          keptCents: 10000,
+        },
       });
-      expect(bookingReport.actions.some((a) => a.type === "QUEUE_PRIMARY_INVOICE")).toBe(false);
     });
 
-    it("reports nothing while the treasurer decides, after an approved refund, or once the invoice is queued", async () => {
-      for (const status of ["OPEN", "COMPLETED"]) {
-        expect(keptFinding(await run(keptBooking(), status))).toBeUndefined();
+    it("queues it the same way whatever the booking's own invoice did: cleared, credit used, re-priced", async () => {
+      for (const payment of [
+        { xeroInvoiceId: "inv_primary" },
+        { creditAppliedCents: 2000 },
+        { amountCents: 10000 },
+      ]) {
+        const booking = keptBooking(payment);
+        booking.finalPriceCents = 13000;
+        const { bookingReport } = await run(booking, "DISMISSED");
+        expect(keptFinding(bookingReport)).toMatchObject({
+          safeToAutoApply: true,
+          details: expect.objectContaining({ keptCents: 10000 }),
+        });
       }
-      // Kept, but refunded in full in the Stripe dashboard since.
+    });
+
+    it("reports nothing while the treasurer decides, after an approved refund, once queued, or once refunded in Stripe", async () => {
+      for (const status of ["OPEN", "COMPLETED"]) {
+        expect(keptFinding((await run(keptBooking(), status)).bookingReport)).toBeUndefined();
+      }
+      for (const status of ["PENDING", "RUNNING", "SUCCEEDED"]) {
+        const { bookingReport } = await run(keptBooking(), "DISMISSED", [keptOperation(status)]);
+        expect(keptFinding(bookingReport)).toBeUndefined();
+      }
       const refunded = keptBooking(
         { refundedAmountCents: 10000, status: "REFUNDED" },
         { refundedAmountCents: 10000, status: "REFUNDED" },
       );
-      expect(keptFinding(await run(refunded, "DISMISSED"))).toBeUndefined();
-      const queued = await run(keptBooking(), "DISMISSED", [
-        {
-          id: "op_kept_invoice",
-          direction: "OUTBOUND",
-          entityType: "INVOICE",
-          operationType: "CREATE",
-          localModel: "Payment",
-          localId: "payment_1",
-          status: "PENDING",
-          queueType: "BOOKING_INVOICE",
-          requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" },
-          replayable: true,
-          createdAt: new Date("2026-05-02T00:00:00Z"),
-          updatedAt: new Date("2026-05-02T00:00:00Z"),
-        },
-      ]);
-      expect(keptFinding(queued)).toBeUndefined();
+      expect(keptFinding((await run(refunded, "DISMISSED")).bookingReport)).toBeUndefined();
+    });
+
+    it("asks again once a row was withdrawn (CANCELLED), and offers a failed one for retry instead", async () => {
+      const withdrawn = await run(keptBooking(), "DISMISSED", [keptOperation("CANCELLED")]);
+      expect(keptFinding(withdrawn.bookingReport)).toBeDefined();
+
+      const failed = await run(keptBooking(), "DISMISSED", [keptOperation("FAILED")]);
+      expect(keptFinding(failed.bookingReport)).toBeUndefined();
+      expect(
+        failed.bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION"),
+      ).toBeDefined();
     });
   });
 

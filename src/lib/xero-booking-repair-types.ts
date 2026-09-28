@@ -48,6 +48,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "SYNC_BOOKING_SCOPED_LINK",
   "REPAIR_CANCELLED_IN_FLIGHT_PAYMENT",
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
+  // #3635: the invoice, paid from Stripe, recording a kept late capture.
+  "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
   "MARK_MANUAL_REVIEW",
 ] as const;
 
@@ -198,8 +200,6 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       stripeCustomerId: true,
       xeroInvoiceId: true,
       xeroInvoiceNumber: true,
-      // #3635: the kept-late-capture rule asks whether it is a card payment.
-      source: true,
       status: true,
       refundedAmountCents: true,
       changeFeeCents: true,
@@ -397,11 +397,11 @@ export interface BookingClassificationContext {
    */
   lateCaptureApprovalIntentIds: Set<string>;
   /**
-   * #3635: of those, the ones a treasurer KEPT (task DISMISSED), each with when
-   * its task was raised. A kept booking payment is recorded in Xero by the
-   * booking invoice (`late-capture-kept-xero-rules.ts`).
+   * #3635: of those, the ones a treasurer KEPT (task DISMISSED), by intent: the
+   * task and the Xero rows anchored on it. A kept booking payment is recorded
+   * by its own invoice, anchored on that task (`late-capture-kept-xero-rules.ts`).
    */
-  keptLateCaptureRaisedAtByIntentId: Map<string, Date>;
+  keptLateCaptures: Map<string, { taskId: string; operations: XeroOperationRecord[] }>;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm
    * raised a `CANCELLED_BOOKING_HAND_BACK` task for. Beside a retired clearing
