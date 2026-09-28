@@ -498,7 +498,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   // themselves mid-stay, for the treasurer to collect by hand.
   "admin-group-joiner-started-stay": {
     "defaultSubject": "Group joiners mid-stay now pay for themselves",
-    "defaultBody": "Group Joiners Mid-Stay Now Pay for Themselves\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Each booking is now the joiner's own to pay. Their stay has already started, so they were not emailed about it. Collect payment from them by hand and mark each booking paid, or they can pay by card from their booking.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nGroup check-in: {{checkIn}}\nJoiners: {{joinerNames}}\n\nView Payments: {{reviewUrl}}"
+    "defaultBody": "Group Joiners Mid-Stay Now Pay for Themselves\n\nThe organiser of this group has paid, but these joiners were not on the bill they paid. Each booking is now the joiner's own to pay. Their stay has already started, so they were not emailed about it. Collect payment from them by hand, then open each joiner's booking below and record it with Record manual payment under Admin tools. They can also pay by card from their own booking.\n\nOrganiser's booking: {{bookingReference}}\nOrganiser: {{organiserName}}\nGroup check-in: {{checkIn}}\n\nJoiners:\n{{joinerBookingLinks}}\n\nOpen the organiser's booking: {{organiserBookingUrl}}"
   },
   "group-join-pay-self": {
     "defaultSubject": "Please pay for your place — {{CLUB_NAME}}",

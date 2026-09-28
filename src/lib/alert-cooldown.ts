@@ -53,8 +53,15 @@ export async function claimAlertCooldown({
 export const ALERT_ONCE_EVER_WINDOW_MS = 36_500 * 86_400_000;
 
 /**
+ * How long a claim whose alert nobody could receive (no admin opted in, the
+ * template switched off, every recipient suppressed) is held before the next
+ * run may try again (#3672): daily, not every run.
+ */
+export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
+
+/**
  * Give back a claim this caller took at `claimedAt` and could not use — the
- * send threw or reached nobody — so the next run can claim and send again
+ * send threw before reaching anyone — so the next run can claim and send again
  * (#3672). Deletes only a row still stamped with this caller's own claim, so a
  * newer claim by another sender is never released.
  */
@@ -68,4 +75,30 @@ export async function releaseAlertCooldown({
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
   await store.alertCooldown.deleteMany({ where: { key, lastAlertedAt: claimedAt } });
+}
+
+/**
+ * Hold a claim this caller took at `claimedAt` for `retryAfterMs` only, rather
+ * than the whole `windowMs` (#3672): the stamp is moved back so the row falls
+ * out of the window, and `claimAlertCooldown` with the same `windowMs` succeeds
+ * again, exactly `retryAfterMs` after the claim. Same own-stamp guard as
+ * `releaseAlertCooldown`, so a newer claim by another sender is never touched.
+ */
+export async function deferAlertCooldown({
+  key,
+  claimedAt,
+  windowMs,
+  retryAfterMs,
+  store = prisma,
+}: {
+  key: string;
+  claimedAt: Date;
+  windowMs: number;
+  retryAfterMs: number;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.updateMany({
+    where: { key, lastAlertedAt: claimedAt },
+    data: { lastAlertedAt: new Date(claimedAt.getTime() - windowMs + retryAfterMs) },
+  });
 }

@@ -909,7 +909,9 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "groupJoinCancelledTemplate:minimal", fn: "groupJoinCancelledTemplate", render: () =>
     groupJoinCancelledTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "adminGroupJoinerStartedStayTemplate:minimal", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
-    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joinerNames: "joinerNames-3", reviewUrl: "https://example.test/admin/payments" }) },
+    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3", bookingUrl: "https://example.test/bookings/bookingId-4" }] }) },
+  { id: "adminGroupJoinerStartedStayTemplate:two-joiners", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
+    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3 <b>", bookingUrl: "https://example.test/bookings/bookingId-4" }, { name: "name-5", bookingUrl: "https://example.test/bookings/bookingId-6" }] }) },
   { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
     groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>

@@ -39,10 +39,13 @@ import {
 } from "@/lib/booking-status";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import {
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
+  deferAlertCooldown,
   releaseAlertCooldown,
 } from "@/lib/alert-cooldown";
+import { adminAlertIsDeliveredOrQueued } from "@/lib/email/admin-alert-send-result";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
@@ -209,10 +212,16 @@ function startedStayAlertKey(groupBookingId: string): string {
 /**
  * Tell the treasurer ONCE per group that joiners its paid bill did not cover
  * were switched to paying for themselves mid-stay, without an email. Claim
- * first, send after, outside any transaction. If the send throws or reaches
- * nobody the claim is given back, so the next group-settlement cycle retries
- * (`alertStartedStayPayerSwitches`). Never throws; returns whether it reached
- * anyone.
+ * first, send after, outside any transaction. What happens to the claim
+ * depends on what the send did (`sendToAdmins`' result):
+ * - an admin was sent it, or has a FAILED copy the email retry cron will
+ *   re-send: the claim is kept for good, so an outage never multiplies it;
+ * - nobody could receive it (the template switched off, nobody opted in,
+ *   every recipient suppressed): the claim is held for a day, then the
+ *   group-settlement cycle tries again (`alertStartedStayPayerSwitches`);
+ * - the send threw before reaching anyone: the claim is given back, so the
+ *   next cycle retries.
+ * Never throws; returns whether the claim was kept.
  */
 export async function alertStartedStayJoinersOnce(
   group: {
@@ -236,6 +245,7 @@ export async function alertStartedStayJoinersOnce(
     const joiners = await prisma.booking.findMany({
       where: { id: { in: bookingIds } },
       select: {
+        id: true,
         memberId: true,
         member: { select: { email: true, firstName: true, lastName: true } },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
@@ -246,22 +256,32 @@ export async function alertStartedStayJoinersOnce(
       { groupBookingId: group.groupBookingId, bookingIds },
       "Paid group joiners switched to paying for themselves mid-stay; alerting the treasurer"
     );
-    const reached = await sendAdminGroupJoinerStartedStayAlert({
+    const result = await sendAdminGroupJoinerStartedStayAlert({
       organiserName: `${group.organiser.firstName} ${group.organiser.lastName}`.trim(),
       organiserBookingId: group.organiserBookingId,
       checkIn: group.checkIn,
-      joinerNames: joiners
-        .map((b) => {
-          const member = bookingOwner(b).member;
-          return `${member.firstName} ${member.lastName ?? ""}`.trim();
-        })
-        .join(", "),
+      joiners: joiners.map((b) => {
+        const member = bookingOwner(b).member;
+        return { name: `${member.firstName} ${member.lastName ?? ""}`.trim(), bookingId: b.id };
+      }),
     });
-    if (reached > 0) return true;
+    if (adminAlertIsDeliveredOrQueued(result)) return true;
     logger.error(
-      { groupBookingId: group.groupBookingId },
-      "The mid-stay group joiner alert reached no admin; it will be retried"
+      { groupBookingId: group.groupBookingId, result },
+      "No admin can receive the mid-stay group joiner alert; it will be retried in a day"
     );
+    await deferAlertCooldown({
+      key,
+      claimedAt,
+      windowMs: ALERT_ONCE_EVER_WINDOW_MS,
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+    }).catch((err) =>
+      logger.error(
+        { err, groupBookingId: group.groupBookingId },
+        "Failed to defer the mid-stay group joiner alert claim"
+      )
+    );
+    return false;
   } catch (err) {
     logger.error(
       { err, groupBookingId: group.groupBookingId },
@@ -333,13 +353,16 @@ export async function notifyJoinersReleasedToMemberPays(
 
 /**
  * The treasurer's mid-stay alert, re-driven from the payer-switch events: every
- * group with a switched joiner whose stay had started and who is still unpaid
- * gets `alertStartedStayJoinersOnce`. A group already alerted loses the claim
- * and sends nothing; one whose earlier send reached nobody gave its claim back
- * and is retried here. Lock-free: it only reads and emails. Returns how many
- * groups it alerted.
+ * group with a switched joiner whose stay had started, who is still unpaid and
+ * whose stay has not ended (check-out on or after the club's today, so the scan
+ * stays bounded to live stays) gets `alertStartedStayJoinersOnce`. A group
+ * already alerted loses the claim and sends nothing; one whose earlier send
+ * threw, or reached nobody a day ago, can claim again and is retried here.
+ * Lock-free: it only reads and emails. Returns how many groups' claims it kept.
  */
-export async function alertStartedStayPayerSwitches(): Promise<number> {
+export async function alertStartedStayPayerSwitches(
+  clubTodayDateOnly: Date
+): Promise<number> {
   const events = await prisma.bookingEvent.findMany({
     where: {
       type: BookingEventType.CANCELLED,
@@ -351,6 +374,7 @@ export async function alertStartedStayPayerSwitches(): Promise<number> {
         deletedAt: null,
         organiserSettled: false,
         status: { in: LEFT_BEHIND_STATUSES },
+        checkOut: { gte: clubTodayDateOnly },
       },
     },
     select: { bookingId: true, snapshot: true },
@@ -466,7 +490,7 @@ export async function releaseJoinersLeftBehindPaidSettlements(
       await notifyJoinersReleasedToMemberPays(group.id, group.organiserMember, outcome.emailToPay);
     }
   }
-  const startedStayAlerts = await alertStartedStayPayerSwitches().catch((err) => {
+  const startedStayAlerts = await alertStartedStayPayerSwitches(clubTodayDateOnly).catch((err) => {
     logger.error({ err }, "Failed to send or retry the mid-stay group joiner alerts");
     return 0;
   });

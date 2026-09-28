@@ -530,8 +530,13 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // #1992/#2007: memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
-  // #3672: the organiser's booking, who is waiting, and where to act.
-  "admin-group-joiner-started-stay": ["bookingReference", "joinerNames", "reviewUrl"],
+  // #3672: the organiser's booking, and each waiting joiner linked to the
+  // booking whose admin tools record their payment.
+  "admin-group-joiner-started-stay": [
+    "bookingReference",
+    "joinerBookingLinks",
+    "organiserBookingUrl",
+  ],
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
@@ -1085,7 +1090,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "A paid organiser-pays group had joiners its bill did not cover whose stay had started; they were switched to paying for themselves without an email, so the treasurer collects by hand (#3672)",
     frequency:
-      "Once per group, guarded by a cross-instance claim that is given back when the send reaches nobody, so the group-settlement cycle retries it",
+      "Once per group, guarded by a cross-instance claim. The claim is kept once any admin is sent it or has a copy queued for the email retry cron, held for a day when no admin can receive it, and given back when the send throws before reaching anyone",
   },
   "group-join-pay-self": {
     triggerSummary:
@@ -1813,8 +1818,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueCategoryCount",
   "issueReportUrl",
   "issueTotalCount",
+  "joinerBookingLinks",
   "joinerCount",
-  "joinerNames",
   "latestErrorMessage",
   "latestErrorNote",
   "localId",
@@ -1856,6 +1861,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // the pre-arrival reminder; empty when nothing is owed, so the body never
   // carries a dangling claim (the {{doorCodeNote}} convention).
   "outstandingAdditionalNote",
+  // #3672: the organiser's booking detail page, for the mid-stay joiner alert.
+  "organiserBookingUrl",
   "organiserName",
   "originalRecipient",
   "originalTemplateName",

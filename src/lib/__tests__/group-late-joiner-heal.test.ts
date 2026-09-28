@@ -14,8 +14,8 @@ import {
  * existed) has that joiner switched to paying for themselves, under `lock(1)`
  * with the group re-read inside it — started stay or not. A joiner who can pay
  * before their stay is emailed; for a started stay the treasurer is alerted
- * once per group, re-driven from the payer-switch events until the alert
- * reaches someone.
+ * once per group, re-driven from the payer-switch events until an admin has
+ * it or has a copy queued for the email retry cron.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   sendStartedAlert: vi.fn(),
   claimAlertCooldown: vi.fn(),
   releaseAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
   loggerError: vi.fn(),
 }));
 
@@ -55,8 +56,10 @@ vi.mock("@/lib/email", () => ({
 }));
 vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
   claimAlertCooldown: mocks.claimAlertCooldown,
   releaseAlertCooldown: mocks.releaseAlertCooldown,
+  deferAlertCooldown: mocks.deferAlertCooldown,
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
@@ -123,8 +126,13 @@ function startedMarker(bookingId: string, groupBookingId = "g1") {
 }
 
 const namedJoiners = [
-  { memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
+  { id: "past-1", memberId: "m1", member: { firstName: "Pat", lastName: "Past" }, organisation: null },
 ];
+
+/** `sendToAdmins`' result for one opted-in admin. */
+function sendResult(overrides: Record<string, unknown> = {}) {
+  return { deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0, ...overrides };
+}
 
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
@@ -133,9 +141,10 @@ beforeEach(() => {
   mocks.eventCreateMany.mockResolvedValue({ count: 1 });
   mocks.eventFindMany.mockResolvedValue([]);
   mocks.sendPaySelf.mockResolvedValue(undefined);
-  mocks.sendStartedAlert.mockResolvedValue(1);
+  mocks.sendStartedAlert.mockResolvedValue(sendResult());
   mocks.claimAlertCooldown.mockResolvedValue(true);
   mocks.releaseAlertCooldown.mockResolvedValue(undefined);
+  mocks.deferAlertCooldown.mockResolvedValue(undefined);
 });
 
 describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
@@ -233,7 +242,7 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
       .mockResolvedValueOnce([released])
       .mockResolvedValueOnce([
         ...namedJoiners,
-        { memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
+        { id: "today-1", memberId: "m2", member: { firstName: "Tia", lastName: "Today" }, organisation: null },
       ]);
     mocks.eventFindMany.mockResolvedValue([startedMarker("past-1"), startedMarker("today-1")]);
 
@@ -248,19 +257,32 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     expect(snapshots).toEqual([true, true, false]);
     expect(mocks.sendPaySelf).toHaveBeenCalledTimes(1);
     expect(mocks.bookingFindMany.mock.calls[0][0].where.id).toEqual({ in: ["late-1"] });
-    // The alert pass reads unpaid, still-live started-stay switches.
-    expect(mocks.eventFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          type: BookingEventType.CANCELLED,
-          AND: [
-            { snapshot: { path: ["kind"], equals: GROUP_JOINER_PAYS_OWN_EVENT_KIND } },
-            { snapshot: { path: ["stayStarted"], equals: true } },
-          ],
-          booking: expect.objectContaining({ deletedAt: null, organiserSettled: false }),
-        }),
-      })
-    );
+    // The alert pass reads started-stay switches whose joiner is still
+    // unpaid and live, and whose stay has not ended: pinned whole, so dropping
+    // the status or check-out bound fails here.
+    expect(mocks.eventFindMany).toHaveBeenCalledWith({
+      where: {
+        type: BookingEventType.CANCELLED,
+        AND: [
+          { snapshot: { path: ["kind"], equals: GROUP_JOINER_PAYS_OWN_EVENT_KIND } },
+          { snapshot: { path: ["stayStarted"], equals: true } },
+        ],
+        booking: {
+          deletedAt: null,
+          organiserSettled: false,
+          status: {
+            in: [
+              BookingStatus.PENDING,
+              BookingStatus.PAYMENT_PENDING,
+              BookingStatus.CONFIRMED,
+              BookingStatus.AWAITING_REVIEW,
+            ],
+          },
+          checkOut: { gte: TODAY },
+        },
+      },
+      select: { bookingId: true, snapshot: true },
+    });
     expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
       expect.objectContaining({ key: "group-joiner-started-stay:g1" })
     );
@@ -268,10 +290,14 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     expect(mocks.sendStartedAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         organiserBookingId: "org-g1",
-        joinerNames: "Pat Past, Tia Today",
+        joiners: [
+          { name: "Pat Past", bookingId: "past-1" },
+          { name: "Tia Today", bookingId: "today-1" },
+        ],
       })
     );
     expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
   });
 
   // The club's day, not UTC's: at 01:00 on 1 Oct in Auckland it is still
@@ -319,13 +345,8 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
     expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
   });
 
-  // Concurrency review F1: a claim spent on a send that told nobody would
-  // silence the alert for good. It is given back, and the next run sends it.
-  it.each([
-    ["reaches no admin", () => mocks.sendStartedAlert.mockResolvedValueOnce(0)],
-    ["throws", () => mocks.sendStartedAlert.mockRejectedValueOnce(new Error("SES down"))],
-  ])("gives the claim back when the send %s, so the next run retries it", async (_label, fail) => {
-    mocks.groupFindMany.mockResolvedValue([]);
+  /** Two reaper cycles over one started-stay group, the alert not yet sent. */
+  function twoAlertCycles() {
     mocks.groupFindMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([alertGroup("g1")])
@@ -333,7 +354,14 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
       .mockResolvedValueOnce([alertGroup("g1")]);
     mocks.eventFindMany.mockResolvedValue([startedMarker("past-1")]);
     mocks.bookingFindMany.mockResolvedValue(namedJoiners);
-    fail();
+  }
+
+  // Concurrency review F1: a claim spent on a send that threw before reaching
+  // anyone would silence the alert for good. It is given back, and the next
+  // run sends it.
+  it("gives the claim back when the send throws before reaching anyone, so the next run retries it", async () => {
+    twoAlertCycles();
+    mocks.sendStartedAlert.mockRejectedValueOnce(new Error("admin list unreadable"));
 
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 0,
@@ -344,15 +372,55 @@ describe("releaseJoinersLeftBehindPaidSettlements (#3672)", () => {
       key: "group-joiner-started-stay:g1",
       claimedAt: firstClaim.now,
     });
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
 
-    // The next cycle claims again and this time reaches the treasurer.
     await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
       released: 0,
       startedStayAlerts: 1,
     });
-    expect(mocks.claimAlertCooldown).toHaveBeenCalledTimes(2);
     expect(mocks.sendStartedAlert).toHaveBeenCalledTimes(2);
     expect(mocks.releaseAlertCooldown).toHaveBeenCalledTimes(1);
+  });
+
+  // Delta review D1: every admin's copy failed into the email retry cron.
+  // Giving the claim back would send a fresh copy on every run of an outage,
+  // each one queued too, and all of them delivered at once on recovery.
+  it("keeps the claim when an admin's copy is queued for the email retry cron", async () => {
+    twoAlertCycles();
+    mocks.sendStartedAlert.mockResolvedValueOnce(
+      sendResult({ recipients: 2, sent: 0, queuedForRetry: 2 })
+    );
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 0,
+      startedStayAlerts: 1,
+    });
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+  });
+
+  // Delta review D2: nobody can receive it, so it is tried again daily, not on
+  // every run.
+  it.each([
+    ["the template is switched off", sendResult({ deliveryAllowed: false, recipients: 0, sent: 0 })],
+    ["no admin is opted in", sendResult({ recipients: 0, sent: 0 })],
+    ["every admin is suppressed", sendResult({ recipients: 2, sent: 0, notDelivered: 2 })],
+  ])("holds the claim for a day when %s", async (_label, result) => {
+    twoAlertCycles();
+    mocks.sendStartedAlert.mockResolvedValueOnce(result);
+
+    await expect(releaseJoinersLeftBehindPaidSettlements(NOW)).resolves.toEqual({
+      released: 0,
+      startedStayAlerts: 0,
+    });
+    const firstClaim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith({
+      key: "group-joiner-started-stay:g1",
+      claimedAt: firstClaim.now,
+      windowMs: 36_500 * 86_400_000,
+      retryAfterMs: 86_400_000,
+    });
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
   });
 
   it.each([

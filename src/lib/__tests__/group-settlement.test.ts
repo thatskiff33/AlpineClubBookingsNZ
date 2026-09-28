@@ -161,6 +161,8 @@ vi.mock("@/lib/alert-cooldown", () => ({
   ALERT_ONCE_EVER_WINDOW_MS: 36_500 * 86_400_000,
   claimAlertCooldown: mocks.claimAlertCooldown,
   releaseAlertCooldown: vi.fn().mockResolvedValue(undefined),
+  deferAlertCooldown: vi.fn().mockResolvedValue(undefined),
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS: 86_400_000,
 }));
 // #3672: the club's day for the started-stay rule, pinned so a joiner's
 // check-in is judged against a fixed today.
@@ -253,7 +255,13 @@ beforeEach(() => {
   mocks.sendSettlementReceipt.mockResolvedValue(undefined);
   mocks.sendJoinSettled.mockResolvedValue(undefined);
   mocks.sendJoinPaySelf.mockResolvedValue(undefined);
-  mocks.sendStartedStayAlert.mockResolvedValue(undefined);
+  mocks.sendStartedStayAlert.mockResolvedValue({
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  });
   mocks.claimAlertCooldown.mockResolvedValue(true);
   // #3672: by default the paid bill left nobody behind.
   mocks.bookingSwitchPayer.mockResolvedValue([]);
@@ -1624,6 +1632,7 @@ describe("applyGroupSettlementSucceeded", () => {
       // After commit: the started joiner, named in the treasurer's alert.
       .mockResolvedValueOnce([
         {
+          id: "started-1",
           memberId: "m-started",
           member: { email: "s@example.com", firstName: "Sam", lastName: "Started" },
           organisation: null,
@@ -1689,7 +1698,10 @@ describe("applyGroupSettlementSucceeded", () => {
     );
     expect(mocks.sendStartedStayAlert).toHaveBeenCalledTimes(1);
     expect(mocks.sendStartedStayAlert).toHaveBeenCalledWith(
-      expect.objectContaining({ organiserBookingId: ORG_BOOKING, joinerNames: "Sam Started" })
+      expect.objectContaining({
+        organiserBookingId: ORG_BOOKING,
+        joiners: [{ name: "Sam Started", bookingId: "started-1" }],
+      })
     );
     // The receipt counts only the joiner the organiser paid for.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledWith(
