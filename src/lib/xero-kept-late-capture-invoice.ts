@@ -210,13 +210,8 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
       active: true,
     },
   });
-  const withdrawn = {
-    status: "CANCELLED" as const,
-    completedAt: new Date(),
-    lastErrorCode: KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE,
-    lastErrorMessage:
-      "Withdrawn unsent: the treasurer reopened the kept payment and refunded it instead.",
-  };
+  const withdrawnMessage =
+    "Withdrawn unsent: the treasurer reopened the kept payment and refunded it instead.";
   if (invoiceLink === 0) {
     await db.xeroSyncOperation.updateMany({
       where: {
@@ -224,7 +219,12 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
         localId: params.manualRefundTaskId,
         status: { in: ["PENDING", "FAILED"] },
       },
-      data: withdrawn,
+      data: {
+        status: "CANCELLED",
+        completedAt: new Date(),
+        lastErrorCode: KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE,
+        lastErrorMessage: withdrawnMessage,
+      },
     });
   } else {
     await db.xeroSyncOperation.updateMany({
@@ -247,7 +247,12 @@ export async function settleKeptLateCaptureRecordOnApproval(params: {
       status: "PENDING",
       requestPayload: { path: ["paymentIntentId"], equals: params.paymentIntentId },
     },
-    data: withdrawn,
+    data: {
+      status: "CANCELLED",
+      completedAt: new Date(),
+      lastErrorCode: KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE,
+      lastErrorMessage: withdrawnMessage,
+    },
   });
 }
 

@@ -1542,6 +1542,21 @@ mispricing a booking.
   re-points existing rows' `memberId` — and it serialises with the approval on
   the lodge capacity key.
 
+- **Kept late-capture task row** — `src/lib/xero-kept-late-capture-invoice.ts`
+  (`lockKeptLateCaptureTask`, #3635): `SELECT 1 FROM "ManualRefundTask" WHERE
+  "id" = … FOR UPDATE` on the #3639 approval task. Taken by the kept-capture
+  enqueue (inside the dismissal's claim, which already holds the row through
+  its status-fenced `updateMany`, and by the repair tool in a transaction of
+  its own) around its re-read and find-and-create, and by the outbox worker
+  around its send-time decision and the withdrawal it commits with it.
+  Counterpart writers: the dismissal, reopen and approval claims, which write
+  the same row. So a re-keep either finds the live row or, once the worker has
+  withdrawn it, queues a new one, and two enqueues can never both insert (the
+  active-correlation index therefore never raises inside an interactive
+  transaction). It adds no lock ordering: inside the dismissal it is a lock
+  that transaction already holds, and the worker and the repair tool take no
+  other lock while holding it. No provider call is made while it is held.
+
 - **Trusted legacy induction baseline** —
   `src/lib/induction-baseline.ts` (`runInductionBaseline`, #2361): apply takes
   `LOCK TABLE "MemberInduction" IN SHARE ROW EXCLUSIVE MODE` as the **first

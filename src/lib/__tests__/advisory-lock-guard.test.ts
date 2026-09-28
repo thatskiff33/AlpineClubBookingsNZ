@@ -1231,6 +1231,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // docs/CONCURRENCY_AND_LOCKING.md -> "Held-party guest rows before a dietary
   // rebuild".
   "src/lib/booking-guest-row-lock.ts": 1,
+  // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
+  // worker's send-time decision lock the #3639 approval task's row
+  // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval
+  // claims write. No advisory key; the dismissal's claim already holds the row.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Kept late-capture task row".
+  "src/lib/xero-kept-late-capture-invoice.ts": 1,
   // Member-photo upload (POST) and remove (DELETE) each lock the member row
   // (`SELECT 1 … FOR UPDATE`) so concurrent replace/remove
   // serialise and never orphan a MEMBER_PHOTO blob. Member-id keyed; no
