@@ -792,6 +792,6 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:89",
   "src/lib/stuck-state-dashboard.ts:616",
-  "src/lib/xero-booking-repair-types.ts:185",
+  "src/lib/xero-booking-repair-types.ts:190",
   "src/lib/xero-inbound/settlement-conflicts.ts:153",
 ];
