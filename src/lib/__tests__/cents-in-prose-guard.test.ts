@@ -96,12 +96,14 @@ describe("cents-in-prose guard: catches the shape", () => {
     expect(await hitsIn(`const refundAmountCents = 1, amountCents = 1, coveredCents = 1, owedCents = 1, payment = { changeFeeCents: 1 }, total = (r: unknown) => 1, rows = [];\n${code}\n`)).toHaveLength(1);
   });
 
-  it("names the canonical helpers and an escape hatch that passes CI", async () => {
+  it("names the canonical helpers and says no exemption list lifts it (#3399)", async () => {
     const message = (await hitsIn(VIOLATING_CODE))[0]?.message;
     expect(message).toContain("formatCents");
     expect(message).toContain("@/lib/utils");
     expect(message).toContain("CENTS_DISPLAY_EXEMPTIONS");
     expect(message).toContain("eslint.config.mjs");
+    expect(message).toContain("No exemption list lifts this rule");
+    expect(message).not.toContain("so adding to it passes CI");
     expect(message).toContain("Never an eslint-disable comment");
   });
 });
