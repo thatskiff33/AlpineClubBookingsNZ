@@ -623,6 +623,16 @@ function createDependencies(state: {
     recordAndNoteRepairedLateCaptureRefunds: vi
       .fn()
       .mockResolvedValue({ noted: [], byHand: [], notInXero: [] }),
+    // #3635: the refund-note gap reader. By default every refunded cent is a
+    // gap, which is what the missing-refund-note arm assumed before.
+    readRefundCreditNoteGap: vi.fn().mockImplementation(
+      async (payment: { refundedAmountCents: number }) => ({
+        cashRefundCents: payment.refundedAmountCents,
+        coveredCents: 0,
+        resolvedInXeroCents: 0,
+        uncoveredCents: payment.refundedAmountCents,
+      })
+    ),
   };
 }
 
@@ -5877,6 +5887,76 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
  * RESOLVED_IN_XERO_BY_OFFICER finding (orchestrator decision 2) - or nothing,
  * where the document itself exists (the PARTIAL clearing note).
  */
+describe("the missing-refund-note arm asks only for what a note may answer (#3635)", () => {
+  const cancelledRefunded = () =>
+    makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        source: "STRIPE",
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        transactions: [
+          {
+            id: "txn_late",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            source: "STRIPE",
+            stripePaymentIntentId: "pi_late",
+            amountCents: 10000,
+            refundedAmountCents: 10000,
+            status: "REFUNDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+      },
+    });
+  const classify = async (uncoveredCents: number) => {
+    const deps = createDependencies({ bookings: [cancelledRefunded()] });
+    deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({
+      cashRefundCents: uncoveredCents,
+      coveredCents: 0,
+      resolvedInXeroCents: 0,
+      uncoveredCents,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+    return { deps, booking: report.passes[0].bookings[0] };
+  };
+
+  it("raises no recurring critical finding for a refund of a late capture Xero never received", async () => {
+    // The gap reader leaves that refund out of the note-eligible cash.
+    const { deps, booking } = await classify(0);
+    expect(deps.readRefundCreditNoteGap).toHaveBeenCalledWith({
+      id: "payment_1",
+      bookingId: "booking_1",
+      refundedAmountCents: 10000,
+    });
+    expect(booking.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+    expect(booking.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_REFUND_CREDIT_NOTE"
+    );
+  });
+
+  it("asks for exactly the uncovered note-eligible cash, never the raw refunded total", async () => {
+    const { booking } = await classify(4000);
+    expect(booking.actions).toContainEqual(
+      expect.objectContaining({
+        type: "QUEUE_REFUND_CREDIT_NOTE",
+        key: "queue:refund-credit-note:payment_1:4000",
+        payload: { paymentId: "payment_1", refundAmountCents: 4000 },
+      })
+    );
+  });
+});
+
 describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
   const RESOLVED_AT = new Date("2026-05-06T00:00:00Z");
   const cancelledCaptured = (paymentOverrides: Record<string, unknown>) =>

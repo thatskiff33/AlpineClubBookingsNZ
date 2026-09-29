@@ -29,6 +29,7 @@ import {
   sumEditReviewChargeSharesByAnchor,
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
+import logger from "@/lib/logger";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -550,6 +551,27 @@ export async function loadAuditData(
         )
       : [];
 
+  // #3635 (composed review): the refund cents a note may still answer, read
+  // through the one gap reader (`readRefundCreditNoteGap`: note-eligible cash
+  // less coverage, resolved notes included), so the missing-refund-note arm
+  // never asks for a late capture's refund no note may answer.
+  const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
+  for (const booking of bookings) {
+    const payment = booking.payment;
+    if (booking.status !== "CANCELLED" || !payment || payment.source !== "STRIPE") continue;
+    if (payment.refundedAmountCents <= 0) continue;
+    try {
+      const gap = await deps.readRefundCreditNoteGap({
+        id: payment.id,
+        bookingId: booking.id,
+        refundedAmountCents: payment.refundedAmountCents,
+      });
+      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents);
+    } catch (err) {
+      logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
+    }
+  }
+
   const handBackPaymentIdsByBookingId = new Map<string, Set<string>>();
   for (const task of handBackTasks) {
     if (!task.paymentId) continue;
@@ -638,6 +660,9 @@ export async function loadAuditData(
     ),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    refundNoteUncoveredCents: booking.payment
+      ? refundNoteUncoveredCentsByPaymentId.get(booking.payment.id) ?? null
+      : null,
     closedPartPaymentReviewPaymentIds:
       closedPartPaymentReviewIdsByBookingId.get(booking.id) ?? new Set<string>(),
     openPartPaymentReviewPaymentIds:
