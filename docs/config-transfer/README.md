@@ -533,7 +533,7 @@ Intentionally excluded / deferred:
   in the attack-surface doc).
 - The rest of `LodgeSettings` (the school-group soft cap and the club-wide
   hut-leader lookahead) — set them on the lodge page. Capacity itself now
-  travels; see below.
+  travels; see above.
 - Cancellation and booking-period policies remain deferred. Minimum-stay
   policies now travel through the dedicated `booking-policies` category above;
   cancellation policy still touches refund maths and booking periods have not
