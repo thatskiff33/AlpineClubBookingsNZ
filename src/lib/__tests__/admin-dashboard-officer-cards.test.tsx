@@ -13,12 +13,13 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    // #3372: the revenue card reads a per-status `groupBy`, never `aggregate`.
+    // #3372: the revenue card reads the month's payment rows with each
+    // booking's `deletedAt`, which the one Net Collected booking scope reads.
     // The write delegates exist only so the display-only pin below can assert
     // they were never reached; a call on a missing delegate would throw
     // instead, which is a crash rather than an assertion.
     payment: {
-      groupBy: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       create: vi.fn(),
@@ -54,6 +55,10 @@ import { auth } from "@/lib/auth";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
+import {
+  NET_COLLECTED_SCOPE_FIXTURE,
+  NET_COLLECTED_SCOPE_PAYMENTS,
+} from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 /*
  * The club's day the fixtures below are built in (#3123). The dashboard takes
@@ -162,17 +167,24 @@ function mockStats() {
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
 
-  // #3372: the month's payments, summed per status, as `groupBy` returns them.
-  // The default fixture is the partly-refunded booking behind the #3340
-  // misreading: $130.00 captured, $65.00 refunded. The card's headline must be
-  // the $65.00 net, never the $130.00 it took. A PENDING group rides
-  // along so the card is seen to leave uncaptured money out.
-  vi.mocked(prisma.payment.groupBy).mockResolvedValue([
+  // #3372: the month's payments. The default fixture is the partly-refunded
+  // booking behind the #3340 misreading: $130.00 captured, $65.00 refunded.
+  // The card's headline must be the $65.00 net, never the $130.00 it took. A
+  // PENDING payment rides along so the card is seen to leave uncaptured money
+  // out.
+  vi.mocked(prisma.payment.findMany).mockResolvedValue([
     {
       status: "PARTIALLY_REFUNDED",
-      _sum: { amountCents: 13_000, refundedAmountCents: 6_500 },
+      amountCents: 13_000,
+      refundedAmountCents: 6_500,
+      booking: { deletedAt: null },
     },
-    { status: "PENDING", _sum: { amountCents: 90_000, refundedAmountCents: 0 } },
+    {
+      status: "PENDING",
+      amountCents: 90_000,
+      refundedAmountCents: 0,
+      booking: { deletedAt: null },
+    },
   ] as any);
   vi.mocked(prisma.refundRequest.count).mockResolvedValue(0);
   vi.mocked(prisma.adminCreditAdjustmentRequest.count).mockResolvedValue(0);
@@ -282,15 +294,21 @@ describe("admin dashboard officer key cards", () => {
     expect(html).not.toContain("$900");
     expect(html).not.toContain("$965");
 
-    // The one query is a per-status read of the month; the status decision is
-    // the derivation's, not the page's, so no `status` filter is passed.
-    expect(vi.mocked(prisma.payment.groupBy)).toHaveBeenCalledTimes(1);
-    const [groupByArgs] = vi.mocked(prisma.payment.groupBy).mock.calls[0] as [
-      { by: string[]; _sum: Record<string, boolean>; where: Record<string, unknown> },
+    // The one query reads the month's payments; the status AND booking-scope
+    // decisions are the derivation's, not the page's, so the query passes no
+    // `status` or booking filter and loads the booking's `deletedAt`.
+    expect(vi.mocked(prisma.payment.findMany)).toHaveBeenCalledTimes(1);
+    const [findManyArgs] = vi.mocked(prisma.payment.findMany).mock.calls[0] as unknown as [
+      { select: Record<string, unknown>; where: Record<string, unknown> },
     ];
-    expect(groupByArgs.by).toEqual(["status"]);
-    expect(groupByArgs._sum).toEqual({ amountCents: true, refundedAmountCents: true });
-    expect(groupByArgs.where).not.toHaveProperty("status");
+    expect(findManyArgs.select).toEqual({
+      status: true,
+      amountCents: true,
+      refundedAmountCents: true,
+      booking: { select: { deletedAt: true } },
+    });
+    expect(findManyArgs.where).not.toHaveProperty("status");
+    expect(findManyArgs.where).not.toHaveProperty("booking");
 
     // Display only (#3372 acceptance): the render changes no stored value.
     expect(prisma.payment.update).not.toHaveBeenCalled();
@@ -302,8 +320,13 @@ describe("admin dashboard officer key cards", () => {
 
   it("omits the breakdown line when nothing on the month's payments was refunded", async () => {
     mockActorMatrix({ overview: "edit", finance: "edit" });
-    vi.mocked(prisma.payment.groupBy).mockResolvedValue([
-      { status: "SUCCEEDED", _sum: { amountCents: 123_400, refundedAmountCents: 0 } },
+    vi.mocked(prisma.payment.findMany).mockResolvedValue([
+      {
+        status: "SUCCEEDED",
+        amountCents: 123_400,
+        refundedAmountCents: 0,
+        booking: { deletedAt: null },
+      },
     ] as any);
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
@@ -311,6 +334,33 @@ describe("admin dashboard officer key cards", () => {
     expect(html).toContain(">$1,234.00</div>");
     expect(html).not.toContain(" paid, ");
     expect(html).not.toContain("refunded or credited");
+  });
+
+  /*
+    #3372, owner decision A: the one Net Collected booking scope. The shared
+    fixture - a cancelled booking that kept a $50.00 fee, and a soft-deleted
+    booking's $70.00 capture - reads $50.00 here, on the payments tile and on
+    Reports. The dashboard used to count the deleted booking too ($120.00).
+  */
+  it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
+    mockActorMatrix({ overview: "edit", finance: "edit" });
+    vi.mocked(prisma.payment.findMany).mockResolvedValue(
+      NET_COLLECTED_SCOPE_PAYMENTS.map((payment) => ({
+        status: payment.status,
+        amountCents: payment.amountCents,
+        refundedAmountCents: payment.refundedAmountCents,
+        booking: { deletedAt: payment.deletedAt },
+      })) as any,
+    );
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents).toBe(5_000);
+    expect(html).toContain(">$50.00</div>");
+    expect(html).not.toContain(">$120.00</div>");
+    // The breakdown is over the same in-scope payments: the deleted booking's
+    // $70.00 is in neither figure.
+    expect(html).toContain(">$200.00 paid, $150.00 refunded or credited</p>");
   });
 
   it("hides officer cards whose target page the actor cannot open", async () => {

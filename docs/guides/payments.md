@@ -610,12 +610,14 @@ page.
 The two money cards are not a subtraction of one another, and each says on
 the card what it covers:
 
-- **Net Collected Cash** counts captured payments on bookings that are not
-  cancelled, less the refunds and account credits on them. A payment that is
-  still pending or failed does not count, and neither does a payment on a
-  **cancelled** booking, even though its row stays in the list. It is worked
-  out the same way as the Net Collected Cash card on [Reports](reports.md),
-  but over different payments: this card uses the payments matching your
+- **Net Collected Cash** counts captured payments, less the refunds and
+  account credits on them. A payment that is still pending or failed does not
+  count. A **cancelled** booking counts at the fee the club kept (what it took
+  less what it refunded or credited), and a **deleted** booking does not count
+  at all, even though its row stays in the list. Every Net Collected figure
+  (this card, the dashboard's and Reports') uses that same rule for which
+  bookings count. It is worked out the same way as the Net Collected Cash card
+  on [Reports](reports.md), but over different payments: this card uses the payments matching your
   filters, and Reports uses the bookings staying in its chosen dates, so the
   two figures need not match. Like Reports, it runs the missing-ledger check:
   when a payment it counts says an addition was collected but no captured
@@ -623,8 +625,8 @@ the card what it covers:
   much the figure may understate. Ask a developer to reconcile that payment's
   ledger before trusting the figure.
 - **Refunded / Credited** covers every payment matching the filters,
-  cancelled bookings included: every card refund and every cancellation
-  credit on them.
+  cancelled and deleted bookings included: every card refund and every
+  cancellation credit on them.
 
 ## Troubleshooting
 

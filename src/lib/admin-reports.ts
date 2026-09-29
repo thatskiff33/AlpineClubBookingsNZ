@@ -32,6 +32,11 @@ export type RevenueGranularity = "daily" | "weekly" | "monthly";
  * The Base Reports population is deliberately positive and exhaustive. New
  * BookingStatus values do not silently become revenue merely because they are
  * not CANCELLED/BUMPED (#2368).
+ *
+ * Net Collected Cash is NOT read over this population (#3372, owner decision
+ * A): it is money the club has, so it uses the one Net Collected booking scope
+ * beside `summarizeCollectedCash`, in which a cancelled booking counts at the
+ * fee the club kept.
  */
 export const REPORT_BOOKING_STATUSES = [
   BookingStatus.PENDING,
@@ -260,7 +265,8 @@ export function summarizeOverlappingGuests(
 /**
  * The Reports route's net-collected-cash figure: the net half of
  * `summarizeCollectedCash` in `booking-payment-state.ts`, which owns the
- * derivation (#3372). Kept as a named wrapper so the route reads one number.
+ * derivation and its booking scope (#3372). Kept as a named wrapper so the
+ * route reads one number.
  */
 export function summarizeNetCollectedCash(
   payments: Parameters<typeof summarizeCollectedCash>[0],

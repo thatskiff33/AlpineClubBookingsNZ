@@ -141,21 +141,27 @@ async function getStats() {
     prisma.booking.count({
       where: { deletedAt: null, status: { in: [...ACTIVE_BOOKING_STATUSES] } },
     }),
-    // #3372: every status, summed per status, so the net-collected-cash
-    // derivation (`summarizeCollectedCash`) decides which statuses count as
-    // captured. This used to sum `SUCCEEDED` alone: a partly-refunded payment
-    // left the figure entirely, and nothing subtracted a refund on the ones that
-    // stayed, so a card titled "Revenue" was neither net nor complete.
+    // #3372: every payment recorded this month, whatever its status, so the
+    // net-collected-cash derivation (`summarizeCollectedCash`) decides which
+    // statuses count as captured AND which bookings count (the one Net
+    // Collected booking scope, owner decision A: every booking not
+    // soft-deleted, so a kept cancellation fee counts). The booking's
+    // `deletedAt` is loaded because the derivation's row type requires it.
+    // This used to sum `SUCCEEDED` alone: a partly-refunded payment left the
+    // figure entirely, and nothing subtracted a refund on the ones that stayed.
     //
-    // Grouped by `createdAt`, the moment the payment RECORD was made - not when
-    // money arrived. A bank-transfer row is created PENDING with the booking and
-    // paid later, so it counts in the month it was recorded once it is paid.
-    // Cancelled bookings are included, so a kept cancellation fee counts.
-    prisma.payment.groupBy({
-      by: ["status"],
-      _sum: { amountCents: true, refundedAmountCents: true },
+    // By `createdAt`, the moment the payment RECORD was made - not when money
+    // arrived. A bank-transfer row is created PENDING with the booking and paid
+    // later, so it counts in the month it was recorded once it is paid.
+    prisma.payment.findMany({
       where: {
         createdAt: { gte: startOfMonth, lte: endOfMonth },
+      },
+      select: {
+        status: true,
+        amountCents: true,
+        refundedAmountCents: true,
+        booking: { select: { deletedAt: true } },
       },
     }),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
@@ -284,13 +290,7 @@ async function getStats() {
   // whenever it was made. A cohort, not a cash-flow statement: a refund this
   // month on last month's payment does not reduce it, and the card's subline
   // says what it covers.
-  const netCollectedThisMonth = summarizeCollectedCash(
-    netCollectedResult.map((group) => ({
-      status: group.status,
-      amountCents: group._sum.amountCents ?? 0,
-      refundedAmountCents: group._sum.refundedAmountCents ?? 0,
-    })),
-  );
+  const netCollectedThisMonth = summarizeCollectedCash(netCollectedResult);
   const unassignedNamesLodges = coverageNeedsLodgeContext({
     activeLodgeCount,
     rows: unassignedHutLeaderDates,

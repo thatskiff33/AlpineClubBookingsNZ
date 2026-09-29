@@ -236,17 +236,84 @@ export interface CollectedCashSummary {
 }
 
 /**
+ * The booking a payment belongs to, as far as the Net Collected scope needs it.
+ */
+export interface NetCollectedBookingScopeFields {
+  deletedAt: Date | null;
+}
+
+/**
+ * #3372, owner decision A (29 Sep 2026): THE booking scope of every "Net
+ * Collected" figure - the dashboard card, the payments board tile and Reports'
+ * Net Collected Cash. A payment counts when its booking has not been
+ * soft-deleted, whatever the booking's status: a cancelled booking nets to the
+ * cancellation fee the club kept, and that fee is money collected.
+ *
+ * Before the decision each screen chose its own set: Reports a fixed status
+ * list, the payments tile everything but cancelled (#773, which kept a refunded
+ * booking's GROSS out of "Total Revenue" - a job the netting now does), the
+ * dashboard everything. The same month's figure differed by every kept fee.
+ *
+ * It is not a caller's choice. `summarizeCollectedCash` applies it to every row
+ * itself, and its row type requires the booking's `deletedAt`, so a surface
+ * cannot hand in rows without the fact the rule reads. A surface's OWN filters
+ * (a date range, a lodge, the payments board's filter bar) still narrow which
+ * payments it hands in; the Reports "deleted" view does not widen this scope.
+ */
+export function isInNetCollectedBookingScope(
+  booking: NetCollectedBookingScopeFields,
+): boolean {
+  return booking.deletedAt === null;
+}
+
+/** A payment as `summarizeCollectedCash` reads it. */
+export interface NetCollectedPaymentRow {
+  status: string | null;
+  amountCents: number;
+  refundedAmountCents: number;
+  booking: NetCollectedBookingScopeFields;
+}
+
+/**
+ * The payments inside the Net Collected booking scope - for a check that must
+ * run over exactly the payments the figure counts, such as the ledger-gap
+ * warning beside it.
+ */
+export function netCollectedScopedPayments<T extends NetCollectedPaymentRow>(
+  payments: ReadonlyArray<T>,
+): T[] {
+  return payments.filter((payment) =>
+    isInNetCollectedBookingScope(payment.booking),
+  );
+}
+
+/**
+ * `Payment.refundedAmountCents` summed over the rows handed in, captured or not:
+ * card refunds and account credits alike (`INV-PAY-050`). The one refund fold -
+ * `summarizeCollectedCash` uses it for the net, and the payments board's
+ * "Refunded / Credited" tile uses it over every payment its filters match.
+ */
+export function sumRefundedAndCreditedCents(
+  payments: ReadonlyArray<{ refundedAmountCents: number }>,
+): number {
+  return payments.reduce(
+    (sum, payment) => sum + payment.refundedAmountCents,
+    0,
+  );
+}
+
+/**
  * #3372: net collected cash over a set of payments, for the officer surfaces —
  * the Reports summary, the dashboard's "Net Collected This Month" card and the
  * payments board's "Net Collected Cash" tile all read it (`INV-SSOT-001`), so
- * they cannot disagree about what "net of refunds and credits" means. Each
- * surface still decides WHICH payments it hands in — a month's, a filter's, a
- * report range's — and says so on screen. Rows may be whole payments or
- * `groupBy` sums per status: the arithmetic is linear, so a status group is the
- * same as its members.
+ * they cannot disagree about what "net of refunds and credits" means, nor about
+ * which bookings count: the Net Collected booking scope
+ * (`isInNetCollectedBookingScope`) is applied here, to every row, and a row
+ * outside it contributes nothing. Each surface still decides WHICH payments it
+ * hands in - a month's, a filter's, a report range's - and says so on screen.
  *
  * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
- * EVERY row handed in, captured or not, and the net is floored at zero.
+ * EVERY in-scope row, captured or not, and the net is floored at zero.
  *
  * Cash is payment-derived and deliberately NOT allocated over stay nights.
  * `Payment.amountCents` already contains captured additions (#2408); rebuilding
@@ -260,24 +327,19 @@ export interface CollectedCashSummary {
  * then a change to the rule here must be made there too.
  *
  * `status` is `string | null`, not `PaymentStatus`: the payments service hands
- * in a plain string, and a `null` (no payment) captures nothing.
+ * in a plain string, and a `null` captures nothing.
  */
 export function summarizeCollectedCash(
-  payments: ReadonlyArray<{
-    status: string | null;
-    amountCents: number;
-    refundedAmountCents: number;
-  } | null>,
+  payments: ReadonlyArray<NetCollectedPaymentRow>,
 ): CollectedCashSummary {
+  const inScope = netCollectedScopedPayments(payments);
   let capturedGrossCents = 0;
-  let refundedCents = 0;
-  for (const payment of payments) {
-    if (!payment) continue;
+  for (const payment of inScope) {
     if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
       capturedGrossCents += payment.amountCents;
     }
-    refundedCents += payment.refundedAmountCents;
   }
+  const refundedCents = sumRefundedAndCreditedCents(inScope);
   return {
     capturedGrossCents,
     refundedCents,
@@ -293,9 +355,10 @@ export function summarizeCollectedCash(
  * board - so the warning cannot read differently on each. `subject` names what
  * the count counts on that surface. `null` when there is no gap.
  *
- * The dashboard card does not carry it: it reads a per-status `groupBy`, which
- * has no per-payment rows or ledger to check, and the check is not worth a
- * second query on the landing page.
+ * The dashboard card does not carry it: it reads only each payment's status and
+ * amounts for the month, with no ledger rows, and loading every payment's
+ * ledger on the landing page is not worth it for a check Reports and the
+ * payments board already run.
  */
 export function formatNetCollectedLedgerGapWarning(
   gap: { additionalLedgerGapCents: number; additionalLedgerGapBookings: number },

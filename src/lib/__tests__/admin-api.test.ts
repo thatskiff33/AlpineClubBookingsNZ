@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  NET_COLLECTED_SCOPE_FIXTURE,
+  NET_COLLECTED_SCOPE_PAYMENTS,
+} from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -279,6 +283,7 @@ describe("Admin Payments API", () => {
         id: "b1",
         status: "PAID",
         checkIn: new Date("2026-04-10"),
+        deletedAt: null,
         creditsFromCancellation: [],
         member: {
           id: "m1",
@@ -391,12 +396,11 @@ describe("Admin Payments API", () => {
     row the filter matched: a refund never subtracted, and under the default
     "all" status filter a PENDING or FAILED payment's amount counted as revenue.
     The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
-    still leaving a cancelled booking's payment out (#773) — while the
-    "Refunded / Credited" tile beside it stays deliberately wider: every matched
-    row, cancelled bookings included. The two are not a subtraction of one
-    another, and this fixture is built so each exclusion moves the number.
+    and - owner decision A - a cancelled booking counts at the fee the club
+    kept (#773's exclusion is retired for this figure). This fixture is built so
+    each exclusion moves the number.
   */
-  it("sums Net Collected Cash over captured payments only, net of refunds, excluding cancelled bookings", async () => {
+  it("sums Net Collected Cash over captured payments only, net of refunds, cancelled bookings at the fee kept", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const cancelledBooking = {
@@ -416,9 +420,8 @@ describe("Admin Payments API", () => {
         // Uncaptured money: neither counts, whatever its amount.
         makePaymentCandidate({ id: "pending", status: "PENDING", amountCents: 9_000 }),
         makePaymentCandidate({ id: "failed", status: "FAILED", amountCents: 4_000 }),
-        // Captured, then the booking was cancelled with part of it refunded.
-        // Its $150.00 net is NOT revenue (#773), but its $50.00 refund IS a
-        // refund the club made, so it counts in the refund tile.
+        // Captured, then the booking was cancelled with $50.00 of it refunded:
+        // the club kept $150.00, which is money collected.
         makePaymentCandidate({
           id: "cancelled",
           bookingId: "b-cancelled",
@@ -436,11 +439,11 @@ describe("Admin Payments API", () => {
 
     const body = await res.json();
     expect(body.summary).toEqual({
-      // 13_000 - 6_500. Were the cancelled row counted it would read 21_500;
-      // were PENDING/FAILED gross added it would read 19_500; gross would be
-      // 13_000.
-      netCollectedCents: 6_500,
-      // 6_500 + 5_000: the cancelled booking's refund still counts here.
+      // (13_000 - 6_500) + (20_000 - 5_000). Were the cancelled row left out
+      // (#773) it would read 6_500; were PENDING/FAILED gross added it would
+      // read 34_500.
+      netCollectedCents: 21_500,
+      // 6_500 + 5_000.
       refundedCents: 11_500,
       count: 4,
       // No payment here records an uncollected-ledger additional payment.
@@ -456,6 +459,48 @@ describe("Admin Payments API", () => {
     expect(prisma.payment.create).not.toHaveBeenCalled();
     expect(prisma.payment.upsert).not.toHaveBeenCalled();
     expect(prisma.payment.delete).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3372, owner decision A: the one Net Collected booking scope. The shared
+    fixture - a cancelled booking that kept a $50.00 fee, and a soft-deleted
+    booking's $70.00 capture - reads $50.00 here, on the dashboard and on
+    Reports. The tile used to leave the cancelled booking out ($0.00).
+  */
+  it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce(
+        NET_COLLECTED_SCOPE_PAYMENTS.map((payment) =>
+          makePaymentCandidate({
+            id: payment.bookingId,
+            bookingId: payment.bookingId,
+            status: payment.status,
+            amountCents: payment.amountCents,
+            refundedAmountCents: payment.refundedAmountCents,
+            booking: {
+              ...makePaymentCandidate().booking,
+              id: payment.bookingId,
+              status: payment.bookingStatus,
+              deletedAt: payment.deletedAt,
+            },
+          })
+        ) as any
+      )
+      .mockResolvedValueOnce([] as any);
+
+    const res = await getPayments(
+      new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10")
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.summary.netCollectedCents).toBe(
+      NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents
+    );
+    // The refund tile is every matched row, as its hint says.
+    expect(body.summary.refundedCents).toBe(15_000);
+    expect(body.summary.count).toBe(2);
   });
 
   /*

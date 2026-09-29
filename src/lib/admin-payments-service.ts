@@ -22,6 +22,8 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
+  netCollectedScopedPayments,
+  sumRefundedAndCreditedCents,
   summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
@@ -167,6 +169,7 @@ type PaymentCandidate = {
     id: string;
     status: string;
     checkIn: Date;
+    deletedAt: Date | null;
     member: {
       id: string;
       firstName: string;
@@ -490,6 +493,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             id: true,
             status: true,
             checkIn: true,
+            // #3372: the Net Collected booking scope reads it.
+            deletedAt: true,
             creditsFromCancellation: {
               select: {
                 amountCents: true,
@@ -660,30 +665,31 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
 
     // #3372: the "Net Collected Cash" tile is NET of refunds and credits over
     // CAPTURED payments, through `summarizeCollectedCash` - the derivation the
-    // dashboard and Reports also use. It used to be "Total Revenue": gross
-    // `amountCents` for every row the filter matched, so a PENDING or FAILED
-    // payment's amount counted under the default "all" status filter, and a
-    // refund was never subtracted.
+    // dashboard and Reports also use, which applies the one Net Collected
+    // booking scope itself (owner decision A: every booking not soft-deleted).
+    // It used to be "Total Revenue": gross `amountCents` for every row the
+    // filter matched, so a PENDING or FAILED payment's amount counted under the
+    // default "all" status filter, and a refund was never subtracted. It also
+    // left cancelled bookings out (#773), which kept a refunded booking's GROSS
+    // out of revenue; the figure is net now, so a cancelled booking counts at
+    // the fee the club kept, as it does on the dashboard and Reports.
     //
-    // A cancelled booking's payment still does not count toward it (#773), even
-    // though the row appears in the list. `refundedCents` is deliberately wider:
-    // every matched row, cancelled bookings included, which is what the
-    // "Refunded / Credited" tile beside it says it is. The two tiles are not a
-    // subtraction of one another, and their hints say so. Both are read from
-    // `summarizeCollectedCash`, so neither tile folds refunds by hand.
-    const retainedRows = filteredCandidates.filter(
-      (payment) => payment.booking.status !== "CANCELLED"
-    );
-    const retained = summarizeCollectedCash(retainedRows);
-    const matched = summarizeCollectedCash(filteredCandidates);
+    // `refundedCents` is deliberately wider: every matched row, a deleted
+    // booking's included, which is what the "Refunded / Credited" tile beside
+    // it says it is. The two tiles are not a subtraction of one another, and
+    // their hints say so.
+    const collected = summarizeCollectedCash(filteredCandidates);
     // The same possible-understatement check Reports runs beside its Net
-    // Collected Cash (#2408), over the same payments the tile counts.
+    // Collected Cash (#2408), over exactly the payments the tile counts.
     const ledgerGap = summarizeAdditionalLedgerGap(
-      retainedRows.map((payment) => ({ id: payment.bookingId, payment }))
+      netCollectedScopedPayments(filteredCandidates).map((payment) => ({
+        id: payment.bookingId,
+        payment,
+      }))
     );
     const summary = {
-      netCollectedCents: retained.netCollectedCents,
-      refundedCents: matched.refundedCents,
+      netCollectedCents: collected.netCollectedCents,
+      refundedCents: sumRefundedAndCreditedCents(filteredCandidates),
       count: filteredCandidates.length,
       additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,
       additionalLedgerGapBookings: ledgerGap.additionalLedgerGapBookings,

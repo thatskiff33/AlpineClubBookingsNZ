@@ -1082,13 +1082,14 @@ export default function PaymentsPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {/* #3372: NET, so the title says so - it used to read "Total Revenue"
             over a gross sum that also counted pending and failed payments. It
-            takes Reports' name for the same derivation. The two hints state the
-            asymmetry: this tile leaves cancelled bookings out (#773), the refund
-            tile counts every payment the filters match. */}
+            takes Reports' name for the same derivation and its one booking
+            scope (owner decision A): a cancelled booking counts at the fee the
+            club kept, a deleted booking not at all. The two hints state the
+            asymmetry: the refund tile counts every payment the filters match. */}
         <SummaryCard
           title="Net Collected Cash"
           icon={DollarSign}
-          hint="Payments received, less refunds and credits. Excludes cancelled bookings."
+          hint="Payments received, less refunds and credits. Cancelled bookings count at the fee kept; deleted bookings are left out."
         >
           {formatCents(summary.netCollectedCents, format)}
         </SummaryCard>
@@ -1096,7 +1097,7 @@ export default function PaymentsPage() {
           title="Refunded / Credited"
           icon={CreditCard}
           valueClassName="text-danger"
-          hint="All payments matching the filters, cancelled bookings included."
+          hint="All payments matching the filters, deleted bookings included."
         >
           {formatCents(summary.refundedCents, format)}
         </SummaryCard>

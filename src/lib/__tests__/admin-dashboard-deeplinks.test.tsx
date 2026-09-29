@@ -13,7 +13,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    payment: { groupBy: vi.fn() },
+    payment: { findMany: vi.fn() },
     refundRequest: { count: vi.fn() },
     adminCreditAdjustmentRequest: { count: vi.fn() },
     membershipCancellationRequest: { count: vi.fn() },
@@ -88,8 +88,8 @@ function mockDashboardCounts({
     .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
     .mockResolvedValueOnce(unsettledAdditionalUpcomingStays)
     .mockResolvedValueOnce(pendingBookingReviews);
-  // #3372: the revenue card groups the month's payments by status.
-  vi.mocked(prisma.payment.groupBy).mockResolvedValue([] as any);
+  // #3372: the revenue card reads the month's payments.
+  vi.mocked(prisma.payment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
@@ -456,12 +456,17 @@ describe("admin dashboard deep links", () => {
     // The month bounds behind "revenue this month". Written out by hand rather
     // than recomputed through the kernel, so a kernel defect cannot agree with
     // itself here.
-    // #3372: every status, grouped, so the net-collected-cash derivation and
-    // not this query decides which statuses are captured.
-    expect(vi.mocked(prisma.payment.groupBy).mock.calls).toContainEqual([
+    // #3372: every status and every booking, so the net-collected-cash
+    // derivation and not this query decides which statuses are captured and
+    // which bookings count.
+    expect(vi.mocked(prisma.payment.findMany).mock.calls).toContainEqual([
       {
-        by: ["status"],
-        _sum: { amountCents: true, refundedAmountCents: true },
+        select: {
+          status: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          booking: { select: { deletedAt: true } },
+        },
         where: {
           createdAt: {
             gte: new Date(chosen.monthStart),
