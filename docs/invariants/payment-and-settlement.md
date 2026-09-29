@@ -1287,8 +1287,8 @@ one, check the other.
 - An invoice is bound only to the current attempt at the settlement's total;
   anything else is abandoned on arrival: VOID queued, pointer cleared, link
   kept inactive.
-- **Money on an invoice is never walked away from.** An invoice that has
-  started being paid or credited is not voided, not released (the group keeps
+- **Money on an invoice is never walked away from.** An invoice with any
+  payment or credit is not voided, not released (the group keeps
   its beds, the owner's #3643 rule) and not replaced; each alerts once per
   kind. One Xero cannot show is held, with an alert, up to seven days past the
   deadline; one Xero does not have is never voided. A started stay with an
