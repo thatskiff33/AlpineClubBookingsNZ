@@ -40,7 +40,6 @@ import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
 } from "@/lib/admin-dataset-reset-state";
-import type { ClubFormat } from "@/lib/club-format";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
 // _components/report-charts and mount after the page shell. The placeholders
@@ -141,20 +140,6 @@ function getRevenueDescription(granularity: RevenueGranularity): string {
     return "Booked revenue allocated across selected stay nights and grouped by week for ranges from 15 to 90 days.";
   }
   return "Booked revenue allocated across selected stay nights and grouped by month for ranges longer than 90 days.";
-}
-
-function getAdditionalLedgerGapWarning(
-  summary: {
-    additionalLedgerGapCents: number;
-    additionalLedgerGapBookings: number;
-  },
-  clubFormat: ClubFormat,
-): string | null {
-  return formatNetCollectedLedgerGapWarning(
-    summary,
-    { one: "overlapping booking", many: "overlapping bookings" },
-    (cents) => formatCents(cents, clubFormat),
-  );
 }
 
 /**
@@ -337,7 +322,11 @@ export default function ReportsPage() {
 
   const occupancyData = data?.occupancy ?? [];
   const additionalLedgerGapWarning = data
-    ? getAdditionalLedgerGapWarning(data.summary, clubFormat)
+    ? formatNetCollectedLedgerGapWarning(
+        data.summary,
+        { one: "overlapping booking", many: "overlapping bookings" },
+        (cents) => formatCents(cents, clubFormat),
+      )
     : null;
   const unreconciledBookingCount =
     data?.summary.moneyReconciliation.byState.UNRECONCILED ?? 0;

@@ -1130,11 +1130,7 @@ function deriveBookingOperationalState(
         emptyXeroActivitySummary()
     ),
   ]);
-  // The one definition the payments list also asks, so the two lists cannot
-  // disagree about whether this booking's payment should have an invoice.
-  const invoiceExpected = isXeroInvoiceExpectedPaymentStatus(
-    booking.payment?.status
-  );
+  const invoiceExpected = isXeroInvoiceExpectedPaymentStatus(booking.payment?.status);
   // #3467: the set already applies the one evidence rule (stored id OR active
   // PRIMARY_INVOICE link), so the field is not OR'd in a second time here.
   const invoiceLinked = booking.payment

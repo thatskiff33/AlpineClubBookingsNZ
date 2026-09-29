@@ -502,8 +502,7 @@ export default function RefundRequestsPage() {
                             <>
                               {/* #3372: GROSS - what was captured before any
                                   refund - so the label says so. "Remaining
-                                  refundable" beside it is the net that can still
-                                  be refunded (`getRemainingRefundableCents`). */}
+                                  refundable" is `getRemainingRefundableCents`. */}
                               <div>
                                 <span className="text-muted-foreground">Gross paid:</span>{" "}
                                 {formatCents(payment.amountCents, format)}

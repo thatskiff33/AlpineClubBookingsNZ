@@ -147,14 +147,11 @@ export async function GET(request: NextRequest) {
         },
         orderBy: [{ checkIn: "asc" }, { id: "asc" }],
       }),
-      // #3372, owner decision A: Net Collected Cash counts the payments of
-      // EVERY booking staying in the range and lodge, whatever its status -
-      // the one Net Collected booking scope, which `summarizeCollectedCash`
-      // applies (every booking not soft-deleted, so a kept cancellation fee
-      // counts). So it reads its own payments rather than the report cohort
+      // #3372, owner decision A: Net Collected Cash reads its own payments -
+      // every booking in the range and lodge, any status - not the cohort
       // above, whose status list and "deleted" view govern the other figures.
-      // The booking's `deletedAt` is loaded because the derivation's row type
-      // requires it.
+      // `summarizeCollectedCash` applies the one Net Collected booking scope
+      // from the `deletedAt` loaded here.
       prisma.payment.findMany({
         where: {
           booking: {
@@ -172,10 +169,8 @@ export async function GET(request: NextRequest) {
           refundedAmountCents: true,
           additionalAmountCents: true,
           additionalPaymentStatus: true,
-          // #2408: the cash figure continues to come from amountCents. We
-          // load only ADDITIONAL ledger evidence so Reports can surface the
-          // same possible-understatement guard as Finance without rebuilding
-          // cash or returning transaction rows.
+          // #2408: ADDITIONAL ledger evidence only, for the understatement
+          // guard; cash still comes from amountCents.
           transactions: {
             where: { kind: PaymentTransactionKind.ADDITIONAL },
             select: {

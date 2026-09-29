@@ -478,9 +478,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         xeroInvoiceId: true,
         xeroInvoiceNumber: true,
         refundedAmountCents: true,
-        // #3372: the inputs of `summarizeAdditionalLedgerGap`, so the Net
-        // Collected Cash tile carries Reports' "may understate" check. The
-        // transactions are already loaded for their `updatedAt`.
+        // #3372: `summarizeAdditionalLedgerGap`'s inputs (Reports' check).
         additionalAmountCents: true,
         additionalPaymentStatus: true,
         updatedAt: true,
@@ -663,24 +661,15 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: the "Net Collected Cash" tile is NET of refunds and credits over
-    // CAPTURED payments, through `summarizeCollectedCash` - the derivation the
-    // dashboard and Reports also use, which applies the one Net Collected
-    // booking scope itself (owner decision A: every booking not soft-deleted).
-    // It used to be "Total Revenue": gross `amountCents` for every row the
-    // filter matched, so a PENDING or FAILED payment's amount counted under the
-    // default "all" status filter, and a refund was never subtracted. It also
-    // left cancelled bookings out (#773), which kept a refunded booking's GROSS
-    // out of revenue; the figure is net now, so a cancelled booking counts at
-    // the fee the club kept, as it does on the dashboard and Reports.
-    //
-    // `refundedCents` is deliberately wider: every matched row, a deleted
-    // booking's included, which is what the "Refunded / Credited" tile beside
-    // it says it is. The two tiles are not a subtraction of one another, and
-    // their hints say so.
+    // #3372: "Net Collected Cash" is net of refunds and credits over captured
+    // payments, in the one Net Collected booking scope (owner decision A) -
+    // both applied by `summarizeCollectedCash`, as on the dashboard and
+    // Reports. It was "Total Revenue": gross, pending and failed included,
+    // cancelled bookings left out (#773). `refundedCents` is every matched
+    // row, as the "Refunded / Credited" hint says; the tiles are not a
+    // subtraction of one another. The ledger-gap check is Reports' (#2408),
+    // over exactly the payments the tile counts.
     const collected = summarizeCollectedCash(filteredCandidates);
-    // The same possible-understatement check Reports runs beside its Net
-    // Collected Cash (#2408), over exactly the payments the tile counts.
     const ledgerGap = summarizeAdditionalLedgerGap(
       netCollectedScopedPayments(filteredCandidates).map((payment) => ({
         id: payment.bookingId,
