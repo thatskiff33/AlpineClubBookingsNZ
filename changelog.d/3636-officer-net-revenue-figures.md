@@ -15,7 +15,9 @@
   failed ones. It now counts only payments that were actually taken, less
   their refunds and credits, and still leaves out cancelled bookings, so this
   figure **only falls**. Each money card now says in small print what it
-  covers.
+  covers. On a partly refunded payment, the line under each row's amount now
+  reads "refunded or credited" rather than "refunded", because the amount
+  taken off may have gone back as account credit instead of to the card.
 
   The booking change requests panel shows a partly refunded payment at its net
   amount, with the amount paid and the amount refunded or credited underneath.
