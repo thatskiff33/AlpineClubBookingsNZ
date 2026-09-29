@@ -24,7 +24,7 @@ import { prisma } from "@/lib/prisma";
 // contract the editor builds name the SAME fields (#2931). `Record` requires
 // every contract field to be present, and the object literal's excess-property
 // check refuses any field the contract does not have — so adding a field on
-// either side, or dropping one, fails `npm run typecheck` rather than failing
+// either side, or dropping one, fails `pnpm run typecheck` rather than failing
 // in a browser as a 400 "Invalid input" that nobody could read. The write
 // contract was previously stated twice, here and by hand in the editor's save.
 const settingsSchema = z

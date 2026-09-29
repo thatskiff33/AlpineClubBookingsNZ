@@ -82,10 +82,10 @@ so the gaps are not silently implied as covered):
 
 ```bash
 cp .env.staging.example .env.staging   # once; adjust ports if taken
-npm run test:e2e                       # prepare stack + run suite
+pnpm run test:e2e                       # prepare stack + run suite
 ```
 
-`npm run test:e2e` (via `scripts/e2e-stack.sh`) does the following:
+`pnpm run test:e2e` (via `scripts/e2e-stack.sh`) does the following:
 
 1. Starts the staging compose Postgres (host port `STAGING_POSTGRES_PORT`,
    default 5433 — **never** the production 5432).
@@ -114,14 +114,14 @@ npm run test:e2e                       # prepare stack + run suite
 Other entry points:
 
 ```bash
-npm run test:e2e:prepare   # stack + fresh database only
-npm run test:e2e:run       # suite only (stack already prepared)
-npm run test:e2e:run -- --ui               # Playwright UI mode
-npm run test:e2e:run -- e2e/booking.spec.ts # one spec
-npm run test:e2e:down      # stop the stack and delete its volumes
+pnpm run test:e2e:prepare   # stack + fresh database only
+pnpm run test:e2e:run       # suite only (stack already prepared)
+pnpm run test:e2e:run --ui               # Playwright UI mode
+pnpm run test:e2e:run e2e/booking.spec.ts # one spec
+pnpm run test:e2e:down      # stop the stack and delete its volumes
 ```
 
-First-time setup: `npx playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
+First-time setup: `pnpm exec playwright install chromium` — the same command CI runs (see "How CI installs the browser" below).
 The HTML report lands in `playwright-report/`; traces and screenshots for
 failures land in `test-results/`.
 
@@ -152,13 +152,13 @@ unaffected:
 - **Project:** the `multi-lodge` Playwright project is only added to
   `playwright.config.ts` when `E2E_MULTI_LODGE=1`, and the default `chromium`
   project always ignores `e2e/multi-lodge/`, so the default suite's project and
-  spec list are byte-identical (verify with `npx playwright test --list`).
+  spec list are byte-identical (verify with `pnpm exec playwright test --list`).
 
 Run it locally (uses the same staging stack; keep off ports 5432/3001 in use):
 
 ```bash
-E2E_MULTI_LODGE=1 npm run test:e2e:prepare              # stack + second lodge
-E2E_MULTI_LODGE=1 npm run test:e2e:run -- --project=multi-lodge
+E2E_MULTI_LODGE=1 pnpm run test:e2e:prepare              # stack + second lodge
+E2E_MULTI_LODGE=1 pnpm run test:e2e:run --project=multi-lodge
 ```
 
 This project is a **coverage aid, not a substitute** for the manual two-lodge
@@ -246,13 +246,13 @@ suite is designed to run against a **fresh** prepare each time; re-running
 Playwright's Chromium needs the usual Linux browser libraries. On a host that
 is missing one (commonly `libasound.so.2`, which surfaces as
 `error while loading shared libraries: libasound.so.2`), install them with
-`npx playwright install-deps chromium` (needs root), or, without root, extract
+`pnpm exec playwright install-deps chromium` (needs root), or, without root, extract
 the package and point the loader at it:
 
 ```bash
 apt-get download libasound2t64 && dpkg -x libasound2t64*.deb extracted
 LD_LIBRARY_PATH="$PWD/extracted/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" \
-  npm run test:e2e:run
+  pnpm run test:e2e:run
 ```
 
 ### How CI installs the browser
@@ -262,11 +262,11 @@ Both E2E jobs get their browser from the composite action
 
 1. **Restore `~/.cache/ms-playwright`**, keyed on the resolved `@playwright/test`
    version, so a version bump misses the cache and nothing else does.
-2. **`npx playwright install chromium`** — run even on a cache hit, where it is a
+2. **`pnpm exec playwright install chromium`** — run even on a cache hit, where it is a
    ~2s no-op that verifies the restored tree and re-downloads anything partial.
 3. **Launch the browser and render a page** (`launch-check.mjs`). A browser that
    launches and lays out a page has every system library it needs.
-4. **Only if that check fails**, run `npx playwright install-deps chromium` and
+4. **Only if that check fails**, run `pnpm exec playwright install-deps chromium` and
    re-check.
 
 CI used to run `npx playwright install --with-deps chromium` on every run
@@ -299,7 +299,7 @@ Two env vars carry the keys, and they flow into the stack differently:
 | `STRIPE_SECRET_KEY` (`sk_test_…`) | Runtime env | Passed to the `app` container at runtime; picked up on restart, no rebuild needed. |
 
 - **Locally**: put both real test-mode keys in `.env.staging`, then run
-  `npm run test:e2e` (not `test:e2e:prepare` with `E2E_SKIP_APP_BUILD=1`) so the
+  `pnpm run test:e2e` (not `test:e2e:prepare` with `E2E_SKIP_APP_BUILD=1`) so the
   app image is rebuilt with the new publishable key. `e2e-stack.sh` parses
   `.env.staging` and exports both vars, so the Playwright process also sees them
   and stops skipping.

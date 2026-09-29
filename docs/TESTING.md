@@ -9,7 +9,7 @@ The Playwright browser suite is a separate thing with its own document —
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md). The journeys each suite is expected to
 cover live in [`END_TO_END_TEST_MATRIX.md`](END_TO_END_TEST_MATRIX.md).
 
-Run it with `npm test` (`vitest run`). It needs `DATABASE_URL` set to any value —
+Run it with `pnpm test` (`vitest run`). It needs `DATABASE_URL` set to any value —
 an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
@@ -17,7 +17,7 @@ the full local gate.
 ## CI shards and the required check
 
 Pull-request and `main` CI run the complete unit suite in four independent
-Vitest file shards (`npm test -- --shard=1/4` through `4/4`). Each shard checks
+Vitest file shards (`pnpm test --shard=1/4` through `4/4`). Each shard checks
 out the whole tree and full Git history: a disk-scanning census still sees all
 source files, and every test file, including each census and frozen-clock test,
 is assigned to exactly one shard. All shards use the same `vitest.config.mts`
@@ -214,7 +214,7 @@ RTL window forced back to its 1,000ms default** — the same both-directions pro
 
 ## Which project typechecks a test
 
-`npm run typecheck` runs three TypeScript projects, and between them they must
+`pnpm run typecheck` runs three TypeScript projects, and between them they must
 read every tracked `.ts`, `.tsx`, `.mts` and `.cts` file in the repository
 except `.semgrep/tests/acb-client-server-boundary.tsx` and
 `.semgrep/tests/acb-unsafe-raw-sql.ts`. Those two files are deliberately broken
@@ -287,7 +287,7 @@ becomes a silent zero. It got there in stages (programme #2694, issues
 slice at a time, and the ratchet was deleted once the count reached zero — a
 ratchet whose baseline is empty is a compiler option with extra steps. From
 here it is an ordinary compiler error like any other, caught by
-`npm run typecheck` and in the editor.
+`pnpm run typecheck` and in the editor.
 
 The Playwright project (`tsconfig.e2e.json`) inherits the flag and has been
 held to it since #3363, so anything that project includes (`e2e/**`, including
@@ -738,7 +738,7 @@ sudo apt-get install -y faketime
 # reaches the real calendar fails on every retry, so this does not soften the
 # signal; only a slowness flake passes.
 FAKETIME_DONT_FAKE_MONOTONIC=1 faketime -f '+366d' \
-  npm test -- --testTimeout=30000 --hookTimeout=30000 --retry=2
+  pnpm test --testTimeout=30000 --hookTimeout=30000 --retry=2
 ```
 
 ### Any workflow that runs the suite must check out full git history
@@ -763,13 +763,13 @@ anyone would look: the canary has no `pull_request` trigger, so no PR check sees
 it, and a developer's clone has full history exactly like `ci.yml`, so a local
 run cannot see it either.
 
-`npm run ci:workflowcheck` (`scripts/ci/check-workflow-suite-checkout-depth.mjs`,
+`pnpm run ci:workflowcheck` (`scripts/ci/check-workflow-suite-checkout-depth.mjs`,
 a step in the `verify` job) is what keeps them matched. It parses
 `.github/workflows/*.yml`, works out from the parsed shell command which jobs run
 the **whole** suite — wrapped invocations included, which is why the canary's
-`faketime -f '${{ matrix.offset }}' npm test -- …` counts — and fails when such a
+`faketime -f '${{ matrix.offset }}' pnpm test …` counts — and fails when such a
 job has no `actions/checkout` step with `fetch-depth: 0`. A job that runs only
-**targeted** files (`npx vitest run <path>`) needs full history only when one of
+**targeted** files (`pnpm exec vitest run <path>`) needs full history only when one of
 those files reads the repository's own history, which is why `migration-drift`
 and `data-migration-verification` are correct checking out shallow.
 
@@ -793,7 +793,7 @@ different "today") and would fail suites that are perfectly correct.
 ```bash
 # Reproduce a specific rollover — this is the date #2443 predicted would break
 # the two subscription-gate suites, and it does.
-TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z npx vitest run \
+TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z pnpm exec vitest run \
   src/lib/__tests__/phase2-guest-subscription.test.ts
 ```
 
@@ -856,7 +856,7 @@ unit-side ones that bought the frozen clock).
 | [`e2e-calendar-navigation.test.ts`](../src/lib/__tests__/e2e-calendar-navigation.test.ts) | That `walkCalendarToMonth` still derives its own direction from the month the calendar is showing, and that the retroactive spec's hop bound stays tight enough to be a real check. |
 
 All three are **disk-scanning**: they read `e2e/` from the filesystem, so they
-have no import edge to the files they scan and `npm run test:related` can never
+have no import edge to the files they scan and `pnpm run test:related` can never
 select them from a diff. Run them by name when a change touches `e2e/`.
 
 ### The walk reads the calendar rather than being told
@@ -1063,7 +1063,7 @@ focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
 listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
-attention. It scans the tree from disk, so `npm run test:related` cannot reach
+attention. It scans the tree from disk, so `pnpm run test:related` cannot reach
 it; run it by name when an admin file gains a scroll or a focus.
 
 ## A fake store applies `where` through one evaluator
@@ -1221,7 +1221,7 @@ So:
 ### Selecting the censuses a change can reach
 
 A census reads source from disk, so it has no import edge to what it scans and
-`npm run test:related` can never select it from a diff — `AGENTS.md` says so, and
+`pnpm run test:related` can never select it from a diff — `AGENTS.md` says so, and
 says the class stays CI-caught by design. A lane that wants to catch one *before*
 CI has to pick the set by grep, and **grepping for the paths your diff changed
 under-selects**. #2958 measured how (#3323).
@@ -1284,7 +1284,7 @@ Two things it does differently from the censuses above, both deliberate:
   tell you whether it would have caught the defect it was written for.
 
 Like every disk-scanning test here it has no import edge to the `.tsx` files it
-reads, so `npm run test:related` cannot select it from a diff. Run it by name
+reads, so `pnpm run test:related` cannot select it from a diff. Run it by name
 when a change adds or edits a numeric input.
 
 ### Suites that time out under load and pass alone
@@ -1312,7 +1312,7 @@ cannot show both is a claim rather than evidence:
    class, and #2886 removed two suites that had been excused as
    "load-sensitive" when they were failing deterministically on Windows for
    real reasons (the shell-out section above).
-2. An isolated re-run of that one file — `npx vitest run <path>` — passes.
+2. An isolated re-run of that one file — `pnpm exec vitest run <path>` — passes.
 
 When both hold: record the red as environmental in your evidence, naming the
 suite and the isolated re-run that passed, and move on. Do not raise
@@ -1322,7 +1322,7 @@ limit under an ordinary batch is a candidate for an inline per-test budget,
 measured and reasoned where it is written; that is a change with its own issue.
 
 **The entries.** Every one carries a figure measured on this repository, not an
-inherited assertion. Isolated means `npx vitest run <that file>`; "under load"
+inherited assertion. Isolated means `pnpm exec vitest run <that file>`; "under load"
 means one vitest invocation over a by-name batch of every test file that reads
 the tree from disk, on a machine doing nothing else. Measured 19 September 2026
 on #3395 at `706a80a91` (vitest 4.1.11, Node 24, a 20-core Windows 11 host)
@@ -1429,12 +1429,12 @@ Two controls enforce this, and they are complementary rather than redundant:
 
 - the helper's parameter is **required** (it accepts `undefined`, because a route
   that passes no options is legitimate), so a bare `evaluateRequireAdminMock()`
-  is a compile error that `npm run typecheck` catches;
+  is a compile error that `pnpm run typecheck` catches;
 - `require-admin-mock-forwarding-contract.test.ts` parses every test file that
   mentions the helper and fails on the shapes the type system cannot see —
   `evaluateRequireAdminMock({})` compiles cleanly and is just as inert. It reads
   `src/` from disk, so it has no import edge to the suites it scans and
-  `npm run test:related` will not select it. Run it directly.
+  `pnpm run test:related` will not select it. Run it directly.
 
 ### Prove the gate, not the guard
 
@@ -1539,7 +1539,7 @@ narrowing only removes callers, so its refusals are sound and its admissions mea
 degraded silently would reintroduce the blindness it exists to remove.
 
 It reads `src/` from disk for the enumeration, so like the forwarding contract
-above it has no import edge to the routes it covers and `npm run test:related`
+above it has no import edge to the routes it covers and `pnpm run test:related`
 will not select it. **Run it by name when you touch admin authorization, the
 route-to-area map, or either guard.**
 

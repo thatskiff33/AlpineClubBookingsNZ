@@ -4,7 +4,7 @@ Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-SSOT`** — a fact is defined once and read
 from that one place. What the repository already requires of documentation, and
-enforces there with `npm run docs:indexcheck`, these rules require of code.
+enforces there with `pnpm run docs:indexcheck`, these rules require of code.
 
 Read this file when you are about to add a constant, helper, formatter, type,
 validation rule or configuration value; when you are writing a guard, a census

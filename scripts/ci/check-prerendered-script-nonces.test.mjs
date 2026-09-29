@@ -13,7 +13,7 @@ import {
 
 /**
  * Unit coverage for the pure half of the prerendered-nonce gate (#2356). The
- * gate itself runs against real build output in CI, after `npm run build`;
+ * gate itself runs against real build output in CI, after `pnpm run build`;
  * these tests pin the RULES so a future edit cannot loosen them silently.
  */
 
@@ -135,7 +135,7 @@ describe("checkBuildOutput", () => {
     // The failure mode the check must never have: a green result from a run
     // that inspected nothing.
     expect(() => checkBuildOutput("./definitely-not-a-build-dir-2356")).toThrow(
-      /must run AFTER `npm run build`/,
+      /must run AFTER `pnpm run build`/,
     );
   });
 

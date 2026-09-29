@@ -499,7 +499,7 @@ export async function planBookingRequestGuestConsent<
  * only thing that makes "a fifth pipeline cannot be added without answering the
  * question" true rather than aspirational. Pinned by the `@ts-expect-error` case
  * in `src/lib/__tests__/booking-request-guest-nights.test.ts`, which fails
- * `npm run typecheck` if the field ever goes back to optional.
+ * `pnpm run typecheck` if the field ever goes back to optional.
  *
  * `dietary` IS REQUIRED for the same reason (#3029, `INV-MOD-059`): the new
  * row's dietary/allergy snapshot, as `resolveBookingGuestDietary` decided it for

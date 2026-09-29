@@ -29,7 +29,11 @@
     "scripts/branding/generate-calendar-icons.mjs",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
-    "scripts/codex/issue-to-prompt.mjs"
+    "scripts/codex/issue-to-prompt.mjs",
+    // Transpiled by the `theme:vendor-transpile` script, never imported. knip
+    // traced it through that script while it was `npx -y esbuild@… <file>`,
+    // but it does not parse `pnpm dlx` (#3673), so it needs saying here.
+    "scripts/theme/vendor/generate-radix-colors.tsx"
     // NOTE: the five documented operator CLIs listed here until #2850 —
     // xero-booking-repair, xero-refund-note-link-repair,
     // backfill-orphaned-applied-credits, audit-ib-hold-clearing and
@@ -74,6 +78,10 @@
     "psql", // src/lib/backup.ts + scripts/audit-access-role-membership-cleanup.ts
     "pg_dump", // src/lib/backup.ts logical backups
     "gunzip", // src/lib/backup.ts restore path
+    // Windows system tools the worktree-removal suite uses to build a
+    // volume-path junction and an unreadable folder (#3673).
+    "mountvol",
+    "icacls",
     "k6" // load/ harness, run via the `load:*` scripts (#1884); host binary, not a dep
   ],
   "ignoreIssues": {

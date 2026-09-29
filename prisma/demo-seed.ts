@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// DEMO DATA SEED  —  `npm run db:seed:demo`
+// DEMO DATA SEED  —  `pnpm run db:seed:demo`
 //
 // Populates a LOCAL demo database with rich, made-up data so every feature can
 // be shown off: members across every role/age-tier/lifecycle state, family

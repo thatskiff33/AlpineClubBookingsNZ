@@ -469,7 +469,7 @@ describe("this repository", () => {
           "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
           "'origin/main' }}",
       },
-      run: 'npm run quality:budget -- --base "$BUDGET_BASE"',
+      run: 'pnpm run quality:budget --base "$BUDGET_BASE"',
     });
   });
 

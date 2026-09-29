@@ -300,7 +300,7 @@ export async function runFinanceSync(
     // transaction. See the field's own note on the context type.
     //
     // The CLI-reachable reader rather than the request-scoped one: this service
-    // is also the entry point of `npm run finance:backfill-monthly-facts`, and a
+    // is also the entry point of `pnpm run finance:backfill-monthly-facts`, and a
     // `server-only` import throws under `tsx` before the script prints anything.
     clubTimeZone: await readClubTimeZoneOutsideRequest(),
   };

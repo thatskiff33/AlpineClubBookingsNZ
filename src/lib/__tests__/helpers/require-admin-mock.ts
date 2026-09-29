@@ -58,7 +58,7 @@ export type RequireAdminMockOptions = {
  * 1. **`options` is a required parameter** (it accepts `undefined`, because a
  *    route that passes nothing is legitimate — but you must pass *something*).
  *    So `evaluateRequireAdminMock()` is a compile error, not a silent
- *    downgrade, and `npm run typecheck` fails the build on it.
+ *    downgrade, and `pnpm run typecheck` fails the build on it.
  * 2. **`require-admin-mock-forwarding-contract.test.ts`** parses every test
  *    file that mentions this helper and fails when a call does not forward its
  *    enclosing function's own first parameter — which is the shape the type

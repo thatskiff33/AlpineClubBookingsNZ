@@ -28,7 +28,7 @@ import {
  * a query that left the field out handed the checks `undefined`, and the stored
  * roles of a login-disabled member resolved in full.
  *
- * The `@ts-expect-error` lines ARE the test. `npm run typecheck` fails on an
+ * The `@ts-expect-error` lines ARE the test. `pnpm run typecheck` fails on an
  * UNUSED `@ts-expect-error`, so if `canLogin` ever becomes optional again on
  * any of these, the directive stops being needed and the build goes red here.
  * The runtime assertions then pin what each check answers once the field is

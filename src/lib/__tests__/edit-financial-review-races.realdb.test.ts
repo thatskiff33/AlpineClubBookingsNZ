@@ -46,7 +46,7 @@
  * To run directly against a throwaway scratch database:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
- *   npx vitest run src/lib/__tests__/edit-financial-review-races.realdb.test.ts
+ *   pnpm exec vitest run src/lib/__tests__/edit-financial-review-races.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";

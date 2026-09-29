@@ -1,8 +1,8 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Generate the deployed-code knowledge bundle (AID-3, #2372).
  *
- *   GIT_COMMIT_SHA=<sha> npm run diagnostics:bundle
+ *   GIT_COMMIT_SHA=<sha> pnpm run diagnostics:bundle
  *
  * Runs in the DOCKER BUILDER (and locally the same way), where the dependencies
  * exist — a club server's `docker compose build` has no host Node toolchain, so

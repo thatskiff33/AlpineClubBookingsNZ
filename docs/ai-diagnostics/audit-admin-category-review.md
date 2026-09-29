@@ -579,7 +579,7 @@ land.
 
 ## How to check this page is still true
 
-`npm run audit:census` prints the live distribution, and
+`pnpm run audit:census` prints the live distribution, and
 `src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
 manifest moving with it. The numbers this page was written against:
 

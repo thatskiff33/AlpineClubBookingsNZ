@@ -26,7 +26,7 @@ vi.mock("@sentry/nextjs", () => ({
  * the only reference to `./instrumentation.node` from the convention module must
  * be the dynamic `await import(…)` inside `register()`, never a static
  * `import`/`export … from`. That is a cheap proxy, not the property itself —
- * asserting on the emitted edge bundle would need a full `npm run build` in the
+ * asserting on the emitted edge bundle would need a full `pnpm run build` in the
  * unit suite. It catches the direct re-export; a node-only dependency arriving
  * transitively through some new static import would still slip past it.
  */

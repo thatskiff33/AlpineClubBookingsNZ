@@ -5,7 +5,7 @@
  * with `bookingOwner()`. This census is what keeps that true: it reads every
  * non-test source file from disk and fails when a direct read comes back.
  *
- * `npm run test:related` CANNOT SELECT THIS FILE. It has no import edge to the
+ * `pnpm run test:related` CANNOT SELECT THIS FILE. It has no import edge to the
  * tree it scans, so the module graph cannot reach it from a changed file — the
  * same blind spot `AGENTS.md` names for the other disk-scanning censuses in
  * this directory. It is CI-caught by design; run it by name.
@@ -75,7 +75,7 @@
  * silently and raises `PrismaClientValidationError` on the first real call:
  * "Unknown field `organisation` for select statement on model `BookingGuest`".
  * A `select` written where a FILTER belongs fails the same way. Neither shape
- * reaches a test that does not execute the query, and `npm run typecheck` is
+ * reaches a test that does not execute the query, and `pnpm run typecheck` is
  * green for both — measured, not assumed.
  *
  * #3369's ownership sweep added `organisation` beside `member` in several

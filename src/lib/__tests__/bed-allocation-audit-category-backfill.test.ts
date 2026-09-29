@@ -29,7 +29,7 @@
  * on — and the rest of INV-OPS-012 is a rule a reviewer applies.
  *
  * DO NOT TRANSCRIBE THESE TWO NUMBERS FROM ANYWHERE — re-measure them with
- * `npm run audit:census` and read the assertion in `audit-writer-census.test.ts`,
+ * `pnpm run audit:census` and read the assertion in `audit-writer-census.test.ts`,
  * which counts the union of the four per-site maps and is the only thing here
  * that measures anything. The pair went stale after #2755 (3 low), again after
  * #2765 (16 low), and again on #2940, where this sentence and INV-OPS-012 both

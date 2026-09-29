@@ -65,7 +65,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml \
-  exec app npx tsx --conditions=react-server prisma/seed.ts
+  exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
 ```
 
 Verify the target:
@@ -95,7 +95,7 @@ to run when it is absent, so an agent must record the check as not run instead
 of guessing a host or starting a shared/live server:
 
 ```bash
-STAGING_APP_URL=http://localhost:3001 npm run review:staging:a11y
+STAGING_APP_URL=http://localhost:3001 pnpm run review:staging:a11y
 ```
 
 Use that command only after the staging health checks above pass. Without a
@@ -105,8 +105,8 @@ contracts and leave the browser/Lighthouse pass as a named manual follow-up.
 ```bash
 STAGING_BASE_URL=http://localhost:3001
 
-npx --yes lighthouse "$STAGING_BASE_URL" --only-categories=accessibility --chrome-flags="--headless"
-npx --yes lighthouse "$STAGING_BASE_URL/login" --only-categories=accessibility --chrome-flags="--headless"
+pnpm dlx lighthouse "$STAGING_BASE_URL" --only-categories=accessibility --chrome-flags="--headless"
+pnpm dlx lighthouse "$STAGING_BASE_URL/login" --only-categories=accessibility --chrome-flags="--headless"
 ```
 
 For authenticated pages:

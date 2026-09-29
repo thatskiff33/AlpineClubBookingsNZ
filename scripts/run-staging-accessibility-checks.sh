@@ -33,7 +33,7 @@ if [ -z "$LIGHTHOUSE_BIN" ]; then
   if command -v lighthouse >/dev/null 2>&1; then
     LIGHTHOUSE_BIN="lighthouse"
   else
-    LIGHTHOUSE_BIN="npx --yes lighthouse@12"
+    LIGHTHOUSE_BIN="pnpm dlx lighthouse@12"
   fi
 fi
 

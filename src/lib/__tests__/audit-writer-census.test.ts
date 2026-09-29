@@ -152,7 +152,7 @@ function currentAuditCensusClaims(): CurrentCensusClaim[] {
       shared regex is how a HISTORICAL statement starts matching.
     */
     {
-      // The fenced `npm run audit:census` paste on the category-review page. Its
+      // The fenced `pnpm run audit:census` paste on the category-review page. Its
       // DISTRIBUTION is compared against the manifest by its own test below.
       pattern: /\brow-producing\s+sites:\s+(\d+)\s+uncategorised:\s+(zero|\d+)\b/giu,
     },
@@ -306,7 +306,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     ]);
     expect(
       claims,
-      "A runtime or document current-fact copy is stale. Re-run `npm run " +
+      "A runtime or document current-fact copy is stale. Re-run `pnpm run " +
         "audit:census`, then update every discovered claim in the same commit.",
     ).toEqual(
       claims.map(({ file, uncategorised }) => ({
@@ -327,7 +327,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
   it("pins the pasted census DISTRIBUTION, not only its total", () => {
     /*
-      The fenced `npm run audit:census` output on the category-review page states
+      The fenced `pnpm run audit:census` output on the category-review page states
       the eleven per-category counts as well as the total, and nothing read either.
       A pass that moves a writer between two categories leaves the total untouched —
       #2755 did exactly that — so a total-only pin would leave that block asserting
@@ -358,7 +358,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     expect(
       pasted,
       "The pasted census distribution on docs/ai-diagnostics/audit-admin-category-review.md " +
-        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `npm run audit:census` " +
+        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `pnpm run audit:census` " +
         "and paste the new block.",
     ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
   });
