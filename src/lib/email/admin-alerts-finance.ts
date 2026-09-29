@@ -58,7 +58,8 @@ export async function sendAdminPaymentFailureAlert(data: {
 },
   format: ClubFormat,
 ) {
-  await sendToAdmins({
+  // Returned so a once-only caller can hold its claim on it (#3635 C5).
+  return sendToAdmins({
     subject: `Payment Failed — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminPaymentFailureTemplate(data, format)),
     templateName: "admin-payment-failure",

@@ -143,6 +143,7 @@ describe("general cron runner", () => {
           resumedInterruptedCancels: 0,
           heldForInvoicePayment: 0,
           heldForUnreadableInvoice: 0,
+          heldForStartedStay: 0,
           releasedToMemberPays: 0,
           startedStayAlerts: 0,
         })),
@@ -216,6 +217,7 @@ describe("general cron runner", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     });
@@ -342,6 +344,7 @@ describe("general cron runner", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     }));

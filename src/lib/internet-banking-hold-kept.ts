@@ -37,10 +37,9 @@ import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email";
 import type { InternetBankingHoldKeptReason } from "@/lib/email-message-notes";
 import type { HoldPaymentEvidence } from "@/lib/internet-banking-hold-payment-evidence";
 import logger from "@/lib/logger";
+import { UNREADABLE_INVOICE_HOLD_BOUND_MS } from "@/lib/unreadable-invoice-hold-bound";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 
-/** The orchestrator's bound on an unreadable invoice (#3643, matches #3642). */
-export const UNREADABLE_HOLD_BOUND_DAYS = 7;
 
 /**
  * Live Xero reads one run may spend on expired holds. Each read is one call per
@@ -49,7 +48,6 @@ export const UNREADABLE_HOLD_BOUND_DAYS = 7;
  */
 export const HOLD_READS_PER_RUN = 20;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const RUN_SLOT_MS = 15 * 60 * 1000;
 
 export interface ExpiredHoldView {
@@ -89,7 +87,7 @@ export function decideExpiredHold(
     const boundPassed =
       // The one started-stay derivation (INV-PAY-016), never a raw Date compare.
       bookingStayHasStarted(hold.booking.checkIn, clubToday) ||
-      now.getTime() >= holdUntil.getTime() + UNREADABLE_HOLD_BOUND_DAYS * DAY_MS;
+      now.getTime() >= holdUntil.getTime() + UNREADABLE_INVOICE_HOLD_BOUND_MS;
     return boundPassed ? { action: "release-at-bound" } : { action: "keep", reason: "unreadable" };
   }
   return { action: "release" };

@@ -38,6 +38,12 @@ const mocks = vi.hoisted(() => ({
   readInvoiceState: vi.fn(),
   alertInvoice: vi.fn(),
   loadModuleFlags: vi.fn(),
+  // #3635 (C5): the started-stay alert runs for real over these.
+  settlementDetailFindUnique: vi.fn(),
+  sendAdminPaymentFailureAlert: vi.fn(),
+  claimAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
 }));
 
 const txClient = {
@@ -56,7 +62,10 @@ const txClient = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    groupBookingSettlement: { findMany: mocks.settlementFindMany },
+    groupBookingSettlement: {
+      findMany: mocks.settlementFindMany,
+      findUnique: mocks.settlementDetailFindUnique,
+    },
     groupBooking: { findMany: mocks.groupBookingFindMany },
     $transaction: mocks.transaction,
   },
@@ -74,8 +83,21 @@ vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
-vi.mock("@/lib/group-settlement-invoice-alerts", () => ({
+// The 24-hour invoice alert is mocked; #3635's once-ever started-stay alert is
+// the real one, over a mocked claim store, so its claim rule is exercised.
+vi.mock("@/lib/group-settlement-invoice-alerts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/group-settlement-invoice-alerts")>()),
   alertGroupSettlementInvoice: mocks.alertInvoice,
+}));
+vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/alert-cooldown")>()),
+  claimAlertCooldown: mocks.claimAlertCooldown,
+  deferAlertCooldown: mocks.deferAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
+}));
+// #3635: the started-stay rule reads the club's day in the club's zone.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
 }));
 vi.mock("@/lib/group-cancel", () => ({
   settleGroupBookingOnOrganiserCancel:
@@ -95,6 +117,7 @@ vi.mock("@/lib/email", () => ({
   sendGroupSettlementExpiredEmail: mocks.sendSettlementExpired,
   sendGroupJoinReleasedEmail: mocks.sendJoinReleased,
   sendGroupJoinCancelledEmail: mocks.sendJoinCancelled,
+  sendAdminPaymentFailureAlert: mocks.sendAdminPaymentFailureAlert,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -193,6 +216,17 @@ beforeEach(() => {
   mocks.readInvoiceState.mockResolvedValue({ kind: "open", totalCents: 30000 });
   mocks.alertInvoice.mockResolvedValue(undefined);
   mocks.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+  mocks.settlementDetailFindUnique.mockResolvedValue(null);
+  mocks.sendAdminPaymentFailureAlert.mockResolvedValue({
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  });
+  mocks.claimAlertCooldown.mockResolvedValue(true);
+  mocks.deferAlertCooldown.mockResolvedValue(undefined);
+  mocks.releaseAlertCooldown.mockResolvedValue(undefined);
 });
 
 describe("groupSettlementReapDeadline", () => {
@@ -240,6 +274,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     });
@@ -497,16 +532,94 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.alertInvoice.mock.calls[0][0].errorMessage).toMatch(/switched off/);
   });
 
-  it("releases, with an alert, a group Xero still cannot show once its hold ends at check-in (#3642)", async () => {
-    // Check-in has arrived: the hold ends (seven days past the deadline would
-    // end it too, for a later check-in).
+  // #3635 (C5, the orchestrator's decision; `INV-PAY-016`): a group whose
+  // invoice Xero cannot show is treated like a single booking's hold on
+  // check-in day. Releasing it would abandon the invoice and cancel joiners
+  // whose organiser may already have paid by bank transfer.
+  it("keeps a group Xero cannot show once its stay has started, and alerts the treasurer once", async () => {
+    // NOW is 12:00 on 1 August in Auckland: a 1 August check-in has started.
     const settlement = ibSettlement("xinv_unreadable");
-    settlement.groupBooking.organiserBooking.checkIn = new Date(NOW.getTime() - HOUR);
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-01");
     mocks.settlementFindMany.mockResolvedValue([settlement]);
     mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
     mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
 
     const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result).toMatchObject({ reaped: 0, heldForStartedStay: 1, heldForUnreadableInvoice: 0 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "group-settlement-started-stay:settle-1" }),
+    );
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(
+      /kept, not released/,
+    );
+    // Delivered: the claim is kept for good, so the next run sends nothing.
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+    const again = await reapStaleGroupSettlements(NOW);
+    expect(again.heldForStartedStay).toBe(1);
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the started-stay claim a day when no admin can receive it", async () => {
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-07-31");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.sendAdminPaymentFailureAlert.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+
+    await reapStaleGroupSettlements(NOW);
+
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith({
+      key: "group-settlement-started-stay:settle-1",
+      claimedAt: claim.now,
+      windowMs: 36_500 * 86_400_000,
+      retryAfterMs: 86_400_000,
+    });
+  });
+
+  it("still holds a group Xero cannot show the day before its check-in", async () => {
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-02");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+
+    const result = await reapStaleGroupSettlements(new Date("2026-08-01T11:00:00.000Z"));
+
+    expect(result).toMatchObject({ reaped: 0, heldForUnreadableInvoice: 1, heldForStartedStay: 0 });
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("releases, with an alert, a group Xero still cannot show seven days past its deadline (#3642)", async () => {
+    // Check-in stays later (15 August), so only the seven-day bound can end it.
+    const settlement = ibSettlement("xinv_unreadable");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    const deadline = groupSettlementReapDeadline(
+      settlement.updatedAt as Date,
+      settlement.groupBooking.organiserBooking.checkIn,
+    );
+
+    const inside = await reapStaleGroupSettlements(
+      new Date(deadline.getTime() + 7 * 24 * HOUR - 60_000),
+    );
+    expect(inside).toMatchObject({ reaped: 0, heldForUnreadableInvoice: 1 });
+
+    const result = await reapStaleGroupSettlements(new Date(deadline.getTime() + 7 * 24 * HOUR));
 
     expect(result.reaped).toBe(1);
     expect(result.heldForUnreadableInvoice).toBe(0);
@@ -578,6 +691,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     });
@@ -630,6 +744,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     });
@@ -664,6 +779,7 @@ describe("reapStaleGroupSettlements", () => {
       resumedInterruptedCancels: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
       releasedToMemberPays: 0,
       startedStayAlerts: 0,
     });
