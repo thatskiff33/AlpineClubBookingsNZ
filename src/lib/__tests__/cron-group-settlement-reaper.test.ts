@@ -567,6 +567,44 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
   });
 
+  // #3635 (the orchestrator decision read in full: "treated like a single
+  // hold on check-in day"): readable-and-unpaid, and missing in Xero, are kept
+  // too once the stay has started, the #3663 single-hold rule.
+  it.each([
+    ["shows the invoice unpaid", { kind: "open", totalCents: 30000 }, /shows no payment yet/],
+    ["does not have the invoice", { kind: "not_found" }, /is not in the connected Xero organisation/],
+  ])("keeps a started-stay group when Xero %s, and alerts the treasurer once", async (_label, state, wording) => {
+    const settlement = ibSettlement("xinv_started");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-01");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockResolvedValue(state);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result).toMatchObject({ reaped: 0, heldForStartedStay: 1, releasedChildBookings: 0 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "group-settlement-started-stay:settle-1" }),
+    );
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(wording);
+  });
+
+  it("still releases a readable, unpaid group the day before its check-in", async () => {
+    const settlement = ibSettlement("xinv_open");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-02");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(new Date("2026-08-01T11:00:00.000Z"));
+
+    expect(result).toMatchObject({ reaped: 1, heldForStartedStay: 0 });
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
   it("holds the started-stay claim a day when no admin can receive it", async () => {
     const settlement = ibSettlement("xinv_unreadable");
     settlement.groupBooking.organiserBooking.checkIn = new Date("2026-07-31");
