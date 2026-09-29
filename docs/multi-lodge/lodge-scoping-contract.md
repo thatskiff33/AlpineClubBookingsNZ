@@ -643,7 +643,12 @@ record the outcome here when decided:
   or linked to the same lodge → code defaults; a legacy row linked elsewhere
   is never inherited, so one lodge's values cannot leak to another.
   `LodgeSettings` retains its existing first-write compatibility behavior and
-  `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row.
+  `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row. A config
+  import that carries a lodge's `capacity` (#3407) writes the lodge's own row,
+  or the legacy row only when that row is already linked to this lodge; it
+  never claims an unlinked legacy row, because that row serves every lodge
+  without an own row. A new own row carries across the soft cap an unlinked
+  legacy row was serving the lodge.
   `BedAllocationSettings` reads the same compatibility chain, but its admin
   API always requires one active lodge: a write updates `default` only when no
   lodge-id row exists and that legacy row is already linked to this lodge;

@@ -362,13 +362,19 @@ deeper reference for what each category contains and the import safety model.
   that still serves it. It is emitted only when a figure is set. Import checks it
   against the same bounds as **Add lodge** (a whole number from 1 to 100,000);
   anything else blocks preview and Apply. Inside the import transaction it is
-  written to the row the resolver reads: a lodge the import creates is born with
-  its own row, an existing lodge's own row is edited, and a lodge still served by
-  the legacy row is edited there, so no lodge ever ends up with two rows saying
-  different things. Absent or `null` leaves the target's capacity untouched in
-  both modes, so a pre-#3407 bundle imports exactly as before, and a lodge it
-  creates shows "not set up for bookings yet" until an officer sets the figure.
-  This is additive and stays within format version 4.
+  written by the per-lodge rule in the
+  [lodge-scoping contract](../multi-lodge/lodge-scoping-contract.md): a lodge
+  the import creates is born with its own row; an existing lodge's own row is
+  edited; the legacy row is edited only when it is already linked to this
+  lodge; otherwise the lodge gets its own row. The import never claims an
+  unlinked legacy row. That row serves every lodge without an own row (a
+  guided-setup install writes one), so claiming it for one lodge would leave
+  the others, the default lodge included, with no capacity. Other lodges are
+  never touched. Absent or `null` leaves the target's capacity untouched in
+  both modes, so a pre-#3407 bundle imports exactly as before. A lodge such a
+  bundle creates is born without a figure; the preview warns about it, and the
+  lodge shows "not set up for bookings yet" until an officer sets one. This is
+  additive and stays within format version 4.
   `seasons.csv` carries the season windows plus the per-season **flat
   whole-lodge night rate** (#2338):
   `name, type, startDate, endDate, active, flatWholeLodgeNightCents` — the last

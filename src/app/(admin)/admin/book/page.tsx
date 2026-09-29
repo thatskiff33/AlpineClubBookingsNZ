@@ -5,7 +5,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
-import { lodgeCapacitySettingsHref } from "@/components/lodge-not-set-up-notice";
+import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -146,6 +146,7 @@ export default function AdminBookPage() {
     reload: reloadLodges,
   } = useLodgeOptions("admin");
   const [lodgeId, setLodgeId] = useState<string | null>(null);
+  const lodgeSettingsHref = useLodgeCapacitySettingsHref(lodgeId);
   const activeLodgeIdRef = useRef<string | null>(lodgeId);
   const dateSelectionSequenceRef = useRef(0);
   const dateSelectionAbortRef = useRef<AbortController | null>(null);
@@ -1090,7 +1091,7 @@ export default function AdminBookPage() {
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
               allowFullDates
-              lodgeSettingsHref={lodgeCapacitySettingsHref(lodgeId)}
+              lodgeSettingsHref={lodgeSettingsHref}
             />
           </CardContent>
         </Card>

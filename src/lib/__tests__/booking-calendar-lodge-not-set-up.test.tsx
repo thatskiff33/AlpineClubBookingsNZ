@@ -5,6 +5,7 @@ import {
   CLUB_TIME_TEST_ZONE,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
@@ -14,7 +15,30 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { BookingCalendar } from "@/components/booking-calendar";
-import { lodgeCapacitySettingsHref } from "@/components/lodge-not-set-up-notice";
+import {
+  LODGE_CAPACITY_OVERRIDE_FIELD_ID,
+  lodgeCapacitySettingsHref,
+  useLodgeCapacitySettingsHref,
+} from "@/components/admin/lodge-capacity-settings-link";
+import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
+const BOOKINGS_ONLY: AdminPermissionMatrix = {
+  overview: "view", bookings: "edit", membership: "none", finance: "none",
+  lodge: "none", content: "none", support: "none",
+};
+const session: { matrix: AdminPermissionMatrix } = { matrix: BOOKINGS_ONLY };
+
+// The census's two matchers: a settings-link prop given any value form, and a
+// spread into either component, which could carry one unseen.
+const PROP = /\b(?:lodgeSettingsHref|settingsHref)\s*=\s*[{"']/;
+const SPREAD_INTO = /<(?:BookingCalendar|LodgeNotSetUpNotice)\b[^]*?\{\s*\.\.\.[^]*?\/>/;
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: { user: { id: "officer-1", adminPermissionMatrix: session.matrix } },
+    status: "authenticated",
+  }),
+}));
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
 
@@ -133,7 +157,7 @@ describe("a lodge with no capacity says it is not set up yet (#3407)", () => {
 });
 
 describe("the not-set-up notice links an officer to the capacity settings (#3407)", () => {
-  it("links /admin/book's calendar to the lodge's capacity field", async () => {
+  it("links /admin/book's calendar to the lodge hub's capacity field", async () => {
     serveCapacity(0);
     render(
       <BookingCalendar
@@ -146,7 +170,9 @@ describe("the not-set-up notice links an officer to the capacity settings (#3407
     await nextMonth();
 
     const link = await screen.findByRole("link", { name: "Set this lodge's capacity" });
-    expect(link.getAttribute("href")).toBe("/admin/lodges/lodge%202#lodge-capacity");
+    expect(link.getAttribute("href")).toBe(
+      `/admin/lodges/lodge%202#${LODGE_CAPACITY_OVERRIDE_FIELD_ID}`,
+    );
     expect(lodgeCapacitySettingsHref(null)).toBe("/admin/lodges");
   });
 
@@ -163,27 +189,51 @@ describe("the not-set-up notice links an officer to the capacity settings (#3407
     expect(screen.queryByRole("link")).toBeNull();
   });
 
+  it.each([
+    ["can view the lodge area", "view", "/admin/lodges/lodge-2#lodge-capacity-override"],
+    ["can edit the lodge area", "edit", "/admin/lodges/lodge-2#lodge-capacity-override"],
+    ["has no lodge-area access", "none", undefined],
+  ] as const)("hands /admin/book a link only to an officer who %s", (_label, lodge, expected) => {
+    session.matrix = { ...BOOKINGS_ONLY, lodge };
+    const { result } = renderHook(() => useLodgeCapacitySettingsHref("lodge-2"));
+    expect(result.current).toBe(expected);
+  });
+
   it("is passed only by the admin booking page, never a member or public surface", () => {
-    // Disk census: every production file that hands the calendar or the notice
-    // a settings link. The member calendar (/book) and the public request and
-    // school forms render the same notice, and a link there would be wrong.
-    const root = join(process.cwd(), "src");
+    // Disk census over comment-stripped source: every production file that
+    // hands the calendar or the notice a settings link, whether as an
+    // expression, a string literal, or through a spread. The member calendar
+    // (/book) and the public request and school forms render the same notice,
+    // and a link there would be wrong.
     const passers: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
         if (entry.isDirectory()) walk(full);
         else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-          if (/\b(?:lodgeSettingsHref|settingsHref)=\{/.test(readFileSync(full, "utf8"))) {
+          const source = stripComments(readFileSync(full, "utf8"));
+          if (PROP.test(source) || SPREAD_INTO.test(source)) {
             passers.push(relative(process.cwd(), full).split("\\").join("/"));
           }
         }
       }
     };
-    walk(root);
+    walk(join(process.cwd(), "src"));
     expect(passers.sort()).toEqual([
       "src/app/(admin)/admin/book/page.tsx",
       "src/components/booking-calendar.tsx",
     ]);
+    // And /admin/book passes the access-gated link, not a bare href.
+    const adminBook = stripComments(
+      readFileSync(join(process.cwd(), "src/app/(admin)/admin/book/page.tsx"), "utf8"),
+    );
+    expect(adminBook).toMatch(/\buseLodgeCapacitySettingsHref\(lodgeId\)/);
+    expect(adminBook).not.toMatch(/\blodgeCapacitySettingsHref\(/);
+  });
+
+  it("would catch a string-literal prop, a spread, and not a commented-out one", () => {
+    expect(PROP.test(stripComments(`<BookingCalendar lodgeSettingsHref="/admin/lodges" />`))).toBe(true);
+    expect(SPREAD_INTO.test(stripComments(`<LodgeNotSetUpNotice show {...props} />`))).toBe(true);
+    expect(PROP.test(stripComments("// lodgeSettingsHref={x}\nconst a = 1;"))).toBe(false);
   });
 });

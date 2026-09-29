@@ -3,17 +3,6 @@ import Link from "next/link";
 import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
 
 /**
- * Where an officer sets a lodge's capacity: the lodge hub's capacity field.
- * With no lodge chosen the calendar shows the default lodge, whose id the
- * caller may not hold, so the lodge list is the honest fallback.
- */
-export function lodgeCapacitySettingsHref(lodgeId: string | null): string {
-  return lodgeId
-    ? `/admin/lodges/${encodeURIComponent(lodgeId)}#lodge-capacity`
-    : "/admin/lodges";
-}
-
-/**
  * The "not set up yet" notice, shown by the booking calendar and the public
  * request and school forms. The calendar's (#3407, owner decision
  * 14 Sep 2026): at a lodge nobody has given a capacity, every night would
