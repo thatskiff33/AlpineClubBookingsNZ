@@ -516,6 +516,24 @@ const ASSERTS_ASK = `
 `;
 
 describe(`${INVARIANT_ID}: the detector, against seeded test files`, () => {
+  // #3635: one seeded case PER SEAM, written out rather than read from
+  // MONEY_SEAMS, so deleting any entry from the list fails here by name. The
+  // two #3567 re-issue minters were the entries nothing else would miss.
+  it.each([
+    ["queueSupersededAdditionalIntentCancellations", "@/lib/booking-payment-cleanup", "additionalAmountCents"],
+    ["createModificationAdditionalPaymentIntent", "@/lib/booking-modification-settlement", "additionalAmountCents"],
+    ["reissueAdditionalIntentInClubCurrency", "@/lib/additional-intent-currency", "additionalAmountCents"],
+    ["reissueRaisedAskIfCurrencyChanged", "@/lib/additional-intent-currency", "additionalAmountCents"],
+    ["reconcilePaymentAggregates", "@/lib/payment-transactions", "additionalAmountCents"],
+  ])("still holds %s to the rule: mocked in %s beside a %s assertion is an offence", (seam, module, figure) => {
+    const seeded = `
+      vi.mock("${module}", () => ({ ${seam}: vi.fn() }));
+      it("asks", () => {
+        expect(result.${figure}).toBe(14000);
+      });`;
+    expect(offenceSeams(seeded)).toContain(seam);
+  });
+
   it("fails a file that mocks the supersede seam and asserts the ask, and passes once the mock is gone", () => {
     const seeded = `
       vi.mock("@/lib/booking-payment-cleanup", () => ({
