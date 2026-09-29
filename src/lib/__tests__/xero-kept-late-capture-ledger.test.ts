@@ -744,6 +744,25 @@ describe("round 3: the nightly self-heal, one note per capture, and the days the
     expect(refundNotes()).toHaveLength(1);
   });
 
+  it("R1 enqueue cap: asked for the payment's whole refunded total, the enqueue queues only the cash a note may answer", async () => {
+    seed({ primaryInvoice: { cents: 30000 } });
+    await approve(); // a capture Xero never received, refunded: no note answers it
+    const payment = h.table("payment").find((p) => p.id === PAYMENT)!;
+    payment.refundedAmountCents = (payment.refundedAmountCents as number) + 5000;
+    h.table("paymentRefund").push({
+      id: "re_ordinary",
+      paymentId: PAYMENT,
+      stripePaymentIntentId: "pi_ordinary",
+      amountCents: 5000,
+      status: "succeeded",
+      stripeCreatedAt: new Date(),
+      createdAt: new Date(),
+    });
+    const queued = await enqueueXeroRefundCreditNoteOperation(PAYMENT, 29000);
+    const row = h.table("xeroSyncOperation").find((r) => r.id === queued.queueOperationId)!;
+    expect((row.requestPayload as { refundAmountCents: number }).refundAmountCents).toBe(5000);
+  });
+
   it("R4: a capture's refunds are noted once per capture, however often it is credited back, while the payment has other uncovered cash", async () => {
     seed({});
     await keep();
