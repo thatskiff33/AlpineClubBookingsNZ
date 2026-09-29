@@ -349,7 +349,7 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 // below is where that judgement is made, once, in writing, per file — exactly
 // the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
 const CENTS_DISPLAY_MESSAGE =
-  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. Only a genuinely different output, such as a raw numeric export cell or an amount in a provider-specific currency, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason. The list is checked by money-cents-guard.test.ts. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. A raw CSV or JSON export cell, and an amount prefixed with a provider's own currency code, are formatCentsPlain's output too. Only a genuinely different output, one neither helper returns, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason that names the difference in terms a reader can check against the code. The list is checked by money-cents-guard.test.ts. Never an eslint-disable comment.";
 
 // #3533 — the OTHER way a person is shown the storage form: not a bad
 // division, but no division at all. `${refundAmountCents} cents` in an audit
@@ -626,43 +626,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
     reason:
       "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
   },
-  {
-    files: [
-      "src/app/(admin)/admin/reports/page.tsx",
-      "src/lib/finance-legacy-dashboard-export.ts",
-      "src/lib/promo-redemptions-csv.ts",
-    ],
-    reason:
-      "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
-  },
-  {
-    files: ["src/lib/membership-cancellation-blocker-messages.ts"],
-    reason:
-      "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
-  },
-];
-
-/**
- * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
- * members (declared below) — `finance-legacy-dashboard-export.ts`
- * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
- * and `membership-cancellation-blocker-messages.ts`
- * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
- * list with #3325. Those three already take the broader
- * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
- * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
- * rather than the ordinary exemption block's plain
- * `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)`. Matching a
- * glob family against a literal path is a real pattern match, not a Set
- * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
- * than computed; `cents-display-guard.test.ts` checks the resolved config at
- * each of these three paths carries the money-MODULE arm, not the narrow one,
- * precisely so a hand-verified list cannot go stale silently.
- */
-const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
-  "src/lib/finance-legacy-dashboard-export.ts",
-  "src/lib/promo-redemptions-csv.ts",
-  "src/lib/membership-cancellation-blocker-messages.ts",
 ];
 
 // Where a bare `x * 100` is money by construction.
@@ -3145,39 +3108,19 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
-    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` below (the
-    // date-fns overlap went with #3566, when the reports page stopped importing
-    // date-fns). Drops only the new group by
-    // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
-    // `src/**` block's own addition, not part of the mandatory set), so
-    // nothing else these files were guarded against is lifted with it.
-    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
-      (file) =>
-        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file),
-    ),
+    // #3302 — CENTS_DISPLAY_EXEMPTIONS. Drops only the new group by name,
+    // plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic `src/**`
+    // block's own addition, not part of the mandatory set), so nothing else
+    // these files were guarded against is lifted with it. #3399 retired the
+    // separate block for exempt files that were also `MONEY_DOMAIN_MODULES`
+    // members, because none remains; a new exemption in a money-domain family
+    // needs that block back (restating `MONEY_MODULE_RESTRICTIONS`), or this
+    // one would silently hand it the narrow money arm.
+    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files),
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the three exempted files
-    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
-    // `membership-cancellation-*` respectively), so they already
-    // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
-    // one. Replicated here rather than re-derived, because flat config
-    // replaces a matching block's rule wholesale and this block must win for
-    // these three paths without silently reverting them to the narrow money
-    // arm the block above would otherwise leave them with.
-    files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
-        ...DATE_RENDERING_RESTRICTIONS,
-        ...MONEY_MODULE_RESTRICTIONS,
       ),
     },
   },

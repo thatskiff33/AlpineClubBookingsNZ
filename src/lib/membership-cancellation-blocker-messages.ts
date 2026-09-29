@@ -2,7 +2,8 @@
  * Membership-cancellation approval blockers: shared shapes and the plain-English
  * wording used to explain them (#2392).
  *
- * Deliberately dependency-free — no Prisma, no Xero, no app config — because the
+ * Deliberately free of Prisma, Xero and app config (its one import is the pure
+ * `formatCentsPlain` from `@/lib/utils`) because the
  * same types and sentences are used by the server (the approval refusal message
  * and its audit record) and by the admin review queue, which is a client
  * component. One source of truth means the reviewer reads on screen exactly what
@@ -13,6 +14,8 @@
  * credit note because the invoice covers other members who are staying. Same
  * reason for living here — the wording is written once and read by both sides.
  */
+
+import { formatCentsPlain } from "@/lib/utils";
 
 /** The label of the setting that turns Xero contact archiving on or off. */
 export const MEMBERSHIP_CANCELLATION_ARCHIVE_SETTING_LABEL =
@@ -124,7 +127,7 @@ export function isInvoiceCheckUnavailableBlocker(
  * is left off entirely rather than guessed.
  */
 export function formatBlockerAmount(cents: number, currency: string): string {
-  const amount = (cents / 100).toFixed(2);
+  const amount = formatCentsPlain(cents);
   return currency && currency !== "UNKNOWN" ? `${currency} ${amount}` : amount;
 }
 

@@ -129,23 +129,36 @@ describe("cents-in-prose guard: it is its own group", () => {
     );
   });
 
-  it("still fires inside a file the toFixed arm exempts", async () => {
-    // `finance-legacy-dashboard-export.ts` is a declared CENTS_DISPLAY
-    // exemption. Its reason — a raw numeric export cell — says nothing about
-    // sentences, so this rule must still reach it.
-    const results = await eslint.lintText(VIOLATING_CODE, {
-      filePath: path.join(REPO_ROOT, "src/lib/finance-legacy-dashboard-export.ts"),
-    });
-    const hits = results
-      .flatMap((result) => result.messages)
-      .filter(
-        (message) =>
-          message.ruleId === "no-restricted-syntax" &&
-          typeof message.message === "string" &&
-          message.message.startsWith(RULE_ID),
-      );
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.severity).toBe(2);
+  it("still fires inside every file the toFixed arm exempts", async () => {
+    // Read from the config rather than named here, so the case follows the
+    // roster (#3399 took the export cells off it). Every reason on that list
+    // is about the toFixed arithmetic; none says anything about sentences, so
+    // this rule must still reach each file.
+    const { pathToFileURL } = await import("url");
+    const config: {
+      CENTS_DISPLAY_EXEMPTIONS?: { files: string[] }[];
+    } = await import(
+      pathToFileURL(path.join(REPO_ROOT, "eslint.config.mjs")).href
+    );
+    const exemptFiles = (config.CENTS_DISPLAY_EXEMPTIONS ?? []).flatMap(
+      (entry) => entry.files,
+    );
+    expect(exemptFiles.length).toBeGreaterThan(0);
+    for (const file of exemptFiles) {
+      const results = await eslint.lintText(VIOLATING_CODE, {
+        filePath: path.join(REPO_ROOT, file),
+      });
+      const hits = results
+        .flatMap((result) => result.messages)
+        .filter(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            typeof message.message === "string" &&
+            message.message.startsWith(RULE_ID),
+        );
+      expect(hits, file).toHaveLength(1);
+      expect(hits[0]?.severity, file).toBe(2);
+    }
   });
 });
 
