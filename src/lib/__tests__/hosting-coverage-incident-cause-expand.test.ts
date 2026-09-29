@@ -41,7 +41,7 @@ import { stripComments } from "./support/strip-comments";
  * legal member of the union, so it will accept a writer anywhere.
  *
  * IT SCANS `src/` FROM DISK, so it has no import edge to the files it reads and
- * `npm run test:related` structurally cannot select it (`docs/TESTING.md`). Run
+ * `pnpm run test:related` structurally cannot select it (`docs/TESTING.md`). Run
  * it by name.
  */
 

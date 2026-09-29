@@ -201,7 +201,7 @@ spot-verified against live code during this review.)*
 
 ## 6. Needs a human decision
 
-1. **Node engine pin `>=24 <25`** (`package.json:15`). Biggest clone-to-run tripwire for
+1. **Node engine pin `>=24 <25`** (`package.json` `engines.node`). Biggest clone-to-run tripwire for
    contributors on Node 20/22 LTS. Widen the range (and test on 22), or keep the pin and
    surface a prominent `nvm use` gate in the README quickstart. Support-surface trade-off.
 2. **Connection-pool sizing target** (F17 lane). Recommended web slots `connection_limit=10`,
@@ -260,7 +260,7 @@ Every fix PR carries proof from this run, not assertion:
 - **Scale (F17, F24):** k6 at 100+ VUs against the local Docker e2e stack (throwaway DB,
   pre-flight asserts the target is not `:5432`); re-run after the pool fix.
 - **A11y (F30):** `@axe-core/playwright` scan wired into the e2e job.
-- **Per PR:** `npm run lint`, `db:generate`, `typecheck`, targeted `vitest` locally; full suite
+- **Per PR:** `pnpm run lint`, `db:generate`, `typecheck`, targeted `vitest` locally; full suite
   + migration-drift + Playwright arbitrated by CI, links quoted in the PR body.
 
 ---

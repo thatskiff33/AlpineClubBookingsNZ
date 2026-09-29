@@ -204,7 +204,7 @@ describe("reconcileBookingMoney", () => {
   it("keeps both reasons when two guests fail for different causes", () => {
     // Typed as a plain array: `reasons` is a union of tuple types, so `indexOf`
     // below narrows its own parameter to `never` and will not compile against
-    // a reason literal. `npm test` does not typecheck, which is how that
+    // a reason literal. `pnpm test` does not typecheck, which is how that
     // reached CI.
     const reasons: readonly BookingMoneyReconciliationReason[] =
       reconcileBookingMoney(

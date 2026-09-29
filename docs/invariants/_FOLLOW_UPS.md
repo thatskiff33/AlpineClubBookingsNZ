@@ -100,7 +100,7 @@ formula and the exclusion. So the identifier went rather than being re-pointed
 (a rule does not cite itself), and the two tokens that CITED it as a rule — the
 comment in `src/lib/booking-cancel.ts` and the one in
 `src/lib/__tests__/booking-cancel.test.ts` — now name `INV-PAY-018`, which
-`npm run docs:indexcheck` can resolve.
+`pnpm run docs:indexcheck` can resolve.
 
 **`FEE-0x` still appears, deliberately, in one file.**
 `src/lib/__tests__/phase8a-change-fee.test.ts` keeps its `FEE-01` / `FEE-02` /

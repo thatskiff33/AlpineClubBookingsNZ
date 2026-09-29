@@ -16,7 +16,7 @@ import "server-only";
  * split this paragraph used to explain has closed. The reason the resolver went
  * without the marker was that it has to stay importable from a `tsx` entrypoint
  * (through `setup-readiness-db.ts`) and so COULD NOT carry it. Since #2850 it
- * could: `npm run setup:check` runs with `--conditions=react-server`, under
+ * could: `pnpm run setup:check` runs with `--conditions=react-server`, under
  * which the marker is inert, and #3204 acted on that. See
  * `docs/invariants/operations.md` -> `INV-OPS-013`.
  * This module has no command-line caller at all — it exists to build a browser

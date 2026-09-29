@@ -7,7 +7,7 @@ vi.mock("server-only", () => ({}));
  * mirror of the same guard on `/display` (`display-screen.test.ts`, fork #54).
  *
  * The CI script is the real gate — it inspects the emitted build — but it needs
- * a full `npm run build` to run. This runs in the unit suite, so deleting the
+ * a full `pnpm run build` to run. This runs in the unit suite, so deleting the
  * export fails in seconds instead of at the end of CI.
  */
 describe("global not-found render mode", () => {
