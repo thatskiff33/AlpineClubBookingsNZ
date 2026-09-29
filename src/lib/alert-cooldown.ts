@@ -108,20 +108,28 @@ export async function deferAlertCooldown({
 /**
  * An alert that could not be delivered and whose subject no run will select
  * again (#3643: a hold already released). The marker is the durable "owed";
- * the next run drains it (`listOwedAlertKeys`) and settles it once delivered.
- * The key is its own namespace, beside the window key the send claimed.
+ * `listOwedAlertKeys` offers it once it is due and the drain settles it once
+ * delivered. `due` says when (#3635 N1): a send that THREW is due on the very
+ * next run (the stamp is back-dated by `retryAfterMs`), while one that ran and
+ * reached nobody waits `retryAfterMs`. The key is its own namespace, beside
+ * the window key the send claimed.
  */
 export async function markAlertOwed({
   key,
+  due,
+  retryAfterMs,
   now = new Date(),
   store = prisma,
 }: {
   key: string;
+  due: "next-run" | "after-retry";
+  retryAfterMs: number;
   now?: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
+  const lastAlertedAt = due === "next-run" ? new Date(now.getTime() - retryAfterMs) : now;
   try {
-    await store.alertCooldown.create({ data: { key, lastAlertedAt: now } });
+    await store.alertCooldown.create({ data: { key, lastAlertedAt } });
   } catch (error) {
     if (!isPrismaUniqueConstraintError(error)) throw error;
   }
@@ -158,6 +166,7 @@ export async function listOwedAlertKeys({
 /**
  * Stamp an owed marker as attempted at `now` without settling it (#3635 F1):
  * the drain tried and nobody received it, so it waits `retryAfterMs` again.
+ * A drain send that threw does not call this (#3635 N1), so it stays due.
  */
 export async function noteOwedAlertAttempt({
   key,

@@ -1488,6 +1488,8 @@ describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", ()
     expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
     expect(mocks.markAlertOwed).toHaveBeenCalledWith({
       key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
+      due: "after-retry",
+      retryAfterMs: 86_400_000,
     });
     expect(mocks.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1495,6 +1497,33 @@ describe("releaseExpiredInternetBankingHolds delta round (#3643 D4, D5, D9)", ()
         details: expect.stringContaining('"alertDelivery":"undelivered"'),
       }),
     );
+  });
+
+  it("D4: a released-unreadable alert whose send THREW is marked owed and due on the next run (#3635 N1)", async () => {
+    mocks.readHoldPaymentEvidence.mockResolvedValue(UNREADABLE);
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockRejectedValue(new Error("recipient read failed"));
+
+    const result = await releaseExpiredInternetBankingHolds(new Date("2026-07-12T08:00:00Z"));
+
+    expect(result.released).toBe(1);
+    expect(mocks.markAlertOwed).toHaveBeenCalledWith({
+      key: "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1",
+      due: "next-run",
+      retryAfterMs: 86_400_000,
+    });
+  });
+
+  it("D4: an owed alert whose drain send THREW is left due, not pushed a day out (#3635 N1)", async () => {
+    mocks.paymentFindMany.mockResolvedValue([]);
+    const key = "internet-banking-hold-alert-owed:released-unreadable:pay_ib_1";
+    mocks.listOwedAlertKeys.mockResolvedValue([key]);
+    mocks.paymentFindUnique.mockResolvedValue(makeExpiredPayment());
+    mocks.sendAdminInternetBankingHoldKeptAlert.mockRejectedValue(new Error("recipient read failed"));
+
+    await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(mocks.noteOwedAlertAttempt).not.toHaveBeenCalled();
+    expect(mocks.settleOwedAlert).not.toHaveBeenCalled();
   });
 
   it("D4: the next run delivers the owed alert and settles it", async () => {

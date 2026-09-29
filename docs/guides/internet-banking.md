@@ -95,8 +95,9 @@ has it: it is kept, and the treasurer gets one email, because the organiser may
 already have paid by bank transfer (#3635).
 
 The email goes to admins with the **payment failure** notification switched on.
-A send that fails is retried on the next run; one that reaches nobody (every
-address suppressed, for example) is tried again a day later, not every run.
+A send that fails is retried on the next run, including the email for a hold
+already released; one that reaches nobody (every address suppressed, for
+example) is tried again a day later, not every run.
 
 ## Troubleshooting
 

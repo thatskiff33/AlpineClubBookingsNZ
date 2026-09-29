@@ -203,9 +203,10 @@ function readOwner(hold: ExpiredHoldView): { memberName: string; memberId: strin
  *  - a send that threw is given back and one that reached nobody is held a
  *    day, as in the helper (#3635 F1), but the helper cannot tell them from
  *    the four-way outcome this caller audits;
- *  - undelivered after commit is marked OWED and drained next run, which the
- *    helper has no notion of, and the caller needs the four-way outcome for
- *    the audit row's `alertDelivery`.
+ *  - undelivered after commit is marked OWED, which the helper has no notion
+ *    of: due on the next run when the send threw, a day later when it reached
+ *    nobody (#3635 N1), and the caller needs the four-way outcome for the
+ *    audit row's `alertDelivery`.
  * Widening the helper with three options for this one caller would give its
  * two other callers (the mid-stay joiner and started-stay hold alerts) a
  * shape neither needs, so only the claim is shared.
@@ -265,7 +266,13 @@ export async function alertExpiredHold(
       );
       return;
     }
-    await markAlertOwed({ key: owedAlertKey(reason, hold.id) }).catch((err) =>
+    await markAlertOwed({
+      key: owedAlertKey(reason, hold.id),
+      // #3635 (N1): a throw is transient, so it is due on the next run; a send
+      // that reached nobody waits a day, as the drain's own retries do.
+      due: sendOutcome === "send-threw" ? "next-run" : "after-retry",
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+    }).catch((err) =>
       logger.error({ err, ...context }, "Failed to mark an undelivered hold alert as owed"),
     );
   }
@@ -315,8 +322,9 @@ export async function alertExpiredHold(
  * Deliver the alerts an earlier run marked owed (D4). Runs at the start of the
  * hold-expiry job, outside every transaction; never throws. The marker is
  * settled once the alert is delivered, muted by the club's rules, or has
- * nobody to go to; a still-undelivered one stays owed and is tried again at
- * most once a day (#3635 F1: `listOwedAlertKeys` returns only due markers).
+ * nobody to go to; one that reached nobody stays owed and is tried again at
+ * most once a day (#3635 F1: `listOwedAlertKeys` returns only due markers),
+ * while one whose send threw stays due and is tried on the next run (N1).
  */
 export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
   let keys: string[];
@@ -355,12 +363,14 @@ export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
         notFound: false,
       };
       const outcome = await sendHoldAlert(hold, evidence, reason, readOwner(hold).memberName, format);
-      if (outcome === "undelivered" || outcome === "send-threw") {
-        // #3635 (F1): tried and still owed; the next attempt is a day away.
+      if (outcome === "undelivered") {
+        // #3635 (F1): tried and reached nobody; the next attempt is a day away.
         await noteOwedAlertAttempt({ key });
-      } else {
+      } else if (outcome !== "send-threw") {
         await settleOwedAlert({ key });
       }
+      // #3635 (N1): a send that threw is transient, so its marker is left
+      // untouched and stays due for the next run.
     } catch (err) {
       logger.error({ err, key }, "Failed to deliver an owed Internet Banking hold alert");
     }

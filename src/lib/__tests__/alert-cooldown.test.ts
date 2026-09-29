@@ -156,7 +156,13 @@ describe("owed alert markers (#3635 F1)", () => {
 
   it("offers an owed alert at most once a day, counted from its last attempt", async () => {
     const { store } = memoryStore();
-    await markAlertOwed({ key: OWED, now: T0, store });
+    await markAlertOwed({
+      key: OWED,
+      due: "after-retry",
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      now: T0,
+      store,
+    });
 
     // Not due until a day after it was marked.
     await expect(list(store, at(ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1))).resolves.toEqual([]);
@@ -167,5 +173,19 @@ describe("owed alert markers (#3635 F1)", () => {
     await noteOwedAlertAttempt({ key: OWED, now: attempt, store });
     await expect(list(store, at(2 * ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1))).resolves.toEqual([]);
     await expect(list(store, at(2 * ALERT_NOBODY_ELIGIBLE_RETRY_MS))).resolves.toEqual([OWED]);
+  });
+
+  it("offers an owed alert whose send threw on the very next run (#3635 N1)", async () => {
+    const { store } = memoryStore();
+    await markAlertOwed({
+      key: OWED,
+      due: "next-run",
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      now: T0,
+      store,
+    });
+    // Fifteen minutes later is the next run, and the marker is already due.
+    await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
+    await expect(list(store, T0)).resolves.toEqual([OWED]);
   });
 });
