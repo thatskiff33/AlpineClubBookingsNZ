@@ -22,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   findManyOperations: vi.fn(),
   countOperations: vi.fn(),
   sendAdminXeroSyncErrorAlert: vi.fn(),
+  // #3635 C4: the claim store under `sendAdminAlertOnceEver`, whose rule runs
+  // for real over it.
+  claimAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
   getPaymentIntent: vi.fn(),
   updateManyOperation: vi.fn(),
   updateOperation: vi.fn(),
@@ -246,6 +251,13 @@ vi.mock("@/lib/stripe", () => ({
 // invoice is unsafe.
 vi.mock("@/lib/email", () => ({
   sendAdminXeroSyncErrorAlert: mocks.sendAdminXeroSyncErrorAlert,
+}));
+
+vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/alert-cooldown")),
+  claimAlertCooldown: mocks.claimAlertCooldown,
+  deferAlertCooldown: mocks.deferAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
 }));
 
 vi.mock("@/lib/membership-cancellation-xero", () => ({
@@ -2964,6 +2976,13 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
  */
 describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const SENT_TO_ONE_ADMIN = {
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  };
   const waitingOp = (id: string, paymentIntentId: string | null, ageDays = 0) => ({
     id,
     createdAt: new Date(Date.now() - ageDays * DAY_MS),
@@ -3022,6 +3041,12 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.getPaymentIntent.mockReset();
     mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
     mocks.countOperations.mockResolvedValue(0);
+    mocks.claimAlertCooldown.mockReset();
+    mocks.claimAlertCooldown.mockResolvedValue(true);
+    mocks.deferAlertCooldown.mockResolvedValue(undefined);
+    mocks.releaseAlertCooldown.mockResolvedValue(undefined);
+    mocks.sendAdminXeroSyncErrorAlert.mockReset();
+    mocks.sendAdminXeroSyncErrorAlert.mockResolvedValue(SENT_TO_ONE_ADMIN);
   });
 
   it("retires a waiting invoice FAILED past the grace window whose request the booking no longer names", async () => {
@@ -3425,12 +3450,79 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     );
     expect(retireCall()).toBeUndefined();
     expect(result.reaped).toBe(0);
+    // #3635 C4: the once-ever rule's claim, keyed on the outbox row.
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "xero-waiting-invoice-capture-unrecorded:op_unrecorded" }),
+    );
+    // Delivered: the claim is kept.
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
 
-    // The claim is lost on a later run (already stamped): no second alert.
+    // A later run: the row is stamped, so Stripe is not read again, and the
+    // claim is held, so no second alert.
     vi.clearAllMocks();
+    waiting = [{ ...waitingOp("op_unrecorded", "pi_unrecorded", 16), lastErrorCode: "PROVIDER_CAPTURED_UNRECORDED" }];
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+    await reapStaleWaitingPaymentXeroOutboxOperations();
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+  });
+
+  // #3635 C4: the stamp stopped every later read AND every later alert, so an
+  // alert nobody received was lost for good. The stamp now only stops the
+  // Stripe reads; the alert follows the one once-ever rule.
+  function unrecordedCaptureFourDaysOld() {
+    waiting = [waitingOp("op_unrecorded", "pi_unrecorded", 16)];
+    mocks.findFirstPaymentTransaction.mockResolvedValue(transaction("FAILED", 200));
+    mocks.findUniquePayment.mockResolvedValue(payableAsk("pi_unrecorded"));
+    const fourDaysAgo = Math.floor((Date.now() - 4 * DAY_MS) / 1000);
+    mocks.getPaymentIntent.mockResolvedValue({
+      status: "succeeded",
+      created: fourDaysAgo,
+      latest_charge: { created: fourDaysAgo },
+    });
+  }
+
+  it("C4: holds the unrecorded-capture claim a day when nobody can receive it, then alerts again from the stamped row", async () => {
+    unrecordedCaptureFourDaysOld();
+    mocks.sendAdminXeroSyncErrorAlert.mockResolvedValueOnce({
+      ...SENT_TO_ONE_ADMIN,
+      sent: 0,
+      notDelivered: 1,
+    });
+
+    await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith({
+      key: "xero-waiting-invoice-capture-unrecorded:op_unrecorded",
+      claimedAt: claim.now,
+      windowMs: 36_500 * 86_400_000,
+      retryAfterMs: 86_400_000,
+    });
+
+    // A day later the claim is free again: the stamped row is alerted about
+    // again, with no further Stripe read.
+    mocks.getPaymentIntent.mockClear();
+    waiting = [{ ...waitingOp("op_unrecorded", "pi_unrecorded", 16), lastErrorCode: "PROVIDER_CAPTURED_UNRECORDED" }];
     mocks.updateManyOperation.mockResolvedValue({ count: 0 });
     await reapStaleWaitingPaymentXeroOutboxOperations();
-    expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
+    expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledTimes(2);
+  });
+
+  it("C4: gives the unrecorded-capture claim back when the send throws", async () => {
+    unrecordedCaptureFourDaysOld();
+    mocks.sendAdminXeroSyncErrorAlert.mockRejectedValueOnce(new Error("SES down"));
+
+    await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.releaseAlertCooldown).toHaveBeenCalledWith({
+      key: "xero-waiting-invoice-capture-unrecorded:op_unrecorded",
+      claimedAt: claim.now,
+    });
   });
 
   it("waits out Stripe's redelivery window before alerting about an unrecorded capture", async () => {

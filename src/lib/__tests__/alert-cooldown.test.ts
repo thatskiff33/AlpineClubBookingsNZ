@@ -14,6 +14,9 @@ import {
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
   deferAlertCooldown,
+  listOwedAlertKeys,
+  markAlertOwed,
+  noteOwedAlertAttempt,
   releaseAlertCooldown,
 } from "@/lib/alert-cooldown";
 
@@ -44,6 +47,22 @@ function memoryStore() {
       rows.set(data.key, data.lastAlertedAt);
       return data;
     }),
+    // Only the owed-marker listing's shape: a prefix and a "due by" stamp.
+    findMany: vi.fn(
+      async ({
+        where,
+      }: {
+        where: { key: { startsWith: string }; lastAlertedAt: { lte: Date } };
+      }) =>
+        [...rows.entries()]
+          .filter(
+            ([key, at]) =>
+              key.startsWith(where.key.startsWith) &&
+              at.getTime() <= where.lastAlertedAt.lte.getTime()
+          )
+          .sort((a, b) => a[1].getTime() - b[1].getTime())
+          .map(([key]) => ({ key }))
+    ),
     deleteMany: vi.fn(async ({ where }: { where: Where }) => {
       const hits = matching(where);
       for (const [key] of hits) rows.delete(key);
@@ -126,5 +145,47 @@ describe("alert-cooldown (#3672)", () => {
     });
     expect(rows.get(KEY)).toEqual(T0);
     await expect(claim(store, at(ALERT_NOBODY_ELIGIBLE_RETRY_MS + 1))).resolves.toBe(false);
+  });
+});
+
+describe("owed alert markers (#3635 F1)", () => {
+  const PREFIX = "internet-banking-hold-alert-owed:";
+  const OWED = `${PREFIX}released-unreadable:pay_1`;
+  const list = (store: never, now: Date) =>
+    listOwedAlertKeys({ prefix: PREFIX, now, retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS, store });
+
+  it("offers an owed alert at most once a day, counted from its last attempt", async () => {
+    const { store } = memoryStore();
+    await markAlertOwed({
+      key: OWED,
+      due: "after-retry",
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      now: T0,
+      store,
+    });
+
+    // Not due until a day after it was marked.
+    await expect(list(store, at(ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1))).resolves.toEqual([]);
+    await expect(list(store, at(ALERT_NOBODY_ELIGIBLE_RETRY_MS))).resolves.toEqual([OWED]);
+
+    // Tried and still undelivered: the next try is a day after that attempt.
+    const attempt = at(ALERT_NOBODY_ELIGIBLE_RETRY_MS);
+    await noteOwedAlertAttempt({ key: OWED, now: attempt, store });
+    await expect(list(store, at(2 * ALERT_NOBODY_ELIGIBLE_RETRY_MS - 1))).resolves.toEqual([]);
+    await expect(list(store, at(2 * ALERT_NOBODY_ELIGIBLE_RETRY_MS))).resolves.toEqual([OWED]);
+  });
+
+  it("offers an owed alert whose send threw on the very next run (#3635 N1)", async () => {
+    const { store } = memoryStore();
+    await markAlertOwed({
+      key: OWED,
+      due: "next-run",
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      now: T0,
+      store,
+    });
+    // Fifteen minutes later is the next run, and the marker is already due.
+    await expect(list(store, at(15 * 60 * 1000))).resolves.toEqual([OWED]);
+    await expect(list(store, T0)).resolves.toEqual([OWED]);
   });
 });

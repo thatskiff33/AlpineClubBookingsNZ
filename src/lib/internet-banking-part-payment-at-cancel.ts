@@ -29,6 +29,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import {
   hasRecordedInvoicePayment,
   readHoldPaymentEvidence,
@@ -197,11 +198,8 @@ export async function recordPartPaymentInClaim(
   ) {
     throw new PartPaymentChangedError();
   }
-  const captured = payment.transactions.some((row) =>
-    [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED].includes(
-      row.status as "SUCCEEDED" | "REFUNDED" | "PARTIALLY_REFUNDED",
-    ),
-  );
+  // The one "has this row's money been taken?" rule (#3635 F4, INV-SSOT).
+  const captured = payment.transactions.some((row) => isCapturedTransactionStatus(row.status));
   if (captured) throw new PartPaymentChangedError();
   const ibPrimary = payment.transactions.filter(
     (row) =>

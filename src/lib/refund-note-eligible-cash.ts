@@ -4,8 +4,9 @@
  * The one figure every refund-note sizing and gap reads: the enqueue's cap
  * (`enqueueXeroRefundCreditNoteOperation`), the note's execution-time cap
  * (`createXeroCreditNote`), the refund-gap reader behind the self-heal list and
- * the booking page (`readRefundCreditNoteGap`), and the hardening report's
- * over-coverage count. It is the payment's provider-backed CASH refund evidence
+ * the booking page (`readRefundCreditNoteGap`), the hardening report's
+ * over-coverage count, and the refund-note link-repair script's coverage
+ * target (`xero-refund-note-link-repair.ts`, #3635 C3). It is the payment's provider-backed CASH refund evidence
  * (`resolveStripeCashRefundEvidence`, #2902) LESS the refunds of late captures
  * the app never recorded in Xero.
  *

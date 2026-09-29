@@ -56,4 +56,27 @@ describe("sendAdminInternetBankingHoldStartedStayAlert (#3663)", () => {
       holdUntil: "29 June 2026, 8:00 pm",
     });
   });
+
+  it("labels the amount as the invoice's, never as a balance still owing (#3635 C1)", async () => {
+    // The cron does not read Xero for a started stay and the app records no
+    // part payment of an Internet Banking invoice, so a part-paid hold must
+    // not be told it owes the whole amount.
+    await sendAdminInternetBankingHoldStartedStayAlert(
+      {
+        memberName: "Alice Member",
+        bookingId: "booking_ib_1",
+        checkIn: new Date("2026-06-30T00:00:00.000Z"),
+        holdUntil: new Date("2026-06-29T08:00:00.000Z"),
+        amountOwingCents: 12345,
+      },
+      CLUB_FORMAT_TEST,
+    );
+
+    const html = h.sendToAdmins.mock.calls[0][0].html as string;
+    expect(html).toContain("Invoice amount");
+    expect(html).toContain("before any payment the app has not seen");
+    expect(html).toContain("may already have paid part or all of it");
+    expect(html).not.toContain("Amount owing");
+    expect(html).not.toContain("passed unpaid");
+  });
 });

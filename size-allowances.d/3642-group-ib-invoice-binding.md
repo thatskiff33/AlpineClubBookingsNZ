@@ -36,12 +36,17 @@ reason: the bound-invoice checks run inside the lock(1) transactions whose
   has paid" predicate.
 
 file: src/lib/cron-group-settlement-reaper.ts
-lines: 1003
+lines: 1046
 reason: the reaper reads an Internet Banking settlement's invoice in Xero
   before releasing it: it keeps and alerts on a group whose invoice has started
-  being paid, holds (with an alert, bounded by check-in or seven days) one Xero
+  being paid, holds (with an alert, for up to seven days) one Xero
   cannot show, and releases one Xero does not have. Its release transaction
   retires the invoice in the same commit, except for a cancelled group. Each
   rule decides the release it sits beside. #3672 (same epic) adds its share: the
   run calls the paid-group self-heal and reports how many joiners it moved
   and how many it left for the treasurer because the stay has started; the heal itself lives in group-late-joiner.ts.
+  #3635 (same epic, composed review C5): a group whose stay has started is
+  kept, counted and alerted once, at each arm that would otherwise release it
+  (unreadable, missing in Xero, unpaid), beside the bound it replaces;
+  the bound is one constant in `unreadable-invoice-hold-bound.ts` and the alert
+  lives in `group-settlement-invoice-alerts.ts`.

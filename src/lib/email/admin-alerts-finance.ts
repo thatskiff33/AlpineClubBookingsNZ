@@ -58,7 +58,8 @@ export async function sendAdminPaymentFailureAlert(data: {
 },
   format: ClubFormat,
 ) {
-  await sendToAdmins({
+  // Returned so a once-only caller can hold its claim on it (#3635 C5).
+  return sendToAdmins({
     subject: `Payment Failed — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminPaymentFailureTemplate(data, format)),
     templateName: "admin-payment-failure",
@@ -429,14 +430,15 @@ export async function sendAdminManualRefundTaskAlert(data: {
   });
 }
 
-// N-05: Admin alert - Xero sync error
+// N-05: Admin alert - Xero sync error. Returns `sendToAdmins`' result so a
+// once-only caller can hold its claim on it (#3635 C4).
 export async function sendAdminXeroSyncErrorAlert(data: {
   errorType: string;
   operation: string;
   errorMessage: string;
   timestamp: Date;
 }) {
-  await sendToAdmins({
+  return sendToAdmins({
     subject: `Xero Sync Error — ${CLUB_BOOKINGS_NAME}`,
     html: await renderEmailHtml(() => adminXeroSyncErrorTemplate(data)),
     templateName: "admin-xero-sync-error",

@@ -220,6 +220,8 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       // cash / off-Xero settlement (no Xero objects expected) apart from a
       // genuinely missing invoice.
       manuallyMarkedPaidAt: true,
+      // #3635: only a Stripe payment's refund gap is read (the note-eligible cash).
+      source: true,
       transactions: {
         orderBy: {
           createdAt: "asc",
@@ -458,6 +460,12 @@ export interface BookingClassificationContext {
    * note it means cash arrived and no clearing note is owed.
    */
   cancelledBookingHandBackPaymentIds: Set<string>;
+  /**
+   * #3635: the refund cents a note may still answer for a cancelled Stripe
+   * payment (`readRefundCreditNoteGap`), or null when not read. The
+   * missing-refund-note arm asks for no more than this.
+   */
+  refundNoteUncoveredCents: number | null;
   /**
    * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
    * booking whose part-payment review task a treasurer has closed. A review

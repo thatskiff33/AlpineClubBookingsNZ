@@ -61,8 +61,9 @@ export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 
 /**
  * Give back a claim this caller took at `claimedAt` and could not use — the
- * send threw before reaching anyone, or (#3643) reached nobody for a hold that
- * stays a candidate — so the next run can claim and send again (#3672).
+ * send threw before reaching anyone — so the next run can claim and send
+ * again (#3672). A send that reached nobody is deferred instead
+ * (`deferAlertCooldown`), never given back (#3635 F1).
  * Deletes only a row still stamped with this caller's own claim, so a newer
  * claim by another sender is never released.
  */
@@ -107,10 +108,67 @@ export async function deferAlertCooldown({
 /**
  * An alert that could not be delivered and whose subject no run will select
  * again (#3643: a hold already released). The marker is the durable "owed";
- * the next run drains it (`listOwedAlertKeys`) and settles it once delivered.
- * The key is its own namespace, beside the window key the send claimed.
+ * `listOwedAlertKeys` offers it once it is due and the drain settles it once
+ * delivered. `due` says when (#3635 N1): a send that THREW is due on the very
+ * next run (the stamp is back-dated by `retryAfterMs`), while one that ran and
+ * reached nobody waits `retryAfterMs`. The key is its own namespace, beside
+ * the window key the send claimed.
  */
 export async function markAlertOwed({
+  key,
+  due,
+  retryAfterMs,
+  now = new Date(),
+  store = prisma,
+}: {
+  key: string;
+  due: "next-run" | "after-retry";
+  retryAfterMs: number;
+  now?: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  const lastAlertedAt = due === "next-run" ? new Date(now.getTime() - retryAfterMs) : now;
+  try {
+    await store.alertCooldown.create({ data: { key, lastAlertedAt } });
+  } catch (error) {
+    if (!isPrismaUniqueConstraintError(error)) throw error;
+  }
+}
+
+/**
+ * The owed markers under `prefix` that are due: last marked or attempted at
+ * least `retryAfterMs` before `now` (#3635 F1), so an alert nobody can
+ * receive is tried at most once per `retryAfterMs`, never every run.
+ */
+export async function listOwedAlertKeys({
+  prefix,
+  now = new Date(),
+  retryAfterMs,
+  store = prisma,
+}: {
+  prefix: string;
+  now?: Date;
+  retryAfterMs: number;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<string[]> {
+  const rows = await store.alertCooldown.findMany({
+    where: {
+      key: { startsWith: prefix },
+      lastAlertedAt: { lte: new Date(now.getTime() - retryAfterMs) },
+    },
+    select: { key: true },
+    orderBy: { lastAlertedAt: "asc" },
+    take: 50,
+  });
+  return rows.map((row) => row.key);
+}
+
+/**
+ * Stamp an owed marker as attempted at `now` without settling it (#3635 F1):
+ * the drain tried and nobody received it, so it waits `retryAfterMs` again.
+ * A drain send that threw does not call this (#3635 N1), so it stays due.
+ */
+export async function noteOwedAlertAttempt({
   key,
   now = new Date(),
   store = prisma,
@@ -119,26 +177,7 @@ export async function markAlertOwed({
   now?: Date;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<void> {
-  try {
-    await store.alertCooldown.create({ data: { key, lastAlertedAt: now } });
-  } catch (error) {
-    if (!isPrismaUniqueConstraintError(error)) throw error;
-  }
-}
-
-export async function listOwedAlertKeys({
-  prefix,
-  store = prisma,
-}: {
-  prefix: string;
-  store?: Pick<typeof prisma, "alertCooldown">;
-}): Promise<string[]> {
-  const rows = await store.alertCooldown.findMany({
-    where: { key: { startsWith: prefix } },
-    select: { key: true },
-    take: 50,
-  });
-  return rows.map((row) => row.key);
+  await store.alertCooldown.updateMany({ where: { key }, data: { lastAlertedAt: now } });
 }
 
 export async function settleOwedAlert({

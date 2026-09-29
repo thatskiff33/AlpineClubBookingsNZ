@@ -22,6 +22,8 @@ import {
 } from "@/lib/xero-operation-queue";
 import { prisma } from "@/lib/prisma";
 import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
+import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
+import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
@@ -56,6 +58,10 @@ export type RepairDependencies = {
   getPaymentIntent: typeof getPaymentIntent;
   markPaymentIntentTransactionFailed: typeof markPaymentIntentTransactionFailed;
   refundPaymentTransactions: typeof refundPaymentTransactions;
+  // #3635 C2: a repaired late-capture refund's record and per-capture note.
+  recordAndNoteRepairedLateCaptureRefunds: typeof recordAndNoteRepairedLateCaptureRefunds;
+  // #3635: the one refund-note gap reader, for the missing-refund-note arm.
+  readRefundCreditNoteGap: typeof readRefundCreditNoteGap;
 };
 
 const defaultDependencies: RepairDependencies = {
@@ -78,6 +84,8 @@ const defaultDependencies: RepairDependencies = {
   getPaymentIntent,
   markPaymentIntentTransactionFailed,
   refundPaymentTransactions,
+  recordAndNoteRepairedLateCaptureRefunds,
+  readRefundCreditNoteGap,
 };
 
 export function getDependencies(overrides?: Partial<RepairDependencies>): RepairDependencies {

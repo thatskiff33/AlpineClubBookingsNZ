@@ -843,7 +843,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-internet-banking-hold-kept": {
     triggerSummary:
-      "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable at check-in or seven days after the deadline, released",
+      "An internet banking hold reached its deadline, but Xero showed money paid against the booking's invoice, or the invoice could not be read - so the booking was kept, or, still unreadable seven days after the deadline, released (a stay that has started is never released)",
     frequency:
       "At most once per hold for each reason - part-paid, paid in full but not yet synced, unreadable, and released while still unreadable - guarded by a cross-instance claim that is given back when the email could not be delivered",
   },

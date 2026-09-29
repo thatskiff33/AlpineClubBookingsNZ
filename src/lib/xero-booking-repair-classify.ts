@@ -2183,6 +2183,14 @@ export function classifyBookingContext(
           // #3635: the account-credit note's operation must not answer for it.
           { payloadQueueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }
         );
+        // #3635: never more than a note may still answer (the one gap reader,
+        // `readRefundCreditNoteGap`). A refund of a late capture Xero never
+        // received, or cash a resolved note covers, is no gap, so it raises no
+        // recurring critical finding.
+        const refundNoteAskCents = Math.min(
+          cashCancellationRefundCents,
+          context.refundNoteUncoveredCents ?? cashCancellationRefundCents
+        );
         if (blockingOperation?.kind === "retryable") {
           const action = addAction(
             actionMap,
@@ -2203,9 +2211,9 @@ export function classifyBookingContext(
         } else if (blockingOperation?.kind === "resolved") {
           // #3635 decision 2: done by hand in Xero; reported, never re-run.
           addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "refund credit note");
-        } else if (!blockingOperation) {
+        } else if (!blockingOperation && refundNoteAskCents > 0) {
           const action = addAction(actionMap, {
-            key: `queue:refund-credit-note:${payment.id}:${cashCancellationRefundCents}`,
+            key: `queue:refund-credit-note:${payment.id}:${refundNoteAskCents}`,
             bookingId: booking.id,
             type: "QUEUE_REFUND_CREDIT_NOTE",
             description:
@@ -2213,7 +2221,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             payload: {
               paymentId: payment.id,
-              refundAmountCents: cashCancellationRefundCents,
+              refundAmountCents: refundNoteAskCents,
             },
           });
           addFinding(findings, {
@@ -2224,7 +2232,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             details: {
               paymentId: payment.id,
-              refundAmountCents: cashCancellationRefundCents,
+              refundAmountCents: refundNoteAskCents,
             },
             actionKeys: [action.key],
           });

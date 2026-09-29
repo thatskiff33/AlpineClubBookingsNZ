@@ -41,8 +41,7 @@
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. It issues typed SELECTs
  * through Prisma (`INV-OPS-001`), and calls no provider.
  */
-import { PaymentStatus } from "@prisma/client";
-
+import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   expectedRefundedFloorCents,
@@ -51,13 +50,6 @@ import {
 import { prisma } from "@/lib/prisma";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
 import { formatCents } from "@/lib/utils";
-
-/** A payment that has captured money, and so can have a refunded total at all. */
-const AUDITED_PAYMENT_STATUSES = [
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-];
 
 export interface RefundedTotalShortfallRow {
   paymentId: string;
@@ -114,7 +106,9 @@ export async function auditRefundedTotalShortfalls(options?: {
 
   const payments = await db.payment.findMany({
     where: {
-      status: { in: AUDITED_PAYMENT_STATUSES },
+      // A payment that has captured money, and so can have a refunded total
+      // at all: the aggregate's one captured list (#3635 F3, INV-SSOT).
+      status: { in: [...CAPTURED_PAYMENT_STATUS_LIST] },
       amountCents: { gt: 0 },
     },
     select: {

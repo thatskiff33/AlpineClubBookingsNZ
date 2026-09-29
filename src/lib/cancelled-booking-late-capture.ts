@@ -299,6 +299,11 @@ export type LateCaptureRecordOutcome = {
   /** The population the row stored, re-read after the caller's Stripe round trip. */
   bookingDeleted: boolean;
   /**
+   * `false` when the record write was lost (its own `critical` audit row says so):
+   * the intent is then NOT a known late capture, and nothing may note it (#3635 N4).
+   */
+  recorded: boolean;
+  /**
    * `true` when an operator's hand-`COMPLETED` row was found AFTER the refund —
    * #2774's residual window, where their completion landed inside the caller's own
    * Stripe round trip and the member has therefore probably been paid twice.
@@ -515,6 +520,7 @@ export async function recordAutomaticLateCaptureRefund(
     });
     return {
       bookingDeleted,
+      recorded: true,
       handCompletedAfterRefund:
         outcome.existingStatus === ManualRefundTaskStatus.COMPLETED,
     };
@@ -544,7 +550,7 @@ export async function recordAutomaticLateCaptureRefund(
         error: taskErr instanceof Error ? taskErr.message : String(taskErr),
       }),
     });
-    return { bookingDeleted, handCompletedAfterRefund: false };
+    return { bookingDeleted, recorded: false, handCompletedAfterRefund: false };
   }
 }
 

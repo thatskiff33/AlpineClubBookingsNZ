@@ -366,7 +366,14 @@ describe("processStoredXeroInboundEvents", () => {
       status: "sent",
     } as Awaited<ReturnType<typeof sendBookingConfirmedEmail>>);
     vi.mocked(sendBookingCancelledEmail).mockResolvedValue(undefined);
-    vi.mocked(sendAdminPaymentFailureAlert).mockResolvedValue(undefined);
+    // #3635: the alert returns `sendToAdmins`' result for once-only callers.
+    vi.mocked(sendAdminPaymentFailureAlert).mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 1,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
     mocks.checkCapacity.mockResolvedValue({ available: true });
     mocks.processWaitlist.mockResolvedValue(undefined);
     mocks.txLinkFindFirst.mockResolvedValue(null);

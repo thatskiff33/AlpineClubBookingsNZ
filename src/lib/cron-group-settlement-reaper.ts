@@ -84,7 +84,13 @@ import {
 } from "@/lib/xero-group-settlement-invoice-voids";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { XeroReconnectRequiredError } from "@/lib/xero-api-client";
-import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
+import {
+  alertGroupSettlementInvoice,
+  alertGroupSettlementStartedStayOnce,
+} from "@/lib/group-settlement-invoice-alerts";
+import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
+import { clubTodayForStartedStay } from "@/lib/club-today-for-started-stay";
+import { UNREADABLE_INVOICE_HOLD_BOUND_MS } from "@/lib/unreadable-invoice-hold-bound";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
@@ -132,9 +138,16 @@ export interface GroupSettlementReapResult {
   heldForInvoicePayment: number;
   /**
    * #3642: NOT released because Xero could not show their invoice this run
-   * (held until check-in or seven days past the deadline).
+   * (held for up to seven days past the deadline).
    */
   heldForUnreadableInvoice: number;
+  /**
+   * #3635 (`INV-PAY-016`): Internet Banking groups NOT released because the
+   * stay has started (their invoice unpaid, missing or unreadable in Xero).
+   * Kept, with one treasurer alert, for reconciliation by hand, the rule a
+   * single booking's hold follows.
+   */
+  heldForStartedStay: number;
   /**
    * #3672 (`INV-PAY-109`): joiners of a paid organiser-pays group its bill did
    * not cover, moved to paying for themselves this run.
@@ -208,6 +221,7 @@ export async function reapStaleGroupSettlements(
     resumedInterruptedCancels: 0,
     heldForInvoicePayment: 0,
     heldForUnreadableInvoice: 0,
+    heldForStartedStay: 0,
     releasedToMemberPays: 0,
     startedStayAlerts: 0,
   };
@@ -234,6 +248,10 @@ export async function reapStaleGroupSettlements(
       }
       if (invoiceGate === "held_unreadable") {
         result.heldForUnreadableInvoice += 1;
+        continue;
+      }
+      if (invoiceGate === "held_started_stay") {
+        result.heldForStartedStay += 1;
         continue;
       }
       const released = await releaseSettlementChildren(settlement.id, {
@@ -440,13 +458,6 @@ type ReleasedChild = {
 };
 
 /**
- * #3642: how long past its deadline an Internet Banking group whose invoice
- * Xero cannot show is held before it is released unchecked. See
- * `invoiceAllowsRelease`.
- */
-const UNREADABLE_INVOICE_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
  * #3642 (`INV-PAY-105`): an unpaid Internet Banking settlement is released only
  * once its emailed invoice is known to carry no money. Xero is read first,
  * outside every lock.
@@ -458,13 +469,18 @@ const UNREADABLE_INVOICE_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
  *   organisation): alert, and release. Nothing here can be paid, and the
  *   abandon VOID reads it again and never voids what it cannot find.
  * - Xero cannot answer (disconnected, the integration switched off, down):
- *   held, with an alert, until the hold ends (check-in, or seven days past the
- *   deadline, whichever comes first), then released with an alert. Check-in is
- *   when an unpaid group is released anyway; seven days is long enough to
- *   reconnect Xero after the alert, and short enough that an outage cannot keep
- *   unpaid beds from other members indefinitely. Releasing is money-safe:
- *   nothing is voided without a successful read, and a payment that still
- *   arrives alerts inbound.
+ *   held, with an alert, for up to seven days past the deadline
+ *   (`UNREADABLE_INVOICE_HOLD_BOUND_MS`, the single-booking hold's bound too),
+ *   then released with an alert. Seven days is long enough to reconnect Xero
+ *   after the alert, and short enough that an outage cannot keep unpaid beds
+ *   from other members indefinitely. Releasing is money-safe: nothing is
+ *   voided without a successful read, and a payment that still arrives alerts
+ *   inbound.
+ * - The stay has started (#3635, `INV-PAY-016`): whether Xero shows the
+ *   invoice unpaid, does not have it, or cannot answer, the group is kept and
+ *   the treasurer alerted once, exactly as a single booking's hold is. The
+ *   organiser may already have paid by a transfer nobody has reconciled, so a
+ *   release would cancel joiners arriving on a paid invoice.
  *
  * Only a PENDING settlement with an invoice is read. A cancelled group's
  * invoice belongs to the cancellation VOID (`INV-PAY-035`).
@@ -478,7 +494,7 @@ async function invoiceAllowsRelease(
     groupBooking: { status: GroupBookingStatus };
   },
   context: { now: Date; deadline: Date; checkIn: Date; format: ClubFormat }
-): Promise<"release" | "held_for_money" | "held_unreadable"> {
+): Promise<"release" | "held_for_money" | "held_unreadable" | "held_started_stay"> {
   const { format } = context;
   if (
     settlement.status !== PaymentStatus.PENDING ||
@@ -508,14 +524,34 @@ async function invoiceAllowsRelease(
     }
   }
 
+  // #3635 (`INV-PAY-016`, the orchestrator's decision: a group is treated
+  // like a single hold on check-in day). A group whose stay has started is
+  // never released by this reaper, whatever Xero says about its invoice short
+  // of money on it: kept, and the treasurer told once. The club's day is read
+  // outside every lock; the derivation is the one the single hold asks.
+  const keepStartedStay = async (invoiceSays: string) => {
+    if (!bookingStayHasStarted(context.checkIn, await clubTodayForStartedStay(context.now))) {
+      return false;
+    }
+    logger.warn(
+      { settlementId: settlement.id, invoiceId },
+      "Group settlement past its deadline on a stay that has started; kept for reconciliation by hand"
+    );
+    await alertGroupSettlementStartedStayOnce(
+      {
+        settlementId: settlement.id,
+        invoiceId,
+        errorMessage: `The group's settlement has run out of time and its stay has started, and its combined invoice ${invoiceId} ${invoiceSays}. The group has been kept, not released: the organiser may already have paid by bank transfer that nobody has reconciled yet. Reconcile the invoice by hand; this alert is not repeated.`,
+      },
+      format
+    );
+    return true;
+  };
+
   if (unreadableReason || !state) {
     const reason = unreadableReason ?? "Xero could not be reached";
-    const holdUntil = new Date(
-      Math.min(
-        context.checkIn.getTime(),
-        context.deadline.getTime() + UNREADABLE_INVOICE_HOLD_MS
-      )
-    );
+    if (await keepStartedStay(`could not be checked (${reason})`)) return "held_started_stay";
+    const holdUntil = new Date(context.deadline.getTime() + UNREADABLE_INVOICE_HOLD_BOUND_MS);
     if (context.now >= holdUntil) {
       await alertGroupSettlementInvoice(
         {
@@ -533,7 +569,7 @@ async function invoiceAllowsRelease(
         kind: "reaper_held_unreadable",
         settlementId: settlement.id,
         invoiceId,
-        errorMessage: `The group's settlement has run out of time, but its combined invoice ${invoiceId} could not be checked (${reason}), so the group's beds are being held rather than released. Reconnect Xero; if it still cannot be checked when the hold ends (check-in, or seven days past the deadline), the group will be released unchecked.`,
+        errorMessage: `The group's settlement has run out of time, but its combined invoice ${invoiceId} could not be checked (${reason}), so the group's beds are being held rather than released. Reconnect Xero; if it still cannot be checked seven days past the deadline, the group will be released unchecked, unless its stay has started by then, when it is kept for you to reconcile.`,
       },
       format
     );
@@ -541,6 +577,10 @@ async function invoiceAllowsRelease(
   }
 
   if (state.kind === "not_found") {
+    // A 404 is no read of the money, as for the single hold (`INV-PAY-107`).
+    if (await keepStartedStay("is not in the connected Xero organisation")) {
+      return "held_started_stay";
+    }
     await alertGroupSettlementInvoice(
       {
         kind: "invoice_not_found",
@@ -552,7 +592,10 @@ async function invoiceAllowsRelease(
     );
     return "release";
   }
-  if (state.kind !== "has_money") return "release";
+  if (state.kind !== "has_money") {
+    if (await keepStartedStay("shows no payment yet")) return "held_started_stay";
+    return "release";
+  }
   logger.error(
     { settlementId: settlement.id, invoiceId, state },
     "Group settlement invoice has started being paid; not releasing the group"

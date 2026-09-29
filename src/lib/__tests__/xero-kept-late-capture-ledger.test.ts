@@ -107,6 +107,12 @@ const h = vi.hoisted(() => {
         for (const row of rows) Object.assign(row, data);
         return { count: rows.length };
       },
+      // The automatic-refund record writer's create (#3635 C2).
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const row = { id: id(name), ...data } as Row;
+        table(name).push(row);
+        return row;
+      },
     };
   }
   const db: Record<string, unknown> = {
@@ -295,6 +301,7 @@ import {
 } from "@/lib/xero-kept-late-capture-invoice";
 import {
   creditBackLateCaptureRefunds,
+  noteLateCaptureRefunds,
   queueLateCaptureRefundCreditNote,
 } from "@/lib/late-capture-refund-credit-note";
 import {
@@ -305,6 +312,9 @@ import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { enqueueXeroRefundCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { getRefundsMissingXeroCreditNotes } from "@/lib/xero-admin-health";
 import { cancelledBookingPrimaryPaymentRefundReason } from "@/lib/deleted-booking-modification-payment";
+import { applyActionsForPass } from "@/lib/xero-booking-repair-passes";
+import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import type { ClubTimeZone } from "@/lib/club-time";
 
 const ZONE = "Pacific/Auckland" as ClubTimeZone;
@@ -791,6 +801,28 @@ describe("round 3: the nightly self-heal, one note per capture, and the days the
     ]);
   });
 
+  it("N4: the note writer says whether it queued a note, so a caller claims none it did not queue", async () => {
+    seed({});
+    // No receipt in Xero yet: nothing to note.
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "nothing-owed",
+    );
+    await keep();
+    await runOutbox();
+    takeStripeRefund(4000);
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "queued",
+    );
+    // The same refund again: already noted, nothing queued.
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "nothing-owed",
+    );
+    await runOutbox();
+    expect(refundNotes().filter((d) => d.paymentIntentId === INTENT)).toEqual([
+      expect.objectContaining({ cents: 4000 }),
+    ]);
+  });
+
   it("R3: a refund taken before the receipt is noted on the day it left Stripe, not the day it was credited back", async () => {
     seed({});
     await dashboardRefund(4000, new Date("2026-06-12T01:00:00.000Z")); // 12 Jun at the club
@@ -835,5 +867,68 @@ describe("round 3: the nightly self-heal, one note per capture, and the days the
     expect(refundNotes()).toHaveLength(0);
     // The approval left the officer's record alone.
     expect(row.status).toBe("FAILED");
+  });
+});
+
+/**
+ * #3635 composed review C2: the repair tool's late-capture refund arm, driven
+ * for real (`applyActionsForPass` with the operator's forced key), with the
+ * real record, the real per-capture note and the real enqueue.
+ */
+describe("C2: the repair tool's refund of a late capture Xero never received", () => {
+  it("records it as the webhook does and posts no Stripe-account refund, then or at the self-heal", async () => {
+    seed({ primaryInvoice: { cents: 30000 } });
+    // The webhook never ran its late-capture handler: no task of either shape.
+    h.state.tables.manualRefundTask = [];
+    const action = {
+      key: `late-capture-refund:${BOOKING}:${PAYMENT}:24000`,
+      bookingId: BOOKING,
+      type: "AUTO_REFUND_LATE_CAPTURED_PAYMENT" as const,
+      description: "",
+      safeToAutoApply: false,
+      payload: {
+        bookingId: BOOKING,
+        paymentId: PAYMENT,
+        refundAmountCents: 24000,
+        allocation: [{ paymentTransactionId: "txn_late", amountCents: 24000 }],
+        invoiceId: "inv_primary",
+      },
+      status: "planned" as const,
+      resultMessage: null,
+    };
+    const deps = {
+      refundPaymentTransactions: async () => {
+        takeStripeRefund(24000);
+        return {
+          refunds: [{ paymentIntentId: INTENT, refundId: "re_repair", amountCents: 24000 }],
+          totalRefundedAmountCents: 24000,
+        };
+      },
+      recordAndNoteRepairedLateCaptureRefunds,
+      enqueueXeroRefundCreditNoteOperation,
+    };
+
+    await applyActionsForPass(
+      [{ bookingId: BOOKING, actions: [action] } as never],
+      deps as never,
+      false,
+      CLUB_FORMAT_TEST,
+      new Set([action.key]),
+    );
+    await runOutbox();
+
+    expect(action.status).toBe("applied");
+    expect(action.resultMessage).toMatch(/Xero never recorded pi_late/);
+    // The webhook's own record names the intent, so it is a known late capture.
+    expect(h.table("manualRefundTask")).toEqual([
+      expect.objectContaining({ reason: cancelledBookingPrimaryPaymentRefundReason(INTENT), status: "DISMISSED" }),
+    ]);
+    expect(refundNotes()).toHaveLength(0);
+    expect(await selfHealAfterGrace()).toBe(0);
+    expect(refundNotes()).toHaveLength(0);
+    // Only the pre-existing invoice and its clearing note: nothing moved in Xero,
+    // as nothing net moved in Stripe.
+    expect(books()).toEqual({ income: 0, stripe: 0, receivable: 0 });
+    expect(books().stripe).toBe(realStripe());
   });
 });

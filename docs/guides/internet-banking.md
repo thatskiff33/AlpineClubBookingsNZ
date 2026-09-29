@@ -78,15 +78,26 @@ If Xero shows the invoice **paid in full** but the app has not caught up, the
 email says so; the next Xero sync marks the booking paid. If the invoice
 **cannot be read** (Xero disconnected, down, or the invoice missing there), the
 hold is kept too and admins get one email. The cron keeps trying and releases the
-hold itself once Xero shows the invoice unpaid. If it still cannot be read by
-the check-in date or seven days after the hold deadline, whichever comes first,
-the hold is released and a second email goes out; the invoice-clearing credit
-note is only created once Xero can be read and shows the invoice still owes it.
-If it is the check-in date that arrives first, the stay has started, so the
-hold is not cancelled at all: it is left for you to reconcile by hand, with one
-email saying so.
-The email goes to admins with the **payment failure** notification switched on,
-and a send that reaches nobody is retried on a later run.
+hold itself once Xero shows the invoice unpaid. If it still cannot be read seven
+days after the hold deadline, the hold is released and a second email goes out;
+the invoice-clearing credit note is only created once Xero can be read and shows
+the invoice still owes it. If the check-in date arrives first, the stay has
+started, so the hold is not cancelled at all: it is left for you to reconcile by
+hand, with one email saying so. The cron does not read Xero for a stay that has
+started, whatever the invoice shows.
+
+**Groups work the same way.** When an organiser pays for a group with one
+combined Internet Banking invoice and the settlement runs out of time while Xero
+cannot show that invoice, the group keeps its beds for up to seven days past the
+deadline, then is released. Once the check-in date of a group with an invoice
+arrives, the group is never released by the app, even if Xero shows the invoice
+unpaid or no longer has it: it is kept, and the treasurer gets one email, because the organiser may
+already have paid by bank transfer (#3635).
+
+The email goes to admins with the **payment failure** notification switched on.
+A send that fails is retried on the next run, including the email for a hold
+already released; one that reaches nobody (every address suppressed, for
+example) is tried again a day later, not every run.
 
 ## Troubleshooting
 

@@ -25,7 +25,9 @@ import {
   SETTLEMENT_MONEY_ALERT_REPEAT_MS,
   claimAlertCooldownFailOpen,
 } from "@/lib/alert-cooldown-fail-open";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import type { AdminAlertSendResult } from "@/lib/email/admin-alert-send-result";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -54,6 +56,8 @@ export type GroupSettlementInvoiceAlertKind =
   | "reaper_held_unreadable"
   /** The reaper released a group it could not check, at the end of the hold. */
   | "reaper_released_unchecked"
+  /** The reaper kept a group it could not check whose stay has started (#3635). */
+  | "reaper_held_started_stay"
   /** Xero raised an invoice at a total different from the settlement's. */
   | "raised_at_wrong_total"
   /** A joiner's stored prices do not add up, so no invoice can be raised. */
@@ -79,15 +83,17 @@ export async function claimGroupSettlementInvoiceAlert(key: string): Promise<boo
   });
 }
 
+type GroupSettlementInvoiceAlertParams = {
+  kind: GroupSettlementInvoiceAlertKind;
+  settlementId: string;
+  /** Null when no invoice exists yet (the lines could not be raised). */
+  invoiceId: string | null;
+  errorMessage: string;
+};
+
 /** Alert the operators about one invoice, at most once per window. */
 export async function alertGroupSettlementInvoice(
-  params: {
-    kind: GroupSettlementInvoiceAlertKind;
-    settlementId: string;
-    /** Null when no invoice exists yet (the lines could not be raised). */
-    invoiceId: string | null;
-    errorMessage: string;
-  },
+  params: GroupSettlementInvoiceAlertParams,
   format: ClubFormat
 ): Promise<void> {
   const holdsClaim = await claimGroupSettlementInvoiceAlert(
@@ -95,34 +101,62 @@ export async function alertGroupSettlementInvoice(
   );
   if (!holdsClaim) return;
   try {
-    const settlementDetail = await prisma.groupBookingSettlement.findUnique({
-      where: { id: params.settlementId },
-      select: {
-        amountCents: true,
-        groupBooking: {
-          select: {
-            organiserMember: { select: { firstName: true, lastName: true } },
-            organiserBooking: { select: { checkIn: true, checkOut: true } },
-          },
-        },
-      },
-    });
-    await sendAdminPaymentFailureAlert({
-      memberName: settlementDetail
-        ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
-        : "Unknown group organiser",
-      checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
-      checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
-      amountCents: settlementDetail?.amountCents ?? 0,
-      errorMessage: params.invoiceId
-        ? `${params.errorMessage} Xero invoice: ${buildXeroInvoiceUrl(params.invoiceId)}`
-        : params.errorMessage,
-      paymentIntentId: params.invoiceId ?? `group settlement ${params.settlementId}`,
-    }, format);
+    await sendGroupSettlementInvoiceAlert(params, format);
   } catch (alertErr) {
     logger.error(
       { err: alertErr, invoiceId: params.invoiceId, settlementId: params.settlementId },
       "Failed to send admin alert for a group settlement invoice"
     );
   }
+}
+
+/**
+ * #3635 (C5, `INV-PAY-016`): the reaper kept a group whose stay has started
+ * and whose invoice Xero cannot show. Told ONCE per settlement, through the
+ * one once-ever rule every started-stay alert shares
+ * (`sendAdminAlertOnceEver`, as the single-booking hold's is): kept once
+ * someone has it, held a day when nobody could receive it, given back on a
+ * throw. Never throws.
+ */
+export async function alertGroupSettlementStartedStayOnce(
+  params: { settlementId: string; invoiceId: string; errorMessage: string },
+  format: ClubFormat
+): Promise<void> {
+  await sendAdminAlertOnceEver({
+    key: `group-settlement-started-stay:${params.settlementId}`,
+    label: "group settlement started-stay alert",
+    context: { settlementId: params.settlementId, invoiceId: params.invoiceId },
+    send: () =>
+      sendGroupSettlementInvoiceAlert({ ...params, kind: "reaper_held_started_stay" }, format),
+  });
+}
+
+async function sendGroupSettlementInvoiceAlert(
+  params: GroupSettlementInvoiceAlertParams,
+  format: ClubFormat
+): Promise<AdminAlertSendResult> {
+  const settlementDetail = await prisma.groupBookingSettlement.findUnique({
+    where: { id: params.settlementId },
+    select: {
+      amountCents: true,
+      groupBooking: {
+        select: {
+          organiserMember: { select: { firstName: true, lastName: true } },
+          organiserBooking: { select: { checkIn: true, checkOut: true } },
+        },
+      },
+    },
+  });
+  return sendAdminPaymentFailureAlert({
+    memberName: settlementDetail
+      ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
+      : "Unknown group organiser",
+    checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
+    checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
+    amountCents: settlementDetail?.amountCents ?? 0,
+    errorMessage: params.invoiceId
+      ? `${params.errorMessage} Xero invoice: ${buildXeroInvoiceUrl(params.invoiceId)}`
+      : params.errorMessage,
+    paymentIntentId: params.invoiceId ?? `group settlement ${params.settlementId}`,
+  }, format);
 }

@@ -648,10 +648,12 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
 - Never once the stay has started (#3663): check-in on or before the club's
-  today (`bookingStayHasStarted`) is skipped, counted `skippedStarted` and
-  alerted to finance once, for reconciliation by hand, under the same claim
-  rule as `INV-PAY-109` (`sendAdminAlertOnceEver`). Pinned by
-  `internet-banking-payment-cron.test.ts`.
+  today (`bookingStayHasStarted`) is skipped before any Xero read, counted
+  `skippedStarted` and alerted to finance once, for reconciliation by hand,
+  under the same claim rule as `INV-PAY-109` (`sendAdminAlertOnceEver`). An
+  Internet Banking organiser-pays group with an invoice, past its deadline,
+  follows it too, whatever Xero shows of it ([INV-PAY-105]). Pinned by `internet-banking-payment-cron.test.ts` and
+  `cron-group-settlement-reaper.test.ts`.
 
 ## INV-PAY-017
 
@@ -698,13 +700,14 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   with the #3535 audit) count only when Xero cannot answer, and, for links newer
   than the read, in the release's re-check, narrowing, not closing, the race;
   the builder's shortfall refusal backs it.
-- **An unreadable invoice is kept only to a bound**: check-in or seven days
-  past the deadline, whichever is first, then released (a 404 counts) unless
-  its stay started ([INV-PAY-016]). Its clearing note is created only once the builder reads
-  what the invoices owe.
-- **One admin alert per hold per reason**, claim-guarded; an undelivered one
-  is retried (given back, or marked owed once the hold is gone) and a release's
-  audit row is written regardless. Live reads: 20 a run, 400 holds a day.
+- **An unreadable invoice is kept up to seven days past the deadline**
+  (`UNREADABLE_INVOICE_HOLD_BOUND_MS`, shared with [INV-PAY-105]), then
+  released (a 404 counts); a started stay never is ([INV-PAY-016]). Its
+  clearing note waits for the builder to read what the invoices owe.
+- **One admin alert per hold per reason**, claim-guarded: a send that threw is
+  given back, one nobody received retried daily (owed once the hold is gone),
+  and a release's audit row is written regardless. Live reads: 20 a run, 400
+  holds a day.
 - **The cancel path recognises the part payment**: the claim
   re-checks for payments recorded since its read, records Xero's exact cash as
   captured, so the policy tiers it as credit, and queues a note for
@@ -827,6 +830,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   task's status, by the repair tool too. An approval withdraws an unsent row;
   one already past its check still sends, and its worker notes the refund.
 - **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+  Its late-capture refund writes the webhook's record first, then notes per
+  capture the same way (#3635).
 - **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
   its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
 - Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
@@ -1149,7 +1154,8 @@ it was).
   page card asks its booking half. The reaper
   (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
   only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
-  rows never recorded alerts once after three days.
+  rows never recorded alerts once after three days (`sendAdminAlertOnceEver`,
+  so an alert nobody received is retried, #3635).
 - **Only a kept capture is invoiced.** `lateCaptureRefundState` answers from
   the #3639 task owning the capture (OPEN undecided, COMPLETED refunded,
   DISMISSED kept, recorded gross: `INV-PAY-110`), else from the booking
@@ -1281,11 +1287,12 @@ one, check the other.
 - An invoice is bound only to the current attempt at the settlement's total;
   anything else is abandoned on arrival: VOID queued, pointer cleared, link
   kept inactive.
-- **Money on an invoice is never walked away from.** An invoice that has
-  started being paid or credited is not voided, not released (the group keeps
+- **Money on an invoice is never walked away from.** An invoice with any
+  payment or credit is not voided, not released (the group keeps
   its beds, the owner's #3643 rule) and not replaced; each alerts once per
-  kind. One Xero cannot show is held, with an alert, until check-in or seven
-  days past the deadline; one Xero does not have is never voided. Joiner
+  kind. One Xero cannot show is held, with an alert, up to seven days past the
+  deadline; one Xero does not have is never voided. A started stay with an
+  invoice is never released, whatever Xero shows ([INV-PAY-016]). Joiner
   prices that cannot make the invoice release the binding and alert. A paid
   invoice settles the group only for the settlement's total read under
   `lock(1)` while it is still the settlement's invoice; a card capture only

@@ -5,6 +5,7 @@ import {
   deriveXeroState,
   emptyXeroActivitySummary,
   mergeXeroActivitySummaries,
+  isXeroInvoiceExpectedPaymentStatus,
   matchesXeroStateFilter,
   paymentSourceFilters,
   xeroStateFilters,
@@ -1130,7 +1131,7 @@ function deriveBookingOperationalState(
     ),
   ]);
   const invoiceExpected = booking.payment
-    ? ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(booking.payment.status)
+    ? isXeroInvoiceExpectedPaymentStatus(booking.payment.status)
     : false;
   // #3467: the set already applies the one evidence rule (stored id OR active
   // PRIMARY_INVOICE link), so the field is not OR'd in a second time here.

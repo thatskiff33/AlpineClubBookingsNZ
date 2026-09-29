@@ -1729,15 +1729,19 @@ lock); a payment slipping through leaves the clearing note refused as a
 shortfall and the repair CLI's manual-review item.
 
 An invoice the job cannot read (Xero disconnected, down, a 404, or a payload
-without payment fields) keeps the hold with one email, until the club's
-check-in date or seven days past the deadline, whichever comes first. Then the
-hold is released with a second email and a
+without payment fields) keeps the hold with one email, for up to seven days past
+the deadline (`UNREADABLE_INVOICE_HOLD_BOUND_MS`, the group settlement reaper's
+bound too). Then the hold is released with a second email and a
 `booking.internet_banking_hold_released_unreadable` audit entry; the clearing
 note it queues is created only once the builder can read the invoices and they
-owe it. An email that reached nobody is retried on the next run: for a kept
-hold its claim is given back; for a released one it is marked owed (an
-`AlertCooldown` row keyed `internet-banking-hold-alert-owed:`) and the next run
-delivers it, and the release's audit entry is written either way. A copy that
+owe it. A hold whose stay has started is never released and is answered before
+any Xero read or read budget is spent (`INV-PAY-016`, #3635), so such holds
+cannot starve the others. An email that threw before reaching anyone is retried
+on the next run; one that ran and reached nobody (every address suppressed, a
+non-production withhold) waits a day. For a kept hold its claim is given back or
+held a day; for a released one it is marked owed (an `AlertCooldown` row keyed
+`internet-banking-hold-alert-owed:`), which a later run tries at most once a
+day until it is delivered, and the release's audit entry is written either way. A copy that
 failed but that the email retry cron will re-send counts as reached, so it is
 not sent twice (`adminAlertSendOutcome`, #3672). At most 20
 holds are read per run, rotating, and 400 a day club-wide (the
