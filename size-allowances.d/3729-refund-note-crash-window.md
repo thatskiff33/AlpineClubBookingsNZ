@@ -18,3 +18,11 @@ reason: the reconciliation report's new "Refund credit notes with no settlement
   on record" class has to join the report's summary, its issue counts and its
   sections; the section itself is built in `xero-refund-note-unsettled.ts`, so
   this file gains one import, one call and one entry in each of those lists.
+
+file: src/lib/xero-sync.ts
+lines: 961
+reason: the refund-note completion must not write PARTIAL over a row a
+  concurrent leg already completed SUCCEEDED (#3548 round 3, R2-6). The guard
+  belongs in the one `completeXeroSyncOperation`, beside the store option and
+  next to `failXeroSyncOperation`'s matching `keepCancelled`, rather than as a
+  second completion writer that would have to repeat its link upserts.

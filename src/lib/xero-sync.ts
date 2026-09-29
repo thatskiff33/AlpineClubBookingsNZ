@@ -781,15 +781,8 @@ export async function deactivateXeroObjectLinks(params: {
 export async function completeXeroSyncOperation(
   operationId: string,
   completion: XeroSyncOperationCompletion,
-  options?: {
-    store?: Prisma.TransactionClient;
-    /**
-     * #3548 round 3: leave a row another writer already completed SUCCEEDED as
-     * it is, links and all, and answer null - so the loser of two concurrent
-     * legs never writes PARTIAL over the winner.
-     */
-    keepSucceeded?: boolean;
-  },
+  // #3548: `keepSucceeded` leaves a row a concurrent leg completed SUCCEEDED as it is, links and all, and answers null.
+  options?: { store?: Prisma.TransactionClient; keepSucceeded?: boolean },
 ) {
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.

@@ -1404,7 +1404,9 @@ it. New attempts can no longer end that way, but rows written before the fix
 remain.
 
 Two readers find them, both through the one predicate
-(`refundNoteSettlementOnRecord` in `src/lib/xero-refund-note-settlement.ts`):
+(`refundNoteSettlementOnRecord` in `src/lib/xero-refund-note-settlement.ts`),
+over the same evidence: refund notes only, never an account-credit note, and
+each note's payment links whether active or not:
 
 - the reconciliation report's **"Refund credit notes with no settlement on
   record"** section (`unsettled-refund-credit-notes`), which also lists a note
@@ -1418,8 +1420,10 @@ should be paid, review it in Xero, then apply the finding's
 (`--apply --apply-action <actionKey>`). The action re-reads the row first, reads the note back
 from Xero, and pays it only if nothing settles it yet: under the note's one
 payment key, dated the note's own day, and never over a payment or allocation
-Xero already shows. A part-settled note has no action: settle its remainder in
-Xero by hand.
+Xero already shows. For a part-settled note, settle its remainder in Xero by
+hand, then apply the same action: on that row it only reads the note back and
+records the payments Xero now shows, never paying, and the listing clears once
+the note is fully settled.
 
 ### Backfill cancel-flattened payment statuses (#1473 / #1506)
 
