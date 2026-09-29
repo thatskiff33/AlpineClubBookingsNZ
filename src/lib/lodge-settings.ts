@@ -192,7 +192,13 @@ export async function loadHutLeaderLookaheadDays(
  */
 export async function createNewLodgeSettings(
   tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
-  input: { lodgeId: string; capacity: number; updatedByMemberId: string },
+  input: {
+    lodgeId: string;
+    capacity: number;
+    updatedByMemberId: string;
+    // Only a config import passes it (see writeImportedLodgeCapacity).
+    schoolGroupSoftCap?: number | null;
+  },
 ): Promise<void> {
   await tx.lodgeSettings.create({
     data: {
@@ -200,6 +206,9 @@ export async function createNewLodgeSettings(
       lodgeId: input.lodgeId,
       capacity: input.capacity,
       updatedByMemberId: input.updatedByMemberId,
+      ...(input.schoolGroupSoftCap != null
+        ? { schoolGroupSoftCap: input.schoolGroupSoftCap }
+        : {}),
     },
     select: { id: true },
   });
@@ -207,18 +216,26 @@ export async function createNewLodgeSettings(
 
 /**
  * A config import's capacity write (#3407): the capacity a bundle carries for
- * one lodge, written inside the import transaction to the row the resolver
- * reads for that lodge, which is also the row the export read it from.
+ * one lodge, written inside the import transaction. It follows the per-lodge
+ * rule in docs/multi-lodge/lodge-scoping-contract.md, as the sibling
+ * bed-allocation importer does:
  *
- * - A lodge the import has just created is born through
- *   `createNewLodgeSettings`, exactly as Add lodge does.
- * - An existing lodge with its own row is edited there.
- * - An existing lodge still served by the legacy "default" row (linked to it,
- *   or unlinked) is edited on that row, and an unlinked row is claimed, as a
- *   hub edit through `updateLodgeSettings` would. Writing an own row instead
- *   would leave the legacy row's school-group soft cap behind, and every
- *   club-wide reader of the legacy row reading a different figure.
- * - Otherwise the lodge gets its own row.
+ * - a lodge the import has just created is born through
+ *   `createNewLodgeSettings`, exactly as Add lodge does;
+ * - an existing lodge with its own row is edited there;
+ * - the legacy "default" row is edited ONLY when it is already linked to this
+ *   lodge;
+ * - otherwise the lodge gets its own row, and the legacy row is left untouched.
+ *
+ * It never claims an unlinked legacy row. An unlinked row serves EVERY lodge
+ * without an own row (a guided-setup install writes one), so claiming it for
+ * one lodge would silently take the figure away from the others, the default
+ * lodge included, with nothing in the preview to say so (#3407 round-3
+ * review, F1). When that unlinked row is what was serving this lodge, its
+ * school-group soft cap is carried onto the new own row, because an own row
+ * is read first and would otherwise reset the lodge's soft cap to the code
+ * default. A legacy row linked to another lodge never served this one, so
+ * nothing is copied from it.
  *
  * Nothing else in a config import writes a `LodgeSettings` row: the model is a
  * model-level exclusion (`MODEL_LEVEL_EXCLUSIONS`), so this is the only path.
@@ -232,43 +249,39 @@ export async function writeImportedLodgeCapacity(
     lodgeCreatedByThisImport: boolean;
   },
 ): Promise<void> {
-  const create = () =>
-    createNewLodgeSettings(tx, {
-      lodgeId: input.lodgeId,
-      capacity: input.capacity,
-      updatedByMemberId: input.updatedByMemberId,
-    });
-  if (input.lodgeCreatedByThisImport) return create();
+  const base = {
+    lodgeId: input.lodgeId,
+    capacity: input.capacity,
+    updatedByMemberId: input.updatedByMemberId,
+  };
+  if (input.lodgeCreatedByThisImport) return createNewLodgeSettings(tx, base);
 
+  const edit = (id: string) =>
+    tx.lodgeSettings.update({
+      where: { id },
+      data: { capacity: input.capacity, updatedByMemberId: input.updatedByMemberId },
+      select: { id: true },
+    });
   const ownRow = await tx.lodgeSettings.findUnique({
     where: { id: input.lodgeId },
     select: { id: true },
   });
   if (ownRow) {
-    await tx.lodgeSettings.update({
-      where: { id: input.lodgeId },
-      data: { capacity: input.capacity, updatedByMemberId: input.updatedByMemberId },
-      select: { id: true },
-    });
+    await edit(input.lodgeId);
     return;
   }
   const legacy = await tx.lodgeSettings.findUnique({
     where: { id: LODGE_SETTINGS_ID },
-    select: { lodgeId: true },
+    select: { lodgeId: true, schoolGroupSoftCap: true },
   });
-  if (legacy && (legacy.lodgeId === null || legacy.lodgeId === input.lodgeId)) {
-    await tx.lodgeSettings.update({
-      where: { id: LODGE_SETTINGS_ID },
-      data: {
-        capacity: input.capacity,
-        updatedByMemberId: input.updatedByMemberId,
-        ...(legacy.lodgeId === null ? { lodgeId: input.lodgeId } : {}),
-      },
-      select: { id: true },
-    });
+  if (legacy && legacy.lodgeId === input.lodgeId) {
+    await edit(LODGE_SETTINGS_ID);
     return;
   }
-  return create();
+  return createNewLodgeSettings(tx, {
+    ...base,
+    schoolGroupSoftCap: legacy && legacy.lodgeId === null ? legacy.schoolGroupSoftCap : null,
+  });
 }
 
 export async function updateLodgeSettings(input: {

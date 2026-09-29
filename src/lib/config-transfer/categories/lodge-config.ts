@@ -29,6 +29,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import {
   applyBundleLodgeCapacity,
   bundleLodgeCapacity,
+  lodgeCreatedWithoutCapacityWarning,
   loadLodgeCapacities,
   validateBundleLodgeCapacity,
 } from "./lodge-capacity";
@@ -752,6 +753,7 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       for (const hit of guarded.hits) warnings.push(cleanedLiteralWarning(hit));
       const write = updateDataForMode(ctx.mode, descriptor, guarded.write);
       const capacity = bundleLodgeCapacity(descriptor);
+      if (!currentLodge && capacity === undefined) warnings.push(lodgeCreatedWithoutCapacityWarning(slug));
       const changed = changedFields(
         capacity === undefined ? write : { ...write, capacity },
         currentLodge,

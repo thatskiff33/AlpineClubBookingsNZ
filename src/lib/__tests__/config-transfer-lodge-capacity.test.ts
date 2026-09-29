@@ -8,6 +8,7 @@ import {
   lodgeConfigImporter,
 } from "@/lib/config-transfer/categories/lodge-config";
 import type { TxDb } from "@/lib/config-transfer/import-types";
+import { loadLodgeCapacityOverride, loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 
 // #3407 (orchestrator decision on the issue): a config export carries each
 // lodge's resolved capacity in lodge.json, and an import writes it inside the
@@ -20,6 +21,7 @@ interface SettingsRow {
   id: string;
   lodgeId: string | null;
   capacity: number | null;
+  schoolGroupSoftCap?: number | null;
 }
 
 interface World {
@@ -76,7 +78,7 @@ function makeDb(w: World): TxDb {
         w.settings.get(where.id) ?? null,
       create: async ({ data }: { data: SettingsRow }) => {
         w.settingsCreates.push(data as unknown as Record<string, unknown>);
-        w.settings.set(data.id, { id: data.id, lodgeId: data.lodgeId, capacity: data.capacity });
+        w.settings.set(data.id, { ...data });
         return { id: data.id };
       },
       update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
@@ -105,22 +107,25 @@ function bundleWith(descriptor: Record<string, unknown>): Map<string, Uint8Array
   return new Map([[LODGE_JSON, strToU8(JSON.stringify({ slug: "main", name: "Main Lodge", ...descriptor }))]]);
 }
 
-function planCtx(db: TxDb, files: Map<string, Uint8Array>) {
+type Mode = "merge" | "overwrite";
+const MODES: Mode[] = ["merge", "overwrite"];
+
+function planCtx(db: TxDb, files: Map<string, Uint8Array>, mode: Mode = "merge") {
   return {
     db,
     files,
     manifest: {} as never,
-    mode: "merge" as const,
+    mode,
     resolutions: new Map<string, string>(),
   } as never;
 }
 
-function applyCtx(tx: TxDb, files: Map<string, Uint8Array>) {
+function applyCtx(tx: TxDb, files: Map<string, Uint8Array>, mode: Mode = "merge") {
   return {
     tx,
     files,
     manifest: {} as never,
-    mode: "merge" as const,
+    mode,
     resolutions: new Map<string, string>(),
     actorMemberId: "admin-1",
     imageRemap: new Map<string, string>(),
@@ -129,7 +134,7 @@ function applyCtx(tx: TxDb, files: Map<string, Uint8Array>) {
 }
 
 describe("config transfer carries each lodge's capacity (#3407)", () => {
-  it("round-trips a lodge's own-row capacity into a new lodge's own settings row", async () => {
+  it.each(MODES)("round-trips a lodge's own-row capacity into a new lodge's own settings row (%s)", async (mode) => {
     const source = world([{ id: "lodge-main", slug: "main" }], [
       { id: "lodge-main", lodgeId: "lodge-main", capacity: 24 },
     ]);
@@ -138,10 +143,10 @@ describe("config transfer carries each lodge's capacity (#3407)", () => {
     expect(descriptor.capacity).toBe(24);
 
     const target = world([], []);
-    const plan = await lodgeConfigImporter.plan(planCtx(makeDb(target), files));
+    const plan = await lodgeConfigImporter.plan(planCtx(makeDb(target), files, mode));
     expect(plan.errors).toEqual([]);
 
-    await lodgeConfigImporter.apply(applyCtx(makeDb(target), files));
+    await lodgeConfigImporter.apply(applyCtx(makeDb(target), files, mode));
     expect(target.settingsCreates).toEqual([
       { id: "lodge-new", lodgeId: "lodge-new", capacity: 24, updatedByMemberId: "admin-1" },
     ]);
@@ -160,21 +165,23 @@ describe("config transfer carries each lodge's capacity (#3407)", () => {
     expect("capacity" in JSON.parse(strFromU8(files.get(LODGE_JSON)!))).toBe(false);
   });
 
-  it("imports an older bundle without the field exactly as before: no settings write", async () => {
+  it.each(MODES)("imports an older bundle without the field exactly as before: no settings write (%s)", async (mode) => {
     const files = bundleWith({});
     const created = world([], []);
-    expect((await lodgeConfigImporter.plan(planCtx(makeDb(created), files))).errors).toEqual([]);
-    await lodgeConfigImporter.apply(applyCtx(makeDb(created), files));
+    expect((await lodgeConfigImporter.plan(planCtx(makeDb(created), files, mode))).errors).toEqual([]);
+    await lodgeConfigImporter.apply(applyCtx(makeDb(created), files, mode));
     expect(created.settingsCreates).toEqual([]);
 
     const existing = world([{ id: "lodge-main", slug: "main" }], [
       { id: "lodge-main", lodgeId: "lodge-main", capacity: 12 },
     ]);
-    const result = await lodgeConfigImporter.apply(applyCtx(makeDb(existing), files));
+    const result = await lodgeConfigImporter.apply(applyCtx(makeDb(existing), files, mode));
     expect(existing.settingsCreates).toEqual([]);
     expect(existing.settingsUpdates).toEqual([]);
     expect(existing.settings.get("lodge-main")?.capacity).toBe(12);
-    expect(result.unchanged).toBe(1);
+    // Overwrite fully defines the lodge row, so it may count as updated there;
+    // what matters is that no settings row was touched.
+    if (mode === "merge") expect(result.unchanged).toBe(1);
   });
 
   it.each([
@@ -225,9 +232,10 @@ describe("config transfer carries each lodge's capacity (#3407)", () => {
 
   it("gives an existing lodge its own row when the legacy row serves another lodge", async () => {
     const w = world([{ id: "lodge-main", slug: "main" }], [
-      { id: "default", lodgeId: "lodge-other", capacity: 30 },
+      { id: "default", lodgeId: "lodge-other", capacity: 30, schoolGroupSoftCap: 8 },
     ]);
     await lodgeConfigImporter.apply(applyCtx(makeDb(w), bundleWith({ capacity: 16 })));
+    // The other lodge's soft cap never served this lodge, so it is not copied.
     expect(w.settingsUpdates).toEqual([]);
     expect(w.settingsCreates).toEqual([
       { id: "lodge-main", lodgeId: "lodge-main", capacity: 16, updatedByMemberId: "admin-1" },
@@ -241,5 +249,79 @@ describe("config transfer carries each lodge's capacity (#3407)", () => {
     const result = await lodgeConfigImporter.apply(applyCtx(makeDb(w), bundleWith({ capacity: 12 })));
     expect(w.settingsUpdates).toEqual([]);
     expect(result.unchanged).toBe(1);
+  });
+});
+
+// Round-3 review F1: an UNLINKED legacy "default" row serves every lodge that
+// has no own row. A guided-setup install writes exactly that, so the club's
+// default lodge and any pre-#3407 lodge both read its figure. An import must
+// never claim it, or the lodges it stops serving silently fall to zero.
+describe("an import never claims the unlinked legacy row (#3407 round 3, F1)", () => {
+  const LODGES = [
+    { id: "lodge-hut", slug: "hut" },
+    { id: "lodge-main", slug: "main" },
+  ];
+  function guidedSetupWorld(): World {
+    return world(LODGES, [
+      { id: "default", lodgeId: null, capacity: 40, schoolGroupSoftCap: 8 },
+    ]);
+  }
+  function bundleOf(lodges: Record<string, Record<string, unknown>>): Map<string, Uint8Array> {
+    return new Map(
+      Object.entries(lodges).map(([slug, extra]) => [
+        `lodge-config/lodges/${slug}/lodge.json`,
+        strToU8(JSON.stringify({ slug, name: "Main Lodge", ...extra })),
+      ]),
+    );
+  }
+
+  it.each(
+    MODES.flatMap((mode) => [
+      [mode, "carries main at the same figure", { hut: { capacity: 12 }, main: { capacity: 40 } }],
+      [mode, "leaves main out", { hut: { capacity: 12 } }],
+    ] as const),
+  )("%s: the untouched lodge still resolves its figure when the bundle %s", async (mode, _label, lodges) => {
+    const w = guidedSetupWorld();
+    const db = makeDb(w);
+    const files = bundleOf(lodges);
+    expect((await lodgeConfigImporter.plan(planCtx(db, files, mode))).errors).toEqual([]);
+    await lodgeConfigImporter.apply(applyCtx(db, files, mode));
+
+    expect(await loadLodgeCapacityOverride(db as never, "lodge-hut")).toBe(12);
+    expect(await loadLodgeCapacityOverride(db as never, "lodge-main")).toBe(40);
+    expect(w.settings.get("default")).toEqual({
+      id: "default", lodgeId: null, capacity: 40, schoolGroupSoftCap: 8,
+    });
+  });
+
+  it("carries the unlinked legacy row's school-group soft cap onto the new own row", async () => {
+    const w = guidedSetupWorld();
+    const db = makeDb(w);
+    await lodgeConfigImporter.apply(applyCtx(db, bundleOf({ hut: { capacity: 12 } })));
+    expect(w.settingsCreates).toEqual([
+      { id: "lodge-hut", lodgeId: "lodge-hut", capacity: 12, updatedByMemberId: "admin-1", schoolGroupSoftCap: 8 },
+    ]);
+    expect(await loadSchoolGroupSoftCap(db as never, "lodge-hut")).toBe(8);
+  });
+});
+
+describe("the preview says when a created lodge will not be set up (#3407 round 3, N2)", () => {
+  it.each(MODES)("warns about a lodge created from a bundle without capacity (%s)", async (mode) => {
+    const plan = await lodgeConfigImporter.plan(planCtx(makeDb(world([], [])), bundleWith({}), mode));
+    expect(plan.warnings).toContain(
+      'Lodge "main" will be created without a capacity. Unless Bed Allocation is on and it has beds, it is not set up for bookings until you set its capacity on the lodge page.',
+    );
+  });
+
+  it("does not warn when the bundle carries a capacity, or the lodge already exists", async () => {
+    const created = await lodgeConfigImporter.plan(
+      planCtx(makeDb(world([], [])), bundleWith({ capacity: 12 })),
+    );
+    const existing = await lodgeConfigImporter.plan(
+      planCtx(makeDb(world([{ id: "lodge-main", slug: "main" }], [])), bundleWith({})),
+    );
+    for (const plan of [created, existing]) {
+      expect(plan.warnings.join(" ")).not.toMatch(/created without a capacity/);
+    }
   });
 });

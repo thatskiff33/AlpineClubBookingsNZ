@@ -86,3 +86,12 @@ export async function applyBundleLodgeCapacity(
   });
   return true;
 }
+
+/**
+ * The preview's warning for a lodge the import will CREATE from a lodge.json
+ * with no capacity (every pre-#3407 bundle): it is born without a figure, so
+ * unless Bed Allocation is on and it has beds, it cannot take a booking yet.
+ */
+export function lodgeCreatedWithoutCapacityWarning(slug: string): string {
+  return `Lodge "${slug}" will be created without a capacity. Unless Bed Allocation is on and it has beds, it is not set up for bookings until you set its capacity on the lodge page.`;
+}
