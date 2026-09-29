@@ -19,8 +19,9 @@ export interface RepairedLateCaptureXeroOutcome {
    */
   recordFailed: string[];
   /**
-   * The record's double-payment signal (`handCompletedAfterRefund`): an operator hand-completed the capture's
-   * refund task while this refund ran. Escalated exactly as the webhook does.
+   * The record's double-payment signal (`handCompletedAfterRefund`): an
+   * operator hand-completed the capture's refund task while this refund ran.
+   * Escalated exactly as the webhook does.
    */
   doubleRefundSuspected: string[];
   /** The capture's own Xero receipt exists and its refund note was QUEUED now. */
