@@ -5,11 +5,10 @@
  * The owner's option A: a hold whose invoice shows any payment is kept. The
  * orchestrator's decision on the thread bounds the case option A did not name —
  * an invoice Xero cannot read (disconnected, token lapsed, the invoice gone):
- * it is kept only until the club's check-in date or seven days past the hold
- * deadline, whichever comes first, then released with a second alert - except
- * that the release's own started-stay rule (#3663, `INV-PAY-016`) never cancels
- * a stay that has started, so the check-in arm hands the hold to that rule and
- * its one alert rather than releasing it. Nothing
+ * it is kept until seven days past the hold deadline, then released with a
+ * second alert. A stay that has started is never released (#3663,
+ * `INV-PAY-016`): if the check-in date comes first, the hold goes to the
+ * started-stay rule and its one alert, and is left for the treasurer. Nothing
  * is voided without a successful Xero read even then: the release only queues
  * the clearing note, and its builder reads the invoice and creates nothing when
  * the invoice owes less than the note (`xero-clearing-allocations.ts`).
