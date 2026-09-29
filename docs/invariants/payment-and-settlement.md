@@ -2637,3 +2637,26 @@ _Split from `INV-PAY-057` (#3220)._
   declined the ask; the club ran out of attempts to raise it, and
   `requested_by_customer` in the club's own Stripe record would misstate a money
   decision.
+
+## INV-PAY-111
+
+**Related: `INV-PAY-101`** (the settlement decision) **and `INV-INT-025`**
+(resolved in Xero).
+
+- **A refund credit note's operation never completes SUCCEEDED without its
+  settling payment or `refundPaymentSkipped`** (orchestrator decision on
+  [#3548](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3548)).
+  The builder saves the note id before it records the payment, so a process
+  that dies between them leaves a saved note with neither.
+- **The retry finishes it in place.** When the saved note has no
+  `REFUND_PAYMENT` link and no create operation recorded its outcome (a
+  payment, a skip, a PARTIAL, a resolve), the retry reads the note back from
+  Xero, settles it through the first attempt's own leg under the same
+  note-keyed idempotency key, and completes with the same payload. A payment
+  that fails completes PARTIAL, which the repair leg offers.
+- **Never a second payment.** A note Xero shows paid, part-paid or allocated
+  is recorded as it stands; on a payment with a refund note an officer
+  resolved by hand in Xero it is left skipped; a voided or missing note fails
+  the row.
+- Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
+  `xero-refund-note-crash-window.test.ts`.
