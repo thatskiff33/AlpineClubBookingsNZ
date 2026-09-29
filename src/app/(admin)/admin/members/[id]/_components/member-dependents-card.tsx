@@ -18,6 +18,7 @@ import { parentLinkTypeLabel } from "@/lib/admin-member-detail-helpers"
 // `INV-DATE-019`, and for a club behind UTC it dates a child a day early —
 // which on this screen decides which age tier they appear to be in.
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
+import { useClubFormat } from "@/components/club-format-provider"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
   DEPENDENT_PARENT_BLOCK_EXPLANATIONS,
@@ -48,6 +49,7 @@ export function MemberDependentsCard({
   className,
   ancestorRendersViewOnlyBanner = false,
 }: MemberDependentsCardProps) {
+  const format = useClubFormat()
   const router = useRouter()
   // #2282: age is no longer part of this. A young member can be recorded as a
   // parent, so what is left is whether the record is CURRENT (active, not
@@ -159,7 +161,7 @@ export function MemberDependentsCard({
                       {dependent.active ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
-                  <TableCell>{dependent.dateOfBirth ? formatPayloadCalendarDay(dependent.dateOfBirth) : "-"}</TableCell>
+                  <TableCell>{dependent.dateOfBirth ? formatPayloadCalendarDay(dependent.dateOfBirth, format) : "-"}</TableCell>
                   <TableCell>
                     {dependent.canLogin ? (
                       <Badge variant="secondary" className="border-border bg-muted text-foreground">

@@ -21,7 +21,7 @@ import type { ESLint, Linter } from "eslint";
  *      `.some()` false, so it too was skipped.
  *   3. A severity downgrade, `["warn", ...]` instead of `["error", ...]`. The
  *      suites read `option.slice(1)` and never looked at `option[0]`, and
- *      `npm run lint` runs bare `eslint` with no `--max-warnings`, so a
+ *      `pnpm run lint` runs bare `eslint` with no `--max-warnings`, so a
  *      warn-level guard blocks nothing at all.
  *
  * The fix is to stop asking "does this glob look like production?" and ask
@@ -82,10 +82,6 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   // --- the narrowed blocks: an exemption from one guard must not lift another -
   { file: "src/lib/date-only.ts", why: "the date-only helper — exempt from the DATE rules only" },
   {
-    file: "src/lib/email-templates/chores.ts",
-    why: "the chore-roster subject line — exempt from the DATE rules only",
-  },
-  {
     file: "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
     why: "number formatting — drops only toLocaleString",
   },
@@ -98,8 +94,8 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
     why: "number formatting — drops only toLocaleString",
   },
   {
-    file: "src/lib/induction-display.ts",
-    why: "an ENVIRONMENT_ZONE_ADAPTER_FILES member — the one narrowed block that has demonstrably hidden a defect. It lifts the environment-zone READ, and a lift written for a read lifted a `= APP_TIME_ZONE` DEFAULT with it for months, on a different file that was on the same list until #3126 deleted the default. Nothing else about THIS file is special, so any guard behaving differently here than at `src/lib/x.ts` is behaving differently because of that block — which is what makes it worth a roster row rather than a string comparison",
+    file: "src/lib/club-time-zone-env.ts",
+    why: "the one ENVIRONMENT_ZONE_ADAPTER_FILES member left (ai-diagnostics-usage.ts held this row until #3567 moved its metering month onto the club's stored zone and off the list, as the induction formatter did before it in #3566) — the one narrowed block that has demonstrably hidden a defect. It lifts the environment-zone READ, and a lift written for a read lifted an environment-zone DEFAULT with it for months, on a different file that was on the same list until #3126 deleted the default. Nothing else about THIS file is special, so any guard behaving differently here than at `src/lib/x.ts` is behaving differently because of that block — which is what makes it worth a roster row rather than a string comparison",
   },
   // --- the money-domain modules --------------------------------------------
   { file: "src/lib/xero-x.ts", why: "a Xero domain module" },
@@ -233,7 +229,7 @@ export async function auditResolvedGuardCoverage(options: {
     }
 
     if (resolved.severity !== 2) {
-      // A `warn` blocks nothing: `npm run lint` runs bare `eslint`, with no
+      // A `warn` blocks nothing: `pnpm run lint` runs bare `eslint`, with no
       // `--max-warnings`, and the tree already exits 0 carrying warnings.
       problems.push({
         file: entry.file,

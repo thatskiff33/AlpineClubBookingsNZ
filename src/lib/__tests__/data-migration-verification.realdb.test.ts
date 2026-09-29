@@ -51,7 +51,7 @@ import type {
  * RUN IT LOCALLY (any throwaway database; the suite creates and drops its own):
  *
  *   DATA_MIGRATION_VERIFICATION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
- *     npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
  */
 
 const REPO_ROOT = process.cwd();

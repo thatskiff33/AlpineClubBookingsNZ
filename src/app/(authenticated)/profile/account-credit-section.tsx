@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatStayDate } from "@/lib/club-time";
+import { formatStayDate, type ClubDateFormat } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -59,8 +59,8 @@ function useTransactionDateFormatter() {
  * real instant is exactly where the two concepts get merged. `formatStayDate`
  * is the kernel's one home for a serialised `@db.Date` (#3507; INV-DATE-010).
  */
-function formatDateRange(checkIn: string, checkOut: string): string {
-  return `${formatStayDate(checkIn)} - ${formatStayDate(checkOut)}`;
+function formatDateRange(checkIn: string, checkOut: string, format: ClubDateFormat): string {
+  return `${formatStayDate(checkIn, format)} - ${formatStayDate(checkOut, format)}`;
 }
 
 export function AccountCreditSection() {
@@ -151,7 +151,7 @@ export function AccountCreditSection() {
                           href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/profile")}
                           className="text-info-11 hover:underline"
                         >
-                          {formatDateRange(booking.checkIn, booking.checkOut)}
+                          {formatDateRange(booking.checkIn, booking.checkOut, format)}
                         </Link>
                       ) : (
                         <span className="text-muted-foreground">-</span>

@@ -4,7 +4,7 @@ import {
   hasAdminAccess,
   isAccessRole,
   type AccessRoleDefinitionLevelFields,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
 
@@ -601,13 +601,13 @@ export function mergeAdminPermissionMatrices(
 }
 
 /**
- * AccessRoleInput extended with the matrix a JWT session carries (#1367).
+ * PrivilegeCheckInput extended with the matrix a JWT session carries (#1367).
  * `session.user.accessRoles` is enum-only (definition-backed custom roles
  * have `role: null` and vanish from it), so the auth `jwt` callback embeds
  * the merged matrix computed from the DB-joined member instead, and every
- * session.user-based check reads it here.
+ * session.user-based check reads it here. `canLogin` is required (#3603).
  */
-export type AdminPermissionInput = AccessRoleInput & {
+export type AdminPermissionInput = PrivilegeCheckInput & {
   adminPermissionMatrix?: unknown;
 };
 
@@ -926,6 +926,22 @@ export function canAccessRoomsBedsPage(
 export function hasFinanceViewerAccess(input: AdminPermissionInput) {
   return LEVEL_RANK[getAdminPermissionMatrix(input).finance] >= LEVEL_RANK.view;
 }
+
+/**
+ * Who may read the connected Xero organisation's summary — its name, short
+ * code and base currency (#2314, owner decision 2 Aug 2026): an admin holding
+ * the finance area at view or above. `GET /api/admin/xero/organisation` gates
+ * on it (as the same literal, which the #2975 authorisation census reads off the
+ * handler's source; a test pins that the two agree), and so does every server
+ * surface that shows a value from that summary to an admin outside that route
+ * (#3633, the base-currency warning on the Club Currency & Locale page and the
+ * setup-readiness list), so the summary reaches exactly the same people
+ * whichever screen shows it.
+ */
+export const XERO_ORGANISATION_READ_PERMISSION: AdminAccessRequirement = {
+  area: "finance",
+  level: "view",
+};
 
 export function hasFinanceManagerAccess(input: AdminPermissionInput) {
   return getAdminPermissionMatrix(input).finance === "edit";

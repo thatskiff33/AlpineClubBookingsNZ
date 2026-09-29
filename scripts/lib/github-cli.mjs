@@ -8,7 +8,7 @@
  * `gh`-not-installed message and the not-authenticated message now have one
  * home, and both callers get the same diagnosis when the CLI is unhappy.
  *
- * Node built-ins only: `scripts/ci/*` gates run before `npm ci` in the `verify`
+ * Node built-ins only: `scripts/ci/*` gates run before `pnpm install --frozen-lockfile` in the `verify`
  * job, and keeping this dependency-free means it stays usable from there.
  */
 import { execFileSync } from "node:child_process";
@@ -52,7 +52,7 @@ export function ghJson(args) {
  *
  * Deliberately thin: it returns whatever `gh` reports and lets the caller decide
  * what an error means. The stale-container reporter has to keep going and mark
- * that container "unknown"; `npm run issue` has to stop. Swallowing the error
+ * that container "unknown"; `pnpm run issue` has to stop. Swallowing the error
  * here would take that choice away from both.
  *
  * `url` is returned for a reason, and a caller that treats `state` as the whole

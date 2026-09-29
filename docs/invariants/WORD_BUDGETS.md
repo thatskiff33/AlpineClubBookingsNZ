@@ -7,7 +7,7 @@ register serves: [`SCHEME.md`](SCHEME.md) §8.1 · deciding issue: #2789.
 
 Every invariant entry is at most **300 words** and every index-row description
 at most **12 words** (`SCHEME.md` §8.1). This file is the only place an entry
-may be allowed more, and `npm run docs:indexcheck` reads it: an id listed here
+may be allowed more, and `pnpm run docs:indexcheck` reads it: an id listed here
 is held to the limit on its row, an id not listed here is held to 300, and the
 index cap has no register at all. **Nothing in this file is a rule and nothing
 here has an id**; it is an inventory the gate enforces exactly, so a row that is
@@ -93,7 +93,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-038` | 1032 |
 | `INV-HOST-052` | 1010 |
 | `INV-HOST-043` | 1003 |
-| `INV-CONFIG-002` | 909 |
+| `INV-CONFIG-002` | 874 |
 | `INV-MONEY-003` | 869 |
 | `INV-ADDPAY-034` | 828 |
 | `INV-MOD-026` | 828 |

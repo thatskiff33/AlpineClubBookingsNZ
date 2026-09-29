@@ -32,8 +32,8 @@ import { useClubFormat } from "@/components/club-format-provider";
  * IT IS ONE CALL NOW because CT-4's `src/lib` group added the missing shape:
  * `HOUSE_SHAPES.longWeekdayDate` is the long weekday, long month AND the year,
  * declared as one shape rather than composed from `longWeekdayDayMonth` plus the
- * year — which is byte-identical for `en-NZ` and not safe for a configurable
- * `APP_LOCALE`.
+ * year — which is byte-identical for `en-NZ` and not safe for the club's
+ * persisted locale (#3566).
  */
 
 interface Guest {
@@ -267,13 +267,13 @@ export function BookingEditor({
             <div>
               <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">
-                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn), format)}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Check-out</p>
               <p className="font-medium">
-                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut), format)}
               </p>
             </div>
             <div>

@@ -387,9 +387,9 @@ export function describeModificationLineCategory(
   return `${describeGuestRateMembershipLabel(labels, line)} ${AGE_TIER_WORD[line.ageTier]}`;
 }
 
-function formatDay(day: string): string {
+function formatDay(day: string, format: ClubFormat): string {
   const parsed = parseCalendarDate(day);
-  return parsed ? formatClubDate(parsed) : day;
+  return parsed ? formatClubDate(parsed, format) : day;
 }
 
 /**
@@ -412,7 +412,7 @@ export function renderModificationLineDescription(
   }
   const verb = line.sign > 0 ? "added" : "removed";
   const nights = `${line.nightCount} night${line.nightCount === 1 ? "" : "s"}`;
-  return `${line.guestCount} x ${describeModificationLineCategory(line, labels)} ${verb} - ${nights} - ${formatDay(line.startDate)} - ${formatDay(line.endExclusive)}`;
+  return `${line.guestCount} x ${describeModificationLineCategory(line, labels)} ${verb} - ${nights} - ${formatDay(line.startDate, format)} - ${formatDay(line.endExclusive, format)}`;
 }
 
 /** The description with its signed money (`+$320.00` / `-$320.00`), for history and audit text. */

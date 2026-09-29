@@ -1,7 +1,9 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { act, render } from "@testing-library/react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { LodgePinSessionProvider } from "@/components/lodge-pin-session";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 
 import KioskPage from "../../page";
 import {
@@ -41,13 +43,15 @@ export function renderKiosk(
   options: { initialPinSessionActive?: boolean } = {},
 ) {
   return render(
-    <ClubTimeProvider zone={CLUB_ZONE}>
-      <LodgePinSessionProvider
-        initialActive={options.initialPinSessionActive === true}
-      >
-        <KioskPage />
-      </LodgePinSessionProvider>
-    </ClubTimeProvider>,
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone={CLUB_ZONE} locale={CLUB_FORMAT_TEST.locale}>
+        <LodgePinSessionProvider
+          initialActive={options.initialPinSessionActive === true}
+        >
+          <KioskPage />
+        </LodgePinSessionProvider>
+      </ClubTimeProvider>
+    </ClubFormatTestProvider>,
   );
 }
 

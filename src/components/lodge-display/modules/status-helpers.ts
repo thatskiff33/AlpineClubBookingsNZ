@@ -8,6 +8,7 @@
 
 import {
   addCalendarDays,
+  type ClubDateFormat,
   formatClubWeekday,
   formatClubWeekdayDay,
   requireCalendarDate,
@@ -39,8 +40,8 @@ import {
  * DAY, so it is formatted as one, with no zone anywhere in the call. See
  * `src/lib/club-time/intl.ts` for why that is an identity and not a projection.
  */
-export function displayWeekday(date: string): string {
-  return formatClubWeekday(requireCalendarDate(date));
+export function displayWeekday(date: string, format: ClubDateFormat): string {
+  return formatClubWeekday(requireCalendarDate(date), format);
 }
 
 export type StayStatus = "arriving" | "staying" | "departing";
@@ -149,6 +150,6 @@ export const STAY_STATUS_ORDER: Record<StayStatus, number> = {
 };
 
 /** "Fri 10" — the column head every board in this folder uses. */
-export function shortDay(date: string): string {
-  return formatClubWeekdayDay(requireCalendarDate(date));
+export function shortDay(date: string, format: ClubDateFormat): string {
+  return formatClubWeekdayDay(requireCalendarDate(date), format);
 }

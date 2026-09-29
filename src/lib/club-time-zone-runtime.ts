@@ -8,13 +8,13 @@
  * (`club-time/server.ts`) both carry `import "server-only"`, and that package
  * THROWS on import under anything but the `react-server` condition:
  *
- *     npx tsx -e "import('./src/lib/club-time/server.ts')"
+ *     pnpm exec tsx -e "import('./src/lib/club-time/server.ts')"
  *     -> This module cannot be imported from a Client Component module.
  *
  * A `tsx` operator script is not a client component, but `server-only` cannot
  * tell the two apart. So a module that both a route and a CLI reach — the
  * finance-sync service, run by the daily cron AND by
- * `npm run finance:backfill-monthly-facts`; the Xero booking-repair loader, run
+ * `pnpm run finance:backfill-monthly-facts`; the Xero booking-repair loader, run
  * only by `scripts/xero-booking-repair.ts` — cannot import either of them
  * without breaking the CLI at import time, before it prints anything.
  * `__tests__/cli-server-only-reach-census.test.ts` walks the real import graph

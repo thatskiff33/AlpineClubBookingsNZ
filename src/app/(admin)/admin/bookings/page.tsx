@@ -468,8 +468,8 @@ export default async function AdminBookingsPage({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {incident.booking.lodge?.name ?? "Lodge"} ·{" "}
-                      {formatClubDate(stayDay(incident.booking.checkIn))}–
-                      {formatClubDate(stayDay(incident.booking.checkOut))}
+                      {formatClubDate(stayDay(incident.booking.checkIn), club.format)}–
+                      {formatClubDate(stayDay(incident.booking.checkOut), club.format)}
                       {uncovered === null
                         ? ""
                         : ` · ${uncovered} uncovered guest-night${uncovered === 1 ? "" : "s"}`}
@@ -588,7 +588,7 @@ export default async function AdminBookingsPage({
                     >
                       <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
                         {row.lodgeName ? `${row.lodgeName} · ` : ""}
-                        {formatClubDate(stayDay(row.checkIn))} – {formatClubDate(stayDay(row.checkOut))}
+                        {formatClubDate(stayDay(row.checkIn), club.format)} – {formatClubDate(stayDay(row.checkOut), club.format)}
                       </span>
                       <span className="block text-xs text-muted-foreground">
                         {row.bookerName}
@@ -601,8 +601,8 @@ export default async function AdminBookingsPage({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {row.status === "DECLINED"
-                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}`
-                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}, never answered`}
+                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt, club.zone, club.format)}` : ""}`
+                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt, club.zone, club.format)}` : ""}, never answered`}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{row.why}</TableCell>
@@ -724,8 +724,8 @@ export default async function AdminBookingsPage({
                         calendar dates that need none (CT-4, #2870). */}
                     <TableCell className="text-sm">{club.instantDate(booking.updatedAt)}</TableCell>
                     <TableCell className="text-sm">
-                      <span className="block">{formatClubDate(stayDay(booking.checkIn))}</span>
-                      <span className="block text-xs text-muted-foreground">to {formatClubDate(stayDay(booking.checkOut))}</span>
+                      <span className="block">{formatClubDate(stayDay(booking.checkIn), club.format)}</span>
+                      <span className="block text-xs text-muted-foreground">to {formatClubDate(stayDay(booking.checkOut), club.format)}</span>
                       <span className="block text-xs text-muted-foreground">
                         {nights} night{nights === 1 ? "" : "s"}
                       </span>
@@ -792,7 +792,7 @@ export default async function AdminBookingsPage({
                             available to this admin. */}
                         <DiagnosticsRecordButton
                           recordId={booking.id}
-                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
+                          subject={`the booking for ${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName} from ${formatClubDate(stayDay(booking.checkIn), club.format)}`}
                         />
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (

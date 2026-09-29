@@ -5,13 +5,18 @@ const { mockFindUnique, mockAuth } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
+// Fixtures are projected through the loader's own `select` (#3603), so a field
+// it stops selecting stops reaching the checks, as with the real client.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique, "Member"),
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 
@@ -28,6 +33,7 @@ function financeMember(overrides: Record<string, unknown> = {}) {
     lastName: "Member",
     role: "USER",
     accessRoles: [] as Array<{ role: string }>,
+    canLogin: true,
     active: true,
     forcePasswordChange: false,
     twoFactorEnabled: false,
@@ -160,6 +166,45 @@ describe("finance API guards", () => {
     expect(viewer.ok).toBe(true);
     expect(manager.ok).toBe(true);
     if (manager.ok) expect(manager.member.id).toBe("member-1");
+  });
+
+  // #3603: a member whose login is switched off holds no finance access, whatever
+  // rows it still stores. "allows treasurers on both guards" above is the
+  // same fixture with login enabled.
+  it("refuses a login-disabled treasurer on both guards", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    mockFindUnique.mockResolvedValue(
+      financeMember({ canLogin: false, accessRoles: [{ role: "FINANCE_ADMIN" }] }),
+    );
+
+    const viewer = await requireFinanceViewerApiAccess();
+    const manager = await requireFinanceManagerApiAccess();
+
+    expect(viewer.ok).toBe(false);
+    expect(manager.ok).toBe(false);
+    if (!viewer.ok) {
+      expect(viewer.response.status).toBe(403);
+      await expect(viewer.response.json()).resolves.toEqual({
+        error: "Finance viewer access required",
+      });
+    }
+    if (!manager.ok) expect(manager.response.status).toBe(403);
+  });
+
+  it("refuses a login-disabled Full Admin on both guards", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    mockFindUnique.mockResolvedValue(
+      financeMember({ canLogin: false, accessRoles: [{ role: "ADMIN" }] }),
+    );
+
+    expect((await requireFinanceViewerApiAccess()).ok).toBe(false);
+    expect((await requireFinanceManagerApiAccess()).ok).toBe(false);
+
+    mockFindUnique.mockResolvedValue(
+      financeMember({ canLogin: true, accessRoles: [{ role: "ADMIN" }] }),
+    );
+    expect((await requireFinanceViewerApiAccess()).ok).toBe(true);
+    expect((await requireFinanceManagerApiAccess()).ok).toBe(true);
   });
 
   it("rejects finance members who must change their password with 403", async () => {

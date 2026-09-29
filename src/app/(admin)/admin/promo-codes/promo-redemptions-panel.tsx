@@ -719,9 +719,9 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>{row.booking.lodgeName}</TableCell>
                       <TableCell>
-                        <div>{formatStayDateOrNull(row.booking.checkIn) ?? row.booking.checkIn}</div>
+                        <div>{formatStayDateOrNull(row.booking.checkIn, format) ?? row.booking.checkIn}</div>
                         <div className="text-xs text-muted-foreground">
-                          to {formatStayDateOrNull(row.booking.checkOut) ?? row.booking.checkOut} ·{" "}
+                          to {formatStayDateOrNull(row.booking.checkOut, format) ?? row.booking.checkOut} ·{" "}
                           {row.booking.nights} night
                           {row.booking.nights === 1 ? "" : "s"}
                         </div>

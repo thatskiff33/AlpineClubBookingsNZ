@@ -82,6 +82,47 @@ common method sets. Each method is a `vi.fn()` typed as `Mock`, so
 same client to the callback, useful when a service is implemented as
 `prisma.$transaction((tx) => ...)`.
 
+### Honouring the query's `select` in a guard test
+
+```ts
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return { prisma: { member: { findUnique: honourSelect(mockFindUnique, "Member") } } };
+});
+
+mockFindUnique.mockResolvedValue({ active: true, canLogin: false, accessRoles: [...] });
+```
+
+`honourSelect(mock, model)` shapes every resolved fixture by the caller's
+arguments, so the code under test sees only the fields its query asked for. Use
+it in any test of a gate that re-reads a member. A fixture that carries a field
+the query never selected otherwise proves nothing: `requireAdmin` passed its
+suites for years without selecting `canLogin`, because every fixture carried it
+(#3603). `projectSelect(row, select, model)` and
+`projectInclude(row, include, model)` are the same projections for a one-off.
+
+What it models:
+
+- a field selected `true` passes through, and a relation with a nested `select`
+  is projected through it;
+- a relation selected `true`, or with only `where`/`orderBy`/`take`, keeps its
+  scalar fields; one with `include` keeps its scalars plus the included
+  relations; a query with neither `select` nor `include` gets the row's scalars;
+- "scalar" means every field that is not a relation, so `Json` values and scalar
+  lists pass whole, as the client returns them;
+- a field the query selects but the fixture lacks stays absent — the helper
+  never invents a value.
+
+**Name the model.** With it, relations are read from the generated client's
+schema (`Prisma.dmmf`), exactly, including relations reached through a relation.
+Without it the helper has to guess: it takes a plain object, or an array holding
+one, to be a relation, so a `Json` object or an array of Json objects would be
+dropped from a bare query. A primitive array still passes. An unknown model name
+throws rather than guessing.
+
+What it does not model: `where`, `orderBy` and `take` are not applied, so the
+mock still decides which row comes back.
+
 ## Recovery-alert focus (jsdom only)
 
 ```ts

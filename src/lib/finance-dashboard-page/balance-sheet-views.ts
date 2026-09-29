@@ -40,7 +40,7 @@ export async function buildCashDashboard(
   format: ClubFormat,
 ) {
   const [series, latestSnapshot] = await Promise.all([
-    buildFinanceMonthlyBalanceSeries(selection.primary),
+    buildFinanceMonthlyBalanceSeries(selection.primary, format),
     loadLatestBankBalancesSnapshot(club, format),
   ]);
   const monthPoints = series.points.filter((point) => point.hasData);
@@ -145,7 +145,7 @@ export async function buildBalanceOrWorkingCapitalDashboard(input: {
   format: ClubFormat;
 }) {
   const { format } = input;
-  const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary);
+  const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary, format);
   const monthPoints = series.points.filter((point) => point.hasData);
   const latest = series.latest;
   const currentRatio =

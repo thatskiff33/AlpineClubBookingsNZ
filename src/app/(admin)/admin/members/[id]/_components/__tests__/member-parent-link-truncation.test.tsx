@@ -29,7 +29,7 @@
  * `total`; change either copy of the sentence.
  */
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

@@ -366,10 +366,56 @@ describe("serializeBookingRequestForAdmin (#2342)", () => {
       lastName: "Teacher Smith",
       email: null,
     });
+    expect("teacherDataNeedsAttention" in serialized).toBe(false);
+  });
+
+  it.each([
+    ["empty name", [{ firstName: "", lastName: "Teacher", email: null }]],
+    ["overlong name", [{ firstName: "T".repeat(101), lastName: "Teacher", email: null }]],
+    ["invalid email", [{ firstName: "Tui", lastName: "Teacher", email: "not-an-email" }]],
+    ["unreadable blob", null],
+  ])("flags only malformed school teachers: %s", (_case, teachers) => {
+    const serialized = serializeBookingRequestForAdmin(
+      row({ type: "SCHOOL", schoolName: "Test School", teachers }),
+    );
+
+    expect(serialized.teachers).toEqual([]);
+    expect(serialized).toMatchObject({ teacherDataNeedsAttention: true });
+    expect("guestDataNeedsAttention" in serialized).toBe(false);
+    expect("linkedMemberDataNeedsAttention" in serialized).toBe(false);
+  });
+
+  it("does not flag the absent teacher column on a general request", () => {
+    const serialized = serializeBookingRequestForAdmin(row({ teachers: null }));
+    expect(serialized.teachers).toEqual([]);
+    expect("teacherDataNeedsAttention" in serialized).toBe(false);
   });
 });
 
 describe("GET /api/admin/booking-requests — the list path (#2342)", () => {
+  it("keeps a malformed school's teacher warning scoped to its own row", async () => {
+    db.bookingRequest.findMany.mockResolvedValue([
+      row({ type: "SCHOOL", schoolName: "Test School", teachers: [
+        { firstName: "", lastName: "Teacher", email: null },
+      ] }),
+      row(),
+    ]);
+    db.bookingRequest.count.mockResolvedValue(2);
+
+    const res = await listRequests(
+      new NextRequest("http://localhost/api/admin/booking-requests?status=ALL"),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: Array<{ teacherDataNeedsAttention?: boolean; teachers: unknown[] }>;
+    };
+    expect(body.data[0]).toMatchObject({
+      teacherDataNeedsAttention: true,
+      teachers: [],
+    });
+    expect("teacherDataNeedsAttention" in body.data[1]).toBe(false);
+  });
+
   it("returns 200 for status=ALL with a malformed row on the page, flagging only that row", async () => {
     db.bookingRequest.findMany.mockResolvedValue([row(), badRow()]);
     db.bookingRequest.count.mockResolvedValue(2);

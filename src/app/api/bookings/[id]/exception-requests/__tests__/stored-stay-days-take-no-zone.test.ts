@@ -24,30 +24,16 @@ import { NextRequest } from "next/server";
  * takes none, ever — so mocking a persisted `ClubTimeSettings` row here would be
  * theatre: the route never reads one on this path, and a test built on that
  * would pass just as happily with the old projection restored. What discriminates
- * is pinning `APP_TIME_ZONE` (the only thing the replaced helper ever read) to a
- * zone BEHIND UTC and demanding the stored days survive it unchanged. The first
- * case measures the legacy answer directly, so the premise cannot go quiet.
+ * is demanding the stored days come back unchanged while the first case measures
+ * the legacy answer in a zone BEHIND UTC directly, so the premise cannot go
+ * quiet. (The environment constant the replaced helper read used to be pinned
+ * here too; #3567 deleted it, so the pin went with it.)
  *
- * Independent of the host's own `TZ`: `APP_TIME_ZONE` is supplied by the mock.
+ * Independent of the host's own `TZ`: every zone here is named explicitly.
  */
 
-/*
- * The zone behind UTC, declared ONCE (#3123). `vi.mock` factories hoist above
- * every plain `const`, which is why the zone used to be inlined here; `vi.hoisted`
- * gives the factory and the premise assertion below the same declaration, so the
- * zone the mock pins and the zone the legacy projection is measured in cannot
- * drift apart.
- */
-const { LEGACY_PROJECTION_ZONE } = vi.hoisted(() => ({
-  LEGACY_PROJECTION_ZONE: "America/Denver",
-}));
-
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: LEGACY_PROJECTION_ZONE,
-  APP_LOCALE: "en-NZ",
-}));
+/** The zone behind UTC the legacy projection is measured in (#3123). */
+const LEGACY_PROJECTION_ZONE = "America/Denver";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),

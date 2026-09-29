@@ -53,7 +53,7 @@
  * Like `concurrency-lock-races.realdb.test.ts`, it is OFF by default and a no-op
  * in ordinary CI/local runs:
  *   - The race describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`; otherwise
- *     it is `describe.skip`, so `npm test` never needs a live database.
+ *     it is `describe.skip`, so `pnpm test` never needs a live database.
  *   - It reads ONLY `CONCURRENCY_RACE_DATABASE_URL` and requires a loopback host,
  *     port 55442+, and the dedicated `concurrency_race_1881` database marker.
  *   - Hosted CI runs it by importing this file from that guarded harness (see the
@@ -63,7 +63,7 @@
  * To run it directly against a throwaway scratch database:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
- *   npx vitest run src/lib/__tests__/ai-diagnostics-budget-race.realdb.test.ts
+ *   pnpm exec vitest run src/lib/__tests__/ai-diagnostics-budget-race.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -334,7 +334,10 @@ describe("diagnostics budget race DB safety guard (#2532)", () => {
       ({ reserveDiagnosticsBudget, diagnosticsUsageMonthKey } = await import(
         "@/lib/ai-diagnostics-usage"
       ));
-      month = diagnosticsUsageMonthKey(RACE_NOW);
+      // The same zone the reserver resolves (#3567 D6): the stored one, or the
+      // seed while this scratch database records none.
+      const { clubTimeZone } = await import("@/lib/club-time/server");
+      month = diagnosticsUsageMonthKey(RACE_NOW, await clubTimeZone());
 
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] =
         await Promise.all([

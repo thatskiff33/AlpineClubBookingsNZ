@@ -56,6 +56,7 @@ import {
 } from "@/components/admin-sidebar";
 import { AdminCommandPalette } from "@/components/admin-command-palette";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /** Behind Greenwich, and NOT what `APP_TIME_ZONE` resolves to under test. */
 const CLUB_BEHIND = "America/Denver";
@@ -118,7 +119,7 @@ function stubPendingCounts(counts: Partial<AdminPendingCounts> = {}) {
 
 function renderSidebar(zone: string) {
   return render(
-    <ClubTimeProvider zone={zone}>
+    <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
       <AdminSidebar
         features={allOn}
         permissionMatrix={fullMatrix}
@@ -248,7 +249,7 @@ describe("the sidebar and the command palette come from ONE definition", () => {
       only on the day this file happens to expect.
     */
     render(
-      <ClubTimeProvider zone={CLUB_BEHIND}>
+      <ClubTimeProvider zone={CLUB_BEHIND} locale={CLUB_FORMAT_TEST.locale}>
         <AdminSidebar
           features={allOn}
           permissionMatrix={fullMatrix}

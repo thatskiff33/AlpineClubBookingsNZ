@@ -2552,11 +2552,18 @@ nominator replacement, and email retry behavior.
 ```text
 built-in type seeded -> admin reviews policy -> type edited/reordered
 custom type created -> active -> archived -> reactivated
+built-in FULL or NON_MEMBER -> archive and booking-rule changes refused -> existing archive may be reactivated, existing wrong rule restored
 member role backfill -> current-season assignment created if missing
 type assignment preview -> apply-from date/reason saved -> audited assignment update
 booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
 subscription display/gate -> resolve season assignment/default -> required or not required
+annual billing preview/confirm -> resolve stored season assignment or role-default row (active or archived) -> when billing is required, require effective fee or surface exception -> snapshot charge
 ```
+
+The `FULL` and `NON_MEMBER` built-ins are also resolved directly by key, so they
+remain in booking use even if an old row was archived. Admin editing refuses
+archiving them and changing their booking behavior away from the built-in value;
+reactivation and restoration to that value remain available (`INV-LIFE-093`).
 
 Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
 stops owners or linked member guests with a structured policy error.
@@ -2573,6 +2580,11 @@ subscription like anyone else. The optional assignment `applyFrom`
 date is date-only metadata for mid-season changeover reporting and audit; the
 guarded preview remains the required save path and existing future bookings are
 not automatically repriced by a type or apply-from change.
+
+An archived role-default row continues to govern existing members with no season
+assignment. Booking keeps its synthetic built-in policy if that row is absent;
+annual billing needs the stored type ID and an effective fee, so a missing row
+or fee becomes an exception instead of a charge (`INV-MONEY-016`).
 
 ## Nomination Lifecycle
 
@@ -3208,6 +3220,12 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
     lastLoginAt bump hits P2025 (member row gone -> id would dangle) -> refuse -> /login?error=google_failed
     eligible -> allow -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
   jwt callback (every request): token.id resolves to NO member row -> sessionInvalidated=true
+    member deleted (#2620), canLogin=false, or sessionsRevokedAt later than the session's
+      issue time (#3603) -> sessionInvalidated=true (INV-LIFE-014, INV-LIFE-092). The database
+      stamps sessionsRevokedAt when login goes on -> off, so a session from before a switch-off
+      is refused after login is switched back on too, whichever cookie is presented; a token
+      once invalidated also stays invalidated (sign-in racing the switch-off, clock skew);
+      the member signs in again for a new one
     -> auth() reads null everywhere -> single redirect to /login rendering the form
        (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```

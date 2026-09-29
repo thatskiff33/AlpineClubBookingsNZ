@@ -26,7 +26,7 @@ configure a club is the admin UI at `/admin/setup` and its linked editors
 You can also run the setup wizard once the database is migrated and seeded:
 
 ```bash
-npm run setup:wizard
+pnpm run setup:wizard
 ```
 
 The wizard now **writes the club's configuration to the database**, not to a
@@ -58,7 +58,7 @@ The config loader (`src/config/club.ts`) never throws, so an absent or broken
 - **Malformed `club.json`** (present but invalid JSON or failing schema
   validation) → the app degrades to the built-in `SAFE_DEFAULT_CONFIG` and logs
   a warning. The `club.example.json` fallback is intentionally **skipped** in
-  this case so a broken primary is not silently masked, and `npm run setup:check`
+  this case so a broken primary is not silently masked, and `pnpm run setup:check`
   reports the Club Config step as **blocked**. Fix `config/club.json`.
 - **Absent `club.json`** → falls back to a valid `config/club.example.json`; if
   the example is also absent or malformed, the app boots on
@@ -140,7 +140,7 @@ never overwrites an admin edit. Healing runs **only from a valid primary
 `config/club.json`** — a boot that fell back to the example or the safe default
 (missing/malformed primary) skips healing so a placeholder identity is never
 frozen into the DB, and self-repairs on a later boot once the primary is fixed
-(the manual `npm run config:self-heal` exits non-zero on such a fallback skip).
+(the manual `pnpm run config:self-heal` exits non-zero on such a fallback skip).
 This is what lets later collapse work drop the file/env fallbacks without
 stranding a live deploy. See "Config self-heal on boot" in `docs/DEPLOYMENT.md`,
 `src/lib/config-self-heal.ts` (the runner) and `src/lib/config-self-heal-steps.ts`
@@ -153,7 +153,7 @@ timezone (#2989). The value it copies comes from `TZ` / `NEXT_PUBLIC_TZ`, not fr
 `club.json`, and since #1987 an absent `club.json` is normal for a database-first
 install — so gating it on the file would mean those installs never recorded their
 timezone at all. It therefore runs on every boot regardless of config provenance,
-and it can only ever CREATE the row, never overwrite one. `npm run
+and it can only ever CREATE the row, never overwrite one. `pnpm run
 config:self-heal` now prints the results of the steps that did run even on a
 provenance skip, and still exits non-zero, because a partial run is not a
 success.
@@ -1253,8 +1253,8 @@ test/demo mode or disabled:
 | `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`.   |
 | `SEED_ADMIN_LAST_NAME`  | Optional last name for the seeded admin; defaults to `User`.     |
 | `SEED_LODGE_PASSWORD`   | Initial password for the seeded shared lodge kiosk account.      |
-| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `npm run db:seed:demo`.       |
-| `DEMO_SEED_PASSWORD`    | Optional local-only password for `npm run db:seed:demo` users.   |
+| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `pnpm run db:seed:demo`.       |
+| `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
@@ -1284,7 +1284,7 @@ legacy `RESERVE` to Associate, historical `LIFE` to Life, `SCHOOL` to School,
 and `NON_MEMBER` to Non-Member) using create-if-missing assignments. Re-running
 the seed does not overwrite existing seasonal assignments.
 
-`npm run db:seed:demo` is separate from the first-run seed. It is intended only
+`pnpm run db:seed:demo` is separate from the first-run seed. It is intended only
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
@@ -1299,7 +1299,7 @@ password.
 Run this before bootstrapping a new install:
 
 ```bash
-npm run setup:check
+pnpm run setup:check
 ```
 
 The check validates environment variable presence/format, module capability
@@ -1889,9 +1889,9 @@ action; scoped admins cannot merge.
 
 | Variable                           | Description                                                                                          |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `CURRENCY`, `NEXT_PUBLIC_CURRENCY` | **A seed only, since #3563.** The club's currency is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Currency & Locale** (`/admin/club-format`); see [`docs/guides/club-format.md`](docs/guides/club-format.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded currency copies the value it is *already effectively using* from here, so nothing about its behaviour changes. **After that the recorded setting is the authority for the SETTING, and editing these variables no longer changes it.** They are not dead configuration yet, and must not be removed. **#3564 moved the ten browser-rendered screens onto the recorded setting** — the currency code beside a fee, a nightly rate, a promo amount, an AI spend cap or a booking-request total, the audit-log timestamps, the health dashboard's ROW timestamps, the promo export counts, and the lobby display's date. What still comes from these variables is every **amount** the site writes, because `formatCents` and the finance formatters build their `Intl` objects at module load (#3565), every other date and time for the same reason, and the remaining server-side readers such as the public fee embeds (#3566). **Two of those dates are ON the screens just listed**, because they go through the club-time kernel rather than through their own page: the health dashboard's `Last refresh` line and the lobby display's live clock. They are the only places a club sees both answers at once, and #3565 moves the kernel's single formatter factory (`src/lib/club-time/intl.ts`) rather than carving either call site out of it. An operator who unsets `CURRENCY` today, or lets it drift from the recorded setting, gets the club's chosen code rendered beside amounts written in `NZD`, on the same screen — which is why the admin screen, the guide and this row all say to keep the two in step. `NZD` is the generic New Zealand default and applies only where neither a recorded currency nor these variables say anything. Store a three-letter ISO 4217 code (`NZD`, `CHF`); a symbol or a name is refused. The transitional `APP_CURRENCY` / `APP_STRIPE_CURRENCY` constants still derive from these for the call sites programme #3205 has not migrated yet (#3565-#3566), and #3567 retires them. Changing the setting re-denominates nothing: every stored amount stays the integer cents it was. |
-| `TZ`, `NEXT_PUBLIC_TZ`             | **A seed only, since CT-1 (#2989).** The club's time zone is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Time Zone** (`/admin/club-time`); see [`docs/guides/club-time.md`](docs/guides/club-time.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded zone copies the value it is *already effectively using* from here, so nothing about its behaviour changes. After that the recorded setting is the authority and editing these variables does not change the club's civil time. They are **not** the server's own clock policy either — that is the container's business and is deliberately irrelevant to what members see. `Pacific/Auckland` is the generic New Zealand default and applies only where neither a recorded zone nor these variables say anything. Store an IANA identifier naming a place (`Pacific/Auckland`); an abbreviation (`NZT`) or a fixed offset (`+12:00`, `Etc/GMT-12`) is refused. The transitional `APP_TIME_ZONE` constant still derives from these for the display call sites epic #2988 has not migrated yet, and CT-6 retires it. Booking dates remain New Zealand date-only lodge nights unless a feature says otherwise. |
-| `LOCALE`, `NEXT_PUBLIC_LOCALE`     | **A seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
+| `CURRENCY`                         | **A first-start seed only.** The club's currency is recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Currency & Locale** (`/admin/club-format`); see [`docs/guides/club-format.md`](docs/guides/club-format.md). This variable is read for exactly one purpose: on the first start after upgrading (or of a new install), an installation that has no recorded currency copies it, so nothing about its behaviour changes. **After that nothing reads it** — not an amount on screen or in an email (since #3565 and #3566), not the currency AI spend is counted in, and **since #3567 not the currency card payments are charged in either**: cards are charged in the recorded currency, so what a member is shown and what their card is charged cannot differ. An operator who edits or unsets `CURRENCY` later changes nothing. `NZD` is the generic New Zealand default and applies only where neither a recorded currency nor this variable says anything. Store a three-letter ISO 4217 code with two decimal places (`NZD`, `CHF`); a symbol, a name, or a currency without two decimal places (`JPY`, `KWD`) cannot be chosen in the app. **Upgrading to #3567:** before it, cards were charged in `CURRENCY`, or in `NZD` when `CURRENCY` was unset or empty (the Docker Compose default); after it, cards are charged in the recorded currency. Where the two differ, card charges change currency on deploy — compare the currency of recent payments in the Stripe Dashboard with the Club Currency & Locale page first. An operator who relied on `CURRENCY` to steer card charges must set the currency in the app instead, and make sure the Stripe account and the Xero base currency match it. `NEXT_PUBLIC_CURRENCY` is **no longer read at all** (#3567): an install that set only it is seeded with `NZD`, and the first start logs a warning naming the ignored variable. Changing the setting re-denominates nothing: every stored amount stays the integer cents it was. |
+| `TZ`, `NEXT_PUBLIC_TZ`             | **A seed only, since CT-1 (#2989).** The club's time zone is now recorded in the database and edited in-app at **Admin → Setup & Configuration → Club Time Zone** (`/admin/club-time`); see [`docs/guides/club-time.md`](docs/guides/club-time.md). These variables are read for exactly one purpose: on the first start after upgrading, an installation that has no recorded zone copies the value it is *already effectively using* from here, so nothing about its behaviour changes. After that the recorded setting is the authority and editing these variables does not change the club's civil time. They are **not** the server's own clock policy either — that is the container's business and is deliberately irrelevant to what members see. `Pacific/Auckland` is the generic New Zealand default and applies only where neither a recorded zone nor these variables say anything. Store an IANA identifier naming a place (`Pacific/Auckland`); an abbreviation (`NZT`) or a fixed offset (`+12:00`, `Etc/GMT-12`) is refused. Since #3567 nothing else reads them: the old `APP_TIME_ZONE` constant is gone, and the AI spend budgets count their months in the recorded zone too. Booking dates remain New Zealand date-only lodge nights unless a feature says otherwise. |
+| `LOCALE`                           | **A first-start seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. `NEXT_PUBLIC_LOCALE` is no longer read at all (#3567); the first start warns if only it is set. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
 | `LANG`, `LC_ALL`                   | **Pinned in the image to `en_US.UTF-8`, beside `TZ` (#3252).** These are the container's own POSIX locale, which Node's bundled ICU reads to choose the default collation and number/date formats for `localeCompare`, `toLocaleString` and friends when a call names no locale. Before #3252 nothing pinned them, so the resolved locale was whatever the base image happened to provide; `en_US` matches what the unpinned image resolved, so pinning it changes no displayed order or format. Every stored identity (proposal fingerprints, confirm tokens, lock-key order) is locale-proof regardless, through `compareOrdinal` (`INV-EXCEPT-036`), so this pin is defence in depth for display only. Override in `docker-compose.yml`'s `environment:` if a club wants a different display collation; set both, because `LC_ALL` wins over `LANG`. Not the club's time zone (`TZ` above) and not the in-app `LOCALE` formatting setting. |
 | ~~`NEXT_PUBLIC_GA_MEASUREMENT_ID`~~ | **Removed as configuration (#2573).** The GA4 measurement id, the consent-banner mode and the banner wording now live **only** in the database, entered in-app at Admin → Integrations → Google Analytics. Nothing in the app reads the environment variable, there is no fallback to it, and its value is **not** imported automatically — so after deploying this release Google Analytics stays inactive until an authorised admin saves a valid measurement id in-app. Remove the variable from your environment. See the Google Analytics section below. |
 | ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
@@ -2429,7 +2429,7 @@ question text is ever stored). The whole page 404s while the module is off.
    spending if it can no longer record usage ("can't-meter ⇒ don't-spend"). The
    cap is a deployment-specific control and does **not** travel in a
    config-transfer bundle — a fresh import gets the default.
-4. **If `CURRENCY` / `NEXT_PUBLIC_CURRENCY` is not `NZD`, set the conversion rate** (#3354). AI usage is
+4. **If the club's currency (Admin → Club Currency & Locale) is not `NZD`, set the conversion rate** (#3354; the club's recorded currency since #3566, not `CURRENCY`). AI usage is
    priced in New Zealand dollars; the **Currency for AI spend** card on both AI
    settings pages takes **how many units of the club's currency one New Zealand
    dollar buys** (for example `0.92`), stores it as an integer in parts per
@@ -2437,6 +2437,8 @@ question text is ever stored). The whole page 404s while the module is off.
    the AI help assistant and AI Diagnostics) and shows **when it was last set**,
    because nothing updates it for you. Until it is set, spend is counted as if
    1 NZD = 1 unit of the club's currency. A New Zealand club sees no editor.
+   **Changing the club's currency clears the rate** (#3566), because a rate set
+   for one currency would misprice another's spend: enter it again afterwards.
    Like the caps, the rate is deployment-local and is **not** carried in the
    config-transfer bundle.
 
@@ -2636,7 +2638,7 @@ rate-limited, or temporarily unavailable.
 | `AUDIT_ARCHIVE_DATABASE_URL`          | Preferred optional archive database for audit retention.                    |
 | `AUDIT_LOG_ARCHIVE_DATABASE_URL`      | Backward-compatible archive database alias.                                 |
 | `SHADOW_DATABASE_URL`                 | Optional Prisma shadow database URL for migration validation.               |
-| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `npm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
+| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `pnpm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
 
 > **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
 > region, access key/secret, retention window, restore-validation shadow

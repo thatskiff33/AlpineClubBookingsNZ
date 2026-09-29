@@ -17,6 +17,7 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // GET /api/display/state?days=N — the lobby display's single data feed
 // (fork issues #28/#32/#52, design.md §5). Two callers:
@@ -104,12 +105,12 @@ async function resolvePreview(
       accessRoles: { select: { role: true } },
     },
   });
-  // `active` is the load-bearing flag, exactly as in requireAdmin (#2383).
-  // Cancellation, archive and deletion deliberately leave the access-role rows
-  // in place and none of them invalidates the session JWT — auth() only
-  // re-stamps the token's roles from those same retained rows — so a preview
-  // grant would otherwise survive an admin's departure until their token
-  // expired. `canLogin` is selected too so hasAdminAccess resolves the
+  // Re-read `active` and `canLogin` rather than trusting the session, exactly
+  // as requireAdmin does (#2383, #3603). Cancellation, archive and deletion
+  // deliberately leave the access-role rows in place. They also switch login
+  // off, so the database stamps the member's revocation time and the token
+  // refresh ends any earlier session (INV-LIFE-092); this re-read is the same
+  // rule at the gate. `canLogin` also makes hasAdminAccess resolve the
   // login-cleared role set rather than the stored one.
   if (!member?.active || !hasAdminAccess(member)) return "denied";
 
@@ -174,7 +175,7 @@ async function loadLayoutRender(
     // authored template can `var(--brand-*)` (LTV-029). getWebsiteThemeRenderState
     // is best-effort (it swallows its own DB error and falls back to defaults),
     // so it never takes the layout render down.
-    const [template, theme] = await Promise.all([
+    const [template, theme, format] = await Promise.all([
       prisma.displayTemplate.findUnique({
         where: { id: templateId },
         select: {
@@ -187,6 +188,7 @@ async function loadLayoutRender(
         },
       }),
       getWebsiteThemeRenderState(),
+      clubFormatValues(), // the {{display-date}} token's format (#3566)
     ]);
     if (!template) {
       logger.warn(
@@ -205,7 +207,8 @@ async function loadLayoutRender(
         footerHtml: template.footerHtml,
         themeCss: theme.css,
       },
-      state
+      state,
+      format
     );
     return { ok: true, render };
   } catch (error) {

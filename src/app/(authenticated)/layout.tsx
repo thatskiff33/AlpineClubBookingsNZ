@@ -66,8 +66,10 @@ export default async function AuthenticatedLayout({
     select: MEMBER_ONBOARDING_GATE_SELECT,
   });
 
-  // Redirect deleted/deactivated accounts even if JWT is still valid
-  if (!member || !member.active) {
+  // Redirect deleted/deactivated accounts even if JWT is still valid, and a
+  // member whose login is switched off (#3603): the token refresh already ends
+  // such a session, and this is the same rule at the layout.
+  if (!member || !member.active || member.canLogin === false) {
     redirect("/login");
   }
 

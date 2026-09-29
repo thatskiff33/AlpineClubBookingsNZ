@@ -16,7 +16,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
  * `club-time-authority.test.ts` beside this file is where the two are pulled
  * apart under a club zone the environment does not hold.
  */
-const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST);
 
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");

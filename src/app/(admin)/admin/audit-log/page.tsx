@@ -46,10 +46,13 @@ import {
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { memberName } from "@/lib/member-serialization";
-import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
-import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
+import {
+  formatClubInstantDateTimeWithSeconds,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -80,56 +83,26 @@ const emptyFacets: AuditFacets = {
   severities: [],
 };
 
-// #2264: not one of the shared house shapes on purpose — the audit trail keeps
-// seconds, so entries logged within the same minute stay orderable. Owner
-// decision: do not migrate this to the shared date-time shape
-// (`formatClubInstantDateTime`, once `formatNZDateTime`), which drops seconds.
-// CT-4 (#2870): an audit stamp is a real INSTANT and is projected through the
-// club's PERSISTED zone (INV-CONFIG-002), which a `"use client"` file receives
-// as data — so the formatter is memoised per zone rather than frozen at module
-// scope against APP_TIME_ZONE.
-// #3564 did to the LOCALE what CT-4 did to the zone: `APP_LOCALE` is
-// `NEXT_PUBLIC_LOCALE` inlined at BUILD time, so in the published image it is
-// `undefined` and every club's audit trail was stamped the New Zealand way. The
-// club's recorded locale reaches a `"use client"` file only as data
-// (INV-CONFIG-006), so the memo is keyed on the PAIR — two clubs can share a
-// zone and differ in locale.
-const AUDIT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function auditFormatter(
-  locale: string,
-  zone: ClubTimeZone,
-): Intl.DateTimeFormat {
-  const key = `${locale}|${zone}`;
-  const cached = AUDIT_FORMATTERS.get(key);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat(locale, {
-    timeZone: zone,
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  AUDIT_FORMATTERS.set(key, created);
-  return created;
-}
-
-/*
-  `format` is the whole `ClubFormat` rather than a bare locale STRING: `value`
-  is also a string, so a bare locale parameter beside it would let a transposed
-  call compile and render nonsense, where an object argument makes the
-  transposition a type error.
-*/
-function formatDateTime(
-  clubTime: BoundClubTime,
-  format: ClubFormat,
-  value: string,
-) {
+// #2264: the audit trail keeps seconds, so entries logged within the same
+// minute stay orderable. Owner decision: do not migrate this to the medium
+// date-time shape (`formatClubInstantDateTime`, once `formatNZDateTime`), which
+// drops them. An audit stamp is a real INSTANT, projected through the club's
+// PERSISTED zone (CT-4, #2870; INV-CONFIG-002).
+//
+// #3566 gave the kernel a `dateTimeSeconds` house shape for it, the identical
+// options this page used to build into a local formatter (memoised on the
+// locale and zone pair since #3564), so the stamp is byte-identical and the
+// kernel is again the only place a date formatter is built. The binding carries
+// the club's locale, so there is no bare locale string left to transpose with
+// `value`.
+function formatDateTime(clubTime: BoundClubTime, value: string) {
   const instant = parseInstant(value);
   if (instant === null) return value;
-  return auditFormatter(format.locale, clubTime.zone).format(instant);
+  return formatClubInstantDateTimeWithSeconds(
+    instant,
+    clubTime.zone,
+    clubTime.format,
+  );
 }
 
 function titleCase(value: string) {
@@ -934,7 +907,7 @@ export default function AuditLogPage() {
                           ) : null}
                         </TableCell>
                         <TableCell className="align-top text-xs text-muted-foreground">
-                          {formatDateTime(clubTime, clubFormat, entry.createdAt)}
+                          {formatDateTime(clubTime, entry.createdAt)}
                         </TableCell>
                         <TableCell className="align-top">
                           <div className="space-y-1">

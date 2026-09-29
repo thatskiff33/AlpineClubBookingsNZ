@@ -112,8 +112,6 @@ export async function GET() {
     cronSchedule: backupCronSchedule(),
     // Client uses this to gate the Full-Admin-only destination/credential
     // affordances; the write routes enforce it independently.
-    canManageDestination: isFullAdmin({
-      accessRoles: guard.session.user.accessRoles,
-    }),
+    canManageDestination: isFullAdmin(guard.session.user),
   });
 }

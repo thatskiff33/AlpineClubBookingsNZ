@@ -1,7 +1,12 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { DisplayPanelOptions } from "./module-options";
-import { countClubNights, requireCalendarDate } from "@/lib/club-time";
+import {
+  type ClubDateFormat,
+  countClubNights,
+  requireCalendarDate,
+} from "@/lib/club-time";
 import { shortDay } from "./status-helpers";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The rotating welcome panel (fork issues #30/#58; visual reference:
 // docs/lobby-display/mockups/approved/whole-lodge-rotating.html panel B): a
@@ -10,9 +15,9 @@ import { shortDay } from "./status-helpers";
 // size, stay dates and nights, and an optional bunks note — or greets the
 // lodge generally when no group holds it.
 
-function shortDate(date: string): string {
+function shortDate(date: string, format: ClubDateFormat): string {
   // The one shared column-head shape (`status-helpers.shortDay`).
-  return shortDay(date);
+  return shortDay(date, format);
 }
 
 /**
@@ -48,6 +53,7 @@ export function WelcomePanel({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const wholeLodgeRow = state.bookings.find((row) => row.wholeLodge) ?? null;
   const checkinNote = state.config["checkin-note"] ?? null;
   const bunksNote = state.config["whole-lodge-note"] ?? null;
@@ -70,7 +76,7 @@ export function WelcomePanel({
           <span className="display-welcome-tile">
             <span className="display-tile-key">Staying</span>
             <span className="display-tile-value">
-              {shortDate(wholeLodgeRow.stayStart)} → {shortDate(wholeLodgeRow.stayEnd)}{" "}
+              {shortDate(wholeLodgeRow.stayStart, format)} → {shortDate(wholeLodgeRow.stayEnd, format)}{" "}
               <small>· {nightsHeld(wholeLodgeRow)} nights</small>
             </span>
           </span>

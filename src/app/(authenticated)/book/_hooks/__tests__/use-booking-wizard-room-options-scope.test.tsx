@@ -33,7 +33,7 @@
 // switch, which is the only ordering that can still race once no unscoped call is
 // ever made; case 3 pins the switch itself.
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({

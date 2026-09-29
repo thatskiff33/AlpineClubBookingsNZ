@@ -3,7 +3,12 @@
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  formatClubLongWeekdayDate,
+  parseCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 // #3228 — a hut leader's PIN session is kept alive for this page by the
 // lodge-area provider (`src/app/(lodge)/layout.tsx`), which is what stops the
 // window closing mid-wizard. This is the safety net for when it closes anyway.
@@ -77,14 +82,14 @@ const MAX_AGE_BY_TIER: Partial<Record<AgeTier, number>> = {
 // exact bag, pinned to `UTC` over the UTC-midnight encoding, which is provably
 // the identity for every club.
 
-function displayDate(dateStr: string): string {
+function displayDate(dateStr: string, format: ClubDateFormat): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this comes off the URL
   // segment, so a hand-typed `/lodge/roster/banana/setup` would otherwise throw
   // and blank the page. The fallback is NEW rather than preserved — the previous
   // `new Date(dateStr + "T00:00:00Z")` produced an invalid Date and `Intl` threw
   // `Invalid time value` out of the render.
   const date = parseCalendarDate(dateStr);
-  return date === null ? dateStr : formatClubLongWeekdayDate(date);
+  return date === null ? dateStr : formatClubLongWeekdayDate(date, format);
 }
 
 // `computeFrequencyInfo` — the "is this chore due tonight?" preview — lives in
@@ -96,6 +101,7 @@ function displayDate(dateStr: string): string {
 // ---------------------------------------------------------------------------
 
 export default function RosterSetupWizard() {
+  const format = useClubFormat();
   const params = useParams();
   const router = useRouter();
   const dateStr = params.date as string;
@@ -495,7 +501,7 @@ export default function RosterSetupWizard() {
           >
             &larr; Back to Kiosk
           </button>
-          <h1 className="text-xl font-bold">{displayDate(dateStr)}</h1>
+          <h1 className="text-xl font-bold">{displayDate(dateStr, format)}</h1>
         </div>
 
         {/* Step indicator */}
@@ -845,7 +851,7 @@ export default function RosterSetupWizard() {
             <p className="text-lg text-kiosk-fg mb-4">
               You are about to confirm {allocations.length} chore assignment
               {allocations.length !== 1 ? "s" : ""} for{" "}
-              {displayDate(dateStr)}.
+              {displayDate(dateStr, format)}.
             </p>
 
             {hasExistingRoster && (

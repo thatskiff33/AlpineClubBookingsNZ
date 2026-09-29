@@ -162,7 +162,7 @@ CHANGELOG.md merge=union
 # how Git treats these files by auto-detection, so this changes nothing about
 # checkout, diff or merge (measured: zero working-tree churn across all 113).
 #
-# What it changes is that `npm run docs:indexcheck` can fail CLOSED. Its
+# What it changes is that `pnpm run docs:indexcheck` can fail CLOSED. Its
 # coverage check asks whether a file that dropped out of Git's text scan is a
 # declared binary asset; anything else is a text file with a NUL hiding it from
 # every check in that command. The first version keyed on the `text` pins above

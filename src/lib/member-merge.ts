@@ -11,7 +11,7 @@ import {
   actorIsFullAdmin,
   wouldRemoveLastFullAdmin,
 } from "@/lib/admin-account-guards";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { memberHoldsFullAdminRole } from "@/lib/access-roles";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
 import {
   describeChildSideDepth,
@@ -600,7 +600,7 @@ export async function evaluateMemberMergeGuards(params: {
     });
   }
 
-  if (hasAdminAccess({ accessRoles: loser.accessRoles })) {
+  if (memberHoldsFullAdminRole(loser)) {
     blockers.push({
       code: "loser_is_admin",
       label: "The duplicate holds an admin access role. Demote it before merging.",
@@ -682,7 +682,7 @@ export async function evaluateMemberMergeGuards(params: {
   // the "cannot tell" the census hands to a person: an unclassified row that
   // looks like a school is a question, and a merge is not the place to answer
   // one. An officer who knows it is a teacher records that with
-  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // `pnpm run db:school-classification-census --classify <id> --as PERSON`,
   // which takes any member id, and the merge then proceeds.
   //
   // If a school really has been recorded twice, the two `Organisation` records
@@ -720,7 +720,7 @@ export async function evaluateMemberMergeGuards(params: {
     );
     const undecided = organisationSides.some((id) => !classifiedById.has(id));
     const howToProceed = undecided
-      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      ? " If it is really a person, record that decision first: pnpm run db:school-classification-census --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
       : "";
     blockers.push({
       code: "organisation_row",

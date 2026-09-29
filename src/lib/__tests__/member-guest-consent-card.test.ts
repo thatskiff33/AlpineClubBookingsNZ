@@ -13,6 +13,7 @@
 // happily with two of them swapped — telling a member a stay had started when
 // the real problem was the booking's status. Pinning is the only assertion
 // that fails when the copy is wrong rather than merely absent.
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { requireClubTimeZone } from "@/lib/club-time";
@@ -408,6 +409,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
           guest: guest("g", "m-family"),
           audience,
           timeZone: CLUB_ZONE,
+          format: CLUB_FORMAT_TEST,
         }),
       ).toBeNull();
       expect(
@@ -415,6 +417,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
           guest: guest("g", null),
           audience,
           timeZone: CLUB_ZONE,
+          format: CLUB_FORMAT_TEST,
         }),
       ).toBeNull();
     }
@@ -427,6 +430,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
           guest: guest("g", "m-1", PENDING),
           audience,
           timeZone: CLUB_ZONE,
+          format: CLUB_FORMAT_TEST,
         }),
       ).toEqual({ tone: "pending", label: "Waiting for consent · expires 7 Aug" });
     }
@@ -439,6 +443,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
           guest: guest("g", "m-1", { consentStatus: "CONFIRMED" }),
           audience,
           timeZone: CLUB_ZONE,
+          format: CLUB_FORMAT_TEST,
         }),
       ).toEqual({ tone: "ok", label: "Told, not asked" });
     }
@@ -454,6 +459,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", TARGET_APPROVED),
         audience: "MEMBER",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented" });
     expect(
@@ -462,6 +468,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "MEMBER",
         responderName: "Ana Kaur",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented" });
     expect(
@@ -470,6 +477,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "MEMBER",
         responderName: "Jo Admin",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Added by the club" });
     expect(
@@ -477,6 +485,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", DECLINED),
         audience: "MEMBER",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "blocked", label: "Said no — still on the booking" });
     expect(
@@ -484,6 +493,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", LAPSED),
         audience: "MEMBER",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "blocked", label: "Lapsed — still on the booking" });
   });
@@ -495,6 +505,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "MEMBER",
         responderName: "Ana Kaur",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       });
       expect(badge?.label).not.toContain("Ana");
       expect(badge?.label).not.toContain("Kaur");
@@ -507,6 +518,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", TARGET_APPROVED),
         audience: "ADMIN",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented 2 Aug" });
     expect(
@@ -515,6 +527,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "ADMIN",
         responderName: "Ana Kaur",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented by Ana Kaur, 2 Aug" });
     expect(
@@ -523,6 +536,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "ADMIN",
         responderName: "Jo Admin",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Added by Jo Admin" });
     expect(
@@ -530,6 +544,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", DECLINED),
         audience: "ADMIN",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "blocked", label: "Said no — could not be removed" });
     expect(
@@ -537,6 +552,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", LAPSED),
         audience: "ADMIN",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "blocked", label: "Lapsed — could not be removed" });
   });
@@ -550,6 +566,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         audience: "ADMIN",
         responderName: null,
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented 2 Aug" });
     expect(
@@ -557,6 +574,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         guest: guest("g", "m-1", ADMIN_ASSIGNED),
         audience: "ADMIN",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Added by the club" });
   });
@@ -572,6 +590,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         }),
         audience: "MEMBER",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "ok", label: "Consented" });
     // A PENDING row with no expiry (the shape the writer refuses) still warns.
@@ -583,6 +602,7 @@ describe("describeMemberGuestConsentBadge (owner decision MG2-M-2 as ticked)", (
         }),
         audience: "ADMIN",
         timeZone: CLUB_ZONE,
+        format: CLUB_FORMAT_TEST,
       }),
     ).toEqual({ tone: "pending", label: "Waiting for consent" });
   });
@@ -594,14 +614,14 @@ describe("the date and count labels", () => {
     // used to be handed `CHECK_IN` here — a `@db.Date` calendar day fed to an
     // instant formatter, which only looked right because the formatter's zone
     // and the encoding's happened to agree. It gets a real instant now (#3123).
-    expect(formatConsentShortDate(EXPIRES, CLUB_ZONE)).toBe("7 Aug");
-    expect(formatConsentWeekdayDate(LAPSE_BY, CLUB_ZONE)).toBe("Sat 8 Aug");
-    expect(formatConsentFullDate(EXPIRES, CLUB_ZONE)).toBe("Fri 7 Aug 2026");
-    expect(formatConsentStayLabel(CHECK_IN, CHECK_OUT)).toBe(
+    expect(formatConsentShortDate(EXPIRES, CLUB_ZONE, CLUB_FORMAT_TEST)).toBe("7 Aug");
+    expect(formatConsentWeekdayDate(LAPSE_BY, CLUB_ZONE, CLUB_FORMAT_TEST)).toBe("Sat 8 Aug");
+    expect(formatConsentFullDate(EXPIRES, CLUB_ZONE, CLUB_FORMAT_TEST)).toBe("Fri 7 Aug 2026");
+    expect(formatConsentStayLabel(CHECK_IN, CHECK_OUT, CLUB_FORMAT_TEST)).toBe(
       "Sat 8 Aug – Mon 10 Aug 2026 (2 nights)",
     );
     expect(
-      formatConsentNightsLabel([CHECK_IN, parseDateOnly("2026-08-09")]),
+      formatConsentNightsLabel([CHECK_IN, parseDateOnly("2026-08-09")], CLUB_FORMAT_TEST),
     ).toBe("Sat 8 Aug, Sun 9 Aug");
   });
 
@@ -682,8 +702,8 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
         consentExpiresAt: EXPIRES,
       },
       targetMemberId: "m-1",
-      member: `Waiting for consent · expires ${formatConsentShortDate(EXPIRES, CLUB_ZONE)}`,
-      admin: `Waiting for consent · expires ${formatConsentShortDate(EXPIRES, CLUB_ZONE)}`,
+      member: `Waiting for consent · expires ${formatConsentShortDate(EXPIRES, CLUB_ZONE, CLUB_FORMAT_TEST)}`,
+      admin: `Waiting for consent · expires ${formatConsentShortDate(EXPIRES, CLUB_ZONE, CLUB_FORMAT_TEST)}`,
       wizard: "Waiting for Sam to approve",
       tone: "pending",
     },
@@ -698,7 +718,7 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
       },
       targetMemberId: "m-1",
       member: "Consented",
-      admin: `Consented ${formatConsentShortDate(RESPONDED, CLUB_ZONE)}`,
+      admin: `Consented ${formatConsentShortDate(RESPONDED, CLUB_ZONE, CLUB_FORMAT_TEST)}`,
       wizard: "Sam approved",
       tone: "ok",
     },
@@ -713,7 +733,7 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
       },
       targetMemberId: "m-1",
       member: "Consented",
-      admin: `Consented by Ana Kaur, ${formatConsentShortDate(RESPONDED, CLUB_ZONE)}`,
+      admin: `Consented by Ana Kaur, ${formatConsentShortDate(RESPONDED, CLUB_ZONE, CLUB_FORMAT_TEST)}`,
       // DELIBERATELY IDENTICAL to TARGET_APPROVED — see the dedicated test below.
       wizard: "Sam approved",
       tone: "ok",
@@ -806,6 +826,7 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
               audience,
               responderName: "Ana Kaur",
               timeZone: CLUB_ZONE,
+              format: CLUB_FORMAT_TEST,
             });
 
       expect(call("MEMBER")?.label ?? null).toBe(member);
@@ -845,6 +866,7 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
             audience,
             responderName: "Ana Kaur",
             timeZone: CLUB_ZONE,
+            format: CLUB_FORMAT_TEST,
           });
 
     for (const audience of ["MEMBER", "WIZARD"] as const) {
@@ -856,12 +878,14 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
       audience: "ADMIN",
       responderName: "Ana Kaur",
       timeZone: CLUB_ZONE,
+      format: CLUB_FORMAT_TEST,
     });
     const adminDelegate = describeMemberGuestConsentBadge({
       guest: { memberId: delegate.targetMemberId, ...delegate.columns },
       audience: "ADMIN",
       responderName: "Ana Kaur",
       timeZone: CLUB_ZONE,
+      format: CLUB_FORMAT_TEST,
     });
     expect(adminTarget).not.toEqual(adminDelegate);
   });
@@ -893,7 +917,7 @@ describe("describeMemberGuestConsentBadge — three audiences, eight sub-states"
       targetFirstName: "Sam",
     });
     expect(badge?.label).toBe("Waiting for Sam to approve");
-    expect(badge?.label).not.toContain(formatConsentShortDate(EXPIRES, CLUB_ZONE));
+    expect(badge?.label).not.toContain(formatConsentShortDate(EXPIRES, CLUB_ZONE, CLUB_FORMAT_TEST));
   });
 
   it("falls back to the member wording when no first name is available", () => {

@@ -14,7 +14,6 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { StatusBadge, StatusIcon, formatUptime, formatDate } from "./_components/shared";
-import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import { useHealthData } from "./_components/use-health-data";
 import type { HealthCheck } from "./_components/types";
@@ -24,17 +23,11 @@ export default function AdminHealthPage() {
   // fetched — so it is shown in the club's persisted zone, not the viewer's
   // (CT-4, #2870; INV-CONFIG-002).
   //
-  // ITS LOCALE IS THE ONE THING ON THIS PAGE #3564 DID NOT MOVE. Every ROW
-  // stamp below goes through `formatDate`, which takes the club's recorded
-  // locale as an argument; this line goes through `clubTime.instantTime`, and
-  // the kernel's single formatter factory (`club-time/intl.ts`) still reads
-  // `APP_LOCALE` at module load. Moving that is #3565, which moves it for the
-  // whole product in one edit rather than carving one call site out of it. So
-  // a club on a non-default locale sees this line in `en-NZ` while the rows
-  // beneath it follow the setting — stated wherever this page's behaviour is
-  // described, rather than left to be discovered.
+  // Its locale is the club's recorded one since #3566: the binding carries it,
+  // so this line and every row stamp beneath it (`formatDate`) follow the one
+  // setting. Before that, the kernel read `APP_LOCALE` and this line alone
+  // stayed New Zealand English on a club with another locale.
   const clubTime = useClubTime();
-  const clubFormat = useClubFormat();
   const { data, loading, error, lastRefresh, refresh } = useHealthData();
 
   if (loading) {
@@ -277,7 +270,7 @@ export default function AdminHealthPage() {
                   </div>
                   <div className="flex items-center gap-3 text-muted-foreground">
                     <span>{wh.durationMs}ms</span>
-                    <span>{formatDate(clubTime, clubFormat, wh.createdAt)}</span>
+                    <span>{formatDate(clubTime, wh.createdAt)}</span>
                   </div>
                 </div>
               ))}

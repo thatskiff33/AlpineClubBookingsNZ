@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberImportDialog } from "@/app/(admin)/admin/members/_components/member-import-dialog";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { ImportResult } from "@/app/(admin)/admin/members/_types";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const fetchMock = vi.fn();
 
@@ -98,7 +99,7 @@ function renderImportDialog() {
   // supplied here, and `America/Denver` is chosen because it is not
   // `APP_TIME_ZONE`'s own fallback.
   render(
-    <ClubTimeProvider zone="America/Denver">
+    <ClubTimeProvider zone="America/Denver" locale={CLUB_FORMAT_TEST.locale}>
       <MemberImportDialog
         open
         onOpenChange={vi.fn()}

@@ -49,7 +49,7 @@ sees it read-only. The page appears only when the `bedAllocation` module is on.
      ALT TEXT DESCRIBES THIS CAPTURE, NOT THE PAGE. The image predates #2937 and
      does not yet show the Allocation preferences card at the foot of the page;
      saying it does would make the substitute a screen-reader user relies on
-     wrong rather than merely stale. Re-run `npm run docs:screenshots` and, in
+     wrong rather than merely stale. Re-run `pnpm run docs:screenshots` and, in
      the same change, extend the alt text to end "…and the Allocation
      preferences card at the foot of the page".
    -->

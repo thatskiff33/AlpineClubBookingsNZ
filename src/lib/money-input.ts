@@ -54,7 +54,7 @@ export const MONEY_INPUT_PROPS = {
   inputMode: "decimal",
 } as const;
 
-/** Parse a non-negative decimal NZD input exactly, without binary float math. */
+/** Parse a non-negative decimal amount input exactly, without binary float math. */
 export function parseDecimalDollarsToCents(value: string): number | null {
   const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(value.trim());
   if (!match) return null;
@@ -66,7 +66,7 @@ export function parseDecimalDollarsToCents(value: string): number | null {
 }
 
 /**
- * Parse a decimal NZD input that may carry a leading sign, exactly.
+ * Parse a decimal amount input that may carry a leading sign, exactly.
  *
  * Only for the places where the domain genuinely allows a negative amount — a
  * member credit adjustment can be a debit. The magnitude is handed to

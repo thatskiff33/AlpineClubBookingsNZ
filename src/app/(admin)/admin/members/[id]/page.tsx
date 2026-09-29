@@ -24,7 +24,7 @@ import {
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import {
   canAdminRequestMembershipCancellation,
   NON_MEMBER_ROLE_VALUES,
@@ -659,9 +659,7 @@ export default function MemberDetailPage({
   }, [loading, member, openSection]);
 
   const isSelf = session?.user?.id === id;
-  const actorIsFullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
+  const actorIsFullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   const xeroRecoveryAlert = (
     <FocusedActionError
@@ -803,7 +801,7 @@ export default function MemberDetailPage({
       currentSeasonSubscriptionLabel: currentSeasonSubscription
         ? subscriptionStatusLabel(currentSeasonSubscription.status)
         : null,
-    }),
+    }, format),
     finance: formatMemberFinancePreview({
       creditBalanceCents: creditLoading ? null : creditBalance,
       promoCodeCount: member.promoCodes?.length ?? 0,
@@ -817,7 +815,7 @@ export default function MemberDetailPage({
     history: formatMemberHistoryPreview({
       totalBookings: member.stats.totalBookings,
       lastStay: member.stats.lastStay,
-    }),
+    }, format),
     lifecycle: formatMemberLifecyclePreview({
       active: member.active,
       cancelledAt: member.cancelledAt,
@@ -1012,7 +1010,7 @@ export default function MemberDetailPage({
                 <span className="font-medium">
                   {/* `lifeMemberDate` is a `@db.Date` CALENDAR DAY — no
                       timezone, so no projection. `INV-DATE-019`. */}
-                  {formatPayloadCalendarDay(member.lifeMemberDate)}
+                  {formatPayloadCalendarDay(member.lifeMemberDate, format)}
                 </span>
               </div>
             )}

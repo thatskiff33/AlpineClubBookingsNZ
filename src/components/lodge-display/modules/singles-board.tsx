@@ -12,6 +12,7 @@ import {
   windowDatesOf,
 } from "./arrivals-board";
 import { shortDay } from "./status-helpers";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The by-booking singles board (fork issues #30/#58; visual reference:
 // docs/lobby-display/mockups/singles-by-booking.html): Room | Guest | night
@@ -63,6 +64,7 @@ export function SinglesBoard({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const days = intOption(options, "days", ARRIVALS_BOARD_DEFAULT_DAYS, {
     min: 1,
     max: 7,
@@ -111,7 +113,7 @@ export function SinglesBoard({
             data-today={index === 0 || undefined}
             style={{ gridColumn: index + (hasRooms ? 3 : 2) }}
           >
-            {shortDay(date)}
+            {shortDay(date, format)}
           </span>
         ))}
       {groups.map((group) => {
@@ -163,7 +165,7 @@ export function SinglesBoard({
                         gridColumnEnd: `span ${layout.spanColumns}`,
                       }}
                     >
-                      {barMeta(layout)}
+                      {barMeta(layout, format)}
                     </span>
                   ))}
                 </div>

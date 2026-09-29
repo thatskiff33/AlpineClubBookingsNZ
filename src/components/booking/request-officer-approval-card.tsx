@@ -20,7 +20,7 @@ import {
   type MemberExceptionRequestSource,
 } from "@/lib/member-exception-requests";
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -166,8 +166,8 @@ export interface RequestOfficerApprovalCardProps {
  * is east of Greenwich; for a club west of it every lodge night printed a day
  * early. A calendar day has no zone, so the kernel's formatter takes none.
  */
-function formatNight(value: string) {
-  return formatClubDate(requireCalendarDate(value));
+function formatNight(value: string, format: ClubDateFormat) {
+  return formatClubDate(requireCalendarDate(value), format);
 }
 
 /**
@@ -181,13 +181,14 @@ function formatNight(value: string) {
 function describeGuestStay(
   guest: ExceptionRequestProposalGuest,
   envelopeNightCount: number,
+  format: ClubDateFormat,
 ): { nightCount: number; label: string } {
   if (guest.nights.length > 0) {
     return {
       nightCount: guest.nights.length,
       label: `${guest.nights.length} ${
         guest.nights.length === 1 ? "night" : "nights"
-      } (${guest.nights.map(formatNight).join(", ")})`,
+      } (${guest.nights.map((night) => formatNight(night, format)).join(", ")})`,
     };
   }
   if (guest.stay) {
@@ -197,7 +198,7 @@ function describeGuestStay(
     );
     return {
       nightCount,
-      label: `${formatNight(guest.stay.start)} to ${formatNight(guest.stay.end)}`,
+      label: `${formatNight(guest.stay.start, format)} to ${formatNight(guest.stay.end, format)}`,
     };
   }
   return { nightCount: envelopeNightCount, label: "the whole stay" };
@@ -226,7 +227,7 @@ export function RequestOfficerApprovalCard({
   // a separate same-length array read back by a shared render index below.
   const guestsWithStays = proposal.guests.map((guest) => ({
     guest,
-    stay: describeGuestStay(guest, proposal.envelopeNightCount),
+    stay: describeGuestStay(guest, proposal.envelopeNightCount, format),
   }));
   const guestNights = guestsWithStays.reduce(
     (sum, { stay }) => sum + stay.nightCount,
@@ -286,7 +287,7 @@ export function RequestOfficerApprovalCard({
           <p className="font-medium">Exactly what the Booking Officer will decide</p>
           {frozen.checkIn && frozen.checkOut ? (
             <p className="mt-1 text-muted-foreground">
-              {formatNight(frozen.checkIn)} to {formatNight(frozen.checkOut)} ·{" "}
+              {formatNight(frozen.checkIn, format)} to {formatNight(frozen.checkOut, format)} ·{" "}
               {frozen.guestNights} guest nights across {frozen.guests.length}{" "}
               {frozen.guests.length === 1 ? "guest" : "guests"}
             </p>
@@ -299,7 +300,7 @@ export function RequestOfficerApprovalCard({
                   {guest.isMember ? " (member)" : ""}
                   {guest.nights.length > 0
                     ? ` · ${guest.nights.length} ${guest.nights.length === 1 ? "night" : "nights"} (${guest.nights
-                        .map(formatNight)
+                        .map((night) => formatNight(night, format))
                         .join(", ")})`
                     : ""}
                 </li>
@@ -367,7 +368,7 @@ export function RequestOfficerApprovalCard({
               {violation.affectedNights.length > 0 ? (
                 <span className="block text-muted-foreground">
                   Nights affected:{" "}
-                  {violation.affectedNights.map(formatNight).join(", ")}
+                  {violation.affectedNights.map((night) => formatNight(night, format)).join(", ")}
                 </span>
               ) : null}
             </li>
@@ -385,15 +386,15 @@ export function RequestOfficerApprovalCard({
           <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
             <dt className="text-muted-foreground sm:w-40">Nights</dt>
             <dd>
-              {formatNight(proposal.checkIn)} to {formatNight(proposal.checkOut)}
+              {formatNight(proposal.checkIn, format)} to {formatNight(proposal.checkOut, format)}
             </dd>
           </div>
           {proposal.base ? (
             <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
               <dt className="text-muted-foreground sm:w-40">Booking today</dt>
               <dd>
-                {formatNight(proposal.base.checkIn)} to{" "}
-                {formatNight(proposal.base.checkOut)} · {proposal.base.guestCount}{" "}
+                {formatNight(proposal.base.checkIn, format)} to{" "}
+                {formatNight(proposal.base.checkOut, format)} · {proposal.base.guestCount}{" "}
                 {proposal.base.guestCount === 1 ? "guest" : "guests"}
               </dd>
             </div>

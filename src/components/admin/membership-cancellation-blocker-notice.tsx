@@ -14,6 +14,7 @@ import {
   type MembershipCancellationBlocker,
 } from "@/lib/membership-cancellation-blocker-messages";
 import { formatStayDate } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * Everything standing between this participant and an approval, in the server's
@@ -59,12 +60,14 @@ function blockerKey(blocker: MembershipCancellationBlocker) {
  * date - are CALENDAR DAYS, so `formatStayDate` serves both (#3507).
  */
 function BlockerLine({ blocker }: { blocker: MembershipCancellationBlocker }) {
+  const format = useClubFormat();
+  const formatDate = (value: string) => formatStayDate(value, format);
   if (!isUnpaidInvoiceBlocker(blocker)) {
-    return <>{describeMembershipCancellationBlocker(blocker, { formatDate: formatStayDate })}</>;
+    return <>{describeMembershipCancellationBlocker(blocker, { formatDate })}</>;
   }
 
   const { label, detail, href } = describeUnpaidInvoiceBlockerParts(blocker, {
-    formatDate: formatStayDate,
+    formatDate,
   });
 
   return (

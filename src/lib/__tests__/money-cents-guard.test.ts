@@ -610,7 +610,7 @@ describe("money cents-conversion guard: the approved helper modules", () => {
 
       // The severity slot, which this test used to skip straight past. A block
       // spelled `["warn", ...]` states every restriction and enforces none:
-      // `npm run lint` runs bare `eslint` with no `--max-warnings`, and the tree
+      // `pnpm run lint` runs bare `eslint` with no `--max-warnings`, and the tree
       // already exits 0 carrying warnings (#2685 review).
       const severity = (option as Array<unknown>)[0];
       if (severity !== "error" && severity !== 2) {
@@ -680,7 +680,7 @@ describe("money cents-conversion guard: the approved helper modules", () => {
 
   it("carries no eslint-disable for this rule anywhere in the tree", async () => {
     // The escape hatch is the config's module list, with a stated reason — never
-    // a disable comment (#2685). `npm run lint` reports an unused directive, so a
+    // a disable comment (#2685). `pnpm run lint` reports an unused directive, so a
     // stale one cannot hide here either.
     const { execSync } = await import("child_process");
     const hits = execSync(
@@ -740,11 +740,10 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "scripts/x.ts": "standard",
     "prisma/seed-x.ts": "standard",
     "src/lib/date-only.ts": "standard",
-    "src/lib/email-templates/chores.ts": "standard",
     "src/app/(admin)/admin/site-style/site-style-wizard.tsx": "standard",
     "src/components/admin/notice-editor.tsx": "standard",
     "src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx": "standard",
-    "src/lib/induction-display.ts": "standard",
+    "src/lib/club-time-zone-env.ts": "standard",
     "src/lib/xero-x.ts": "moneyModule",
     "src/lib/xero.ts": "moneyModule",
     "src/lib/xero-inbound/x.ts": "moneyModule",

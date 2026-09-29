@@ -2,7 +2,7 @@
   CT-4 (#2870), epic #2988 — the day stamped into a config-transfer download.
 
   Both routes name their zip after "today", and both used to get that day from
-  `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE` — the container's
+  `todayDateOnlyForTimeZone()`, which read `APP_TIME_ZONE` — the container's
   `TZ`. `INV-CONFIG-002` says the club's civil time is the persisted
   `ClubTimeSettings.timeZone` and nothing else, and the difference is visible to
   the person doing the transfer: on a club whose day has not yet rolled over,
@@ -51,7 +51,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import { POST as exportBundle } from "@/app/api/admin/config-transfer/export/route";
 import { POST as resealBundleRoute } from "@/app/api/admin/config-transfer/reseal/route";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
@@ -68,7 +68,7 @@ function filenameOf(response: Response): string {
  * Denver's answer here — so a name comparison would pass while the assertion
  * below went vacuous.
  *
- * `APP_TIME_ZONE` IS PASSED ON PURPOSE, and it is the one zone that belongs
+ * `ENVIRONMENT_CLUB_ZONE` IS PASSED ON PURPOSE, and it is the one zone that belongs
  * here (#3123). This function's whole subject is the ENVIRONMENT authority — the
  * day the routes used to stamp, before CT-4 moved them onto the persisted
  * `ClubTimeSettings.timeZone`. Naming any other zone would make the disagreement
@@ -77,7 +77,7 @@ function filenameOf(response: Response): string {
  */
 function expectEnvironmentDisagrees() {
   expect(
-    todayDateOnlyForTimeZone(APP_TIME_ZONE),
+    todayDateOnlyForTimeZone(ENVIRONMENT_CLUB_ZONE),
     "INV-CONFIG-002: the environment authority already names the club's day, so " +
       "this filename cannot tell which of the two the route read.",
   ).not.toBe(CLUB_TODAY);

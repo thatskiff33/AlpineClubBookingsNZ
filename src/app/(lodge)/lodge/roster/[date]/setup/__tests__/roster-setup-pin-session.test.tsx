@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LodgePinSessionProvider } from "@/components/lodge-pin-session";
@@ -47,13 +47,6 @@ import RosterSetupWizard from "../page";
  * The second and third are the safety net for when the window does close — the
  * work survives and the PIN box appears here rather than a bare "Forbidden".
  */
-
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
 
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({

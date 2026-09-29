@@ -8,6 +8,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import PayByLinkPage from "../page";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
+  PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
@@ -20,6 +21,7 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
   financialReviewNoteBesideAnAmount,
 } from "@/lib/booking-financial-review-copy";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -194,6 +196,13 @@ describe("public payment-link captured-payment recovery", () => {
       },
       heading: "Card transaction found - check payment status",
       message: /could not confirm whether it is still paid or has been refunded/i,
+    },
+    {
+      // #3567: an intent in the club's previous currency is still processing.
+      name: "earlier payment still processing",
+      body: PAYMENT_PROCESSING_BODY,
+      heading: "Payment being processed",
+      message: /This payment is being processed\. Refresh the page in a minute/,
     },
   ])(
     "suppresses every payment action for $name recovery",
@@ -472,7 +481,7 @@ describe("the public payment page says when the link dies, in the CLUB's time", 
     return render(<PayByLinkPage />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ClubFormatTestProvider>
-          <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         </ClubFormatTestProvider>
       ),
     });

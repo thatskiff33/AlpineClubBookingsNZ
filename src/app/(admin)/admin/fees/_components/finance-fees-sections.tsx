@@ -33,7 +33,7 @@ import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache";
 
 type FeeComponent = { id: string; label: string; amountCents: number; prorate: boolean; xeroAccountCode: string | null; xeroItemCode: string | null; sortOrder: number };
 type Fee = { id: string; amountCents: number; effectiveFrom: string; effectiveTo: string | null; ageTier?: string | null; billingBasis?: string; prorationRule?: string; components?: FeeComponent[] };
-// A draft component row in the fee editor (#1932, E6). Amounts are entered as NZD
+// A draft component row in the fee editor (#1932, E6). Amounts are entered as
 // strings and converted to integer cents on save, exactly like the fee total.
 type ComponentDraft = { label: string; amount: string; prorate: boolean; xeroAccountCode: string; xeroItemCode: string };
 const defaultComponentDraft = (): ComponentDraft => ({ label: "Annual membership fee", amount: "", prorate: true, xeroAccountCode: "", xeroItemCode: "" });
@@ -96,6 +96,9 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   */
   const format = useClubFormat();
   const { currencyCode } = format;
+  // "an NZD amount", "a CHF amount": the article follows how the code's first
+  // letter is SAID, so a club on NZD reads exactly what it always has (#3567).
+  const amountNoun = `${/^[AEFHILMNORSX]/.test(currencyCode) ? "an" : "a"} ${currencyCode} amount`;
   // The default "effective from" for a new fee is the CLUB's today, and it has
   // to be: the server reads these windows in club time, so seeding them from
   // the build's `NEXT_PUBLIC_TZ` — fixed at build time, not read from the club's
@@ -307,7 +310,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   };
   function saveMembershipFee() {
     const amountCents = parseDecimalDollarsToCents(membershipAmount);
-    if (amountCents == null) { setError("Enter an NZD amount with no more than two decimal places."); return; }
+    if (amountCents == null) { setError(`Enter ${amountNoun} with no more than two decimal places.`); return; }
     // Build the reconciled components array (#1932, E6). NO_INVOICE fees carry no
     // components. A single component mirrors the fee total; multiple components
     // are parsed individually (the server is the final Σ==total validator).
@@ -319,7 +322,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       // looking it up (#2801).
       for (const [index, row] of componentRows.entries()) {
         const rowCents = componentRows.length === 1 ? amountCents : parseDecimalDollarsToCents(row.amount);
-        if (rowCents == null) { setError("Enter a valid NZD amount for each fee component."); return; }
+        if (rowCents == null) { setError(`Enter a valid ${currencyCode} amount for each fee component.`); return; }
         built.push({
           label: row.label.trim() || "Annual membership fee",
           amountCents: rowCents,
@@ -341,7 +344,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
   }
   function saveEntranceFee() {
     const amountCents = parseDecimalDollarsToCents(entranceAmount);
-    if (amountCents == null) { setError("Enter an NZD amount with no more than two decimal places."); return; }
+    if (amountCents == null) { setError(`Enter ${amountNoun} with no more than two decimal places.`); return; }
     void mutate({
       action: editingEntranceFeeId ? "UPDATE_JOINING_FEE" : "CREATE_JOINING_FEE",
       ...(editingEntranceFeeId

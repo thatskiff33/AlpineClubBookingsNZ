@@ -24,15 +24,20 @@ const {
   })),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: {
-      findUnique: mockFindUnique,
-      findFirst: mockFindFirst,
-      update: mockUpdate,
+// The refresh's member read is projected through its real `select` (#3603), so
+// a field the refresh stops selecting stops reaching the callback.
+vi.mock("@/lib/prisma", async () => {
+  const { honourSelect } = await import("@/lib/__tests__/helpers/prisma-mocks");
+  return {
+    prisma: {
+      member: {
+        findUnique: honourSelect(mockFindUnique, "Member"),
+        findFirst: mockFindFirst,
+        update: mockUpdate,
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret"),
@@ -153,6 +158,9 @@ describe("auth session refresh", () => {
         forcePasswordChange: true,
         emailVerified: true,
         passwordChangedAt: true,
+        // #3603 (D1): a session issued before the member's login was switched
+        // off is refused, like one issued before a newer password.
+        sessionsRevokedAt: true,
         twoFactorEnabled: true,
         twoFactorMethod: true,
         postLoginLanding: true,
@@ -450,6 +458,8 @@ describe("auth session refresh", () => {
       name: "Admin User",
       role: "MEMBER",
       accessRoles: ["USER"],
+      // The token carried no canLogin, so the projection fails closed (#3603).
+      canLogin: false,
       // The token carried no matrix, so the projection fails closed (#1367).
       adminPermissionMatrix: ALL_NONE_MATRIX,
       forcePasswordChange: true,
@@ -631,6 +641,168 @@ describe("auth session refresh", () => {
       expect(
         hasAdminAreaAccess(session!.user, { area: "bookings", level: "view" }),
       ).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #3603: every sign-in provider requires `canLogin: true`, so a session whose
+  // member has since had login switched off is ended on its next refresh, the
+  // same kill switch as a deleted account (#2620). Until it is, the role claim
+  // and the matrix are empty too. Each case is paired with the same member at
+  // `canLogin: true`.
+  // ---------------------------------------------------------------------------
+  describe("a member whose login is switched off (#3603)", () => {
+    function memberRow(canLogin: boolean, sessionsRevokedAt: Date | null = null) {
+      return {
+        role: "ADMIN",
+        canLogin,
+        accessRoles: [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null }],
+        forcePasswordChange: false,
+        emailVerified: true,
+        passwordChangedAt: null,
+        sessionsRevokedAt,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      };
+    }
+
+    async function refresh(token: Record<string, unknown> = {}) {
+      return authConfig.callbacks.jwt?.({
+        token: {
+          id: "admin-1",
+          role: "ADMIN",
+          accessRoles: ["ADMIN"],
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+          ...token,
+        },
+      } as never);
+    }
+
+    it("invalidates the session and empties the role claims and matrix", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(false));
+
+      const token = await refresh();
+
+      expect(token?.sessionInvalidated).toBe(true);
+      expect(token?.accessRoles).toEqual([]);
+      // The legacy role column is a claim too, and grants nothing once login is off.
+      expect(token?.role).toBe("USER");
+      expect(token?.canLogin).toBe(false);
+      expect(token?.adminPermissionMatrix).toEqual(ALL_NONE_MATRIX);
+    });
+
+    it("keeps the session, roles and matrix of the same member with login enabled", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(true));
+
+      const token = await refresh();
+
+      expect(token?.sessionInvalidated).toBe(false);
+      expect(token?.accessRoles).toEqual(["ADMIN"]);
+      expect(token?.role).toBe("ADMIN");
+      expect(token?.canLogin).toBe(true);
+      expect(token?.adminPermissionMatrix).toEqual(
+        Object.fromEntries(Object.keys(ALL_NONE_MATRIX).map((area) => [area, "edit"])),
+      );
+    });
+
+    // D1: the revocation time is read from the member row on every refresh, so
+    // the refusal holds for ANY copy of a token issued before the switch-off,
+    // whatever the token itself says. The end-to-end proof with real Auth.js
+    // cookies is `auth-session-revocation-replay.test.ts`.
+    it("refuses a session issued before the switch-off once login is back on", async () => {
+      const issuedAt = Date.now() - 60_000;
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(issuedAt + 1_000)),
+      );
+
+      const token = await refresh({ sessionIssuedAt: issuedAt, sessionInvalidated: false });
+
+      expect(token?.sessionInvalidated).toBe(true);
+    });
+
+    it("keeps a session issued after the switch-off live once login is back on", async () => {
+      const issuedAt = Date.now() - 60_000;
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(issuedAt - 1_000)),
+      );
+
+      const token = await refresh({ sessionIssuedAt: issuedAt });
+
+      expect(token?.sessionInvalidated).toBe(false);
+      expect(token?.accessRoles).toEqual(["ADMIN"]);
+    });
+
+    // The in-token term: a session whose issue time is NOT before the stored
+    // revocation time (a sign-in racing the switch-off, or clock skew) is still
+    // refused while login is off, and must stay refused once it is back on.
+    it("keeps a token invalidated while login was off ended after login is back on", async () => {
+      const switchedOffAt = new Date(Date.now() - 60_000);
+      // Issued AFTER the stamp: the stored time alone would not refuse it.
+      const issuedAt = switchedOffAt.getTime() + 1_000;
+
+      mockFindUnique.mockResolvedValue(memberRow(false, switchedOffAt));
+      const whileOff = await refresh({ sessionIssuedAt: issuedAt });
+      expect(whileOff?.sessionInvalidated).toBe(true);
+
+      mockFindUnique.mockResolvedValue(memberRow(true, switchedOffAt));
+      const later = await authConfig.callbacks.jwt?.({ token: whileOff } as never);
+      expect(later?.sessionInvalidated).toBe(true);
+    });
+
+    it("gives a fresh sign-in a live session once login is enabled again", async () => {
+      // The member was switched off a minute ago and back on since.
+      mockFindUnique.mockResolvedValue(
+        memberRow(true, new Date(Date.now() - 60_000)),
+      );
+
+      const token = await authConfig.callbacks.jwt?.({
+        // A stale flag on the incoming token is cleared by sign-in.
+        token: { sessionInvalidated: true },
+        user: {
+          id: "admin-1",
+          role: "ADMIN",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          twoFactorEnabled: false,
+          twoFactorMethod: null,
+        },
+      } as never);
+
+      expect(token?.sessionInvalidated).toBe(false);
+    });
+
+    it("projects canLogin onto session.user, so privilege checks over it apply the rule", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(true));
+      const token = await refresh();
+
+      const session = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token,
+      } as never);
+
+      expect(session?.user.canLogin).toBe(true);
+      expect(hasAdminAccess(session!.user)).toBe(true);
+
+      const disabled = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token: { ...token, canLogin: false },
+      } as never);
+      expect(disabled?.user.canLogin).toBe(false);
+      expect(hasAdminAccess(disabled!.user)).toBe(false);
+    });
+
+    it("makes auth() return no session for the login-disabled member", async () => {
+      mockFindUnique.mockResolvedValue(memberRow(false));
+      const token = await refresh();
+      const session = await authConfig.callbacks.session?.({
+        session: { user: { id: "admin-1", email: "a@example.com", name: "A" } },
+        token,
+      } as never);
+      mockRawAuth.mockResolvedValue(session);
+
+      await expect(auth()).resolves.toBeNull();
     });
   });
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSchoolAttendeeConfirmation } from "@/lib/school-attendee-confirmation";
 import { formatStayDate } from "@/lib/club-time";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 
 // The attendee-confirmation link carries a one-time token and must never be
@@ -30,6 +31,7 @@ export default async function SchoolAttendeeConfirmationPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+  const format = await clubFormatValues();
   const details = await getSchoolAttendeeConfirmation(token);
 
   return (
@@ -61,7 +63,7 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-in
               </p>
               <p className="mt-1 text-sm">
-                {formatStayDate(details.booking.checkIn)}
+                {formatStayDate(details.booking.checkIn, format)}
               </p>
             </div>
             <div>
@@ -69,7 +71,7 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-out
               </p>
               <p className="mt-1 text-sm">
-                {formatStayDate(details.booking.checkOut)}
+                {formatStayDate(details.booking.checkOut, format)}
               </p>
             </div>
           </div>

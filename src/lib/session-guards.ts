@@ -3,11 +3,11 @@ import { headers } from "next/headers";
 import type { PostLoginLanding } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import {
-  dedupeAccessRoles,
   hasAdminAccess,
+  sessionAccessRoleClaim,
   type AppAccessRole,
 } from "@/lib/access-roles";
-import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import {
   getAdminPermissionMatrix,
   getAdminRouteRequirement,
@@ -31,6 +31,12 @@ type SessionUser = {
   id: string;
   role: string;
   accessRoles: AppAccessRole[];
+  /**
+   * Whether the member may sign in (#3603). Required so a privilege check over
+   * this user (`isFullAdmin(guard.session.user)`) applies the login-disabled
+   * rule; on `requireAdmin`'s result it is the DB-read value.
+   */
+  canLogin: boolean;
   adminPermissionMatrix?: AdminPermissionMatrix;
   email?: string | null;
   twoFactorRequired?: boolean;
@@ -225,9 +231,10 @@ export async function requireAdmin(
         active: true,
         forcePasswordChange: true,
         twoFactorEnabled: true,
-        // Joined definitions so area checks resolve definition-backed
-        // (custom or edited) access roles.
-        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+        // `canLogin` plus the joined definitions (#3603, #1367): area checks
+        // resolve definition-backed (custom or edited) access roles, and a
+        // login-disabled member resolves to none of them.
+        ...MEMBER_PRIVILEGE_CHECK_SELECT,
       },
     }),
     inferAdminAccessRequirement(options),
@@ -281,10 +288,10 @@ export async function requireAdmin(
       user: {
         ...(session.user as SessionUser),
         // DB-verified roles so downstream separation-of-duties checks
-        // (issue #1012) never trust a stale JWT claim.
-        accessRoles: dedupeAccessRoles(
-          member.accessRoles.map(({ role }) => role),
-        ),
+        // (issue #1012) never trust a stale JWT claim — cleared, like the
+        // matrix below, when login is disabled (#3603).
+        accessRoles: sessionAccessRoleClaim(member),
+        canLogin: member.canLogin,
         // DB-verified matrix for the same reason (#1367): downstream area
         // checks on this user resolve from the rows this guard just read
         // (definitions joined), not the JWT-carried snapshot.
@@ -339,6 +346,11 @@ export async function requireActiveSessionUser(
     where: { id: userId },
     select: {
       active: true,
+      // #3603: a member whose login is switched off holds no session-backed
+      // access. The token refresh already invalidates such a session; this is
+      // the same rule at the gate, for a caller that reaches it first. No role
+      // is derived here, so the access-role rows are not joined.
+      canLogin: true,
       forcePasswordChange: true,
       twoFactorEnabled: true,
     },
@@ -347,6 +359,13 @@ export async function requireActiveSessionUser(
   if (!member?.active) {
     return NextResponse.json(
       { error: "Account is deactivated" },
+      { status: 403 }
+    );
+  }
+
+  if (member.canLogin === false) {
+    return NextResponse.json(
+      { error: "Sign-in is disabled for this account" },
       { status: 403 }
     );
   }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@/lib/__tests__/support/club-time-render";
 import type {
   DisplayState,
   DisplayStateBooking,

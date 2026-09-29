@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 // Browser E2E suite for the Critical journeys in docs/END_TO_END_TEST_MATRIX.md.
 // It drives the staging Docker Compose stack (docker-compose.staging.yml) seeded
-// with prisma/seed.ts + prisma/demo-seed.ts. Run via `npm run test:e2e`, which
+// with prisma/seed.ts + prisma/demo-seed.ts. Run via `pnpm run test:e2e`, which
 // prepares the stack and database first; see docs/E2E_PLAYWRIGHT.md.
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 

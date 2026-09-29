@@ -103,10 +103,13 @@ export async function wouldRemoveAllFullAdmins(
 }
 
 /**
- * True when the actor holds the ADMIN access role. Used by the lifecycle
- * privileged-target guard, which — unlike the member-edit/bulk/deletion routes
- * — is not handed the actor's session roles, so it resolves them from the
- * database by actor id.
+ * True when the actor is a Full Admin in the sense above: active,
+ * login-enabled, holding the ADMIN access role. Used by the lifecycle
+ * privileged-target guard and the member-merge guard, which — unlike the
+ * member-edit/bulk/deletion routes — are not handed the actor's session roles,
+ * so they resolve them from the database by actor id. It shares
+ * `ACTIVE_FULL_ADMIN_WHERE` so an actor whose login was switched off is not a
+ * Full Admin here either (#3603).
  */
 export async function actorIsFullAdmin(
   db: GuardDbClient,
@@ -115,7 +118,7 @@ export async function actorIsFullAdmin(
   const count = await db.member.count({
     where: {
       id: actorMemberId,
-      accessRoles: { some: { role: AccessRole.ADMIN } },
+      ...ACTIVE_FULL_ADMIN_WHERE,
     },
   });
   return count > 0;

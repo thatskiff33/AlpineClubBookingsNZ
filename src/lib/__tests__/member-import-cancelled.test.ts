@@ -87,12 +87,12 @@ function mockCreateTransaction() {
   );
 }
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 
 /**
  * The club this suite is about. The route reads the PERSISTED zone (CT-4,
  * #2870), so the fixtures below have to be built in the SAME zone -- deriving
- * "today" from `APP_TIME_ZONE` instead would agree only on a host that happens
+ * "today" from the environment's zone instead would agree only on a host that happens
  * to sit in New Zealand, and diverge silently anywhere else.
  */
 const SUITE_CLUB_ZONE = "Pacific/Auckland";
@@ -450,7 +450,7 @@ describe("issue #1946 — importing cancelled members", () => {
     // The premise, measured as an ANSWER rather than as a zone identifier: two
     // zone names can still name the same day, and then this proves nothing.
     /*
-     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else in this file an
+     * `ENVIRONMENT_CLUB_ZONE` PASSED ON PURPOSE (#3123). Everywhere else in this file an
      * explicit zone exists to get OFF the environment; here the environment IS
      * the subject — the line measures what the environment authority answers so
      * it can prove the persisted zone answers differently. A literal zone name
@@ -458,7 +458,7 @@ describe("issue #1946 — importing cancelled members", () => {
      * tracking the environment it is guarding.
      */
     expect(
-      todayDateOnlyForTimeZone(APP_TIME_ZONE),
+      todayDateOnlyForTimeZone(ENVIRONMENT_CLUB_ZONE),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this row cannot tell the two apart.",
     ).not.toBe("2026-06-30");

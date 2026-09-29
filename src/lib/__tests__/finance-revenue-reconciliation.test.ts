@@ -38,6 +38,7 @@ const ACCOUNT_CODE_DEFAULTS: Record<string, string> = {
 };
 
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 function incomePayload(lineItems: Array<[string, string]>, total: string) {
   return {
@@ -177,7 +178,7 @@ describe("finance revenue reconciliation", () => {
     ]);
     mockHutFees(1_000_000, 600_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -202,7 +203,7 @@ describe("finance revenue reconciliation", () => {
     ]);
     mockHutFees(800_000, 500_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -219,7 +220,7 @@ describe("finance revenue reconciliation", () => {
     // $40 gap, under the $50 / 1% tolerance.
     mockHutFees(996_000, 500_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -233,7 +234,7 @@ describe("finance revenue reconciliation", () => {
     ]);
     mockHutFees(1_000_000, 600_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -249,7 +250,7 @@ describe("finance revenue reconciliation", () => {
   it("returns no periods when there are no profit-and-loss snapshots", async () => {
     mockListFinanceSnapshots.mockResolvedValue([]);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -272,7 +273,7 @@ describe("finance revenue reconciliation", () => {
     ]);
     mockHutFees(1_000_000, 600_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -311,7 +312,7 @@ describe("finance revenue reconciliation", () => {
     });
     mockHutFees(500_000, 300_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 
@@ -353,7 +354,7 @@ describe("finance revenue reconciliation", () => {
     });
     mockHutFees(500_000, 300_000);
 
-    const result = await buildFinanceRevenueReconciliation({
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
       now: new Date("2026-04-30T10:00:00.000Z"),
     });
 

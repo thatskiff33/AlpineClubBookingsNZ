@@ -41,11 +41,14 @@ import type { ClubFormat } from "@/lib/club-format";
 /**
  * The currency shapes the house renders money in, declared once.
  *
- * `cents` DELIBERATELY DECLARES NO FRACTION DIGITS. `Intl` then uses the
- * currency's own minor-unit count — two for `NZD`, zero for `JPY`, three for
- * `KWD` — which is the correct answer for every club and is what the retired
- * module-level `centsFormatter` did. Pinning two here would have been invisible
- * on the New Zealand defaults and wrong for the first club that is not.
+ * `cents` PINS TWO FRACTION DIGITS (#3567 review), because every amount here is
+ * an integer of hundredths and a card is charged exactly that. Left to `Intl`,
+ * the engine's own minor-unit count rounded the DISPLAY while the charge stayed
+ * exact: V8 writes HUF, IDR, COP and a dozen more selectable currencies with no
+ * decimals, so 8450 cents showed as "HUF 85" and charged 84.50. Currencies whose
+ * real minor unit is not two (JPY, KWD) cannot be chosen at all
+ * (`club-currency-minor-unit.ts`), so two is right for every club that can
+ * exist, and on the New Zealand defaults it is exactly what `Intl` wrote before.
  *
  * `dollars` pins zero, because the finance dashboard's KPIs, panels and chart
  * tooltips show whole units on purpose: cents are visual noise at dashboard
@@ -53,8 +56,8 @@ import type { ClubFormat } from "@/lib/club-format";
  * by `cents`.
  */
 const MONEY_SHAPES = {
-  /** Exact amount in the currency's own minor units, e.g. `$1,234.56`. */
-  cents: {},
+  /** Exact amount in hundredths, e.g. `$1,234.56`, whatever the engine thinks. */
+  cents: { minimumFractionDigits: 2, maximumFractionDigits: 2 },
   /** Whole units with separators, e.g. `$446,675`. */
   dollars: { minimumFractionDigits: 0, maximumFractionDigits: 0 },
 } as const satisfies Record<string, Intl.NumberFormatOptions>;

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { normalizeInternalAppUrl } from "@/lib/app-url";
-import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import { deriveIssueReportScreenshotOrigin } from "@/lib/issue-report-screenshot-access";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -157,8 +157,8 @@ export async function POST(request: NextRequest) {
         email: true,
         // Joined role definitions, so the origin classification below resolves
         // definition-backed (custom or club-edited) access roles rather than
-        // only the seeded enum ones (#2703).
-        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+        // only the seeded enum ones (#2703), with `canLogin` (#3603).
+        ...MEMBER_PRIVILEGE_CHECK_SELECT,
       },
     });
 

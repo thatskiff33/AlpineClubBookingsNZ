@@ -337,6 +337,22 @@ describe("setup-readiness", () => {
     expect(readiness.status).toBe("warning");
   });
 
+  it("points a key-resolved membership type warning to its repair screen", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        keyResolvedRateHolderWarnings: ["Full (FULL) is archived; Reactivate it."],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const check = findStep(readiness, "key-rate-holders");
+    expect(check?.status).toBe("warning");
+    expect(check?.href).toBe("/admin/membership-types");
+    expect(check?.details).toContain("Full (FULL) is archived; Reactivate it.");
+  });
+
   it("warns when the public hut-fees embed would show fewer than two rate columns (#2129)", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,
@@ -1405,7 +1421,7 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
     expect(text).toContain("Australia/Sydney");
     expect(text).toMatch(/has not been stored yet/i);
     expect(text).toMatch(/next time it starts|next boot/i);
-    expect(text).toContain("npm run config:self-heal");
+    expect(text).toContain("pnpm run config:self-heal");
   });
 
   it("blocks when the snapshot simply omits the field (an older caller)", () => {
@@ -1783,5 +1799,114 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
         .find((candidate) => candidate.id === "club-time-zone");
 
     expect(pick(early)).toEqual(pick(late));
+  });
+});
+
+// #3633: the Operational Xero step warns when the connected organisation's base
+// currency differs from the club's, because Xero books every invoice in its
+// base currency while card payments are charged in the club's. A warning only:
+// it never blocks, and it says nothing when either currency is unknown.
+describe("setup-readiness Xero base currency (#3633)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function readinessWith(
+    xeroBaseCurrency: string | null | undefined,
+    database: Partial<SetupDatabaseSnapshot> = {},
+  ) {
+    return buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        clubFormatCurrencyCode: "AUD",
+        clubChargeCurrencyCode: "AUD",
+        ...database,
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+      ...(xeroBaseCurrency === undefined ? {} : { xeroBaseCurrency }),
+    });
+  }
+
+  it("warns, naming both currencies, when they differ — and blocks nothing", () => {
+    const readiness = readinessWith("NZD");
+    const step = findStep(readiness, "xero-operational");
+
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toBe(
+      "The club's currency is AUD but its Xero organisation's base currency is NZD, and Xero books every invoice this site sends in its base currency, so card payments are charged in AUD while their Xero invoices are in NZD.",
+    );
+    expect(readiness.summary.blocked).toBe(0);
+    expect(readiness.status).toBe("warning");
+  });
+
+  it("compares case-insensitively", () => {
+    const step = findStep(readinessWith("aud"), "xero-operational");
+    expect(step?.status).toBe("complete");
+  });
+
+  it.each([
+    ["the currencies match", "AUD", {}],
+    ["the base currency is unknown", null, {}],
+    ["no base currency was read at all (the CLI)", undefined, {}],
+    ["Xero is not connected", "NZD", { operationalXeroConnected: false }],
+    [
+      "the Xero module is off",
+      "NZD",
+      {
+        adminModuleSettings: {
+          ...completeDatabase.adminModuleSettings!,
+          xeroIntegration: false,
+        },
+      },
+    ],
+    // #3633 review: a stored currency no card can be charged in resolves to a
+    // null charge currency, so there is nothing to compare — the Stripe step
+    // already blocks on it. The RAW value is ignored here on purpose.
+    [
+      "the stored currency is not usable",
+      "NZD",
+      { clubFormatCurrencyCode: "JPY", clubChargeCurrencyCode: null },
+    ],
+    ["no charge currency reached the snapshot", "NZD", { clubChargeCurrencyCode: undefined }],
+  ] as const)("says nothing when %s", (_label, xero, database) => {
+    const step = findStep(readinessWith(xero, database), "xero-operational");
+    expect(step?.message).not.toMatch(/base currency/);
+    expect(step?.details.join(" ")).not.toMatch(/base currency/);
+  });
+
+  it("compares the charge currency, not the raw stored value", () => {
+    // The raw value says NZD, but what cards are charged in (the fallback
+    // resolution) is AUD: the warning must describe what cards really do.
+    const step = findStep(
+      readinessWith("NZD", {
+        clubFormatCurrencyCode: "NZD",
+        clubChargeCurrencyCode: "AUD",
+      }),
+      "xero-operational",
+    );
+    expect(step?.message).toMatch(/^The club's currency is AUD/);
+  });
+
+  it("takes the message ahead of the legacy-variable tidy-up, which stays in the details", () => {
+    const readiness = buildSetupReadiness({
+      env: { ...baseEnv, XERO_CLIENT_ID: "legacy" },
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        clubFormatCurrencyCode: "AUD",
+        clubChargeCurrencyCode: "AUD",
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+      xeroBaseCurrency: "NZD",
+    });
+    const step = findStep(readiness, "xero-operational");
+
+    expect(step?.status).toBe("warning");
+    expect(step?.message).toMatch(/base currency is NZD/);
+    expect(step?.details.join(" ")).toMatch(/XERO_CLIENT_ID/);
   });
 });

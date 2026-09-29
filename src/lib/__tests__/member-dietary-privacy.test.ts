@@ -97,7 +97,7 @@ function adminUser(membership: "none" | "view" | "edit") {
     session: {
       user: {
         id: "admin-1",
-        adminPermissionMatrix: getAdminPermissionMatrix({ accessRoles: ["ADMIN"] }),
+        adminPermissionMatrix: getAdminPermissionMatrix({ accessRoles: ["ADMIN"], canLogin: true }),
       },
     },
   };

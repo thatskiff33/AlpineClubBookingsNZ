@@ -6,6 +6,8 @@ import {
   type StaySegment,
   type StayStatus,
 } from "./status-helpers";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // Allocation-off status board (issue #115, closes #114; visual reference:
 // origin five-panel mock O4 "When rooms aren't assigned"). Three status columns
@@ -49,7 +51,7 @@ function bookingLabel(booking: DisplayStateBooking): { label: string; group: boo
   };
 }
 
-function spanText(segment: StaySegment): string {
+function spanText(segment: StaySegment, format: ClubDateFormat): string {
   // Leaving shows the whole stay (mock O4: "Mon 6 – Fri 10"); arriving/staying
   // point at the check-out ("→ Sun 12").
   //
@@ -59,9 +61,9 @@ function spanText(segment: StaySegment): string {
   // after the day it says they leave. For a contiguous stay the segment IS the
   // envelope and nothing changes.
   if (segment.status === "departing") {
-    return `${shortDay(segment.stayStart)} – ${shortDay(segment.stayEnd)}`;
+    return `${shortDay(segment.stayStart, format)} – ${shortDay(segment.stayEnd, format)}`;
   }
-  return `→ ${shortDay(segment.stayEnd)}`;
+  return `→ ${shortDay(segment.stayEnd, format)}`;
 }
 
 export function StatusBoard({
@@ -70,6 +72,7 @@ export function StatusBoard({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const tonight = state.window.start;
 
   const byStatus = new Map<StayStatus, StatusEntry[]>([
@@ -85,7 +88,7 @@ export function StatusBoard({
     byStatus.get(segment.status)!.push({
       key: booking.key,
       label,
-      span: spanText(segment),
+      span: spanText(segment, format),
       group,
     });
   }

@@ -53,6 +53,7 @@ export async function GET(req: NextRequest) {
     landingPreference: user.postLoginLanding,
     permissionInput: {
       adminPermissionMatrix: user.adminPermissionMatrix,
+      canLogin: user.canLogin,
     },
   });
 

@@ -11,6 +11,7 @@ import {
 import { getFinancialYearEndMonth } from "@/lib/financial-year";
 import { isMonthKey, shiftMonthKey } from "@/lib/finance-monthly-facts";
 import { must } from "@/lib/indexed-access";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 // #3123 FINISHED THE FILE. The three `getTodayDateOnly()` reads that chose the
 // reporting month became one required `today` parameter. Nothing in this module
@@ -249,15 +250,16 @@ function monthEndString(monthKey: string): string {
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;
 }
 
-function monthRangeLabel(fromMonth: string, toMonth: string) {
+function monthRangeLabel(fromMonth: string, toMonth: string, format: ClubDateFormat) {
   return fromMonth === toMonth
-    ? financeDashboardMonthLabel(fromMonth)
-    : `${financeDashboardMonthLabel(fromMonth)} to ${financeDashboardMonthLabel(toMonth)}`;
+    ? financeDashboardMonthLabel(fromMonth, format)
+    : `${financeDashboardMonthLabel(fromMonth, format)} to ${financeDashboardMonthLabel(toMonth, format)}`;
 }
 
 function monthRangeWindow(
   fromMonth: string,
   toMonth: string,
+  format: ClubDateFormat,
   label?: string
 ): FinanceDashboardDateWindow {
   return {
@@ -265,7 +267,7 @@ function monthRangeWindow(
     to: monthEndString(toMonth),
     fromMonth,
     toMonth,
-    label: label ?? monthRangeLabel(fromMonth, toMonth),
+    label: label ?? monthRangeLabel(fromMonth, toMonth, format),
   };
 }
 
@@ -304,6 +306,7 @@ function readCustomMonthParam(input: {
   value: string | undefined;
   label: string;
   warnings: string[];
+  format: ClubDateFormat;
 }): string | null {
   const value = input.value?.trim();
   if (!value) {
@@ -315,7 +318,7 @@ function readCustomMonthParam(input: {
   if (isDateOnlyString(value)) {
     const monthKey = value.slice(0, 7);
     input.warnings.push(
-      `${input.label} now uses whole months; ${value} was read as ${financeDashboardMonthLabel(monthKey)}.`
+      `${input.label} now uses whole months; ${value} was read as ${financeDashboardMonthLabel(monthKey, input.format)}.`
     );
     return monthKey;
   }
@@ -328,16 +331,19 @@ function resolveCustomMonthWindow(input: {
   fallback: FinanceDashboardDateWindow;
   label: string;
   warnings: string[];
+  format: ClubDateFormat;
 }): FinanceDashboardDateWindow {
   const fromMonth = readCustomMonthParam({
     value: input.fromParam,
     label: input.label,
     warnings: input.warnings,
+    format: input.format,
   });
   const toMonth = readCustomMonthParam({
     value: input.toParam,
     label: input.label,
     warnings: input.warnings,
+    format: input.format,
   });
 
   if (!fromMonth || !toMonth) {
@@ -354,7 +360,7 @@ function resolveCustomMonthWindow(input: {
     return input.fallback;
   }
 
-  return monthRangeWindow(fromMonth, toMonth);
+  return monthRangeWindow(fromMonth, toMonth, input.format);
 }
 
 // test seam
@@ -363,29 +369,32 @@ export function resolvePrimaryFinanceRange(input: {
   searchParams?: SearchParams;
   /** REQUIRED — see the note on `resolveFinanceDashboardSelection` (#3123). */
   today: Date;
+  /** REQUIRED — the club's date format, for the range labels (#3566). */
+  format: ClubDateFormat;
   financialYearEndMonth?: number;
   warnings?: string[];
 }): FinanceDashboardDateWindow {
   const today = input.today;
+  const format = input.format;
   const warnings = input.warnings ?? [];
   const yearEndMonth = input.financialYearEndMonth ?? getFinancialYearEndMonth();
   const currentMonth = monthKeyFromDate(today);
   const lastCompleted = shiftMonthKey(currentMonth, -1);
 
   if (input.option === "last-month") {
-    return monthRangeWindow(lastCompleted, lastCompleted);
+    return monthRangeWindow(lastCompleted, lastCompleted, format);
   }
 
   if (input.option === "last-3-months") {
-    return monthRangeWindow(shiftMonthKey(lastCompleted, -2), lastCompleted);
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -2), lastCompleted, format);
   }
 
   if (input.option === "last-6-months") {
-    return monthRangeWindow(shiftMonthKey(lastCompleted, -5), lastCompleted);
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -5), lastCompleted, format);
   }
 
   if (input.option === "last-12-months") {
-    return monthRangeWindow(shiftMonthKey(lastCompleted, -11), lastCompleted);
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -11), lastCompleted, format);
   }
 
   if (input.option === "financial-year-to-date") {
@@ -395,7 +404,8 @@ export function resolvePrimaryFinanceRange(input: {
     return monthRangeWindow(
       fyStart,
       currentMonth,
-      `${financialYearName(fyStart)} to date (${monthRangeLabel(fyStart, currentMonth)})`
+      format,
+      `${financialYearName(fyStart)} to date (${monthRangeLabel(fyStart, currentMonth, format)})`
     );
   }
 
@@ -406,16 +416,18 @@ export function resolvePrimaryFinanceRange(input: {
     return monthRangeWindow(
       lastFyStart,
       lastFyEnd,
-      `${financialYearName(lastFyStart)} (${monthRangeLabel(lastFyStart, lastFyEnd)})`
+      format,
+      `${financialYearName(lastFyStart)} (${monthRangeLabel(lastFyStart, lastFyEnd, format)})`
     );
   }
 
   return resolveCustomMonthWindow({
     fromParam: readParam(input.searchParams, "from"),
     toParam: readParam(input.searchParams, "to"),
-    fallback: monthRangeWindow(lastCompleted, lastCompleted),
+    fallback: monthRangeWindow(lastCompleted, lastCompleted, format),
     label: "Primary range",
     warnings,
+    format,
   });
 }
 
@@ -423,9 +435,12 @@ export function resolveComparisonFinanceRange(input: {
   option: FinanceDashboardCompareOption;
   primary: FinanceDashboardDateWindow;
   searchParams?: SearchParams;
+  /** REQUIRED — the club's date format, for the range labels (#3566). */
+  format: ClubDateFormat;
   warnings?: string[];
 }): FinanceDashboardDateWindow | null {
   const warnings = input.warnings ?? [];
+  const format = input.format;
 
   if (input.option === "none") {
     return null;
@@ -434,7 +449,8 @@ export function resolveComparisonFinanceRange(input: {
   const monthCount = financeDashboardMonthCount(input.primary);
   const previousPeriod = monthRangeWindow(
     shiftMonthKey(input.primary.fromMonth, -monthCount),
-    shiftMonthKey(input.primary.fromMonth, -1)
+    shiftMonthKey(input.primary.fromMonth, -1),
+    format,
   );
 
   if (input.option === "previous-period") {
@@ -444,7 +460,8 @@ export function resolveComparisonFinanceRange(input: {
   if (input.option === "same-period-last-year") {
     return monthRangeWindow(
       shiftMonthKey(input.primary.fromMonth, -12),
-      shiftMonthKey(input.primary.toMonth, -12)
+      shiftMonthKey(input.primary.toMonth, -12),
+      format,
     );
   }
 
@@ -454,6 +471,7 @@ export function resolveComparisonFinanceRange(input: {
     fallback: previousPeriod,
     label: "Comparison range",
     warnings,
+    format,
   });
 }
 
@@ -463,16 +481,19 @@ function resolveForwardFinanceWindow(input: {
   searchParams?: SearchParams;
   /** REQUIRED — see the note on `resolveFinanceDashboardSelection` (#3123). */
   today: Date;
+  /** REQUIRED — the club's date format, for the window labels (#3566). */
+  format: ClubDateFormat;
   seasons?: FinanceDashboardSeasonWindow[];
   warnings?: string[];
 }): FinanceDashboardForwardWindow {
   const today = input.today;
+  const format = input.format;
   const warnings = input.warnings ?? [];
   const currentMonth = monthKeyFromDate(today);
   const nextMonth = shiftMonthKey(currentMonth, 1);
 
   if (input.option === "next-month") {
-    const window = monthRangeWindow(nextMonth, nextMonth);
+    const window = monthRangeWindow(nextMonth, nextMonth, format);
     return { from: window.from, to: window.to, label: window.label };
   }
 
@@ -485,7 +506,7 @@ function resolveForwardFinanceWindow(input: {
       quarterYear += 1;
     }
     const startMonth = `${quarterYear}-${String(quarter * 3 + 1).padStart(2, "0")}`;
-    const window = monthRangeWindow(startMonth, shiftMonthKey(startMonth, 2));
+    const window = monthRangeWindow(startMonth, shiftMonthKey(startMonth, 2), format);
     return {
       from: window.from,
       to: window.to,
@@ -494,7 +515,7 @@ function resolveForwardFinanceWindow(input: {
   }
 
   if (input.option === "next-12-months") {
-    const window = monthRangeWindow(nextMonth, shiftMonthKey(nextMonth, 11));
+    const window = monthRangeWindow(nextMonth, shiftMonthKey(nextMonth, 11), format);
     return { from: window.from, to: window.to, label: window.label };
   }
 
@@ -532,19 +553,20 @@ function resolveForwardFinanceWindow(input: {
     return {
       from,
       to,
-      label: `${seasonLabel}: ${financeDashboardDayLabel(from)} to ${financeDashboardDayLabel(to)}`,
+      label: `${seasonLabel}: ${financeDashboardDayLabel(from, format)} to ${financeDashboardDayLabel(to, format)}`,
       seasonName: activeOrUpcoming.name,
       seasonLodgeName,
     };
   }
 
-  const fallback = monthRangeWindow(nextMonth, nextMonth);
+  const fallback = monthRangeWindow(nextMonth, nextMonth, format);
   const custom = resolveCustomMonthWindow({
     fromParam: readParam(input.searchParams, "forwardFrom"),
     toParam: readParam(input.searchParams, "forwardTo"),
     fallback,
     label: "Forward window",
     warnings,
+    format,
   });
 
   return { from: custom.from, to: custom.to, label: custom.label };
@@ -589,6 +611,8 @@ export function resolveFinanceDashboardSelection(input: {
   searchParams?: SearchParams;
   /** The club's today, as a UTC-midnight date-only instant. See above. */
   today: Date;
+  /** The club's date format for every label (#3566); required, like `today`. */
+  format: ClubDateFormat;
   seasons?: FinanceDashboardSeasonWindow[];
   financialYearEndMonth?: number;
 }): FinanceDashboardSelection {
@@ -614,6 +638,7 @@ export function resolveFinanceDashboardSelection(input: {
     option: range,
     searchParams: input.searchParams,
     today,
+    format: input.format,
     financialYearEndMonth,
     warnings,
   });
@@ -621,12 +646,14 @@ export function resolveFinanceDashboardSelection(input: {
     option: compare,
     primary,
     searchParams: input.searchParams,
+    format: input.format,
     warnings,
   });
   const forwardWindow = resolveForwardFinanceWindow({
     option: forward,
     searchParams: input.searchParams,
     today,
+    format: input.format,
     seasons: input.seasons,
     warnings,
   });

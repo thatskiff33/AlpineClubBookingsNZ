@@ -81,7 +81,10 @@ export function useFullAdminEditAccess(): boolean | undefined {
 
   if (!session?.user) return false;
 
-  return isFullAdmin({ accessRoles: session.user.accessRoles ?? [] });
+  return isFullAdmin({
+    accessRoles: session.user.accessRoles ?? [],
+    canLogin: session.user.canLogin ?? false,
+  });
 }
 
 /**

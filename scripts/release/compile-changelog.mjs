@@ -24,7 +24,10 @@
  *      The note is identified by its `<!-- changelog-pointer-note:start -->`
  *      sentinel, never by position, and is re-emitted directly under the
  *      heading every time — see the sentinel constants below for why.
- *   4. Deletes the fragments it consumed and prints exactly what it did,
+ *   4. Deletes the changelog fragments it consumed and committed, clean
+ *      `size-allowances.d/*.md` files made inert by their merge to main.
+ *      Untracked or locally edited allowance files are never deleted.
+ *   5. Prints exactly what it did,
  *      including a loud warning for anything left under `## Unreleased` that is
  *      neither the note nor an entry.
  *
@@ -35,6 +38,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
+import { ALLOWANCE_DIR, isReservedAllowanceName, isSafeAllowanceName } from "../lib/allowance-dir.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -46,6 +51,7 @@ export const FRAGMENTS_DIRNAME = "changelog.d";
  * Compared case-insensitively so `readme.md` is never compiled into a release.
  */
 const RESERVED_FRAGMENT_NAMES = new Set(["readme.md", ".gitkeep"]);
+const MERGED_ALLOWANCE_REF = "origin/main";
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -134,13 +140,88 @@ export function readFragments(dir) {
     )
     .map((entry) => entry.name)
     .sort(compareFragmentNames)
-    .map((name) => ({
-      name,
-      // Fragments are pinned to LF by .gitattributes, but a file created by a
-      // Windows editor before it is committed can still arrive as CRLF; the
-      // compiled CHANGELOG.md must stay LF-only.
-      body: fs.readFileSync(path.join(dir, name), "utf8").replace(/\r\n/g, "\n"),
-    }));
+    .map((name) => {
+      const bytes = fs.readFileSync(path.join(dir, name));
+      return {
+        name,
+        bytes,
+        // Fragments are pinned to LF by .gitattributes, but a file created by a
+        // Windows editor before it is committed can still arrive as CRLF; the
+        // compiled CHANGELOG.md must stay LF-only.
+        body: bytes.toString("utf8").replace(/\r\n/g, "\n"),
+      };
+    });
+}
+
+/**
+ * Release-prep starts from current origin/main. Only that ref's files have
+ * merged, even if a release-prep branch contains its own new commits. Never
+ * include untracked or locally edited drafts.
+ * Preflight the whole removal set before CHANGELOG.md is written.
+ */
+export function retiredAllowancePaths(repoRoot) {
+  const dir = path.join(repoRoot, ALLOWANCE_DIR);
+  const dirStat = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (!dirStat) return [];
+  if (!dirStat.isDirectory()) {
+    throw new Error(`${ALLOWANCE_DIR}/ must be a real directory, not a link or file.`);
+  }
+
+  let tracked;
+  try {
+    execFileSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", MERGED_ALLOWANCE_REF, "HEAD"], {
+      stdio: "ignore",
+    });
+    tracked = execFileSync(
+      "git",
+      ["-C", repoRoot, "ls-tree", "-r", "-z", MERGED_ALLOWANCE_REF, "--", ALLOWANCE_DIR],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    throw new Error(
+      `Cannot inspect merged ${ALLOWANCE_DIR}/ files: fetch ${MERGED_ALLOWANCE_REF} and start release-prep from it (${error.message}).`,
+    );
+  }
+
+  const paths = [];
+  for (const entry of tracked.split("\0").filter(Boolean)) {
+    const separator = entry.indexOf("\t");
+    if (separator < 0) throw new Error(`Malformed ${MERGED_ALLOWANCE_REF} allowance tree entry.`);
+    const [mode, type] = entry.slice(0, separator).split(" ");
+    const relative = entry.slice(separator + 1);
+    const parts = relative.split("/");
+    if (parts[0] !== ALLOWANCE_DIR || parts.length !== 2) {
+      throw new Error(`Unsafe allowance path in ${MERGED_ALLOWANCE_REF}: ${relative}`);
+    }
+    const name = parts[1];
+    if (isReservedAllowanceName(name)) continue;
+    if (!isSafeAllowanceName(name)) {
+      throw new Error(`Unsafe allowance filename in ${MERGED_ALLOWANCE_REF}: ${relative}`);
+    }
+    if (type !== "blob" || !["100644", "100755"].includes(mode)) {
+      throw new Error(`Committed allowance must not be a symlink: ${relative}`);
+    }
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", MERGED_ALLOWANCE_REF, "HEAD", "--", relative], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Merged allowance has branch edits; preserve it and re-run: ${relative}`);
+    }
+    const absolute = path.join(dir, name);
+    if (!fs.lstatSync(absolute).isFile()) {
+      throw new Error(`Committed allowance must be a regular file: ${relative}`);
+    }
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", "HEAD", "--", relative], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Committed allowance has local edits; preserve it and re-run: ${relative}`);
+    }
+    paths.push(relative);
+  }
+  return paths.sort((a, b) => compareFragmentNames(path.basename(a), path.basename(b)));
 }
 
 function stripBlankEdges(lines) {
@@ -308,6 +389,8 @@ export function compileChangelog({
   date = todayInNewZealand(),
   dryRun = false,
   log = console.log,
+  removeFile = fs.rmSync,
+  beforeApplySnapshot = () => {},
 } = {}) {
   if (!VERSION_PATTERN.test(String(version ?? ""))) {
     throw new Error(`Version must look like 0.14.0, got: ${version ?? "(missing)"}`);
@@ -318,7 +401,8 @@ export function compileChangelog({
 
   const changelogPath = path.join(repoRoot, "CHANGELOG.md");
   const fragmentsDir = path.join(repoRoot, FRAGMENTS_DIRNAME);
-  const changelog = fs.readFileSync(changelogPath, "utf8").replace(/\r\n/g, "\n");
+  const originalChangelog = fs.readFileSync(changelogPath);
+  const changelog = originalChangelog.toString("utf8").replace(/\r\n/g, "\n");
 
   if (changelog.split("\n").some((line) => line.startsWith(`## ${version} `))) {
     throw new Error(`CHANGELOG.md already has a "## ${version}" section — nothing to compile.`);
@@ -350,11 +434,14 @@ export function compileChangelog({
       `Nothing to compile: ${FRAGMENTS_DIRNAME}/ holds no fragments and "## Unreleased" has no ` +
         "entries. CHANGELOG.md was left unchanged.",
     );
-    return { written: false, version, date, fragments: [], foldedLegacyEntries: false };
+    log("  Any spent allowance fragments remain until a release is compiled.");
+    return { written: false, version, date, fragments: [], retiredAllowances: [], foldedLegacyEntries: false };
   }
 
+  const retiredAllowances = retiredAllowancePaths(repoRoot);
   const names = fragments.map((fragment) => fragment.name);
   if (dryRun) {
+    log(`  Source is local ${MERGED_ALLOWANCE_REF}; refresh it before release prep.`);
     log(`[dry run] Would add "## ${version} - ${date}" to CHANGELOG.md with:`);
     if (composed.restoredPointerNote) {
       log('  - a restored changelog.d pointer note under "## Unreleased" (it is missing)');
@@ -365,15 +452,102 @@ export function compileChangelog({
     for (const name of names) {
       log(`  - ${FRAGMENTS_DIRNAME}/${name} (would be deleted)`);
     }
+    for (const relative of retiredAllowances) {
+      log(`  - ${relative} (spent allowance; would be deleted)`);
+    }
     log("[dry run] No files were changed.");
-    return { written: false, version, date, fragments: names, ...composed };
+    return { written: false, version, date, fragments: names, retiredAllowances, ...composed };
   }
 
-  fs.writeFileSync(changelogPath, composed.changelog);
-  for (const name of names) {
-    fs.rmSync(path.join(fragmentsDir, name));
+  // Snapshot every planned deletion before the first write. An ordinary I/O
+  // failure must not leave a new version heading with half its source files
+  // still present, which would make a safe retry impossible.
+  beforeApplySnapshot(); // deterministic race hook in fixture tests; no-op in the CLI
+  const removalPaths = [
+    ...names.map((name) => path.join(fragmentsDir, name)),
+    ...retiredAllowances.map((relative) => path.join(repoRoot, relative)),
+  ];
+  const fragmentBytes = new Map(fragments.map(({ name, bytes }) => [path.join(fragmentsDir, name), bytes]));
+  const originals = removalPaths.map((file) => {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile()) throw new Error(`Release fragment must be a regular file: ${file}`);
+    const bytes = fs.readFileSync(file);
+    const composedFrom = fragmentBytes.get(file);
+    if (composedFrom && !bytes.equals(composedFrom)) {
+      throw new Error(`Changelog fragment changed after it was read; preserve and rerun: ${file}`);
+    }
+    return { file, bytes, mode: stat.mode };
+  });
+  if (retiredAllowances.length > 0) {
+    try {
+      execFileSync("git", ["-C", repoRoot, "diff", "--quiet", "HEAD", "--", ...retiredAllowances], {
+        stdio: "ignore",
+      });
+    } catch {
+      throw new Error(`Merged allowance changed during release preflight; preserve it and rerun.`);
+    }
+  }
+  if (!fs.readFileSync(changelogPath).equals(originalChangelog)) {
+    throw new Error(`CHANGELOG.md changed after it was read; preserve and rerun: ${changelogPath}`);
   }
 
+  try {
+    fs.writeFileSync(changelogPath, composed.changelog);
+    for (const { file, bytes } of originals) {
+      const current = fs.lstatSync(file, { throwIfNoEntry: false });
+      if (!current?.isFile() || !fs.readFileSync(file).equals(bytes)) {
+        throw new Error(`Release input changed before removal; left untouched: ${file}`);
+      }
+      try {
+        removeFile(file);
+      } catch (removeError) {
+        throw new Error(`Could not remove ${file}: ${removeError.message}`, { cause: removeError });
+      }
+    }
+  } catch (error) {
+    const restoreErrors = [];
+    for (const { file, bytes, mode } of originals) {
+      try {
+        const current = fs.lstatSync(file, { throwIfNoEntry: false });
+        if (!current) {
+          fs.writeFileSync(file, bytes, { mode, flag: "wx" });
+        } else if (!current.isFile() || !fs.readFileSync(file).equals(bytes)) {
+          throw new Error(`Release input changed during rollback; left untouched: ${file}`);
+        }
+      } catch (restoreError) {
+        restoreErrors.push(restoreError);
+      }
+    }
+    try {
+      const current = fs.lstatSync(changelogPath, { throwIfNoEntry: false });
+      if (!current) {
+        fs.writeFileSync(changelogPath, originalChangelog, { flag: "wx" });
+      } else if (!current.isFile()) {
+        throw new Error(`CHANGELOG.md changed during rollback; left untouched: ${changelogPath}`);
+      } else {
+        const currentBytes = fs.readFileSync(changelogPath);
+        if (!currentBytes.equals(originalChangelog)) {
+          if (!currentBytes.equals(Buffer.from(composed.changelog))) {
+            throw new Error(`CHANGELOG.md changed during rollback; left untouched: ${changelogPath}`);
+          }
+          fs.writeFileSync(changelogPath, originalChangelog);
+        }
+      }
+    } catch (restoreError) {
+      restoreErrors.push(restoreError);
+    }
+    if (restoreErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...restoreErrors],
+        `Release compilation failed (${error.message}); automatic restoration was incomplete: ${restoreErrors.map((item) => item.message).join("; ")}. Inspect these files before retrying.`,
+      );
+    }
+    throw new Error(`Release compilation failed (${error.message}); original files restored and the release can be retried.`, {
+      cause: error,
+    });
+  }
+
+  log(`  Source was local ${MERGED_ALLOWANCE_REF}; it must be refreshed before release prep.`);
   log(`Added "## ${version} - ${date}" to CHANGELOG.md.`);
   if (composed.restoredPointerNote) {
     log('  Restored the changelog.d pointer note under "## Unreleased" (it was missing).');
@@ -386,7 +560,8 @@ export function compileChangelog({
       ? `  Compiled and deleted ${names.length} fragment(s): ${names.join(", ")}`
       : "  No fragments were present.",
   );
-  return { written: true, version, date, fragments: names, ...composed };
+  log(`  Retired ${retiredAllowances.length} committed size-allowance fragment(s).`);
+  return { written: true, version, date, fragments: names, retiredAllowances, ...composed };
 }
 
 /** Parse argv into `{ version, date, dryRun }`. Exported for tests. */

@@ -131,7 +131,7 @@ function adminGuard(membership: "none" | "view" | "edit") {
           }
         : null,
   );
-  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"] });
+  const matrix = getAdminPermissionMatrix({ accessRoles: ["ADMIN"], canLogin: true });
   return {
     ok: true,
     session: {

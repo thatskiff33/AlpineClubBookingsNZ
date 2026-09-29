@@ -20,7 +20,7 @@ import {
 import { AI_ASSISTANT_MODEL, answerHelpQuestion } from "@/lib/anthropic-client";
 import { buildHelpGrounding } from "@/lib/help/grounding";
 import type { HelpSurface } from "@/lib/help/types";
-import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
 import {
   canOpenAdminPath,
   hasFinanceViewerAccess,
@@ -110,9 +110,13 @@ async function resolveEffectiveSurface(
 
   const member = await prisma.member.findUnique({
     where: { id: memberId },
-    select: { accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT } },
+    select: MEMBER_PRIVILEGE_CHECK_SELECT,
   });
-  const input = { accessRoles: member?.accessRoles ?? [] };
+  // No row means no access: an absent member is treated as login-disabled.
+  const input = {
+    accessRoles: member?.accessRoles ?? [],
+    canLogin: member?.canLogin ?? false,
+  };
 
   if (claimed === "admin") {
     return canOpenAdminPath(input, pathname) ? "admin" : "member";

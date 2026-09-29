@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockListMonthlyFacts } = vi.hoisted(() => ({
@@ -65,7 +66,7 @@ describe("buildFinanceMonthlyBalanceSeries", () => {
     const series = await buildFinanceMonthlyBalanceSeries({
       fromMonth: "2026-04",
       toMonth: "2026-06",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(series.points).toHaveLength(3);
     const [april, may, june] = series.points;
@@ -106,7 +107,7 @@ describe("buildFinanceMonthlyBalanceSeries", () => {
     const series = await buildFinanceMonthlyBalanceSeries({
       fromMonth: "2026-05",
       toMonth: "2026-06",
-    });
+    }, CLUB_FORMAT_TEST);
 
     expect(series.latest).toBeNull();
     expect(series.monthsWithData).toBe(0);

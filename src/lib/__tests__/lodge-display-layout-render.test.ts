@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DisplayState } from "@/lib/lodge-display-state";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // buildLayoutRender pulls in page-content-html which imports `server-only`,
 // throwing outside an RSC context; stub it (mirrors display-state-route.test).
@@ -72,7 +73,7 @@ function slotHtml(
 
 describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   it("resolves value tokens in bodyHtml and swaps area tokens for inert markers", () => {
-    const render = buildLayoutRender(input(), state());
+    const render = buildLayoutRender(input(), state(), CLUB_FORMAT_TEST);
     expect(render.bodyHtml).toContain("Silverpeak Lodge");
     expect(render.bodyHtml).toContain("alpine1234");
     // Area placeholders become inert markers the client portals into (LTV-041).
@@ -83,7 +84,7 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   });
 
   it("HTML-escapes an injected config value on every authored surface", () => {
-    const render = buildLayoutRender(input(), state());
+    const render = buildLayoutRender(input(), state(), CLUB_FORMAT_TEST);
     // Slot html: the <img onerror> value is inert escaped text, not an element.
     expect(slotHtml(render, "main")).toContain("&lt;img");
     expect(slotHtml(render, "main")).not.toContain("<img");
@@ -93,7 +94,7 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   });
 
   it("keeps the VISIBLE unset marker inside defaultContent html", () => {
-    const render = buildLayoutRender(input(), state());
+    const render = buildLayoutRender(input(), state(), CLUB_FORMAT_TEST);
     const withdefault = render.areas.find((a) => a.key === "withdefault");
     expect(withdefault?.defaultContent).toEqual({
       html: "<p>Default ⟨config:door-pin?⟩</p>",
@@ -101,7 +102,7 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
   });
 
   it("swaps module embed tokens for inert markers on slot and footer html", () => {
-    const render = buildLayoutRender(input(), state());
+    const render = buildLayoutRender(input(), state(), CLUB_FORMAT_TEST);
     expect(slotHtml(render, "main")).toContain(
       '<div data-display-module="arrivals-board"></div>'
     );
@@ -117,7 +118,8 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
       input({
         slotContent: { main: { html: "<p>{{club-name}} {{lodge-capacity}}</p>" } },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(slotHtml(render, "main")).toContain("{{club-name}}");
     expect(slotHtml(render, "main")).toContain("{{lodge-capacity}}");
@@ -129,7 +131,8 @@ describe("buildLayoutRender — LTV-028 value-token resolution", () => {
       input({
         footerHtml: "<span>Wi-Fi</span><script>evil()</script>",
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(render.footerHtml).not.toMatch(/<script/i);
   });
@@ -150,7 +153,8 @@ describe("buildLayoutRender — display img-src restriction (issue #161)", () =>
         },
         footerHtml: '<img src="https://evil.example/y.png" />Wi-Fi info',
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
 
     expect(render.bodyHtml).not.toContain("evil.example");
@@ -175,7 +179,8 @@ describe("buildLayoutRender — display img-src restriction (issue #161)", () =>
           },
         },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(slotHtml(render, "main")).toBe(
       '<img src="/branding/lodge.jpg" alt="a" /><img src="data:image/png;base64,aGVsbG8=" alt="b" />'
@@ -191,7 +196,8 @@ describe("buildLayoutRender — URL-scheme guard for resolved tokens (issue #176
       input({
         slotContent: { main: { html: '<a href="{{config:evil}}">Book</a>' } },
       }),
-      state({ config: { "wifi-code": "alpine1234", evil: "javascript:alert(1)" } })
+      state({ config: { "wifi-code": "alpine1234", evil: "javascript:alert(1)" } }),
+      CLUB_FORMAT_TEST
     );
     const html = slotHtml(render, "main");
     expect(html).not.toContain("javascript:");
@@ -205,7 +211,8 @@ describe("buildLayoutRender — URL-scheme guard for resolved tokens (issue #176
       }),
       state({
         config: { "wifi-code": "alpine1234", "book-url": "https://club.nz/book" },
-      })
+      }),
+      CLUB_FORMAT_TEST
     );
     expect(slotHtml(render, "main")).toContain('href="https://club.nz/book"');
   });
@@ -227,7 +234,8 @@ describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
         ],
         slotContent: { main: { html: "<p>x</p>" } },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(render.bodyHtml).toContain(
       '<div class="main-col"><div data-display-area="main"></div></div>'
@@ -250,7 +258,8 @@ describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
         areas: [{ key: "main", description: "Main", kind: "static" }],
         slotContent: { main: { html: "<p>x</p>" } },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     const markerCount = (
       render.bodyHtml.match(/data-display-area="main"/g) ?? []
@@ -269,7 +278,8 @@ describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
           },
         },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     const html = slotHtml(render, "main");
     // Only the generated arrivals-board marker survives; the hand-typed welcome
@@ -287,7 +297,8 @@ describe("buildLayoutRender — LTV-041 marker replacement (issue #96)", () => {
           },
         },
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(slotHtml(render, "main")).toContain(
       '<section><div data-display-module="arrivals-board"></div></section>'
@@ -303,7 +314,8 @@ describe("buildLayoutRender — LTV-029 CSS hardening + theme", () => {
         cssOverrides:
           ".x{background:url(https://evil.example/x.png)}.display-header-clock{display:none}",
       }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     // Every authored selector is prefixed with the authored-root scope so it
     // can only style the editable body/footer, never the chrome.
@@ -320,7 +332,8 @@ describe("buildLayoutRender — LTV-029 CSS hardening + theme", () => {
   it("still neutralises the </style breakout in CSS (now via sanitiseDisplayCss)", () => {
     const render = buildLayoutRender(
       input({ defaultCss: "body{color:red}</style><script>y()</script>" }),
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     expect(render.defaultCss).not.toMatch(/<\/style/i);
     expect(render.defaultCss).not.toContain("<");
@@ -328,12 +341,12 @@ describe("buildLayoutRender — LTV-029 CSS hardening + theme", () => {
 
   it("passes the club themeCss through verbatim and unscoped", () => {
     const themeCss = ":root,.website-theme{--brand-gold:#8fa87c;}";
-    const render = buildLayoutRender(input({ themeCss }), state());
+    const render = buildLayoutRender(input({ themeCss }), state(), CLUB_FORMAT_TEST);
     expect(render.themeCss).toBe(themeCss);
   });
 
   it("defaults themeCss to an empty string when none is supplied", () => {
-    const render = buildLayoutRender(input(), state());
+    const render = buildLayoutRender(input(), state(), CLUB_FORMAT_TEST);
     expect(render.themeCss).toBe("");
   });
 });
@@ -361,7 +374,8 @@ describe("buildLayoutRender — LTV-038 seeded built-ins build cleanly", () => {
           cssOverrides: template.cssOverrides,
           footerHtml: template.footerHtml,
         },
-        state()
+        state(),
+        CLUB_FORMAT_TEST
       );
       // Every area placeholder became an inert marker; no raw token survived.
       expect(render.bodyHtml).not.toContain("{{area:");
@@ -390,7 +404,8 @@ describe("buildLayoutRender — LTV-038 seeded built-ins build cleanly", () => {
         cssOverrides: template.cssOverrides,
         footerHtml: template.footerHtml,
       },
-      state()
+      state(),
+      CLUB_FORMAT_TEST
     );
     // The two-column grid selector survived sanitisation and is scoped.
     expect(render.defaultCss).toContain(".display-authored-root .eb-grid");

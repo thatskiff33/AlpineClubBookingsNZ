@@ -1,6 +1,7 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import { resolveDisplayText } from "@/lib/lodge-display/display-text";
 import type { DisplayPanelOptions } from "./module-options";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The committee notice board (fork issue #36): the one deliberately AUTHORED
 // display surface — free text posted by permitted admins, rendered strictly
@@ -15,11 +16,12 @@ export function NoticeBoard({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   if (!state.notice) {
     return <div className="display-notice-board display-notice-empty" />;
   }
 
-  const resolved = resolveDisplayText(state.notice, state);
+  const resolved = resolveDisplayText(state.notice, state, format);
   const paragraphs = resolved
     .split(/\n+/)
     .map((line) => line.trim())

@@ -344,8 +344,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
   could not go on the modules that matter most: **fourteen** operator CLI
-  entrypoints reach `@/lib/prisma` — `npm run setup:check`, the seed,
-  `npm run config:self-heal`, `npm run induction:baseline`, the finance, Xero
+  entrypoints reach `@/lib/prisma` — `pnpm run setup:check`, the seed,
+  `pnpm run config:self-heal`, `pnpm run induction:baseline`, the finance, Xero
   and credit repair tools, and both E2E seeds — and marking it would have
   aborted every one of them at startup with an error message about React that
   names nothing the operator did. A `server-only` edge added for a route's
@@ -508,7 +508,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
   without a
   backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 128 of its 488 write sites
+  than having none: the audit-writer census pins only 128 of its 489 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted

@@ -554,7 +554,16 @@ export const AUDIT_CENSUS_TOTALS = {
   // awaited `createAuditLog` in the booking-value edit route, under `booking`
   // and carrying the guest id and a changed flag, never the value
   // (`INV-PRIV-022`). RE-MEASURED with `npm run audit:census`.
-  writeSites: 488,
+  // 488 -> 489 (#3566): `AI_SPEND_CURRENCY_RATE_CLEARED`, the record that a
+  // currency change in `/api/admin/club-format` cleared the stored AI spend
+  // rate (owner decision 4) - who, the previous and new currency, and the rate
+  // that was cleared. One `tx.auditLog.create` in
+  // `src/lib/ai-spend-currency-clear.ts`, on that route's own Serializable
+  // transaction client, written only when a rate existed. Categorised
+  // `admin` at the site like the rate writer it undoes, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
+  // audit:census` on the tree merged with #3029, not incremented.
+  writeSites: 489,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -748,7 +757,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the
     // club-timezone writer two entries above, on a route that does exactly the
     // same job, rather than a fifth form.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
+    // transaction beside the writer above, in the same form.
+    "auditLog.create": { total: 77, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1021,7 +1032,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
     // save, read with `support:view` like every other settings row beside it, so
     // it widens nobody's access.
-    admin: 108,
+    // 108 -> 109 (#3566): `AI_SPEND_CURRENCY_RATE_CLEARED`. A widening of who
+    // can read what by one site, stated rather than counted: `admin` is
+    // readable with `support:view` alone, so the derived weakest-gate total
+    // moves 136 -> 137. The row carries two currency codes, a ratio and the id
+    // of the administrator whose currency change cleared it - no member data -
+    // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
+    // is: installation configuration.
+    admin: 109,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

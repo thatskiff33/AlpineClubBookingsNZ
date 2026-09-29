@@ -41,7 +41,7 @@
  *    decode replaces one with U+FFFD before every other check here sees it,
  *    so it needs the raw buffer. See {@link findInvalidUtf8Bytes}.
  *
- *   npm run docs:indexcheck                       # check, non-zero on any problem
+ *   pnpm run docs:indexcheck                       # check, non-zero on any problem
  *   node scripts/ci/check-doc-index-integrity.mjs  # same
  *
  * ## The `INV-` namespace was already occupied
@@ -75,7 +75,7 @@
  * the common case.
  *
  * Anchor-style citations (`…#inv-cap-021`) are deliberately not handled here.
- * `npm run docs:linkcheck` already validates fragments against real headings, and
+ * `pnpm run docs:linkcheck` already validates fragments against real headings, and
  * duplicating it would give two places to disagree.
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -2587,7 +2587,7 @@ export function findFilesHiddenFromTextScan(repoRoot) {
  * Scope is Markdown, because a doc is a page a reader reads: the assets beside
  * them (`docs/images/**`, the lobby-display HTML mockups, the Codex profile
  * TOMLs) are referenced from their own pages and are covered by
- * `npm run docs:linkcheck` instead.
+ * `pnpm run docs:linkcheck` instead.
  */
 export function auditDocReachability(files) {
   const markdown = new Set(

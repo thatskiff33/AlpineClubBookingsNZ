@@ -18,9 +18,9 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npm run finance:backfill-monthly-facts
-  npm run finance:backfill-monthly-facts -- --from-month 2020-04
-  npm run finance:backfill-monthly-facts -- --max-chunks 5
+  pnpm run finance:backfill-monthly-facts
+  pnpm run finance:backfill-monthly-facts --from-month 2020-04
+  pnpm run finance:backfill-monthly-facts --max-chunks 5
 
 Options:
   --from-month <YYYY-MM>  Stop after the chunk containing this month

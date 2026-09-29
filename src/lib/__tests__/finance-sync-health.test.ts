@@ -8,6 +8,7 @@ import {
 import type { FinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
 import type { FinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import type { XeroAdminHealthSnapshot } from "@/lib/xero-admin-health";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const NOW = new Date("2026-06-15T10:00:00.000Z");
 const CURRENT_MONTH = "2026-06";
@@ -130,6 +131,7 @@ function healthyInput(): FinanceSyncHealthSourceData {
     reconciliation: reconciliation(),
     xeroHealth: xeroHealth(),
     factFreshness: freshFacts(),
+    format: CLUB_FORMAT_TEST,
   };
 }
 

@@ -76,6 +76,7 @@ import { FamilyGroupRequestReviewSection } from "@/components/admin/family-group
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const REQUESTER = {
   id: "parent-1",
@@ -972,7 +973,7 @@ describe("FamilyGroupRequestReviewSection - the club zone it hands each card", (
         // Replaces the harness's default provider — the point of this block is
         // that the zone is NOT the default one.
         wrapper: ({ children }: { children: React.ReactNode }) => (
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         ),
       }
     );

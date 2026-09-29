@@ -64,6 +64,8 @@ const {
   getPaymentMethod,
   detachPaymentMethod,
   constructWebhookEvent,
+  stripeChargeCurrency,
+  UnsupportedChargeCurrencyError,
 } = await import("../stripe");
 
 describe("Stripe library", () => {
@@ -84,7 +86,6 @@ describe("Stripe library", () => {
       const result = await createPaymentIntent({
         format: CLUB_FORMAT_TEST,
         amountCents: 5000,
-        currency: "nzd",
         customerId: "cus_test",
         metadata: { bookingId: "booking_1" },
       });
@@ -102,20 +103,19 @@ describe("Stripe library", () => {
       expect(result.id).toBe("pi_test_123");
     });
 
-    it("passes the caller's currency straight to the wire", async () => {
-      /*
-        THIS USED TO ASSERT A DEFAULT, AND THERE IS NO LONGER ONE (#3563, owner
-        decision D5). `currency = APP_STRIPE_CURRENCY` was excluded from
-        INV-SSOT-003's authority-default ban on a cost argument that carried its
-        own trigger — the day a persisted club-currency setting exists, both
-        names join the ban — and `ClubFormatSettings` is that setting. So the
-        parameter is required, every call site states it, and what is worth
-        asserting here is that this boundary passes the caller's value through
-        unaltered rather than having an opinion of its own.
-      */
+    /*
+      THE CHARGE CURRENCY IS THE CLUB'S STORED CURRENCY (#3567, owner decision
+      D1). There is no `currency` argument any more: the wire value is worked out
+      from the `format` every caller already passes, so shown and charged cannot
+      diverge. These pin the NZ default byte-for-byte, prove the argument is
+      load-bearing with a second currency, prove the server's CURRENCY has no
+      say, and prove a currency without two decimal places is refused before
+      Stripe is called (D3).
+    */
+    it("charges a club on the NZ default in nzd", async () => {
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, currency: "nzd" });
+      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000 });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "nzd" }),
@@ -123,15 +123,69 @@ describe("Stripe library", () => {
       );
     });
 
-    it("allows custom currency", async () => {
+    it("charges a club stored on AUD in aud", async () => {
       mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
 
-      await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000, currency: "aud" });
+      await createPaymentIntent({
+        format: { currencyCode: "AUD", locale: "en-AU" },
+        amountCents: 1000,
+      });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
         expect.objectContaining({ currency: "aud" }),
         undefined,
       );
+    });
+
+    it("ignores the server's CURRENCY: a club stored on NZD is charged nzd under CURRENCY=AUD", async () => {
+      vi.stubEnv("CURRENCY", "AUD");
+      vi.stubEnv("NEXT_PUBLIC_CURRENCY", "AUD");
+      try {
+        mockPaymentIntentsCreate.mockResolvedValue({ id: "pi_test" });
+
+        await createPaymentIntent({ format: CLUB_FORMAT_TEST, amountCents: 1000 });
+
+        expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ currency: "nzd" }),
+          undefined,
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it.each(["JPY", "KWD", "jpy"])(
+      "refuses to charge in %s, which does not count in hundredths, before calling Stripe",
+      async (currencyCode) => {
+        await expect(
+          createPaymentIntent({
+            format: { currencyCode, locale: "en-NZ" },
+            amountCents: 845000,
+          }),
+        ).rejects.toBeInstanceOf(UnsupportedChargeCurrencyError);
+        await expect(
+          chargePaymentMethod({
+            format: { currencyCode, locale: "en-NZ" },
+            amountCents: 845000,
+            customerId: "cus_test",
+            paymentMethodId: "pm_test",
+          }),
+        ).rejects.toThrow(/does not count in hundredths/);
+        expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+      },
+    );
+
+    it("refuses to charge for a club whose STORED currency is JPY, though it displays NZD (#3567 re-review)", async () => {
+      const stored = { currencyCode: "NZD", locale: "en-NZ", unusableStoredCurrency: "JPY" };
+      await expect(createPaymentIntent({ format: stored, amountCents: 500000 })).rejects.toBeInstanceOf(
+        UnsupportedChargeCurrencyError,
+      );
+      expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+    });
+
+    it("exposes the derivation it uses, so a caller can never pass a second answer", () => {
+      expect(stripeChargeCurrency(CLUB_FORMAT_TEST)).toBe("nzd");
+      expect(stripeChargeCurrency({ currencyCode: "CHF", locale: "de-CH" })).toBe("chf");
     });
   });
 
@@ -168,7 +222,6 @@ describe("Stripe library", () => {
       const result = await chargePaymentMethod({
         format: CLUB_FORMAT_TEST,
         amountCents: 8000,
-        currency: "nzd",
         customerId: "cus_test",
         paymentMethodId: "pm_test",
         metadata: { bookingId: "booking_2" },

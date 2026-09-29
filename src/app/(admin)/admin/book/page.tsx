@@ -46,6 +46,7 @@ import {
   formatClubDate,
   formatClubWeekdayDate,
   parseCalendarDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 
 import { formatCents, formatSignedCents } from "@/lib/utils";
@@ -62,15 +63,18 @@ type BookingPaymentMethod = "stripe" | "internet_banking";
  * night before. An empty or malformed value renders as itself rather than
  * throwing while the operator is still choosing dates.
  */
-function formatLodgeNight(value: string | null): string {
+function formatLodgeNight(value: string | null, format: ClubDateFormat): string {
   const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubDate(day) : (value ?? "");
+  return day ? formatClubDate(day, format) : (value ?? "");
 }
 
 /** {@link formatLodgeNight}, weekday-bearing — "Thu, 16 Apr 2026". */
-function formatLodgeNightWithWeekday(value: string | null): string {
+function formatLodgeNightWithWeekday(
+  value: string | null,
+  format: ClubDateFormat,
+): string {
   const day = value === null ? null : parseCalendarDate(value);
-  return day ? formatClubWeekdayDate(day) : (value ?? "");
+  return day ? formatClubWeekdayDate(day, format) : (value ?? "");
 }
 
 /**
@@ -1099,8 +1103,8 @@ export default function AdminBookPage() {
               Add Guests
               {checkIn && checkOut && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  {formatLodgeNight(checkIn)} -{" "}
-                  {formatLodgeNight(checkOut)} ({nights} night
+                  {formatLodgeNight(checkIn, format)} -{" "}
+                  {formatLodgeNight(checkOut, format)} ({nights} night
                   {nights !== 1 ? "s" : ""})
                 </span>
               )}
@@ -1229,13 +1233,13 @@ export default function AdminBookPage() {
                 <div>
                   <span className="text-muted-foreground">Check-in:</span>{" "}
                   <span className="font-medium">
-                    {formatLodgeNightWithWeekday(checkIn)}
+                    {formatLodgeNightWithWeekday(checkIn, format)}
                   </span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Check-out:</span>{" "}
                   <span className="font-medium">
-                    {formatLodgeNightWithWeekday(checkOut)}
+                    {formatLodgeNightWithWeekday(checkOut, format)}
                   </span>
                 </div>
                 <div>
@@ -1443,7 +1447,7 @@ export default function AdminBookPage() {
 
           {isRetroactive && (
             <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
-              Recording a past stay ({formatLodgeNight(checkIn)}). The
+              Recording a past stay ({formatLodgeNight(checkIn, format)}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.
             </div>

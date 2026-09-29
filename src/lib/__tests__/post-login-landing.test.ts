@@ -17,7 +17,7 @@ function matrix(
 }
 
 function withMatrix(m: AdminPermissionMatrix): AdminPermissionInput {
-  return { adminPermissionMatrix: m };
+  return { adminPermissionMatrix: m, canLogin: true };
 }
 
 // A Full-Admin-style matrix (overview editable → first accessible = dashboard).

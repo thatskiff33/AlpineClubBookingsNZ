@@ -168,7 +168,7 @@ export function UnpricedNightPriceFields({
               htmlFor={`${inputIdPrefix}-${date}`}
               className="w-40 shrink-0 text-sm font-normal"
             >
-              {formatClubDate(date)}
+              {formatClubDate(date, format)}
             </Label>
             <span className="text-sm">$</span>
             <Input

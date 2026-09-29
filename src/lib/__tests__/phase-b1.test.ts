@@ -74,7 +74,7 @@ function makeDate(str: string): Date {
 }
 
 function subject(id: string, ...roles: string[]) {
-  return { id, accessRoles: roles.map((role) => ({ role })) };
+  return { id, canLogin: true, accessRoles: roles.map((role) => ({ role })) };
 }
 
 function authUser(id: string, role: "ADMIN" | "LODGE" | "USER" = "USER") {

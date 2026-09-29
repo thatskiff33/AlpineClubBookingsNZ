@@ -94,7 +94,7 @@ import {
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   isAccessRole,
-  type AccessRoleInput,
+  type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import {
   accessRoleAssignmentRowsFromTokens,
@@ -1274,8 +1274,7 @@ export async function listAdminMembers(
 
 export async function createAdminMember(
   data: CreateMemberInput,
-  actor: {
-    accessRoles: AccessRoleInput["accessRoles"];
+  actor: PrivilegeCheckInput & {
     /** #2941: a membership:edit dietary grant, or null (the field is not stored). */
     dietaryGrant: DietaryAccessGrant | null;
   },
@@ -1296,7 +1295,7 @@ export async function createAdminMember(
         });
   if (
     accessRoleChangeRequiresFullAdmin([], requestedGrant) &&
-    !isFullAdmin({ accessRoles: actor.accessRoles })
+    !isFullAdmin(actor)
   ) {
     return jsonResult(
       {

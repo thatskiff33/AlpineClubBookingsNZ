@@ -30,7 +30,7 @@ accounting, membership, and booking risk.
 13. Tear down any Docker infrastructure this lane created — on an abandoned or
     failed lane too, not only a merged one. See "Lane-owned Docker
     infrastructure" below for the naming convention, the teardown commands, and
-    `npm run stale-containers`.
+    `pnpm run stale-containers`.
 
 ## Planning Mode
 
@@ -53,7 +53,7 @@ tracked-only locator documented in
 [`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md):
 
 ```text
-npm run agent:context -- -- --base origin/main --entry <tracked-path> [--depth 1|2]
+pnpm run agent:context --base origin/main --entry <tracked-path> [--depth 1|2]
 ```
 
 Give a subagent only the relevant section or local artifact path, never a full
@@ -123,12 +123,14 @@ Two consequences:
 
 Run this before delegating validation in every new Windows worktree. The
 orchestrator coordinates it; implementors must not start competing installs or
-use an `npx` fallback that downloads an unreviewed package.
+use a `pnpm dlx`/`npx` fallback that downloads an unreviewed package. The
+repository installs with pnpm; the command mapping from npm is in
+[`CONTRIBUTING.md` → "Package manager: pnpm"](../../CONTRIBUTING.md#package-manager-pnpm).
 
 ### 1. Activate and verify the pinned Node runtime
 
 The default shell may expose system Node 22 even when `fnm` has Node 24.
-Initialise `fnm` inside the same PowerShell process that will run npm, use the
+Initialise `fnm` inside the same PowerShell process that will run pnpm, use the
 repository's `.nvmrc`, and fail closed if either engine is wrong:
 
 ```powershell
@@ -136,21 +138,25 @@ fnm env --shell powershell | Out-String | Invoke-Expression
 fnm use --install-if-missing
 
 $nodeMajor = [int](node -p "process.versions.node.split('.')[0]")
-$npmMajor = [int](npm --version).Split('.')[0]
-if ($nodeMajor -ne 24 -or $npmMajor -lt 11) {
-  throw "Expected Node 24 and npm 11+, got Node $nodeMajor and npm $npmMajor"
+$pnpmMajor = [int](pnpm --version).Split('.')[0]
+if ($nodeMajor -ne 24 -or $pnpmMajor -lt 11) {
+  throw "Expected Node 24 and pnpm 11+, got Node $nodeMajor and pnpm $pnpmMajor"
 }
 ```
 
 Repeat the activation prefix in every fresh PowerShell validation shell; shell
-state does not carry between tool calls.
+state does not carry between tool calls. If `pnpm` is missing, install it once
+per machine (`npm install -g pnpm@11`, or `corepack enable pnpm`); it then
+switches itself to the exact version pinned in `package.json` `packageManager`.
 
 ### 2. Require an isolated dependency tree
 
 Every active branch owns a physical `node_modules` inside its own worktree.
 Never junction or symlink it to another checkout. Prisma generation writes the
-branch's client into `node_modules/@prisma/client`; a shared dependency tree lets
-one lane silently change another lane's types. npm's cache is already shared and
+branch's client inside that `node_modules` (under pnpm,
+`node_modules/.pnpm/@prisma+client@…/node_modules/.prisma/client`, as fresh files,
+not links into the store); a shared dependency tree lets one lane silently change
+another lane's types. pnpm's content-addressable store is already shared and
 provides download reuse without sharing mutable generated output.
 
 Before installing, inspect any existing entry and refuse reparse points:
@@ -166,19 +172,26 @@ if (Test-Path -LiteralPath $modules) {
 }
 ```
 
-On Windows, a direct `npm ci` has reproduced a race that starts
-`unrs-resolver` before its locked `napi-postinstall` helper is available. Use the
-verified two-phase install: extract the exact lockfile without scripts, then
-rebuild only the reviewed packages whose install scripts this lockfile needs.
-If `package-lock.json` changes or npm reports a different script-package list,
-stop for review instead of extending it by guesswork.
+Install straight from the lockfile. pnpm hard-links packages from the shared
+store, so a new worktree's install is mostly linking rather than downloading.
+The old two-phase npm workaround (`npm ci --ignore-scripts`, then `npm rebuild`
+of six packages, for an `unrs-resolver` race on Windows) is retired: pnpm runs
+install scripts only for the packages listed under `allowBuilds` in
+`pnpm-workspace.yaml` and fails on any other package that has one. If it fails
+that way, stop for review instead of extending the list by guesswork.
+Entries are pinned to exact versions, so a bumped package with an install script
+fails the same way until its new version is reviewed and written there.
+
+`pnpm run`/`pnpm exec` never install on their own here: `verifyDepsBeforeRun:
+error` in `pnpm-workspace.yaml` stops a run whose `node_modules` no longer
+matches the manifests with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN`. That is the
+orchestrator's cue to run the install, not an implementor's.
 
 ```powershell
-npm ci --ignore-scripts
-npm rebuild @prisma/engines @sentry/cli core-js esbuild prisma unrs-resolver
+pnpm install --frozen-lockfile
 
 $env:DATABASE_URL = "postgresql://codex:codex@127.0.0.1:5432/codex_local"
-npm run db:generate
+pnpm run db:generate
 
 if (-not (Test-Path -LiteralPath "node_modules/.bin/prisma.cmd") -or
     -not (Test-Path -LiteralPath "node_modules/.bin/vitest.cmd")) {
@@ -243,6 +256,98 @@ Only then verify the worktree is clean, its head is merged into the intended
 base, and run `git worktree remove` on that exact path. Do not use `-Force` to
 paper over a failed safety check.
 
+**A pnpm worktree: remove it with the helper, never with bare git.** pnpm's
+strict layout builds `node_modules` from about 2,700 directory junctions per
+worktree here. Measured on git 2.53.0.windows.1 (#3673), `git worktree remove`
+cannot delete them (it deregistered the worktree, deleted part of it and stopped
+with "Directory not empty"), and it FOLLOWS a junction it meets anywhere in the
+tree and deletes the target's contents. So the helper deletes only the
+generated folders itself and leaves everything else to git:
+
+```powershell
+pnpm run worktree:remove C:\path\to\exact-worktree                     # merged into origin/main
+pnpm run worktree:remove C:\path\to\exact-worktree --base origin/epic/1  # an epic child
+pnpm run worktree:remove C:\path\to\exact-worktree --allow-unmerged      # an abandoned lane
+pnpm run worktree:remove C:\path\to\exact-worktree --forget-missing      # its folder is really gone
+```
+
+Run it from outside the worktree it removes (the main checkout is the usual
+place). What it does:
+
+1. Runs the refusals below. Nothing is deleted until they all pass.
+2. Deletes the lane's top-level `node_modules` and `.next` with Node's
+   `fs.rmSync`, which removes a link itself rather than descending into it
+   (verified on Windows for drive-letter and volume-path junctions). Before
+   that it refuses if git would protect anything in them, in whatever case
+   the folder is spelled (a tracked file, or one the branch does not ignore:
+   `git ls-files` with `:(icase)` pathspecs, since git's pathspecs are
+   case-sensitive even on a case-insensitive disk). If one cannot be fully deleted it stops
+   with the lane still registered; run it again.
+3. Checks the lane again, because deleting a real `node_modules` takes about
+   ten seconds: if either folder has reappeared, or the scan below now finds a
+   link, an unreadable folder or another repository, it stops before git runs.
+4. Runs plain `git worktree remove <path>`, **without `--force`**. git's own
+   checks then refuse on modified, untracked or submodule work exactly as in
+   normal use. If git refuses, git has deleted nothing and the lane is still
+   registered; only its `node_modules` and `.next` are gone, and
+   `pnpm install` brings them back.
+
+**The accepted trade-off, the same as plain `git worktree remove`: ignored
+files, such as `.env.local`, are deleted with the lane.** That includes files a
+repository-local ignore rule (`.git/info/exclude`, a per-worktree
+`core.excludesFile`) makes ignored. Copy out anything ignored you want to keep
+first.
+
+Every git call runs without any `GIT_*` environment variable, in any case (so
+nothing in your shell points git at another repository or injects config), and
+with `core.longpaths=true`, `core.fsmonitor=false` and
+`status.showUntrackedFiles=normal`, so a long path, a stale fsmonitor or a
+config setting cannot hide work from git's check.
+
+It refuses, before deleting anything:
+
+- the main checkout, a path that is not a registered worktree, a locked one, and
+  a path that is itself a link to the worktree (pass the worktree's own path);
+- being run from inside the target (the current directory or `INIT_CWD`);
+- another registered worktree inside the target, and any `.git` file or folder
+  below its root, in any case on Windows and inside `node_modules` and `.next`
+  too: another repository whose work git would not check. A Claude Code
+  session's `.claude/worktrees/<name>` inside a lane is exactly this;
+- a top-level `node_modules` that is itself a link (the legacy shape above,
+  which needs the manual unlink), and any symlink, junction or other reparse
+  point outside the top-level `node_modules` and `.next`, which git would
+  follow. A link is anything `lstat` flags, or a directory whose
+  real path is not its own path, which is how a junction to a
+  `\\?\Volume{…}` path or a mount point shows up. The refusal lists them;
+  delete the links, not their targets, and run it again;
+- any folder it cannot read, since it could hide a link;
+- a link or unreadable folder in the lane's own git directory
+  (`.git/worktrees/<lane>`), which git deletes with the lane;
+- a `.git` that git does not accept as the lane's own (`git rev-parse
+  --show-toplevel` names another tree): git searches upward, so a lane under
+  `.artifacts/worktrees/` would otherwise be checked as the main checkout;
+- what `git worktree remove` would delete without complaint: an in-progress
+  rebase (its autostash lives in the lane's git directory), merge, cherry-pick,
+  revert, bisect or sequence; any `refs/worktree/*` or `refs/bisect/*` ref; a
+  submodule repository kept in the lane's git directory (it survives
+  `submodule deinit`); and files marked `--skip-worktree` or
+  `--assume-unchanged`, whose edits git status does not show (a sparse checkout
+  uses the same flag, so it is refused too);
+- a HEAD not merged into the base without `--allow-unmerged`;
+- a lane whose folder is missing, because none of these checks can run and a
+  folder that is only away (an unmounted drive, a moved folder) would lose its
+  index and any commit only its HEAD holds. `--forget-missing` unregisters it
+  when it is really gone.
+
+Stated limits. If git itself fails part way through deleting (a file held
+open), it has already checked the lane and unregistered it; the tool says so,
+and what is left is deleted by hand. And the second check narrows the window
+for a new link but does not close it: a link created in the lane, outside
+`node_modules` and `.next`, after that check and before git reaches it could
+still be followed. Measured on a real lane of this repository: the re-check
+took about 0.3 s, and git's own run, its check and then its delete, about 3 s.
+Stop anything writing to a lane (a dev server, an install) before removing it.
+
 ### 4. Preserve progress while lanes run
 
 Long-running implementors keep a checkpoint outside the worktree and update it
@@ -253,13 +358,14 @@ reviews, but never overlaps colliding work simply to maximise slot count.
 
 ### 5. Split fast local evidence from full CI gates
 
-Before push, run the branch-correct Prisma generation, lint, typecheck, focused
-touched/adjacent tests, and mutation checks for every new guard. Add docs
+Before push, run the branch-correct Prisma generation, lint, typecheck (with
+`NODE_OPTIONS=--max-old-space-size=8192`, as CI sets it — the default heap runs
+out of memory since #2679), focused touched/adjacent tests, and mutation checks for every new guard. Add docs
 linkcheck when documentation changes and knip when files or exports change.
 These fast checks catch branch-specific mistakes before they consume a runner.
 
 Push a draft PR after that evidence is green. GitHub Actions owns the full
-`npm test`, build, migration-drift, E2E, static/secret/dependency, and container
+`pnpm test`, build, migration-drift, E2E, static/secret/dependency, and container
 gates. Do not delay a draft PR just to duplicate those full gates locally; the
 public repository's CI minutes are the standard execution path. Run a full
 suite locally only to diagnose a CI failure or when CI is unavailable, and
@@ -390,7 +496,7 @@ infrastructure is created, not from memory at the end:
 ```text
 docker compose -p <project> down -v --remove-orphans   # a whole Compose project
 docker rm -f <container>                               # a standalone container
-npm run test:e2e:down                                  # the E2E stack this repo ships
+pnpm run test:e2e:down                                  # the E2E stack this repo ships
 ```
 
 Use `down -v` only for a disposable lane project, where the volumes exist solely
@@ -411,19 +517,17 @@ remove a container belonging to somebody else's open lane.
 ### See what is already there
 
 ```text
-npm run stale-containers               # human-readable report
-npm run stale-containers -- -- --json  # same data for an orchestrator or a preflight
-node scripts/stale-containers.mjs --json   # bypasses npm entirely; always exact
+pnpm run stale-containers               # human-readable report
+pnpm run stale-containers --json        # same data for an orchestrator or a preflight
+node scripts/stale-containers.mjs --json   # bypasses pnpm entirely; always exact
 ```
 
-The doubled `--` on the JSON line is the same portable form
-[`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md) uses for `npm run agent:context`, and the
-reporter's parser skips a literal `--` so the one line is right in PowerShell, Git
-Bash and CI alike. **What must not be written is `npm run stale-containers --json`
-with no separator at all**: measured on this repository, npm consumes `--json` as
-its own flag, the script receives nothing, and it prints the human table and exits
-0 — so a preflight or orchestrator parsing that output either fails at `JSON.parse`
-or silently misreads a padded table. When in doubt, run the `node` form.
+Under pnpm no separator is needed in either PowerShell or Git Bash, because pnpm
+hands every option after the script name to the script (the same rule
+[`SCOPED_CONTEXT.md`](SCOPED_CONTEXT.md) relies on for `pnpm run agent:context`).
+The `node` line is the exact form: a preflight or orchestrator that parses the
+JSON should use it, because pnpm can print install-check lines of its own on
+stdout before the script runs (seen when `package.json` has just changed).
 
 It lists agent-owned containers with their owning issue, how that owner was
 established, the issue's state, the container's state and age, and whether it is

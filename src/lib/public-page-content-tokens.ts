@@ -111,9 +111,9 @@ async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean>
  * (measured, all 1,461 days of 2024-2027). " to " stays a literal: it is copy,
  * and `formatRange` would give an en dash and collapse a shared year.
  */
-function dateRange(start: Date, end: Date): string {
-  const from = formatClubDate(calendarDateOfDateOnlyInstant(start));
-  const to = formatClubDate(calendarDateOfDateOnlyInstant(end));
+function dateRange(start: Date, end: Date, format: ClubFormat): string {
+  const from = formatClubDate(calendarDateOfDateOnlyInstant(start), format);
+  const to = formatClubDate(calendarDateOfDateOnlyInstant(end), format);
   return `${from} to ${to}`;
 }
 
@@ -538,7 +538,7 @@ export async function loadPublicHutFees(
   const tables: PublicFeeTable[] = [];
   for (const { id, name: lodgeName } of lodges) {
     for (const season of seasons.filter((row) => row.lodgeId === id)) {
-      const seasonTitle = `${lodgeName} — ${season.name} (${dateRange(season.startDate, season.endDate)}) nightly rates`;
+      const seasonTitle = `${lodgeName} — ${season.name} (${dateRange(season.startDate, season.endDate, format)}) nightly rates`;
       const byType = new Map<string, { id: string; name: string; sortOrder: number; ageGroupsApply: boolean; rates: Array<{ ageTier: string | null; pricePerNightCents: number }> }>();
       for (const rate of season.membershipTypeRates ?? []) {
         const type = rate.membershipType;
@@ -587,7 +587,7 @@ function exceptionCapacityCopy(mode: "HOLD" | "NO_HOLD"): string {
     : "An exception request does not reserve capacity until the club approves it.";
 }
 
-export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBookingPolicy | null> {
+export async function loadPublicBookingPolicy(format: ClubFormat, slug?: string): Promise<PublicBookingPolicy | null> {
   if (!(await isPublicContentEnabled("bookingPolicySummary"))) return null;
   const lodge = slug === undefined ? null : await findPublicLodge(slug);
   if (slug !== undefined && !lodge) return null;
@@ -650,12 +650,12 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
     hold: defaults ? holdText(defaults.nonMemberHoldEnabled, defaults.nonMemberHoldDays) : null,
     periods: effectivePeriods.map((period) => ({
       name: period.name,
-      dateRange: dateRange(period.startDate, period.endDate),
+      dateRange: dateRange(period.startDate, period.endDate, format),
       hold: holdText(period.nonMemberHoldEnabled, period.nonMemberHoldDays),
     })),
     minimumStays: effectiveMinimumStays.map((policy) => ({
       name: policy.name,
-      dateRange: dateRange(policy.startDate, policy.endDate),
+      dateRange: dateRange(policy.startDate, policy.endDate, format),
       minimumNights: policy.minimumNights,
       triggerDays: policy.triggerDays.length === 0
         ? "all check-in days"
@@ -762,7 +762,7 @@ export async function loadPublicCancellationPolicy(format: ClubFormat, slug?: st
     tiers: describePublicCancellationRules(effectiveRows, format),
     periods: effectivePeriods.map((period) => ({
       name: period.name,
-      dateRange: dateRange(period.startDate, period.endDate),
+      dateRange: dateRange(period.startDate, period.endDate, format),
       tiers: Array.isArray(period.cancellationRules)
         ? describePublicCancellationRules(period.cancellationRules as unknown as PublicCancellationRuleInput[], format)
         : [],

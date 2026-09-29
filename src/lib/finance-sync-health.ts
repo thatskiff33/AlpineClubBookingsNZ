@@ -15,6 +15,7 @@ import {
 } from "@/lib/xero-admin-health";
 import { prisma } from "@/lib/prisma";
 import { formatMonthOnly } from "@/lib/date-only";
+import type { ClubDateFormat } from "@/lib/club-time";
 
 /**
  * Treasurer sync-confidence view: aggregates the health signals the platform
@@ -77,6 +78,8 @@ export interface FinanceSyncHealthSourceData {
   reconciliation: FinanceRevenueReconciliation | null;
   xeroHealth: XeroAdminHealthSnapshot | null;
   factFreshness: FinanceSyncHealthFactFreshness[];
+  /** The club's date format (#3566), for the month labels in the signals. */
+  format: ClubDateFormat;
 }
 
 const XERO_ADMIN_HREF = "/admin/xero";
@@ -329,12 +332,12 @@ function classifyFactFreshness(
       id: `facts-final-month-${freshness.kind}`,
       label: `${kindLabel} final through`,
       value: freshness.latestFinalMonth
-        ? financeDashboardTrendMonthLabel(freshness.latestFinalMonth)
+        ? financeDashboardTrendMonthLabel(freshness.latestFinalMonth, input.format)
         : "No final months",
       detail:
         !freshness.latestFinalMonth ||
         freshness.latestFinalMonth < lastFinishedMonth
-          ? `${financeDashboardTrendMonthLabel(lastFinishedMonth)} has ended but is still provisional or missing.`
+          ? `${financeDashboardTrendMonthLabel(lastFinishedMonth, input.format)} has ended but is still provisional or missing.`
           : undefined,
       tone:
         freshness.latestFinalMonth &&
@@ -434,13 +437,14 @@ async function loadFactFreshness(
 export async function buildFinanceSyncHealth(input: {
   currentMonth: string;
   now?: Date;
+  format: ClubDateFormat;
 }): Promise<FinanceSyncHealth> {
   const now = input.now ?? new Date();
 
   const [diagnostics, reconciliation, xeroHealth, factFreshness] =
     await Promise.all([
       getFinanceSyncDiagnosticsStatus().catch(() => null),
-      buildFinanceRevenueReconciliation().catch(() => null),
+      buildFinanceRevenueReconciliation(input.format).catch(() => null),
       getXeroAdminHealthSnapshot().catch(() => null),
       Promise.all(
         Object.values(FinanceMonthlyStatementKind).map((kind) =>
@@ -462,5 +466,6 @@ export async function buildFinanceSyncHealth(input: {
     reconciliation,
     xeroHealth,
     factFreshness,
+    format: input.format,
   });
 }

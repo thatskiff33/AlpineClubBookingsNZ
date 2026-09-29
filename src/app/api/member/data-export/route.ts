@@ -234,7 +234,8 @@ export async function GET() {
 
     // CT-4 (#2870): the CLUB's calendar day, from the persisted
     // ClubTimeSettings zone and not the container's TZ (INV-CONFIG-002).
-    const exportDate = (await clubTime()).today();
+    const club = await clubTime();
+    const exportDate = club.today();
     const payload = {
       exportedAt: new Date().toISOString(),
       exportedBy: `${member.firstName} ${member.lastName}`,
@@ -344,7 +345,7 @@ export async function GET() {
       ],
       subscriptions: subscriptions.map((s) => ({
         seasonYear: s.seasonYear,
-        seasonLabel: seasonSelectLabel(s.seasonYear),
+        seasonLabel: seasonSelectLabel(s.seasonYear, club.format),
         status: s.status,
         paidAt: s.paidAt ? s.paidAt.toISOString() : null,
         createdAt: s.createdAt.toISOString(),

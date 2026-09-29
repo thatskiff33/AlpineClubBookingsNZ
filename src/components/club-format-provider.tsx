@@ -78,7 +78,9 @@ import {
  * that obtains it and nothing else. (A `useBoundClubFormat` hook shipped briefly
  * in #3565 and was removed once every call site had chosen the explicit form.)
  *
- * `club-time/intl.ts`'s locale is still the environment's; it is #3566.
+ * Renders dates too, since #3566: every club-time date rendering takes the
+ * club's format as well, and `ClubTimeProvider` is handed the same `locale`
+ * this provider receives, so the two cannot disagree.
  */
 
 /**

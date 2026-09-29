@@ -482,7 +482,7 @@ Minimum production categories:
   Boot (DR / clone)".
 - AI Diagnostics (optional module, default off): `AI_DIAGNOSTICS_DATABASE_URL` —
   a **dedicated non-superuser, SELECT-only** database role for the diagnostics
-  tool substrate, provisioned with `npm run diagnostics:provision-role`. It is
+  tool substrate, provisioned with `pnpm run diagnostics:provision-role`. It is
   never the app's `DATABASE_URL` (the Compose app role is a superuser), and the
   app verifies the role's privileges with the server before every read. Required
   before the module can be used. See
@@ -538,7 +538,7 @@ docker build -t tacbookings:local .
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
 database**, not in a file. After the migrate/seed steps, sign in as the seeded
 admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
-seasons/rates, email, Stripe, Xero). Optionally run `npm run setup:wizard`
+seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
 is written). `config/club.json` remains an optional seed/fallback only: copy
@@ -868,7 +868,7 @@ sequence below is run once, not once per migration.
 
   **The backfill REFUSES unless the classification is complete**, and that is a
   precondition of the window rather than a step inside it. Run
-  `npm run db:school-classification-census` against the club's database before
+  `pnpm run db:school-classification-census` against the club's database before
   the window opens; every row it lists as CANNOT TELL must be decided by a person
   and recorded, or the migration raises
   `school_member_classification_incomplete` and writes nothing at all. The
@@ -1140,7 +1140,7 @@ For a deliberate two-phase deploy, or to heal a cold database out-of-band
 without a restart, run the same routine manually:
 
 ```bash
-npm run config:self-heal
+pnpm run config:self-heal
 ```
 
 It prints, per registered setting, whether the row was `healed`,

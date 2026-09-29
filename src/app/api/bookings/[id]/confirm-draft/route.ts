@@ -34,7 +34,7 @@ import {
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { authorizationRoleFromAccessRoles, hasAdminAccess } from "@/lib/access-roles";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
   hostingCoverageActorOptions,
@@ -326,7 +326,7 @@ export async function POST(
         // #3232: confirming a draft does not move its stay, so there is no
         // vacated window for the dependent fan-out to also look at.
         vacatedRange: null,
-        actorRole: session.user.role,
+        actorRole: authorizationRoleFromAccessRoles(session.user),
         hasBookingsEditAccess: isAdmin,
         actorMemberId: session.user.id,
         ...(hostingOverride ? { override: hostingOverride } : {}),

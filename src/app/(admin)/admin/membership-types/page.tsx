@@ -50,6 +50,10 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS,
+  canonicalKeyResolvedRateHolderBookingBehavior,
+} from "@/lib/membership-types";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
@@ -110,11 +114,7 @@ type EditorTarget =
   | { mode: "new" }
   | { mode: "edit"; membershipTypeId: string };
 
-const bookingBehaviorLabels: Record<BookingBehavior, string> = {
-  MEMBER_RATE: "Member rate",
-  NON_MEMBER_RATE: "Non-member rate",
-  BLOCK_BOOKING: "Block booking",
-};
+const bookingBehaviorLabels = MEMBERSHIP_TYPE_BOOKING_BEHAVIOR_LABELS;
 
 const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   REQUIRED: "Subscription required",
@@ -321,6 +321,9 @@ function MembershipTypeEditorDialog({
   onSetActive,
 }: MembershipTypeEditorDialogProps) {
   const { confirm, confirmDialog } = useConfirm();
+  const canonicalBookingBehavior = membershipType
+    ? canonicalKeyResolvedRateHolderBookingBehavior(membershipType)
+    : null;
   const validationError = validateDraft(draft);
   const dirty =
     target?.mode === "edit" && membershipType
@@ -460,12 +463,21 @@ function MembershipTypeEditorDialog({
                       onCheckedChange={(checked) =>
                         onDraftChange({ isActive: checked === true })
                       }
-                      disabled={!canEdit}
+                      disabled={
+                        !canEdit ||
+                        (canonicalBookingBehavior !== null && membershipType?.isActive)
+                      }
                     />
                     <Label htmlFor="membership-type-editor-active">
                       Active and assignable
                     </Label>
                   </div>
+                  {canonicalBookingBehavior !== null && (
+                    <p className="text-xs text-muted-foreground">
+                      This type is used for bookings even when archived. It cannot
+                      be archived; reactivate it if needed.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="space-y-2">
@@ -531,28 +543,57 @@ function MembershipTypeEditorDialog({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Booking behavior</Label>
-                  <Select
-                    value={draft.bookingBehavior}
-                    disabled={!canEdit}
-                    onValueChange={(value) =>
-                      onDraftChange({
-                        bookingBehavior: value as BookingBehavior,
-                      })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(bookingBehaviorLabels).map(
-                        ([value, label]) => (
-                          <SelectItem key={value} value={value}>
-                            {label}
-                          </SelectItem>
-                        ),
+                  {canonicalBookingBehavior !== null ? (
+                    <div className="space-y-2">
+                      <p className="rounded-md border border-border px-3 py-2 text-sm">
+                        {bookingBehaviorLabels[draft.bookingBehavior]} (expected:{" "}
+                        {bookingBehaviorLabels[canonicalBookingBehavior]})
+                      </p>
+                      {membershipType?.bookingBehavior !== canonicalBookingBehavior && (
+                        <>
+                          <p className="text-xs text-muted-foreground">
+                            This built-in type has the wrong booking behavior.
+                            Restore the expected value to keep bookings consistent.
+                          </p>
+                          {draft.bookingBehavior !== canonicalBookingBehavior && (
+                            <ViewOnlyActionButton
+                              canEdit={canEdit}
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                onDraftChange({ bookingBehavior: canonicalBookingBehavior })
+                              }
+                            >
+                              Restore expected booking behavior
+                            </ViewOnlyActionButton>
+                          )}
+                        </>
                       )}
-                    </SelectContent>
-                  </Select>
+                    </div>
+                  ) : (
+                    <Select
+                      value={draft.bookingBehavior}
+                      disabled={!canEdit}
+                      onValueChange={(value) =>
+                        onDraftChange({
+                          bookingBehavior: value as BookingBehavior,
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(bookingBehaviorLabels).map(
+                          ([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Subscription behavior</Label>
@@ -648,7 +689,9 @@ function MembershipTypeEditorDialog({
 
           <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
             <div>
-              {target?.mode === "edit" && membershipType ? (
+              {target?.mode === "edit" &&
+              membershipType &&
+              (!membershipType.isActive || canonicalBookingBehavior === null) ? (
                 <ViewOnlyActionButton
                   canEdit={canEdit}
                   type="button"
@@ -956,23 +999,26 @@ function MembershipTypeList({
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton
-                  canEdit={canEdit}
-                  describeReason={false}
-                  type="button"
-                  variant="outline"
-                  onClick={() => onSetActive(type, !type.isActive)}
-                  disabled={savingId === type.id}
-                >
-                  {savingId === type.id ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : type.isActive ? (
-                    <Archive className="mr-2 h-4 w-4" />
-                  ) : (
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                  )}
-                  {type.isActive ? "Archive" : "Reactivate"}
-                </ViewOnlyActionButton>
+                {(!type.isActive ||
+                  canonicalKeyResolvedRateHolderBookingBehavior(type) === null) && (
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
+                    describeReason={false}
+                    type="button"
+                    variant="outline"
+                    onClick={() => onSetActive(type, !type.isActive)}
+                    disabled={savingId === type.id}
+                  >
+                    {savingId === type.id ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : type.isActive ? (
+                      <Archive className="mr-2 h-4 w-4" />
+                    ) : (
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                    )}
+                    {type.isActive ? "Archive" : "Reactivate"}
+                  </ViewOnlyActionButton>
+                )}
                 {!type.isBuiltIn && (
                   <ViewOnlyActionButton
                     canEdit={canEdit}
@@ -1737,8 +1783,8 @@ export default function AdminMembershipTypesPage() {
                   Seasons
                 </div>
                 <div className="mt-1 text-foreground">
-                  {seasonSelectLabel(rollForwardResult.fromSeasonYear)} to{" "}
-                  {seasonSelectLabel(rollForwardResult.toSeasonYear)}
+                  {seasonSelectLabel(rollForwardResult.fromSeasonYear, clubTime.format)} to{" "}
+                  {seasonSelectLabel(rollForwardResult.toSeasonYear, clubTime.format)}
                 </div>
               </div>
               <div>

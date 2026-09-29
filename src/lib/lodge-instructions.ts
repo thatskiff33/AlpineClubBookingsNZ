@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
-import { hasAdminAccess, type AccessRoleInput } from "@/lib/access-roles";
+import { hasAdminAccess, type PrivilegeCheckInput } from "@/lib/access-roles";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 // Canonical display order for the three keyed documents.
@@ -65,7 +65,7 @@ async function hasCurrentOrUpcomingHutLeaderAssignment(
  */
 export async function canReadLodgeInstructions(
   memberId: string,
-  subject: AccessRoleInput,
+  subject: PrivilegeCheckInput,
 ): Promise<boolean> {
   if (hasAdminAccess(subject)) {
     return true;

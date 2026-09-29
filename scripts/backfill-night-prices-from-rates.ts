@@ -22,12 +22,12 @@
  * Dry run by default. SAFE USAGE - run against a NON-PRODUCTION copy first:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run bookings:backfill-night-prices-from-rates
+ *     pnpm run bookings:backfill-night-prices-from-rates
  *
  * Only after reviewing the dry-run report, apply (each booking in its own
  * transaction, one audit row per booking):
  *
- *   ... npm run bookings:backfill-night-prices-from-rates -- --apply
+ *   ... pnpm run bookings:backfill-night-prices-from-rates --apply
  */
 import "dotenv/config";
 import process from "node:process";
@@ -37,15 +37,16 @@ import {
   runRateDerivedNightPriceBackfill,
 } from "../src/lib/rate-derived-night-price-backfill";
 import { prisma } from "../src/lib/prisma";
+import { clubFormatValues } from "../src/lib/club-format-server";
 import { decodeRawRows } from "../src/lib/raw-sql-rows";
 
 function printUsage() {
   console.log(`Usage:
-  npm run bookings:backfill-night-prices-from-rates                    # dry run (default)
-  npm run bookings:backfill-night-prices-from-rates -- --dry-run       # explicit dry run
-  npm run bookings:backfill-night-prices-from-rates -- --apply         # rewrite the derivable strands
-  npm run bookings:backfill-night-prices-from-rates -- --booking <id>  # one booking only
-  npm run bookings:backfill-night-prices-from-rates -- --limit <n>     # the n oldest candidate bookings
+  pnpm run bookings:backfill-night-prices-from-rates                    # dry run (default)
+  pnpm run bookings:backfill-night-prices-from-rates --dry-run       # explicit dry run
+  pnpm run bookings:backfill-night-prices-from-rates --apply         # rewrite the derivable strands
+  pnpm run bookings:backfill-night-prices-from-rates --booking <id>  # one booking only
+  pnpm run bookings:backfill-night-prices-from-rates --limit <n>     # the n oldest candidate bookings
 
 Options:
   --apply         Rewrite every strand the rate table reproduces, each booking
@@ -123,13 +124,15 @@ async function assertRateDerivedValueExists() {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await assertRateDerivedValueExists();
+  const format = await clubFormatValues();
   const result = await runRateDerivedNightPriceBackfill({
     apply: args.apply,
+    format,
     bookingId: args.bookingId,
     limit: args.limit,
   });
   console.log(`Mode: ${result.mode}`);
-  console.log(formatRateDerivedBackfillReport(result.plans));
+  console.log(formatRateDerivedBackfillReport(result.plans, format));
   if (result.mode === "apply") {
     console.log(
       `Applied: ${result.applied.length} booking(s), ${result.applied.reduce((n, a) => n + a.rows, 0)} night row(s)`,

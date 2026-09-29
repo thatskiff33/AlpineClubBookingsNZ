@@ -230,7 +230,7 @@ export function formatDateOnlyForTimeZone(
  * this file, excluding `__tests__`, excluding comment lines — all three are at
  * zero, and what remains outside tests is docblocks explaining what moved.
  *
- * THE TEST SUITE IS THE CALLER, and `npm run knip` — this repository's arbiter
+ * THE TEST SUITE IS THE CALLER, and `pnpm run knip` — this repository's arbiter
  * for a dead export — does not flag any of the three, because a test import is
  * a real import. Each is the compact spelling of a fixture the suites build
  * constantly: the club's today as a day string, or as the UTC-midnight

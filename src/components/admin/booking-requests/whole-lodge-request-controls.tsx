@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -99,8 +99,8 @@ export function WholeLodgeRequestBadges({
  * club the two errors did not cancel and the night came out a day early. A
  * calendar day needs no zone at all, so both steps are gone.
  */
-function formatNight(value: string): string {
-  return formatClubDate(requireCalendarDate(value));
+function formatNight(value: string, format: ClubDateFormat): string {
+  return formatClubDate(requireCalendarDate(value), format);
 }
 
 /**
@@ -115,6 +115,7 @@ export function WholeLodgeAvailabilityStrip({
 }: {
   requestId: string;
 }) {
+  const format = useClubFormat();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<HoldConflictsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -174,7 +175,7 @@ export function WholeLodgeAvailabilityStrip({
                           : "rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground"
                     }
                   >
-                    {formatNight(night.date)} ·{" "}
+                    {formatNight(night.date, format)} ·{" "}
                     {night.wholeLodgeHeld
                       ? "held"
                       : `${night.occupiedBeds}/${data.lodgeCapacity} beds`}
@@ -196,8 +197,8 @@ export function WholeLodgeAvailabilityStrip({
                     {data.conflicts.map((conflict) => (
                       <li key={conflict.id}>
                         {conflict.memberName} ·{" "}
-                        {formatNight(conflict.checkIn)}–
-                        {formatNight(conflict.checkOut)} ·{" "}
+                        {formatNight(conflict.checkIn, format)}–
+                        {formatNight(conflict.checkOut, format)} ·{" "}
                         {conflict.guestCount}{" "}
                         {conflict.guestCount === 1 ? "guest" : "guests"} ·{" "}
                         {conflict.status}

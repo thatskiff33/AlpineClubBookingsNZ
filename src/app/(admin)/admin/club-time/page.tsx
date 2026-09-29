@@ -3,7 +3,7 @@
 import { useSession } from "next-auth/react";
 
 import { ClubTimeZonePanel } from "@/components/admin/club-time-zone-panel";
-import { isFullAdmin } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 
 /**
  * Club Time Zone — the Full-Admin maintenance surface for the club's time zone
@@ -30,9 +30,7 @@ import { isFullAdmin } from "@/lib/access-roles";
  */
 export default function ClubTimePage() {
   const { data: session } = useSession();
-  const fullAdmin = isFullAdmin({
-    accessRoles: session?.user?.accessRoles ?? [],
-  });
+  const fullAdmin = isFullAdmin(sessionPrivilegeInput(session?.user));
 
   if (session && !fullAdmin) {
     return (

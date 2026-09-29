@@ -322,7 +322,7 @@ export async function buildRevenueDashboard(selection: FinanceDashboardSelection
       1,
       Math.min(12, financeDashboardMonthCount(selection.primary))
     );
-    const reconciliation = await buildFinanceRevenueReconciliation({ periods });
+    const reconciliation = await buildFinanceRevenueReconciliation(format, { periods });
     mapped.statusPanels.push({
       title: "Xero vs booking reconciliation",
       description:

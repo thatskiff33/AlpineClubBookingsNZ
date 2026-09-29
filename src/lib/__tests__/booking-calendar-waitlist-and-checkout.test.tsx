@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   CLUB_TIME_TEST_ZONE,
   fireEvent,
@@ -8,7 +9,6 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_LOCALE } from "@/config/operational";
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -22,7 +22,7 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
   with the club about which month that is. Same reasoning as the header of
   `booking-calendar-heat.test.tsx`.
 */
-const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST).today();
 const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
 const now = new Date(clubYear, clubMonth - 1, clubDay);
 
@@ -58,7 +58,7 @@ function labelPrefix(monthsForward: number, day: number) {
     now.getFullYear(),
     now.getMonth() + monthsForward,
     day,
-  ).toLocaleDateString(APP_LOCALE, {
+  ).toLocaleDateString(CLUB_FORMAT_TEST.locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -71,7 +71,7 @@ function monthHeading(monthsForward: number) {
     now.getFullYear(),
     now.getMonth() + monthsForward,
     1,
-  ).toLocaleDateString(APP_LOCALE, { month: "long", year: "numeric" });
+  ).toLocaleDateString(CLUB_FORMAT_TEST.locale, { month: "long", year: "numeric" });
 }
 
 function dayButton(monthsForward: number, day: number) {

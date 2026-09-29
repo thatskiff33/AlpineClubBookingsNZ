@@ -40,9 +40,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ClubTimeProvider } from "@/components/club-time-provider"
-import { APP_TIME_ZONE } from "@/config/operational"
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone"
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import { MemberBulkMembershipDialog } from "../member-bulk-membership-dialog"
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture"
 
 /**
  * New Year's Eve, midday UTC. New Zealand has already rolled over (NZDT is
@@ -102,7 +103,7 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
     vi.setSystemTime(NEW_YEAR_EVE_UTC)
   })
 
-  it("uses the persisted club zone's year, not APP_TIME_ZONE's, across the New Year boundary", async () => {
+  it("uses the persisted club zone's year, not the environment zone's, across the New Year boundary", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's calendar year on New Year's Eve",
       answerKey: "year",
@@ -120,7 +121,7 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
     // answer, so `chosen.year` is provably the chosen zone's and provably not
     // the environment's. `environmentYear` is still needed for the negative
     // assertion at the end.
-    const environmentYear = Number(yearIn(APP_TIME_ZONE))
+    const environmentYear = Number(yearIn(ENVIRONMENT_CLUB_ZONE))
 
     vi.stubGlobal(
       "fetch",
@@ -138,7 +139,7 @@ describe("MemberBulkMembershipDialog seeds the season from the CLUB's year (CT-4
       />,
       {
         wrapper: ({ children }: { children: ReactNode }) => (
-          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+          <ClubTimeProvider zone={chosen.zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
         ),
       },
     )

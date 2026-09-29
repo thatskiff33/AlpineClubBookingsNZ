@@ -472,8 +472,8 @@ export function BookingApprovalsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatStayDate(booking.checkIn)} to{" "}
-                      {formatStayDate(booking.checkOut)}
+                      {formatStayDate(booking.checkIn, format)} to{" "}
+                      {formatStayDate(booking.checkOut, format)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Status:</span> {booking.status}

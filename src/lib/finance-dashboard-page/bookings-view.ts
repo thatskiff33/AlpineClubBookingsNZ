@@ -1,4 +1,8 @@
-import { formatClubDayMonth, requireCalendarDate } from "@/lib/club-time";
+import {
+  formatClubDayMonth,
+  requireCalendarDate,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import {
   getFinanceBookingMetrics,
   type FinanceBookingMetricsResult,
@@ -34,8 +38,8 @@ import type { ClubFormat } from "@/lib/club-format";
 // Greenwich; for a club west of it every trend point on the finance dashboard,
 // and every exported row label, named the PREVIOUS day (INV-DATE-019).
 
-function formatShortDate(dateOnly: string) {
-  return formatClubDayMonth(requireCalendarDate(dateOnly));
+function formatShortDate(dateOnly: string, format: ClubDateFormat) {
+  return formatClubDayMonth(requireCalendarDate(dateOnly), format);
 }
 
 export async function buildBookingsDashboard(
@@ -187,7 +191,7 @@ export async function buildBookingsDashboard(
       variant: "line",
       xKey: "label",
       data: realized.byDate.map((entry) => ({
-        label: formatShortDate(entry.date),
+        label: formatShortDate(entry.date, format),
         occupancy: entry.occupancyRate,
         guestNights: entry.guestNights,
       })),
@@ -215,7 +219,7 @@ export async function buildBookingsDashboard(
       variant: "area",
       xKey: "label",
       data: metrics.forward.byDate.map((entry) => ({
-        label: formatShortDate(entry.date),
+        label: formatShortDate(entry.date, format),
         committed: entry.committed.guestNights,
         atRisk: entry.atRisk.guestNights,
       })),

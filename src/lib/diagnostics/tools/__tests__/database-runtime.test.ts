@@ -5,7 +5,7 @@
  * the privilege verdict. Everything else in that module used to be exercised only
  * by the opt-in real-PostgreSQL proof, which `describe.skip`s itself without
  * `RUN_CONCURRENCY_RACE_TESTS=1`. That left the pool cache, the readiness mapping,
- * and the exact SQL the executor sends with no coverage in ordinary `npm test`.
+ * and the exact SQL the executor sends with no coverage in ordinary `pnpm test`.
  *
  * Two things here are deliberately asserted as EXACT STRINGS rather than
  * behaviourally, because they are the substrate's structural guarantees and a fake
@@ -428,7 +428,7 @@ describe("getDiagnosticsDatabase — the verified pool (#2374, ADR-007)", () => 
     const refused = await getDiagnosticsDatabase();
     expect(refused.ok).toBe(false);
 
-    // The operator re-runs `npm run diagnostics:provision-role`.
+    // The operator re-runs `pnpm run diagnostics:provision-role`.
     fixture.privilegeRow = SAFE_PRIVILEGE_ROW;
     const repaired = await getDiagnosticsDatabase();
     expect(repaired.ok).toBe(true);

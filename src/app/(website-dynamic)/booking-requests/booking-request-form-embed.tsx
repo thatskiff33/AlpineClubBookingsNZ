@@ -1,6 +1,7 @@
 import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { clubFormatValues } from "@/lib/club-format-server";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
@@ -38,8 +39,11 @@ export async function BookingRequestFormEmbed({
 }: {
   club: ClubIdentity;
 }) {
+  // The zone and the locale are resolved together (#3566): this mount sits
+  // outside both chromes on the root 404, so nothing above it carries either.
+  const [zone, format] = await Promise.all([clubTimeZone(), clubFormatValues()]);
   return (
-    <ClubTimeProvider zone={await clubTimeZone()}>
+    <ClubTimeProvider zone={zone} locale={format.locale}>
       <BookingRequestForm club={club} />
     </ClubTimeProvider>
   );

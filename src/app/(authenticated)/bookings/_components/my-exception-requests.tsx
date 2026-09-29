@@ -17,7 +17,7 @@ import {
   type MemberExceptionRequestStatus,
 } from "@/lib/member-exception-requests";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { formatClubDate, parseCalendarDate, type ClubDateFormat } from "@/lib/club-time";
 
 /**
  * "My booking-rule requests" — the member's request-management area (#2562).
@@ -67,9 +67,9 @@ const STATUS_BADGE_CLASS: Record<MemberExceptionRequestStatus, string> = {
  * would throw inside a member's booking list and blank the whole page, where
  * echoing the raw value shows the member something and loses nothing.
  */
-function formatNight(value: string) {
+function formatNight(value: string, format: ClubDateFormat) {
   const night = parseCalendarDate(value);
-  return night === null ? value : formatClubDate(night);
+  return night === null ? value : formatClubDate(night, format);
 }
 
 /**
@@ -214,7 +214,7 @@ export function MyExceptionRequests({
                         ? "A new booking"
                         : "A change to a booking"}
                       {request.proposal.checkIn && request.proposal.checkOut
-                        ? ` · ${formatNight(request.proposal.checkIn)} to ${formatNight(request.proposal.checkOut)}`
+                        ? ` · ${formatNight(request.proposal.checkIn, clubTime.format)} to ${formatNight(request.proposal.checkOut, clubTime.format)}`
                         : ""}
                     </p>
                     <p className="text-muted-foreground">
@@ -249,8 +249,8 @@ export function MyExceptionRequests({
                     {request.proposal.baseCheckIn &&
                     request.proposal.baseCheckOut ? (
                       <p className="mt-1 text-muted-foreground">
-                        The booking today: {formatNight(request.proposal.baseCheckIn)}{" "}
-                        to {formatNight(request.proposal.baseCheckOut)}
+                        The booking today: {formatNight(request.proposal.baseCheckIn, clubTime.format)}{" "}
+                        to {formatNight(request.proposal.baseCheckOut, clubTime.format)}
                         {request.proposal.baseGuestNights !== null
                           ? ` · ${request.proposal.baseGuestNights} guest nights`
                           : ""}
@@ -269,7 +269,7 @@ export function MyExceptionRequests({
                             {guest.isMember ? " (member)" : ""}
                             {guest.nights.length > 0
                               ? ` · ${guest.nights.length} ${guest.nights.length === 1 ? "night" : "nights"} (${guest.nights
-                                  .map(formatNight)
+                                  .map((night) => formatNight(night, clubTime.format))
                                   .join(", ")})`
                               : ""}
                           </li>
@@ -296,7 +296,7 @@ export function MyExceptionRequests({
                             {memberExceptionRuleLabel(rule.reasonCode)}
                             {rule.message ? ` — ${rule.message}` : ""}
                             {rule.affectedNights.length > 0
-                              ? ` (${rule.affectedNights.map(formatNight).join(", ")})`
+                              ? ` (${rule.affectedNights.map((night) => formatNight(night, clubTime.format)).join(", ")})`
                               : ""}
                           </li>
                         ))}
