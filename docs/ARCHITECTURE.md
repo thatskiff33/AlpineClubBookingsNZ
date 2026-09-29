@@ -2999,8 +2999,10 @@ released by the payment cron when their hold expiry passes unpaid; the release
 cancels the booking, fails the pending payment, queues invoice-clearing
 credit-note work, emails the member, records history/audit, and processes
 waitlists. A hold whose invoice Xero shows any payment against is kept instead
-and admins are alerted once; one Xero cannot read is kept only until check-in or
-seven days past the deadline. Cancelling a part-paid booking records the Xero
+and admins are alerted once; one Xero cannot read is kept up to seven days past
+the deadline, and never released once its stay has started (`INV-PAY-016`,
+which an organiser-pays group's unreadable invoice follows too). Cancelling a
+part-paid booking records the Xero
 cash as captured, so the cancellation policy applies to it (#3643,
 `INV-PAY-107`).
 
