@@ -337,8 +337,11 @@ const FIGURES = {
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
     * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
     * booking behavior for a drifted key-resolved built-in. MEASURED.
+   *
+   * 366 -> 367 (#3407): the lodge setup wizard's new Capacity step adds its
+   * Save and continue. Back and Skip are plain Buttons. MEASURED.
     */
-   callSites: 366,
+   callSites: 367,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -363,8 +366,10 @@ const FIGURES = {
    * 308 -> 310 (#3596): so do the club currency and locale page's two.
    *
    * 310 -> 311 (#2941): so does Member Fields' new Edit.
+   *
+   * 311 -> 312 (#3407): so does the setup wizard's Capacity Save and continue.
    */
-  optOuts: 311,
+  optOuts: 312,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -418,8 +423,12 @@ const FIGURES = {
    *
    * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
    * own banner, beside the Save that was already static.
+   *
+   * 277 -> 278 (#3407): the setup wizard's Capacity Save and continue sits in
+   * the same file as the wizard's own banner, beside its sibling steps' static
+   * opt-outs.
    */
-  staticOptOuts: 277,
+  staticOptOuts: 278,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

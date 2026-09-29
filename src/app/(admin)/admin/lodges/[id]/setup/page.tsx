@@ -183,9 +183,11 @@ export default function LodgeSetupWizardPage() {
         const [lodgesRes, modulesRes, settingsRes] = await Promise.all([
           fetch("/api/admin/lodges"),
           fetch("/api/admin/modules"),
+          // Tolerant: the Capacity step can still be filled in from blank, so a
+          // failed read must not take the whole wizard down with it.
           fetch(
             `/api/admin/lodge-settings?lodgeId=${encodeURIComponent(lodgeId)}`,
-          ),
+          ).catch(() => null),
         ]);
         if (!lodgesRes.ok) throw new Error("Failed to load lodges");
         const lodgesData = await lodgesRes.json();
