@@ -598,6 +598,10 @@ export default function LodgeSetupWizardPage() {
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={saveIdentity} disabled={saving}>
                 {saving ? "Saving..." : "Save and continue"}
               </ViewOnlyActionButton>
+              {/* Navigation, not an edit (#3407): without it a view-only admin could never leave this step. */}
+              <Button variant="ghost" onClick={goNext} disabled={saving}>
+                Skip for now
+              </Button>
             </div>
           </CardContent>
         </Card>

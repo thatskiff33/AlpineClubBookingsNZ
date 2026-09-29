@@ -196,6 +196,8 @@ describe("the lodge setup wizard's Capacity step and Finish (#3407)", () => {
     calls: Call[];
     resolvedCapacity?: number;
     readinessFails?: boolean;
+    lockers?: boolean;
+    chores?: boolean;
   }) {
     let settingsReads = 0;
     vi.stubGlobal(
@@ -235,8 +237,8 @@ describe("the lodge setup wizard's Capacity step and Finish (#3407)", () => {
           return ok({
             settings: {
               bedAllocation: options.bedAllocation,
-              lockers: false,
-              chores: false,
+              lockers: options.lockers ?? false,
+              chores: options.chores ?? false,
             },
           });
         }
@@ -406,26 +408,47 @@ describe("the lodge setup wizard's Capacity step and Finish (#3407)", () => {
     );
   });
 
-  it("a view-only admin sees the Capacity step read-only, and can still skip it", async () => {
+  it("a view-only admin sees the Capacity step read-only, with Back and Skip", async () => {
     const calls: Call[] = [];
-    stubWizardFetch({ bedAllocation: false, savedCapacity: 12, setUpForBookings: true, calls });
-    const { rerender } = render(<LodgeSetupWizardPage />);
-    // The identity step offers no Skip, so reach Capacity as an editor and then
-    // re-render as a view-only admin.
-    await finishIdentity();
-    await screen.findByLabelText("Capacity (maximum guests)");
     mocks.canEdit.mockReturnValue(false);
-    rerender(<LodgeSetupWizardPage />);
+    stubWizardFetch({ bedAllocation: false, savedCapacity: 12, setUpForBookings: true, calls });
+    render(<LodgeSetupWizardPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
 
     const field = await screen.findByLabelText("Capacity (maximum guests)");
     await waitFor(() => expect(field).toBeDisabled());
-    expect(field).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save and continue" })).toBeDisabled();
-    const skip = screen.getByRole("button", { name: "Skip for now" });
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
-    expect(skip).toBeEnabled();
-    fireEvent.click(skip);
-    expect(await screen.findByText("Seasons & rates")).toBeInTheDocument();
-    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
   });
+
+  // The wizard's steps depend on the modules, so walk both shapes: between them
+  // they cover every step the wizard has.
+  it.each([
+    ["Bed Allocation off", false, ["Lodge identity", "Capacity", "Lockers", "Seasons & rates", "Chores"]],
+    ["Bed Allocation on", true, ["Lodge identity", "Rooms & beds", "Lockers", "Seasons & rates", "Chores"]],
+  ])(
+    "a view-only admin can move through every step to Finish without editing (%s)",
+    async (_label, bedAllocation, titles) => {
+      const calls: Call[] = [];
+      mocks.canEdit.mockReturnValue(false);
+      stubWizardFetch({
+        bedAllocation, lockers: true, chores: true,
+        savedCapacity: 12, setUpForBookings: true, calls,
+      });
+      render(<LodgeSetupWizardPage />);
+
+      for (const title of titles) {
+        // The card title (a div), not the step indicator or a field label.
+        expect(await screen.findByText(title, { selector: "div" })).toBeInTheDocument();
+        const skip = screen.getByRole("button", { name: "Skip for now" });
+        expect(skip).toBeEnabled();
+        fireEvent.click(skip);
+      }
+      expect(
+        await screen.findByRole("button", { name: "Open lodge configuration" }),
+      ).toBeInTheDocument();
+      expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+    },
+  );
 });
