@@ -52,6 +52,13 @@ const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 const mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => {

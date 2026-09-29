@@ -60,6 +60,27 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3582's edit and review-closure proof into the same harness", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./booking-ledger-modification.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-modification.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "TWO EDITS: the second reverses the first edit's re-post, never a line already reversed",
+      "a replayed posting posts nothing and the transaction still commits",
+      "posts nothing for a booking not yet confirmed on the ledger",
+      "a closure's re-price posts under its history row from the real guest rows, and the share posts no second record",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = readFileSync(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),

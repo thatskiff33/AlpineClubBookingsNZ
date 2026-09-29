@@ -35,6 +35,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  executeRaw: vi.fn().mockResolvedValue(0),
   manualRefundTaskFindUnique: vi.fn(),
   manualRefundTaskUpdateMany: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
@@ -68,6 +69,13 @@ const mocks = vi.hoisted(() => ({
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
 }));
@@ -219,6 +227,8 @@ import {
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
+  // #3582: an edit review's completion takes lock(1) first, before its claim.
+  $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),

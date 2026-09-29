@@ -17,6 +17,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  executeRaw: vi.fn().mockResolvedValue(0),
   manualRefundTaskFindUnique: vi.fn(),
   manualRefundTaskUpdateMany: vi.fn(),
   memberCreditFindUnique: vi.fn(),
@@ -57,6 +58,13 @@ const mocks = vi.hoisted(() => ({
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
 }));
@@ -158,6 +166,7 @@ vi.mock("@/lib/member-credit", () => {
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
+import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-sync";
 // The MOCKED class — the same constructor the module under test compares
 // against, so the branch is exercised rather than approximated.
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
@@ -169,6 +178,8 @@ import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-rec
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
+  // #3582: an edit review's completion takes lock(1) first, before its claim.
+  $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
@@ -1547,6 +1558,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       officerMemberId: "admin-1",
       store: tx,
     });
+    // #3582: a hand-back posts no closure lines and takes no global lock.
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    expect(vi.mocked(postReviewClosureLedgerLines)).not.toHaveBeenCalled();
   });
 
   it("raises the bank-transfer refund note for a completed cancellation hand-back on a booking with an issued invoice (INV-PAY-101, #3369)", async () => {
@@ -1761,6 +1775,27 @@ describe("recording per-night amounts while settling (#3191)", () => {
       }),
       tx,
     );
+    // #3582: lock(1) is this transaction's FIRST lock — taken before the claim,
+    // so the ledger fence is asked under the settle's key and no row lock is
+    // held while waiting for it — and the closure posts its ledger lines with
+    // the share's direction.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
+      "pg_advisory_xact_lock(1)",
+    );
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
+    );
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        manualRefundTaskId: "task-1",
+        rebaseHistoryId: "mod-rebase-1",
+        settlement: { direction: "REFUND_TO_MEMBER", amountCents: 4_500 },
+        officerMemberId: "admin-1",
+        store: tx,
+      }),
+    );
   });
 
   it("records them on a DISMISSAL too, where nothing moves and the total does not", async () => {
@@ -1786,6 +1821,10 @@ describe("recording per-night amounts while settling (#3191)", () => {
         metadata: expect.objectContaining({ resolution: "dismissed" }),
       }),
       tx,
+    );
+    // #3582: a dismissal settles nothing, so it carries no share to the ledger.
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: null }),
     );
   });
 

@@ -72,6 +72,13 @@ const mockBookingGuestValidationError = class BookingGuestValidationError extend
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
 }));

@@ -9,12 +9,16 @@
  *     under `pg_advisory_xact_lock(1)`. A `vi.fn()` cannot reproduce advisory-lock
  *     mutual exclusion, so a unit test that "proves" this proves only that the
  *     lock statement was SENT.
- *  2. **One task settles exactly ONCE.** The completion holds no advisory lock at
- *     all - deliberately, because serialising it would mean holding the global key
- *     across a Stripe round trip - so its whole single-flight guarantee is a
- *     status-guarded `updateMany` on `OPEN`. Whether that really excludes a
- *     concurrent completion is a question about row locks and READ COMMITTED
- *     re-evaluation, which only a real server answers.
+ *  2. **One task settles exactly ONCE.** The completion never holds an advisory
+ *     lock across the Stripe round trip - that runs after the commit - so its
+ *     single-flight guarantee is a status-guarded `updateMany` on `OPEN`. Since
+ *     #3582 an edit review's completion takes `pg_advisory_xact_lock(1)` as its
+ *     first lock inside the transaction (it posts booking-ledger lines), so two
+ *     completions now also queue behind each other on that key; each still read
+ *     the task OPEN before it, so the claim is still what refuses the second.
+ *     Whether that really excludes a concurrent completion is a question about
+ *     row locks and READ COMMITTED re-evaluation, which only a real server
+ *     answers.
  *  3. **One booking edit sends exactly ONE supplementary Xero invoice** (#3170).
  *     Two officers settling the two review tasks of one edit both derive a total
  *     and both reach `enqueueXeroSupplementaryInvoiceOperation`; the per-anchor
@@ -537,10 +541,12 @@ let observerClient: PrismaClient;
       let holderPid = 0;
       let holderError: unknown;
 
-      // The completion path holds NO advisory lock — that is deliberate, and is
-      // why the contended resource here is the task ROW rather than a key. A
-      // third connection takes that row's lock and parks, so both completions
-      // are guaranteed to reach their status-guarded claim and block on it.
+      // The contended resource here is the task ROW. A third connection takes
+      // that row's lock and parks. Since #3582 the first completion takes
+      // `lock(1)` and then blocks on the row, and the second queues behind the
+      // first on `lock(1)` — `blockedByHolder` counts the chain, so both are
+      // still seen waiting on the holder — and both read the task OPEN before
+      // their lock, so the second is refused by the status-guarded claim.
       const holder = lockHolderClient
         .$transaction(
           async (tx) => {

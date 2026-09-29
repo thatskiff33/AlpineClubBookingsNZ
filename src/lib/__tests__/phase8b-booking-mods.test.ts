@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { NextRequest } from "next/server";
 
 // --- Mocks ---
@@ -29,6 +30,13 @@ const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => {
@@ -851,6 +859,19 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     const body = await res.json();
     expect(body.priceDiffCents).toBe(20000); // 30000 - 10000
     expect(body.changeFeeCents).toBe(0);
+    // #3582: the same edit, per night, on the booking ledger, anchored on the
+    // history row it just wrote and inside its transaction.
+    expect(vi.mocked(postModificationLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: tx,
+        bookingId: "bk1",
+        bookingModificationId: "mod1",
+        priceDiffCents: 20000,
+        changeFeeCents: 0,
+        site: "date-change",
+        sides: expect.objectContaining({ before: expect.any(Object), after: expect.any(Object) }),
+      }),
+    );
   });
 
   it("writes the moved range's night rows at the amounts it priced (#3031)", async () => {
@@ -2276,6 +2297,16 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       expect.objectContaining({
         data: expect.objectContaining({ modificationType: "GUEST_REMOVE" }),
       })
+    );
+    // #3582: the removal's own lines, per night, inside its transaction.
+    expect(vi.mocked(postModificationLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: tx,
+        bookingModificationId: "mod1",
+        priceDiffCents: -5000,
+        changeFeeCents: 0,
+        site: "guest-removal",
+      }),
     );
 
     await Promise.resolve();
