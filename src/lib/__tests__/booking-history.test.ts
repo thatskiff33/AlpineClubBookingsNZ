@@ -441,6 +441,54 @@ describe("buildBookingHistoryItems", () => {
     ).toBe(false);
     expect(items.map((item) => item.title)).toEqual(["Booking created"]);
   });
+
+  // #3638 review (SSOT F9): the settlement markers were "admin-visible" in the
+  // acceptance criterion and visible nowhere. The staff timeline shows them.
+  const secondInstrumentMarker = {
+    id: "event-marker-1",
+    occurredAt: new Date("2026-04-06T12:00:00Z"),
+    amountCents: 27000,
+    title: "May have been paid twice (card and Xero)",
+    detail: "Xero reported this booking's invoice paid after a card payment had already settled it. Xero invoice INV-3638.",
+    tone: "danger" as const,
+  };
+
+  it("renders a settlement marker on the staff timeline (#3638)", () => {
+    const items = buildBookingHistoryItems({
+      audience: "staff",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+      settlementMarkers: [secondInstrumentMarker],
+    }, CLUB_FORMAT_TEST);
+
+    const marker = items.find((item) => item.id === "settlement-marker-event-marker-1");
+    expect(marker).toEqual({
+      id: "settlement-marker-event-marker-1",
+      occurredAt: secondInstrumentMarker.occurredAt,
+      category: "Payment",
+      title: "May have been paid twice (card and Xero)",
+      detail: secondInstrumentMarker.detail,
+      amountDisplay: "$270.00",
+      tone: "danger",
+    });
+  });
+
+  it("never renders a settlement marker for a member, even when handed one (#3638)", () => {
+    const items = buildBookingHistoryItems({
+      audience: "member",
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [],
+      settlementMarkers: [secondInstrumentMarker],
+    }, CLUB_FORMAT_TEST);
+
+    expect(items.map((item) => item.title)).toEqual(["Booking created"]);
+  });
 });
 
 /**

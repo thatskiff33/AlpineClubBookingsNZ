@@ -52,6 +52,10 @@ function makeDeps(overrides: {
    * keeps asserting exactly what it always did.
    */
   invoiceSyncFault?: BookingInvoiceSyncFault | null;
+  /** #3635: an officer resolved the create in Xero. Defaults to none. */
+  resolvedInvoiceCreate?: boolean;
+  /** #3635 round 4: the refund-note gap; defaults to "nothing resolved". */
+  refundGap?: { uncoveredCents: number; resolvedInXeroCents: number };
 }) {
   const booking =
     overrides.booking === null ? null : bookingRecord(overrides.booking ?? {});
@@ -81,6 +85,16 @@ function makeDeps(overrides: {
     getBookingInvoiceSyncFault: vi
       .fn()
       .mockResolvedValue(overrides.invoiceSyncFault ?? null),
+    findResolvedBookingInvoiceCreate: vi
+      .fn()
+      .mockResolvedValue(overrides.resolvedInvoiceCreate ? { id: "op-invoice" } : null),
+    readRefundCreditNoteGap: vi.fn().mockResolvedValue({
+      cashRefundCents: 4500,
+      coveredCents: 0,
+      uncoveredCents: 4500,
+      resolvedInXeroCents: 0,
+      ...overrides.refundGap,
+    }),
   } as unknown as BookingProviderMismatchDependencies;
 }
 
@@ -94,6 +108,39 @@ describe("getBookingProviderMismatches", () => {
       "xero-invoice-pending",
     ]);
     expect(mismatches[0].href).toBe("/admin/xero/records/Payment/payment-1");
+  });
+
+  it("says an officer resolved the invoice in Xero, not that it is pending (#3635)", async () => {
+    const deps = makeDeps({ invoiceExists: false, resolvedInvoiceCreate: true });
+
+    const mismatches = await getBookingProviderMismatches("booking-1", { deps });
+
+    expect(mismatches.map((mismatch) => mismatch.id)).toEqual(["xero-resolved-in-xero"]);
+    expect(mismatches[0].description).toMatch(/resolved in Xero/);
+  });
+
+  it.each([
+    [{ uncoveredCents: 0, resolvedInXeroCents: 4500 }, "xero-resolved-in-xero"],
+    // A later refund beyond the hand-made note: still pending, never hidden.
+    [{ uncoveredCents: 3000, resolvedInXeroCents: 5000 }, "xero-credit-note-pending"],
+  ])("shows a hand-resolved refund note only while it covers everything (#3635 round 4): %o", async (refundGap, expected) => {
+    const deps = makeDeps({
+      refundGap,
+      booking: {
+        status: "CANCELLED",
+        payment: {
+          id: "payment-1",
+          source: "STRIPE",
+          refundedAmountCents: 4500,
+          xeroInvoiceId: "inv-1",
+          xeroRefundCreditNoteId: null,
+        },
+      },
+    });
+
+    const mismatches = await getBookingProviderMismatches("booking-1", { deps });
+
+    expect(mismatches.map((mismatch) => mismatch.id)).toEqual([expected]);
   });
 
   it("stays quiet for a paid booking with invoice evidence", async () => {

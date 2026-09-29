@@ -9,6 +9,7 @@ import {
 } from "@/lib/booking-history-modification-narrative";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import type { RateMembershipLabelResolver } from "@/lib/rate-membership-label";
+import type { SettlementMarkerTimelineEntry } from "@/lib/manual-settlement-reversal-event";
 import { formatCents, formatSignedCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -108,6 +109,15 @@ interface BuildBookingHistoryOptions {
    */
   duplicateCaptureRefunds?: BookingHistoryDuplicateCaptureRefund[];
   /**
+   * #3638: the admin-only settlement markers — a manual payment reversed, a Xero
+   * payment on a cash-settled booking (#2262), a booking that may have been paid
+   * twice by card and bank. Rendered ONLY for the `"staff"` audience, whatever
+   * the caller passes: the page withholds them at the data feed as well, and
+   * this makes a member view that is handed them render nothing. Defaults to
+   * none.
+   */
+  settlementMarkers?: SettlementMarkerTimelineEntry[];
+  /**
    * #3033 (epic #2797): this booking has an OPEN financial review — a change
    * saved while the refund or credit for it could not be worked out from stored
    * history.
@@ -151,6 +161,7 @@ export function buildBookingHistoryItems({
   refundRequests,
   auditLogs,
   duplicateCaptureRefunds = [],
+  settlementMarkers = [],
   financialReviewPending = false,
   rateLabels = null,
 }: BuildBookingHistoryOptions,
@@ -636,6 +647,21 @@ export function buildBookingHistoryItems({
       amountDisplay: formatCents(refund.amountCents, format),
       tone: "warning",
     });
+  }
+
+  if (audience === "staff") {
+    for (const marker of settlementMarkers) {
+      items.push({
+        id: `settlement-marker-${marker.id}`,
+        occurredAt: marker.occurredAt,
+        category: "Payment",
+        title: marker.title,
+        detail: marker.detail,
+        amountDisplay:
+          marker.amountCents === null ? null : formatCents(marker.amountCents, format),
+        tone: marker.tone,
+      });
+    }
   }
 
   return items.sort(

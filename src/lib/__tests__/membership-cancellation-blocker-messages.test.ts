@@ -3,6 +3,7 @@ import {
   buildMembershipCancellationApprovalBlockedMessage,
   describeMembershipCancellationBlocker,
   describeUnpaidInvoiceBlockerParts,
+  formatBlockerAmount,
   membershipCancellationBlockerHeading,
   membershipCancellationBlockerHint,
   type MembershipCancellationBlocker,
@@ -104,6 +105,43 @@ describe("membership cancellation blocker wording", () => {
         unpaidInvoice({ currency: "UNKNOWN" }),
       ),
     ).toContain("120.50 still owing");
+  });
+
+  // #3722: the stored figure is hundredths of the major unit for every
+  // currency, so a currency without two decimal places must not be padded to
+  // two — that would claim a precision the invoice does not have.
+  describe("an invoice currency without two decimal places", () => {
+    it("prints a zero-decimal amount as a whole number", () => {
+      expect(formatBlockerAmount(120000, "JPY")).toBe("JPY 1200");
+      expect(
+        describeMembershipCancellationBlocker(
+          unpaidInvoice({ amountDueCents: 120000, currency: "JPY" }),
+        ),
+      ).toContain("JPY 1200 still owing");
+    });
+
+    it("keeps the hundredths it was given, unpadded", () => {
+      expect(formatBlockerAmount(123, "KWD")).toBe("KWD 1.23");
+      expect(formatBlockerAmount(120, "KWD")).toBe("KWD 1.2");
+    });
+
+    it("reads the code the way the minor-unit rule does", () => {
+      expect(formatBlockerAmount(120000, "jpy")).toBe("jpy 1200");
+    });
+
+    it("leaves a two-decimal currency, and an unknown one, at two places", () => {
+      expect(formatBlockerAmount(120000, "NZD")).toBe("NZD 1200.00");
+      expect(formatBlockerAmount(120000, "UNKNOWN")).toBe("1200.00");
+      expect(formatBlockerAmount(120000, "")).toBe("1200.00");
+    });
+
+    it("carries the same figure into the approval refusal", () => {
+      expect(
+        buildMembershipCancellationApprovalBlockedMessage([
+          unpaidInvoice({ amountDueCents: 120000, currency: "JPY" }),
+        ]),
+      ).toContain("INV-0042 (JPY 1200)");
+    });
   });
 
   it("keeps the existing booking wording, and honours a caller's date format", () => {

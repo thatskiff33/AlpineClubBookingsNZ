@@ -369,6 +369,43 @@ describe("Xero admin bulk routes", () => {
     });
   });
 
+  it("force-sync of one booking overrides a resolved-in-Xero mark and audits that it did (#3635)", async () => {
+    mocks.prisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        memberId: "member-1",
+        status: "PAID",
+        payment: { id: "payment-1", xeroInvoiceId: null },
+      },
+    ]);
+    mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
+      queueOperationId: "queue-1",
+      message: "Xero booking invoice queued for background processing.",
+      overrodeResolvedInXeroOperationId: "op-resolved",
+    });
+
+    const response = await forceSync(
+      makeJsonRequest("http://localhost/api/admin/xero/force-sync", {
+        syncType: "INVOICE",
+        query: "booking-1",
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
+      "booking-1",
+      expect.objectContaining({ overrideResolvedInXero: true })
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "XERO_FORCE_SYNC_INVOICE",
+        summary: expect.stringContaining("overriding an officer's resolved-in-Xero mark"),
+        details: expect.stringContaining("op-resolved"),
+        metadata: expect.objectContaining({ overrodeResolvedInXeroOperationId: "op-resolved" }),
+      })
+    );
+  });
+
   it("returns a client error when a force-sync member lookup is ambiguous", async () => {
     mocks.prisma.member.findMany.mockResolvedValue([
       {

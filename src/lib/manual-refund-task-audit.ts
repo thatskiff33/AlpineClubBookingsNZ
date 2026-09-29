@@ -8,7 +8,10 @@ import {
   completionSettlementShape,
   completionSummary,
 } from "@/lib/manual-refund-task-copy";
-import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  isPartPaymentReviewTask,
+  manualRefundTaskKindAllowsSettlement,
+} from "@/lib/manual-refund-task-settlement-rules";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import type { SettlementDirectionValue } from "@/lib/stored-night-price-repair";
 
@@ -49,6 +52,8 @@ export async function recordManualRefundTaskClosureAudit({
     amountCents: number | null;
     raisedAmountCents: number | null;
     kind: ManualRefundTaskKind | null;
+    /** #3643: set on a part-payment review. Required, so no caller can forget it. */
+    partPaymentReviewPaymentId: string | null;
     /** The booking OWNER, null when it is owned by an Organisation (#3369). */
     booking: { memberId: string | null };
   };
@@ -99,7 +104,9 @@ export async function recordManualRefundTaskClosureAudit({
       summary:
         resolution === "completed"
           ? completionSummary(completionSettlementShape(settlementRoute))
-          : manualRefundTaskKindAllowsSettlement(task.kind)
+          : isPartPaymentReviewTask(task)
+            ? "Part payment settled in Xero closed as dealt with, no money moved here"
+            : manualRefundTaskKindAllowsSettlement(task.kind, false)
             ? "Manual booking refund task dismissed"
             : "Uncollected booking amount closed as dealt with, no money moved",
       details: note,

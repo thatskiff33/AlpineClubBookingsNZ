@@ -16,10 +16,17 @@ const h = vi.hoisted(() => ({
   periodUpdate: vi.fn(),
   periodDelete: vi.fn(),
   revalidatePublicPageContent: vi.fn(),
+  hasAdminAreaAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: (...args: unknown[]) => h.requireAdmin(...args),
+}));
+
+// #3639 review F2: the late-capture refund choice needs finance:edit as well.
+vi.mock("@/lib/admin-permissions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/admin-permissions")),
+  hasAdminAreaAccess: (...args: unknown[]) => h.hasAdminAreaAccess(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -101,6 +108,7 @@ describe("non-member hold policy admin API", () => {
       ok: true,
       session: { user: { id: "admin-1" } },
     });
+    h.hasAdminAreaAccess.mockReturnValue(true);
     h.transaction.mockImplementation((fn: (store: typeof tx) => Promise<unknown>) =>
       fn(tx)
     );
@@ -150,6 +158,151 @@ describe("non-member hold policy admin API", () => {
       },
     });
     expect(h.revalidatePublicPageContent).toHaveBeenCalledOnce();
+  });
+
+  describe("the late-payment refund setting (#3639, owner decision 26 Sep 2026)", () => {
+    it("reads 'refund automatically' for a club that never saved it", async () => {
+      const res = await getDefaultPolicy(
+        new NextRequest("http://localhost/api/admin/booking-policies/cancellation"),
+      );
+      await expect(res.json()).resolves.toMatchObject({
+        lateCaptureRefundNeedsApproval: false,
+      });
+    });
+
+    it("stores treasurer approval, and audits the change", async () => {
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(h.defaultsUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { lateCaptureRefundNeedsApproval: true },
+          create: expect.objectContaining({ lateCaptureRefundNeedsApproval: true }),
+        }),
+      );
+      expect(h.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.stringContaining("lateCaptureNeedsApproval=true"),
+        }),
+      );
+    });
+
+    it("writes its own payment-category audit entry for the switch, with before and after", async () => {
+      await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+      expect(h.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking-defaults.late_capture_refund_approval.changed",
+          category: "payment",
+          severity: "important",
+          details: JSON.stringify({
+            before: "refund_automatically",
+            after: "treasurer_approves",
+            via: "cancellation-page",
+          }),
+        }),
+      );
+      expect(h.hasAdminAreaAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        { area: "finance", level: "edit" },
+      );
+    });
+
+    it("refuses a bookings-only officer who tries to CHANGE it, and writes nothing (review F2)", async () => {
+      h.hasAdminAreaAccess.mockReturnValue(false);
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(403);
+      // Refused inside the write transaction (delta D3), before any write.
+      expect(h.cancellationDeleteMany).not.toHaveBeenCalled();
+      expect(h.defaultsUpsert).not.toHaveBeenCalled();
+      expect(h.logAudit).not.toHaveBeenCalled();
+    });
+
+    it("refuses a save made against a value that changed while the page was open, with its own message (delta D3)", async () => {
+      // A treasurer switched it on after this page loaded the old answer.
+      h.defaultsFindUnique.mockResolvedValue({
+        id: "default",
+        nonMemberHoldEnabled: false,
+        nonMemberHoldDays: 14,
+        lateCaptureRefundNeedsApproval: true,
+      });
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: false,
+          lateCaptureRefundNeedsApprovalLoaded: false,
+        }),
+      );
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        error: expect.stringContaining("changed how late card payments"),
+      });
+      expect(h.defaultsUpsert).not.toHaveBeenCalled();
+    });
+
+    it("lets a bookings-only officer save the page when the stored answer is re-sent unchanged", async () => {
+      h.hasAdminAreaAccess.mockReturnValue(false);
+      h.defaultsFindUnique.mockResolvedValue({
+        id: "default",
+        nonMemberHoldEnabled: false,
+        nonMemberHoldDays: 14,
+        lateCaptureRefundNeedsApproval: true,
+      });
+
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(h.logAudit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "booking-defaults.late_capture_refund_approval.changed" }),
+      );
+    });
+
+    it("leaves the stored answer alone on a save that does not mention it", async () => {
+      await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          nonMemberHoldDays: 30,
+        }),
+      );
+      const [upsert] = h.defaultsUpsert.mock.calls[0];
+      expect(upsert.update).not.toHaveProperty("lateCaptureRefundNeedsApproval");
+      expect(upsert.create).not.toHaveProperty("lateCaptureRefundNeedsApproval");
+    });
+
+    it("refuses it per lodge: it is how the club handles money", async () => {
+      const res = await putDefaultPolicy(
+        request("https://example.test/api/admin/booking-policies/cancellation", {
+          rules,
+          lodgeId: "lodge-1",
+          lateCaptureRefundNeedsApproval: true,
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(h.transaction).not.toHaveBeenCalled();
+    });
   });
 
   it("does not invalidate public content when the default policy update is rejected", async () => {

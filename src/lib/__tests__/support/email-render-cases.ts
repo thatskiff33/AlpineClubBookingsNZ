@@ -83,12 +83,15 @@ import {
   adminLateCaptureAutoRefundTemplate,
   adminLateCaptureHandBackConflictTemplate,
   adminManualRefundTaskTemplate,
+  adminLateCaptureHeldTemplate,
   adminManualSettlementConflictTemplate,
+  adminSecondInstrumentSettlementConflictTemplate,
   adminPaymentFailureTemplate,
   adminRefundRequestTemplate,
   adminXeroRepeatedFailureTemplate,
   adminXeroSyncErrorTemplate,
 } from "@/lib/email-templates/admin-finance";
+import { adminInternetBankingHoldKeptTemplate } from "@/lib/email-templates/admin-internet-banking";
 import {
   adminAccountDeletionRequestedTemplate,
   adminFamilyGroupRequestTemplate,
@@ -189,8 +192,10 @@ import {
 import {
   familyMemberBookingAddedTemplate,
 } from "@/lib/email-templates/family-booking";
+import { adminGroupJoinerStartedStayTemplate } from "@/lib/email-templates/admin-group-joiner-started-stay";
 import {
   groupJoinCancelledTemplate,
+  groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
   groupSettlementExpiredTemplate,
@@ -245,6 +250,7 @@ import {
   waitlistOfferTemplate,
   waitlistPlaceRestoredTemplate,
 } from "@/lib/email-templates/waitlist";
+import { adminInternetBankingHoldStartedStayTemplate } from "@/lib/email-templates/admin-internet-banking-started-stay";
 import { CLUB_FORMAT_TEST } from "./club-format-fixture";
 
 export interface EmailRenderCase {
@@ -695,6 +701,10 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminDuplicateCaptureRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", settledPaymentIntentId: "settledPaymentIntentId-6", operationReference: "operationReference-7", reviewUrl: "reviewUrl-8", refundFailed: true }, CLUB_FORMAT_TEST) },
   { id: "adminDuplicateCaptureRefundTemplate:full", fn: "adminDuplicateCaptureRefundTemplate", render: () =>
     adminDuplicateCaptureRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", settledPaymentIntentId: "settledPaymentIntentId-6", operationReference: "operationReference-7", errorMessage: "errorMessage-8", reviewUrl: "reviewUrl-9", refundFailed: true }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldStartedStayTemplate:minimal", fn: "adminInternetBankingHoldStartedStayTemplate", render: () =>
+    adminInternetBankingHoldStartedStayTemplate({ memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), holdUntil: null, amountOwingCents: 105, reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldStartedStayTemplate:full", fn: "adminInternetBankingHoldStartedStayTemplate", render: () =>
+    adminInternetBankingHoldStartedStayTemplate({ memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), holdUntil: new Date("2026-03-02T08:00:00.000Z"), amountOwingCents: 105, reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureAutoRefundTemplate:minimal", fn: "adminLateCaptureAutoRefundTemplate", render: () =>
     adminLateCaptureAutoRefundTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", bookingId: "bookingId-6", bookingDeleted: true, captureKind: "modification", reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
   { id: "adminLateCaptureAutoRefundTemplate:full", fn: "adminLateCaptureAutoRefundTemplate", render: () =>
@@ -705,8 +715,20 @@ const GENERATED_CASES: EmailRenderCase[] = [
     adminLateCaptureHandBackConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, paymentIntentId: "paymentIntentId-5", bookingId: "bookingId-6", bookingDeleted: true, captureKind: "primary", handBackAmountCents: 107, refundSent: true, reviewUrl: "reviewUrl-8" }, CLUB_FORMAT_TEST) },
   { id: "adminManualSettlementConflictTemplate:minimal", fn: "adminManualSettlementConflictTemplate", render: () =>
     adminManualSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", bookingStatus: "bookingStatus-6", xeroInvoiceNumber: "xeroInvoiceNumber-7", xeroInvoiceUrl: "xeroInvoiceUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldKeptTemplate:minimal", fn: "adminInternetBankingHoldKeptTemplate", render: () =>
+    adminInternetBankingHoldKeptTemplate({ reason: "unreadable", memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), holdUntil: new Date("2026-03-05T00:00:00.000Z"), paidCents: null, amountOwingCents: null, xeroInvoiceNumber: null, xeroInvoiceUrl: null, reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminInternetBankingHoldKeptTemplate:full", fn: "adminInternetBankingHoldKeptTemplate", render: () =>
+    adminInternetBankingHoldKeptTemplate({ reason: "part-paid", memberName: "memberName-1", bookingId: "bookingId-2", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), holdUntil: new Date("2026-03-05T00:00:00.000Z"), paidCents: 106, amountOwingCents: 107, xeroInvoiceNumber: "xeroInvoiceNumber-8", xeroInvoiceUrl: "xeroInvoiceUrl-9", reviewUrl: "reviewUrl-10" }, CLUB_FORMAT_TEST) },
+  { id: "adminSecondInstrumentSettlementConflictTemplate:minimal", fn: "adminSecondInstrumentSettlementConflictTemplate", render: () =>
+    adminSecondInstrumentSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", bookingStatus: "bookingStatus-5", conflictKind: "settled", invoiceAmountCents: 106, cardHeldCents: 107, cardPaymentIntentId: null, xeroInvoiceNumber: null, xeroInvoiceUrl: null, bookingUrl: "bookingUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminSecondInstrumentSettlementConflictTemplate:full", fn: "adminSecondInstrumentSettlementConflictTemplate", render: () =>
+    adminSecondInstrumentSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", bookingStatus: "bookingStatus-5", conflictKind: "cancelledAfterCard", invoiceAmountCents: 106, cardHeldCents: 107, cardPaymentIntentId: "cardPaymentIntentId-6", xeroInvoiceNumber: "xeroInvoiceNumber-7", xeroInvoiceUrl: "xeroInvoiceUrl-8", bookingUrl: "bookingUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
+  { id: "adminSecondInstrumentSettlementConflictTemplate:refund-history", fn: "adminSecondInstrumentSettlementConflictTemplate", render: () =>
+    adminSecondInstrumentSettlementConflictTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), bookingId: "bookingId-4", bookingStatus: "bookingStatus-5", conflictKind: "cancelledAfterRefund", invoiceAmountCents: 106, cardHeldCents: 107, cardPaymentIntentId: "cardPaymentIntentId-6", xeroInvoiceNumber: "xeroInvoiceNumber-7", xeroInvoiceUrl: "xeroInvoiceUrl-8", bookingUrl: "bookingUrl-8", reviewUrl: "reviewUrl-9" }, CLUB_FORMAT_TEST) },
   { id: "adminManualRefundTaskTemplate:minimal", fn: "adminManualRefundTaskTemplate", render: () =>
     adminManualRefundTaskTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), refundAmountCents: 104, bookingId: "bookingId-5", reason: "reason-6", reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
+  { id: "adminLateCaptureHeldTemplate:minimal", fn: "adminLateCaptureHeldTemplate", render: () =>
+    adminLateCaptureHeldTemplate({ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), amountCents: 104, bookingId: "bookingId-5", reviewUrl: "reviewUrl-6" }, CLUB_FORMAT_TEST) },
   { id: "adminPendingDeadlineTemplate:minimal", fn: "adminPendingDeadlineTemplate", render: () =>
     adminPendingDeadlineTemplate([{ memberName: "memberName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, deadline: new Date("2026-03-06T00:00:00.000Z"), hoursRemaining: 106 }]) },
   { id: "adminBookingBumpedTemplate:minimal", fn: "adminBookingBumpedTemplate", render: () =>
@@ -899,6 +921,12 @@ const GENERATED_CASES: EmailRenderCase[] = [
     groupJoinReleasedTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "groupJoinCancelledTemplate:minimal", fn: "groupJoinCancelledTemplate", render: () =>
     groupJoinCancelledTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
+  { id: "adminGroupJoinerStartedStayTemplate:minimal", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
+    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3", bookingUrl: "https://example.test/bookings/bookingId-4" }] }) },
+  { id: "adminGroupJoinerStartedStayTemplate:two-joiners", fn: "adminGroupJoinerStartedStayTemplate", render: () =>
+    adminGroupJoinerStartedStayTemplate({ organiserName: "organiserName-1", organiserBookingId: "organiserBookingId-2", organiserBookingUrl: "https://example.test/bookings/organiserBookingId-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), joiners: [{ name: "name-3 <b>", bookingUrl: "https://example.test/bookings/bookingId-4" }, { name: "name-5", bookingUrl: "https://example.test/bookings/bookingId-6" }] }) },
+  { id: "groupJoinPaySelfTemplate:minimal", fn: "groupJoinPaySelfTemplate", render: () =>
+    groupJoinPaySelfTemplate({ firstName: "firstName-1", organiserName: "organiserName-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z") }) },
   { id: "bookingRequestApprovedTemplate:minimal", fn: "bookingRequestApprovedTemplate", render: () =>
     bookingRequestApprovedTemplate({ firstName: "firstName-1", payUrl: "payUrl-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105, priceCents: 106, expiresAt: new Date("2026-03-08T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
   { id: "splitGuestPaymentLinkTemplate:minimal", fn: "splitGuestPaymentLinkTemplate", render: () =>

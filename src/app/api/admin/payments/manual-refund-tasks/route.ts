@@ -147,6 +147,13 @@ export async function GET() {
           decision D3's evidence — projected below, never sent raw.
         */
         kind: true,
+        // #3639: marks a late capture held for a treasurer's approval.
+        lateCaptureApprovalIntentId: true,
+        // #3643: marks a part-payment review, settled in Xero.
+        partPaymentReviewPaymentId: true,
+        // #3643 (`INV-PAY-108`): the sync's note that Xero reported it paid.
+        partPaymentReviewXeroPaidAt: true,
+        partPaymentReviewXeroPaidCents: true,
         raisedAmountCents: true,
         reviewContext: true,
         reason: true,

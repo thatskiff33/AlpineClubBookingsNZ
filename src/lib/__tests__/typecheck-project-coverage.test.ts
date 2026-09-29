@@ -66,6 +66,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-website-prerender-manifest.test.mjs",
   "scripts/ci/check-website-render-modes.test.mjs",
   "scripts/ci/check-workflow-suite-checkout-depth.test.mjs",
+  // #3721: the suite of the `.mjs` hand-sync description tool, which runs
+  // before any install alongside the renderer it extends.
+  "scripts/ci/epic-sync-body.test.mjs",
   "scripts/ci/filter-suppressed-sarif.test.mjs",
   "scripts/ci/render-epic-sync-pr-body.test.mjs",
   "scripts/ci/require-test-shards.test.mjs",

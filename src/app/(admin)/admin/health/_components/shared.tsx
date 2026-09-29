@@ -20,6 +20,7 @@ export function StatusBadge({ status }: { status: string }) {
     degraded: "bg-warning-3 text-warning-11",
     SKIPPED: "bg-warning-3 text-warning-11",
     skipped: "bg-warning-3 text-warning-11",
+    warning: "bg-warning-3 text-warning-11",
     stale: "bg-warning-3 text-warning-11",
     missing: "bg-warning-3 text-warning-11",
     error: "bg-danger-3 text-danger-11",

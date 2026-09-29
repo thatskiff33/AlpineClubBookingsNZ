@@ -647,20 +647,15 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
     reason:
       "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
   },
-  {
-    files: ["src/lib/membership-cancellation-blocker-messages.ts"],
-    reason:
-      "Formats an amount in a Xero invoice's OWN currency, which the club's configured formatCents structurally cannot do — the currency varies per call and is deliberately not APP_CURRENCY (see formatBlockerAmount's own docblock).",
-  },
 ];
 
 /**
  * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
  * members (declared below) — `finance-legacy-dashboard-export.ts`
- * (`finance-*`), `promo-redemptions-csv.ts` (`*promo*`),
- * and `membership-cancellation-blocker-messages.ts`
- * (`membership-cancellation-*`); `internet-banking-payment-cron.ts` left the
- * list with #3325. Those three already take the broader
+ * (`finance-*`) and `promo-redemptions-csv.ts` (`*promo*`);
+ * `internet-banking-payment-cron.ts` left the list with #3325, and
+ * `membership-cancellation-blocker-messages.ts` with #3722, when its Xero
+ * amount moved onto `formatCentsPlain`. Those two already take the broader
  * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
  * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
  * rather than the ordinary exemption block's plain
@@ -668,13 +663,12 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
  * glob family against a literal path is a real pattern match, not a Set
  * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
  * than computed; `cents-display-guard.test.ts` checks the resolved config at
- * each of these three paths carries the money-MODULE arm, not the narrow one,
+ * each of these paths carries the money-MODULE arm, not the narrow one,
  * precisely so a hand-verified list cannot go stale silently.
  */
 const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
   "src/lib/finance-legacy-dashboard-export.ts",
   "src/lib/promo-redemptions-csv.ts",
-  "src/lib/membership-cancellation-blocker-messages.ts",
 ];
 
 // Where a bare `x * 100` is money by construction.
@@ -3176,13 +3170,13 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the three exempted files
-    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*`, `*promo*`,
-    // `membership-cancellation-*` respectively), so they already
+    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the two exempted files
+    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*` and `*promo*`
+    // respectively), so they already
     // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
     // one. Replicated here rather than re-derived, because flat config
     // replaces a matching block's rule wholesale and this block must win for
-    // these three paths without silently reverting them to the narrow money
+    // these paths without silently reverting them to the narrow money
     // arm the block above would otherwise leave them with.
     files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
     rules: {

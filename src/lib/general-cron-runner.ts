@@ -9,6 +9,7 @@ import {
   recordCronJobRunSafe,
   type RecordCronJobRunInput,
 } from "@/lib/cron-job-run";
+import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reapStaleGroupSettlements } from "@/lib/cron-group-settlement-reaper";
 import { reapExpiredPolicyExceptionHolds } from "@/lib/cron-policy-exception-hold-reaper";
 import { sendPlaceholderGuestNameReminders } from "@/lib/placeholder-guest-name-reminders";
@@ -124,35 +125,23 @@ async function runRecordedTask<T>({
   task: GeneralCronTask<T>;
   recordCronRun: (input: RecordCronJobRunInput) => Promise<void> | void;
 }): Promise<T> {
-  const startedAt = new Date();
-  try {
-    const result = await task.work();
-    await recordCronRun({
-      jobName: task.jobName,
-      startedAt,
-      status: "SUCCESS",
-      resultSummary: result,
-    });
-    return result;
-  } catch (error) {
-    const message = toErrorMessage(error);
+  const outcome = await runRecordedCronTask({
+    jobName: task.jobName,
+    work: task.work,
+    recordCronRun,
     // Top-level cron-task FAILURE: log at error AND page Sentry via the scoped
     // bridge (deduped per job). Per-item best-effort failures inside tasks stay
     // log-only.
-    reportCronError({
-      tag: task.jobName,
-      err: error,
-      message: task.failureMessage,
-      context: { job: task.jobName },
-    });
-    await recordCronRun({
-      jobName: task.jobName,
-      startedAt,
-      status: "FAILURE",
-      error: message,
-    });
-    throw new Error(message);
-  }
+    onFailure: (error) =>
+      reportCronError({
+        tag: task.jobName,
+        err: error,
+        message: task.failureMessage,
+        context: { job: task.jobName },
+      }),
+  });
+  if (!outcome.ok) throw new Error(outcome.message);
+  return outcome.result;
 }
 
 export async function runGeneralCronCycle(

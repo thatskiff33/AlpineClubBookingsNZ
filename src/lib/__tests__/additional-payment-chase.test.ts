@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ADDITIONAL_OWED_BOOKING_STATUSES,
   ADDITIONAL_PAYABLE_BOOKING_STATUSES,
   isAdditionalPayableBookingStatus,
+  isAdditionalPaymentDoorOpenForBooking,
   isAdditionalPaymentOwed,
+  isLateCaptureRefundedBookingStatus,
+  payableAdditionalPaymentIntentId,
   resolveAdditionalPaymentChase,
+  resolveAdditionalPaymentDoor,
 } from "@/lib/additional-payment-chase";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 
@@ -124,6 +128,151 @@ describe("isAdditionalPayableBookingStatus", () => {
       undefined,
     ]) {
       expect(isAdditionalPayableBookingStatus(status)).toBe(false);
+    }
+  });
+});
+
+/*
+  #3641 (`INV-PAY-104`): the member's pay door. The additional-payment-secret
+  route and the Xero outbox reaper both ask it, so the reaper keeps a waiting
+  invoice for exactly as long as the member can still pay the ask.
+*/
+describe("payableAdditionalPaymentIntentId", () => {
+  const door = (
+    overrides: Partial<{
+      bookingStatus: string;
+      bookingDeletedAt: Date | null;
+      additionalPaymentIntentId: string | null;
+      additionalPaymentStatus: string | null;
+    }> = {},
+  ) =>
+    payableAdditionalPaymentIntentId({
+      bookingStatus: overrides.bookingStatus ?? "CONFIRMED",
+      bookingDeletedAt: overrides.bookingDeletedAt ?? null,
+      payment: {
+        additionalPaymentIntentId:
+          overrides.additionalPaymentIntentId === undefined
+            ? "pi_ask"
+            : overrides.additionalPaymentIntentId,
+        additionalPaymentStatus:
+          overrides.additionalPaymentStatus === undefined
+            ? "PENDING"
+            : overrides.additionalPaymentStatus,
+      },
+    });
+
+  it("hands out the ask while it is unpaid, declined included, on a payable booking", () => {
+    for (const additionalPaymentStatus of ["PENDING", "FAILED", null]) {
+      expect(door({ additionalPaymentStatus })).toBe("pi_ask");
+    }
+    expect(door({ bookingStatus: "PAYMENT_PENDING" })).toBe("pi_ask");
+  });
+
+  it("is closed once the ask is collected, withdrawn, or the booking can no longer take it", () => {
+    expect(door({ additionalPaymentStatus: "SUCCEEDED" })).toBeNull();
+    expect(door({ additionalPaymentIntentId: null })).toBeNull();
+    expect(door({ bookingDeletedAt: new Date() })).toBeNull();
+    expect(door({ bookingStatus: "CANCELLED" })).toBeNull();
+    expect(door({ bookingStatus: "BUMPED" })).toBeNull();
+    expect(
+      payableAdditionalPaymentIntentId({
+        bookingStatus: "CONFIRMED",
+        bookingDeletedAt: null,
+        payment: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+/**
+ * #3641, `INV-PAY-104`: the whole pay door, Stripe's half included. The route
+ * hands out a secret only on `payable`; the Xero reaper retires only on `closed`.
+ */
+describe("resolveAdditionalPaymentDoor", () => {
+  const openInput = {
+    bookingStatus: "CONFIRMED",
+    bookingDeletedAt: null,
+    payment: {
+      additionalPaymentIntentId: "pi_ask",
+      additionalPaymentStatus: "FAILED",
+    },
+  };
+
+  it("is payable while Stripe still lets the intent be confirmed", async () => {
+    for (const status of [
+      "requires_payment_method",
+      "requires_confirmation",
+      "requires_action",
+    ]) {
+      const intent = { status, client_secret: "secret" };
+      await expect(
+        resolveAdditionalPaymentDoor(openInput, async () => intent),
+      ).resolves.toEqual({ state: "payable", intent });
+    }
+  });
+
+  it("is closed for an intent Stripe cancelled, though our rows read it as a decline", async () => {
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => ({ status: "canceled" })),
+    ).resolves.toEqual({ state: "closed" });
+  });
+
+  it("is closed when Stripe has no such intent, and never asks Stripe when the local door is shut", async () => {
+    const missing = Object.assign(new Error("No such payment_intent"), {
+      type: "StripeInvalidRequestError",
+      code: "resource_missing",
+    });
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => {
+        throw missing;
+      }),
+    ).resolves.toEqual({ state: "closed" });
+
+    const retrieve = vi.fn();
+    await expect(
+      resolveAdditionalPaymentDoor(
+        { ...openInput, bookingStatus: "CANCELLED" },
+        retrieve,
+      ),
+    ).resolves.toEqual({ state: "closed" });
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  it("reports money Stripe has taken, or is taking, that our rows have not caught up with", async () => {
+    for (const status of ["succeeded", "requires_capture", "processing"]) {
+      const intent = { status };
+      await expect(
+        resolveAdditionalPaymentDoor(openInput, async () => intent),
+      ).resolves.toEqual({ state: "captured-at-provider", intent });
+    }
+  });
+
+  it("lets any other Stripe failure through, so no caller mistakes an outage for an answer", async () => {
+    await expect(
+      resolveAdditionalPaymentDoor(openInput, async () => {
+        throw new Error("stripe unavailable");
+      }),
+    ).rejects.toThrow("stripe unavailable");
+  });
+});
+
+describe("the booking half of the door, and which captures are refunded (#3641)", () => {
+  it("opens only for a live booking in a payable lifecycle", () => {
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "PAID", bookingDeletedAt: null }),
+    ).toBe(true);
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "PAID", bookingDeletedAt: new Date() }),
+    ).toBe(false);
+    expect(
+      isAdditionalPaymentDoorOpenForBooking({ bookingStatus: "BUMPED", bookingDeletedAt: null }),
+    ).toBe(false);
+  });
+
+  it("refunds a capture on a CANCELLED booking only; every other closed status keeps the money", () => {
+    expect(isLateCaptureRefundedBookingStatus("CANCELLED")).toBe(true);
+    for (const status of ["BUMPED", "AWAITING_REVIEW", "PENDING", "WAITLISTED", "CONFIRMED", null]) {
+      expect(isLateCaptureRefundedBookingStatus(status)).toBe(false);
     }
   });
 });

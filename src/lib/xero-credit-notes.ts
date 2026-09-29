@@ -15,12 +15,21 @@
  * Xero credit-note IDs.
  */
 
+import {
+  findKeptLateCaptureInvoiceIdForPayment,
+  findLateCapturePaymentIntents,
+  readLateCaptureXeroReceipt,
+} from "@/lib/late-capture-xero-receipt";
+import {
+  readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
 import { CreditType } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -30,7 +39,6 @@ import {
   sanitizeForJson,
   startXeroSyncOperation,
   upsertXeroObjectLink,
-  sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
 import {
   callXeroApi,
@@ -59,6 +67,7 @@ import {
   defaultRefundMethodForPaymentSource,
 } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
@@ -79,7 +88,14 @@ export interface CreateXeroRefundCreditNoteOptions
    * only evidence and `defaultRefundMethodForPaymentSource` reads it.
    */
   refundMethod?: CashRefundMethod;
+  /** #3635 round-3 R4: the late capture this note answers (its receipt is named). */
+  paymentIntentId?: string;
+  /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
+  documentDate?: string;
 }
+
+/** Stamped on a late-capture refund note the app does not raise (`INV-PAY-110`). */
+export const LATE_CAPTURE_REFUND_NOTE_SKIPPED = "late-capture-refund-not-app-recorded";
 
 function readLinkWatermarkCents(metadata: unknown): number | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
@@ -111,11 +127,56 @@ export async function createXeroCreditNote(
   });
 
   if (!payment) throw new Error(`Payment not found: ${paymentId}`);
-  if (!payment.xeroInvoiceId) {
+  const queuedOperationId = options?.syncOperationId ?? null;
+  // #3635 (`INV-PAY-110`, round-3 R5): a note for a LATE CAPTURE names that
+  // capture's own receipt - its kept invoice, or its change's supplementary
+  // invoice - and never `payment.xeroInvoiceId`, which for a late capture is
+  // the pre-cancel invoice the cancel already cleared. With no receipt the app
+  // recorded (none, or one an officer recorded and resolved by hand) no note is
+  // raised: the row completes as skipped, and the repair tool tells an officer
+  // to record the refund by hand. A released invoice not yet in Xero is a
+  // transient failure, retried like any other.
+  const lateCaptureIntent =
+    options?.paymentIntentId &&
+    (await findLateCapturePaymentIntents([options.paymentIntentId])).has(options.paymentIntentId)
+      ? options.paymentIntentId
+      : null;
+  let originalInvoiceId: string | null;
+  if (lateCaptureIntent) {
+    const receipt = await readLateCaptureXeroReceipt(lateCaptureIntent);
+    if (receipt.kind !== "recorded") {
+      logger.warn(
+        { paymentId, paymentIntentId: lateCaptureIntent, receipt: receipt.kind },
+        "Late-capture refund credit note not raised: the app never recorded this capture's receipt in Xero"
+      );
+      if (queuedOperationId) {
+        await completeXeroSyncOperation(queuedOperationId, {
+          responsePayload: {
+            skipped: LATE_CAPTURE_REFUND_NOTE_SKIPPED,
+            receipt: receipt.kind,
+            paymentIntentId: lateCaptureIntent,
+          },
+        });
+      }
+      return "";
+    }
+    if (!receipt.invoiceId) {
+      throw new Error(
+        `The receipt of late capture ${lateCaptureIntent} has not reached Xero yet, so its refund credit note waits for it`
+      );
+    }
+    originalInvoiceId = receipt.invoiceId;
+  } else {
+    // A note for the payment as a whole: a kept capture's own invoice first,
+    // since the payment's own may be the cleared pre-cancel one. The note is
+    // unallocated either way (it settles by its own refund payment), so the id
+    // records which document it answers.
+    originalInvoiceId =
+      (await findKeptLateCaptureInvoiceIdForPayment(paymentId)) ?? payment.xeroInvoiceId;
+  }
+  if (!originalInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
-  const originalInvoiceId = payment.xeroInvoiceId;
-  const queuedOperationId = options?.syncOperationId ?? null;
   const watermarkCents = options?.watermarkCents;
   const isDeltaMode =
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
@@ -163,15 +224,26 @@ export async function createXeroCreditNote(
       },
     });
 
-    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
-    const evidence = await resolveStripeCashRefundEvidence({
+    // #3635 (`INV-INT-025`): the same coverage the enqueue capped against -
+    // links plus the notes an officer raised by hand in Xero - so a note
+    // resolved after this one was queued is not credited a second time here.
+    const resolvedCoverage = await readResolvedRefundCreditNoteCoverage(paymentId);
+    if (resolvedCoverage.unreadableOperationIds.length > 0) {
+      throw new Error(
+        `Refusing to create a Xero refund credit note for payment ${paymentId}: a note resolved by hand in Xero on this payment has no readable amount (#3635). Raise this refund's credit note in Xero by hand.`
+      );
+    }
+    const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolvedCoverage);
+    // #3635 round-3 R1: the cash a note may answer, the figure the enqueue
+    // capped against, never refunds of late captures Xero never received.
+    const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash({
       id: payment.id,
       bookingId: payment.bookingId,
       refundedAmountCents: payment.refundedAmountCents,
     });
     const uncoveredCents = Math.max(
       0,
-      evidence.cashRefundCents - coveredCents
+      eligibleCashCents - coveredCents
     );
 
     if (uncoveredCents <= 0) {
@@ -331,7 +403,11 @@ export async function createXeroCreditNote(
   // stay dates above are `@db.Date` lodge nights, left on truncation —
   // INV-DATE-019's first boundary with INV-DATE-026, not INV-DATE-010 (#3080).
   // Read once, outside the closure: it runs per payload and per repair attempt.
-  const creditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
+  // #3635 round-3 R3: a late capture's refund noted after the fact is dated the
+  // day it left Stripe, so it lands in the period the payout does.
+  const creditNoteDate =
+    options?.documentDate ??
+    xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -361,6 +437,13 @@ export async function createXeroCreditNote(
         refundAmountCents,
         "v1"
       );
+  // #3635 round-3 R4/R3: which capture this note answers, and its date, ride
+  // in the recorded payload and the link so a retry keeps both and the
+  // capture's notes can be counted.
+  const lateCaptureFields = {
+    ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
+    ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+  };
   let operationId = queuedOperationId;
   // `refundMethod` rides in the recorded payload so a retry or a repair of
   // this row settles against the same account and says the same thing.
@@ -371,6 +454,7 @@ export async function createXeroCreditNote(
       amount: effectiveRefundAmountCents / 100,
     },
     refundMethod,
+    ...lateCaptureFields,
   };
 
   if (operationId) {
@@ -416,6 +500,7 @@ export async function createXeroCreditNote(
           amount: effectiveRefundAmountCents / 100,
         },
         refundMethod,
+        ...lateCaptureFields,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
@@ -488,7 +573,7 @@ export async function createXeroCreditNote(
           refundAmountCents: effectiveRefundAmountCents,
           bankCode,
           // The club's calendar day, from the persisted zone (CT-5, #2869).
-          paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+          paymentDate: creditNoteDate,
           refundMethod,
         });
         const refundPaymentResponse = await callXeroApi(
@@ -554,6 +639,7 @@ export async function createXeroCreditNote(
               effectiveWatermarkCents ??
               options?.watermarkCents ??
               effectiveRefundAmountCents,
+            ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
           },
         },
         ...(refundPaymentResponseBody?.paymentID
@@ -606,7 +692,7 @@ async function backfillCancellationCreditXeroNote(params: {
       // already-cancelled booking, #1357).
       description: {
         in: [
-          `Cancellation refund for booking ${bookingLabel}`,
+          cancellationCreditDescription(params.bookingId),
           `Internet Banking payment credit for booking ${bookingLabel}`,
           `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
         ],

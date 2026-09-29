@@ -33,7 +33,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
-import { manualRefundTaskSettlementRefusal } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  isPartPaymentReviewTask,
+  manualRefundTaskSettlementRefusal,
+} from "@/lib/manual-refund-task-settlement-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -63,6 +66,13 @@ export { MANUAL_PAYMENT_NOTE_MAX };
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
+import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
+import { settleKeptLateCaptureRecordOnApproval } from "@/lib/xero-kept-late-capture-invoice";
+import {
+  finishKeptLateCaptureXeroRecord,
+  planKeptLateCaptureXeroRecord,
+  type KeptLateCaptureXeroPlan,
+} from "@/lib/late-capture-kept-xero";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -133,7 +143,10 @@ export async function resolveManualRefundTask(
     );
   }
 
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest()); // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window
+  // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window,
+  // and (#3635) the day a kept late capture's Xero receipt is dated.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const todayAtClub = clubToday(clubZone);
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -148,6 +161,11 @@ export async function resolveManualRefundTask(
         // (owner decision D2).
         raisedAmountCents: true,
         kind: true,
+        // #3639: which capture a late-capture approval refunds, and the
+        // sentence that names a #2700 task's capture.
+        lateCaptureApprovalIntentId: true,
+        partPaymentReviewPaymentId: true,
+        reason: true,
         status: true,
         // #3032: the settlement route needs three more facts, all read inside
         // the same transaction as the claim. `reviewContext` carries the
@@ -212,7 +230,11 @@ export async function resolveManualRefundTask(
     // before any write, so no input reaches a money path - and asked of
     // `manual-refund-task-settlement-rules.ts`, the one client-safe home the
     // settle screen reads to decide whether that control exists at all.
-    const refusal = manualRefundTaskSettlementRefusal(task.kind, resolution);
+    const refusal = manualRefundTaskSettlementRefusal(
+      task.kind,
+      resolution,
+      isPartPaymentReviewTask(task),
+    );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
@@ -449,6 +471,16 @@ export async function resolveManualRefundTask(
         // frozen slices under the same task-scoped Stripe key prefix the inline
         // call uses, so Stripe answers a repeat with the original refund and the
         // ledger dedupes on refund id.
+        // #3639: the same persist-the-debt-first rule for an approved late
+        // capture, under the webhook's own Stripe prefix.
+        else if (settlementRoute.kind === "late-capture-refund") {
+          await persistLateCaptureApprovalRefundDebt({
+            bookingId: task.bookingId,
+            route: settlementRoute,
+            amountCents: settlement.amountCents,
+            store: tx,
+          });
+        }
         else if (settlementRoute.kind === "stripe-refund") {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,
@@ -477,8 +509,9 @@ export async function resolveManualRefundTask(
         }
         // #3032: this completion holds no advisory lock, so a concurrent writer
         // on the same payment can move the ledger under it. The compare-and-set
-        // inside `applyLocalRefundAllocation` turns that into a loud failure
-        // instead of a lost update; the transaction rolls back, so the task is
+        // inside `applyLocalRefundAllocation` retries against the fresh total
+        // (#3640) and refuses loudly only when that writer used the headroom
+        // this completion needed; the transaction rolls back, so the task is
         // still OPEN and its money is still owed when the operator retries.
         if (error instanceof RefundAllocationRacedError) {
           throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
@@ -504,6 +537,28 @@ export async function resolveManualRefundTask(
           store: tx,
         });
       }
+    }
+
+    // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
+    // inside this claim, so a replayed dismissal queues nothing.
+    const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
+      resolution === "dismissed" && task.lateCaptureApprovalIntentId
+        ? await planKeptLateCaptureXeroRecord({
+            manualRefundTaskId: task.id,
+            bookingId: task.bookingId,
+            paymentIntentId: task.lateCaptureApprovalIntentId,
+            actingMemberId,
+            clubZone,
+            store: tx,
+          })
+        : { kind: "none" };
+    // #3635: approving a reopened keep settles what that keep queued, here.
+    if (resolution === "completed" && task.lateCaptureApprovalIntentId) {
+      await settleKeptLateCaptureRecordOnApproval({
+        manualRefundTaskId: task.id,
+        paymentIntentId: task.lateCaptureApprovalIntentId,
+        store: tx,
+      });
     }
 
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
@@ -545,6 +600,8 @@ export async function resolveManualRefundTask(
       raisedAmountCents: task.raisedAmountCents,
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
+      /** #3643: a part-payment review, for the dismissal's wording. */
+      partPaymentReview: isPartPaymentReviewTask(task),
       /**
        * #3191: how many of this booking's blank nights this decision filled in,
        * so the operator's receipt can say it happened. Zero when none were sent,
@@ -610,6 +667,7 @@ export async function resolveManualRefundTask(
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
           : ManualRefundTaskStatus.DISMISSED,
+      keptLateCaptureXeroPlan,
     };
   });
 
@@ -644,5 +702,9 @@ export async function resolveManualRefundTask(
       format,
     });
 
-  return { ...result, stripeRefundId, additionalPaymentIntentId };
+  // #3635: the kept capture's Xero record, after the commit; never returned.
+  const { keptLateCaptureXeroPlan, ...closed } = result;
+  await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
+
+  return { ...closed, stripeRefundId, additionalPaymentIntentId };
 }
