@@ -69,7 +69,8 @@ const KNOWN_PLACEHOLDERS = {
 const MODES = Object.keys(KNOWN_PLACEHOLDERS);
 
 const BRANCH_NAME = /^[\w.\-/]+$/;
-const FULL_SHA = /^[0-9a-f]{40}$/;
+/** A full commit or tree id, as git prints it. */
+export const FULL_SHA = /^[0-9a-f]{40}$/;
 
 /**
  * Keep one mode's blocks and drop every other mode's. A block that spans whole
@@ -107,9 +108,11 @@ function substitute(template, mode, values) {
         "Add the substitution here, or remove the placeholder from .github/epic-branch-sync-pr-body.md.",
     );
   }
+  // A replacer FUNCTION, not a string: a string replacement reads `$&`, `$'`,
+  // `` $` `` and `$$` as patterns, and a hand-resolved path may contain them.
   let out = body;
   for (const [placeholder, value] of Object.entries(values)) {
-    out = out.replaceAll(placeholder, value);
+    out = out.replaceAll(placeholder, () => value);
   }
   return out;
 }
@@ -147,9 +150,9 @@ export function renderEpicSyncPrBody({ branch, runUrl, template = readTemplate()
 /**
  * The body for a sync opened by hand from a merge branch (#3721).
  *
- * `resolvedFiles` is every path whose content in the merge commit differs from
- * git's automatic merge of its two parents: the hand resolutions, measured
- * rather than declared. The template's declaration says no hand resolution
+ * `resolvedFiles` is every path git reported as conflicted, plus every path
+ * whose content in the merge commit differs from git's automatic merge of its
+ * two parents: the hand resolutions, measured rather than declared. The template's declaration says no hand resolution
  * touches a concurrency-sensitive path, so when one does this refuses instead
  * of printing a structural claim that is false. That pull request needs a
  * person's declaration over the resolution.

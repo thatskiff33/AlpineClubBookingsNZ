@@ -16,17 +16,16 @@
  *
  * Nothing here is taken on the author's word. HEAD must be a two-parent merge;
  * its first parent must be on the epic branch and its second on `main`; and the
- * hand resolutions are MEASURED, as the paths where HEAD's tree differs from
- * `git merge-tree`'s automatic merge of the two parents. A conflicted automatic
- * merge writes markers into its tree, so every resolved conflict shows up in
- * that difference too.
+ * hand resolutions are MEASURED: every path `git merge-tree` reports as
+ * conflicted, plus every path where HEAD's tree differs from its automatic
+ * merge of the two parents (see readSyncMerge for why it takes both).
  */
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
+import { FULL_SHA, renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
 
 function git(args, { cwd, allowExit = [] } = {}) {
   try {
@@ -90,15 +89,31 @@ export function readSyncMerge({ branch, main = "origin/main", cwd }) {
     throw new Error(`HEAD's second parent ${mainSha.slice(0, 9)} is not on ${main}. Fetch ${main} and check the merge.`);
   }
 
-  // Exit 1 means the automatic merge conflicted; its tree id is still line one.
-  const autoTree = git(["merge-tree", "--write-tree", epicSha, mainSha], { cwd, allowExit: [1] }).split("\n")[0].trim();
-  if (!/^[0-9a-f]{40}$/.test(autoTree)) {
+  // A hand resolution is either of two things, and each alone misses a case.
+  //  - A path git reported as CONFLICTED. A modify/delete or binary conflict
+  //    writes no markers: git leaves one side's content in its tree, so a
+  //    person who keeps that side leaves HEAD identical to the automatic merge
+  //    and the diff below sees nothing.
+  //  - A path whose content in HEAD differs from the automatic merge. This
+  //    catches every marker-bearing conflict and any edit slipped into the
+  //    merge commit.
+  // NUL-separated throughout (`-z`): git still quotes a name holding `"`, `\`
+  // or a control character without it, and a quoted `"src/lib/…"` would then
+  // fail the sensitive-path test. Exit 1 from merge-tree means "conflicted";
+  // its output is the tree id, then one conflicted path per record.
+  const [autoTree, ...conflicted] = git(
+    ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", epicSha, mainSha],
+    { cwd, allowExit: [1] },
+  )
+    .split("\0")
+    .filter(Boolean);
+  if (!FULL_SHA.test(autoTree ?? "")) {
     throw new Error("git merge-tree did not return a tree id; git 2.38 or later is required.");
   }
-  const resolvedFiles = git(["diff", "--name-only", "--no-renames", autoTree, `${headSha}^{tree}`], { cwd })
-    .split("\n")
-    .map((line) => line.trim())
+  const differing = git(["diff", "-z", "--name-only", "--no-renames", autoTree, `${headSha}^{tree}`], { cwd })
+    .split("\0")
     .filter(Boolean);
+  const resolvedFiles = [...new Set([...conflicted, ...differing])].sort();
 
   return { branch, headSha, epicSha, mainSha, resolvedFiles };
 }

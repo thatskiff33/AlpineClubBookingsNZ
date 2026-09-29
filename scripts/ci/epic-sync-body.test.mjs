@@ -9,7 +9,7 @@
  * ever stops seeing a resolved conflict.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -61,7 +61,9 @@ describe("the hand-opened sync description", () => {
     expect(hand).not.toContain("The sync workflow wrote");
 
     const workflow = renderEpicSyncPrBody({ branch: BRANCH, runUrl: "https://example.test/run/1" });
-    expect(workflow).not.toContain("epic:sync-body");
+    expect(workflow).not.toContain("`pnpm run epic:sync-body` wrote");
+    // It does name the command once, as where a conflicted sync goes next.
+    expect(workflow).toContain("open that as a hand sync with `pnpm run epic:sync-body`");
     expect(workflow).not.toContain("Hand resolutions");
 
     for (const body of [hand, workflow]) {
@@ -74,6 +76,10 @@ describe("the hand-opened sync description", () => {
   it("lists hand resolutions outside the sensitive paths", () => {
     const body = renderHand(["docs/TESTING.md", "src/lib/__tests__/booking-create.test.ts"]);
     expect(body).toContain("`docs/TESTING.md`, `src/lib/__tests__/booking-create.test.ts`. These differ");
+  });
+
+  it("writes a path holding replacement patterns literally", () => {
+    expect(renderHand(["docs/$&-$$-$'.md"])).toContain("`docs/$&-$$-$'.md`");
   });
 
   it("refuses to write a structural declaration over a sensitive hand resolution", () => {
@@ -105,7 +111,9 @@ describe("parseArgs", () => {
   });
 });
 
-describe("readSyncMerge against a real repository", () => {
+// Each case spawns a dozen or more git processes, which on Windows under a
+// parallel run can exceed the 5-second default without anything being wrong.
+describe("readSyncMerge against a real repository", { timeout: 60_000 }, () => {
   let dir;
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
@@ -166,6 +174,32 @@ describe("readSyncMerge against a real repository", () => {
     git("add", "epic.md");
     git("commit", "-q", "--no-edit");
     expect(readSyncMerge({ branch: BRANCH, cwd: dir }).resolvedFiles).toEqual(["epic.md"]);
+  });
+
+  it("counts a conflict resolved by keeping the side git left, which leaves no diff", () => {
+    // modify/delete: git leaves the epic's modified file in its automatic tree
+    // with no markers, so restoring it makes HEAD identical to that tree. Only
+    // merge-tree's conflicted list sees it — and on a booking module the
+    // generated declaration must then be refused, not written.
+    dir = mkdtempSync(path.join(tmpdir(), "epic-sync-body-"));
+    git("init", "-q", "-b", "main");
+    mkdirSync(path.join(dir, "src", "lib"), { recursive: true });
+    commitFile("src/lib/booking-x.ts", "a\n", "base");
+    git("switch", "-q", "-c", "epic");
+    commitFile("src/lib/booking-x.ts", "b\n", "epic edits");
+    git("switch", "-q", "main");
+    git("rm", "-q", "src/lib/booking-x.ts");
+    git("commit", "-q", "-m", "main deletes");
+    git("update-ref", `refs/remotes/origin/${BRANCH}`, "epic");
+    git("update-ref", "refs/remotes/origin/main", "main");
+    git("switch", "-q", "-c", "sync", "epic");
+    expect(() => git("merge", "-q", "--no-edit", "origin/main")).toThrow();
+    git("add", "src/lib/booking-x.ts");
+    git("commit", "-q", "--no-edit");
+
+    const merge = readSyncMerge({ branch: BRANCH, cwd: dir });
+    expect(merge.resolvedFiles).toEqual(["src/lib/booking-x.ts"]);
+    expect(() => renderHandSyncPrBody(merge)).toThrow(/hand-resolves concurrency-sensitive path/);
   });
 
   it("refuses a HEAD that is not a merge, and a merge made the wrong way round", () => {

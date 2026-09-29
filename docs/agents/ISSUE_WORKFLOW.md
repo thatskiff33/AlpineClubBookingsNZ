@@ -322,9 +322,9 @@ runs the next epic.
   auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
   human — which is the correct division. **A red sync pull request is the branch
   telling you `main` and the epic no longer compose**, so read it rather than
-  re-running it. Resolve a conflict on the epic branch by hand
-  (`git merge origin/main`, resolve, commit, push), never by force-pushing a
-  shared branch and never by letting a merge tool pick a side unread.
+  re-running it. Resolve a conflict by hand on a merge branch, opened as a
+  hand sync (below), never by force-pushing a shared branch and never by
+  letting a merge tool pick a side unread.
 
   The description that workflow writes carries a complete
   `## Concurrency And Lock Impact` section, and says in its own words that the
@@ -343,9 +343,9 @@ runs the next epic.
   `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
   with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
   pull request with `--body-file body.md`. The command reads the merge commit
-  rather than your account of it. It names both parents, lists every file that
-  differs from git's automatic merge, and refuses when one of those is
-  concurrency-sensitive. In that case you write the declaration yourself.
+  rather than your account of it. It names both parents, lists every file git
+  reported as conflicted or that differs from its automatic merge, and refuses
+  when one of those is concurrency-sensitive. In that case you write the declaration yourself.
   Hand-typing the description is how #3718 failed the gate in 23 seconds (#3721).
 - **Every migration in the epic lands in ONE deploy.** So **no child may pair an
   expand with its own contract.** A contract half waits for a release *after* the

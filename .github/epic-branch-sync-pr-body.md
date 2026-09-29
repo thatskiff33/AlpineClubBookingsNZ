@@ -26,8 +26,9 @@
        __HEAD_SHA__     (by hand) the sync merge commit
        __EPIC_SHA__     (by hand) its first parent, the epic branch's tip
        __MAIN_SHA__     (by hand) its second parent, the `main` commit merged in
-       __RESOLUTIONS__  (by hand) what differs from git's automatic merge, read
-                        from `git merge-tree`, never from the author -->
+       __RESOLUTIONS__  (by hand) every path git reported as conflicted or whose
+                        content differs from its automatic merge, read from
+                        `git merge-tree`, never from the author -->
 
 <!-- workflow -->
 Automated sync of `main` into this epic's integration branch (#3002), opened or refreshed every six hours.
@@ -46,7 +47,7 @@ It exists so the eventual `__BRANCH__` → `main` merge is a series of small rec
 <!-- workflow -->
 **If it is green, it merges itself.** Auto-merge is armed.
 
-**If it conflicts,** resolve it on `__BRANCH__` by hand: `git merge origin/main`, resolve, commit, push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong.
+**If it conflicts,** resolve it by hand on a merge branch made from `origin/__BRANCH__`, and open that as a hand sync with `pnpm run epic:sync-body` (the steps are in `docs/agents/ISSUE_WORKFLOW.md` → "Drift"); `epic/**` takes no direct push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong.
 
 Run: __RUN_URL__
 <!-- /workflow -->
