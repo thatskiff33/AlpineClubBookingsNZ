@@ -90,9 +90,11 @@ describe("INV-SSOT: captured-status lists are read from their one home (#3635)",
           // A comment recording the removed copy is history, not a copy.
           file: "src/lib/comment-only.ts",
           source:
-            "// was: [SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)
-/* ([SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED] as const).includes(s) */
-const ok = true;",
+            [
+              "// was: [SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)",
+              "/* ([SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED] as const).includes(s) */",
+              "const ok = true;",
+            ].join("\n"),
         },
         {
           // Two of the three is a different question and is left alone.
