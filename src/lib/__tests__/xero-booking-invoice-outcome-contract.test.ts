@@ -25,8 +25,8 @@ import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outc
  * asserts the key names are still the ones the reader looks for.
  *
  * Disk-scanning, so it has no import edge to the writer it inspects and
- * `npm run test:related` cannot select it. Like the other censuses in this
- * directory it is CI-caught by design; run it locally with `npm run test:named`.
+ * `pnpm run test:related` cannot select it. Like the other censuses in this
+ * directory it is CI-caught by design; run it locally with `pnpm run test:named`.
  */
 
 const WRITER = path.join(process.cwd(), "src/lib/xero-booking-invoices.ts");

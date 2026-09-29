@@ -2072,7 +2072,7 @@ describe("the lint guard reaches every production path, and no block can drop it
     PATTERN rather than a match against a path, and #2685's lane proved three
     ordinary edits walk straight through it: a glob rooted on `**` that names a
     real screen directory, a block with no `files` key at all (flat config applies
-    it everywhere), and a severity downgrade to `warn` (which `npm run lint`
+    it everywhere), and a severity downgrade to `warn` (which `pnpm run lint`
     ignores entirely, having no `--max-warnings`).
 
     `auditResolvedGuardCoverage` asks ESLint what the rule IS at a roster of real

@@ -10,7 +10,7 @@
  * what CI verifies. Exact command (also in the PR body):
  *
  *   docker run --rm -v "$PWD":/repo -w /repo node:24.17-alpine \
- *     sh -c "npm ci --no-audit --no-fund && npx tsx scripts/theme/generate-goldens.ts"
+ *     sh -c "corepack enable pnpm && pnpm install --frozen-lockfile && pnpm exec tsx scripts/theme/generate-goldens.ts"
  *
  * Regenerating on the local Node 22 is FORBIDDEN for the committed golden — a float
  * wiggle would bake a v22 value into a v24-verified golden. A local run is only for

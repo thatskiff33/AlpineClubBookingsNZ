@@ -3245,7 +3245,7 @@ const eslintConfig = defineConfig([
     // what this rule exists to stop needing.
     //
     // "No escape" USED to be an overclaim, because an inline ESLint disable
-    // directive naming the rule is exactly one: `npm run lint` is bare
+    // directive naming the rule is exactly one: `pnpm run lint` is bare
     // `eslint`, `noInlineConfig` is not set, and 37 files in this tree already
     // carry directives for other rules. The residual was bounded for a
     // construct that genuinely fails to parse — the coverage gate catches those
@@ -3275,7 +3275,7 @@ const eslintConfig = defineConfig([
     // `/.artifacts/` non-source, so nothing here is ever committed or built,
     // and `docs/agents/SCOPED_CONTEXT.md` describes it as ignored, local,
     // bounded context. Linting it made an interrupted agent's half-written
-    // mutation harness the only "error" in an unrelated lane's `npm run lint`
+    // mutation harness the only "error" in an unrelated lane's `pnpm run lint`
     // — a wrong signal at the exact moment the next agent is reconstructing
     // state. The ignore is the whole directory rather than today's harness
     // extension, so the next harness cannot bring the problem back.

@@ -1,10 +1,10 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * File-size budget ratchet (#2687, rebuilt on the base ref by #2979).
  *
- * `npm run quality:budget`                    judge the files this change touched
- * `npm run quality:budget -- --base <ref>`    compare against a different ref
- * `npm run quality:budget -- --report`        print the whole tree's debt
+ * `pnpm run quality:budget`                    judge the files this change touched
+ * `pnpm run quality:budget --base <ref>`    compare against a different ref
+ * `pnpm run quality:budget --report`        print the whole tree's debt
  *
  * `--base` is not only a diagnostic. CI passes it on a `push` to `main`, where
  * the default of `origin/main` IS the commit being tested and would make this
@@ -34,7 +34,7 @@
  *
  * Exits 1 on any finding, and also when the base ref cannot be resolved: a gate
  * that cannot read what it is comparing against must not report a pass it has
- * not earned. `npm run pr:check` already behaves this way for the same reason.
+ * not earned. `pnpm run pr:check` already behaves this way for the same reason.
  *
  * Reads `git` and the working tree only: no network, no build, no database, no
  * provider.
@@ -192,7 +192,7 @@ function explainRemovedUpdateMode(): number {
       "  An accepted increase is now explained in the pull request body instead, which",
       "  is where a reviewer was meant to be looking. There is nothing to regenerate.",
       "",
-      `  ${CHECK_COMMAND} -- --report   the whole tree's debt, if that is what you wanted`,
+      `  ${CHECK_COMMAND} --report   the whole tree's debt, if that is what you wanted`,
       "",
     ].join("\n"),
   );
@@ -310,7 +310,7 @@ export function run(root: string, argv: readonly string[]): number {
       "rules; splitting the file is still the better answer where it is available.",
       "",
       `  ${CHECK_COMMAND}                     re-run this check`,
-      `  ${CHECK_COMMAND} -- --report         the whole tree's debt, for context`,
+      `  ${CHECK_COMMAND} --report         the whole tree's debt, for context`,
       "",
     ].join("\n"),
   );

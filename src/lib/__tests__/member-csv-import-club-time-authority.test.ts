@@ -83,7 +83,7 @@ describe("the cancelled-date boundary follows the day it is given (#3123)", () =
       the pinned zone, and `"2026-07-01" > undefined` afterwards. It read as
       coverage of the removal and measured nothing at all.
 
-      The primary guard remains the TYPE: `npm run typecheck` refuses a
+      The primary guard remains the TYPE: `pnpm run typecheck` refuses a
       one-argument call, and that is what enumerated the call sites. A test
       cannot assert a compile error without casting the type away, which is
       precisely how the previous spelling stopped being able to fail.

@@ -12,15 +12,12 @@ repository dump and it is never injected into a conversation automatically.
 Use the same one-line command in PowerShell, Git Bash, or a POSIX shell:
 
 ```text
-npm run agent:context -- -- --base <ref> --entry <tracked-path> [--entry <tracked-path> ...] [--model <PrismaModel> ...] [--depth 1|2] [--max-chars 32000]
+pnpm run agent:context --base <ref> --entry <tracked-path> [--entry <tracked-path> ...] [--model <PrismaModel> ...] [--depth 1|2] [--max-chars 32000]
 ```
 
-The doubled `--` is deliberate and is what makes one command portable.
-PowerShell removes the first `--` before `npm` sees it, so with a single
-separator npm swallows `--base` and `--entry` as its own config flags and the
-script receives bare values. A POSIX shell forwards the extra `--` unchanged and
-the parser skips it. Keep the command on one line: `\` continuations are a POSIX
-form that PowerShell does not accept.
+Under pnpm no separator is needed in either shell, because pnpm hands every
+option after the script name to the script. Keep the command on one line: `\`
+continuations are a POSIX form that PowerShell does not accept.
 
 `--base` and at least one `--entry` are required. Depth defaults to one and is
 limited to one or two hops. The combined cap defaults to 32,000 characters and
@@ -29,7 +26,7 @@ counts all four files, including the manifest.
 For example:
 
 ```text
-npm run agent:context -- -- --base origin/main --entry src/lib/addy-address.ts --model AuditLog
+pnpm run agent:context --base origin/main --entry src/lib/addy-address.ts --model AuditLog
 ```
 
 Quote any entry containing `[` or `]` — a dynamic route such as
@@ -98,7 +95,7 @@ to the task, inspect it directly and state that limit in the handoff.
 "Nearby tests" means tracked TypeScript test/spec files that share the module's
 base name and sit either in its own directory or in that directory's `__tests__`
 child — `foo.ts` finds `foo.test.ts` and `__tests__/foo.test.ts`, not every other
-file beside them. It is a locator, not a coverage claim; `npm run test:related`
+file beside them. It is a locator, not a coverage claim; `pnpm run test:related`
 and the routed testing rules remain the validation authority, and a test that
 covers a module under a different name will not appear here.
 

@@ -338,16 +338,16 @@ describe("agent context generator", () => {
       "32000",
     ];
 
-    // POSIX shell: npm forwards the second separator verbatim.
+    // A literal `--` (a POSIX shell forwards one if somebody writes it) is skipped.
     expect(parseAgentContextArgs(["--", ...flags])).toEqual(expected);
-    // PowerShell: the first separator is stripped, so the script sees flags only.
+    // pnpm with no separator, in any shell: the script sees flags only.
     expect(parseAgentContextArgs(flags)).toEqual(expected);
 
-    // Single `--` under PowerShell: npm consumes the flags and only bare values
-    // survive. The error has to name that cause, not just the stray value.
+    // A package manager that consumes the flags (npm did, under PowerShell,
+    // before #3673) leaves only bare values. The error has to name that cause.
     expect(() =>
       parseAgentContextArgs(["origin/main", "src/entry.ts"]),
-    ).toThrow(/Unexpected bare value: origin\/main\. .*shell or npm consumed them/);
+    ).toThrow(/Unexpected bare value: origin\/main\. .*shell or the package manager consumed them/);
 
     expect(() => parseAgentContextArgs(["--entry", "src/entry.ts"])).toThrow(/--base is required/);
     expect(() => parseAgentContextArgs(["--base", "origin/main"])).toThrow(/At least one --entry/);

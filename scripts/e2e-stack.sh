@@ -74,7 +74,7 @@ prepare() {
   # before any seed and persist it for Playwright, so club midnight cannot move
   # a Monday-aligned fixture to a different week between them (#3702).
   unset E2E_FIXTURE_TODAY_NZ
-  E2E_FIXTURE_TODAY_NZ="$(npx --no-install tsx scripts/e2e-fixture-today.ts)"
+  E2E_FIXTURE_TODAY_NZ="$(pnpm exec tsx scripts/e2e-fixture-today.ts)"
   export E2E_FIXTURE_TODAY_NZ
   mkdir -p .artifacts
   printf '%s\n' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"
@@ -87,32 +87,32 @@ prepare() {
     -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
   echo "==> Generating Prisma client"
-  DATABASE_URL="$HOST_DATABASE_URL" npx prisma generate
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec prisma generate
 
   echo "==> Applying migrations"
-  DATABASE_URL="$HOST_DATABASE_URL" npx prisma migrate deploy
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec prisma migrate deploy
 
   echo "==> Seeding demo data"
-  ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/demo-seed.ts
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server prisma/demo-seed.ts
 
   echo "==> Seeding base data"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server prisma/seed.ts
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server prisma/seed.ts
 
   echo "==> Relativizing booking seasons so seeded fixtures never expire (#2117)"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/relativize-seasons.ts
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx e2e/setup/relativize-seasons.ts
 
   echo "==> Enabling the modules the E2E journeys need"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx e2e/setup/enable-e2e-modules.ts
 
   echo "==> Seeding Stripe test-mode credentials into the encrypted store (#2082; no-op unless test keys are set)"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
+  DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
 
   # Multi-lodge project only (E2E_MULTI_LODGE=1): provision a second active
   # lodge and enable the multiLodge module. Skipped by default, so the default
   # single-lodge suite is seeded byte-identically.
   if [[ "${E2E_MULTI_LODGE:-}" == "1" ]]; then
     echo "==> Provisioning second lodge (E2E_MULTI_LODGE=1)"
-    DATABASE_URL="$HOST_DATABASE_URL" npx tsx --conditions=react-server e2e/setup/seed-second-lodge.ts
+    DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-second-lodge.ts
   fi
 
   echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"
@@ -139,7 +139,7 @@ run() {
   if [[ "${E2E_PRESERVE_AUTH_STATE:-0}" != "1" ]]; then
     rm -rf e2e/.auth
   fi
-  npx playwright test "$@"
+  pnpm exec playwright test "$@"
 }
 
 case "${1:-}" in

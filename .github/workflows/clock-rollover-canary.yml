@@ -100,11 +100,15 @@ jobs:
           # `verify`, which already checks out in full (#2907).
           fetch-depth: 0
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install libfaketime
         run: |
@@ -132,10 +136,10 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       # The timeouts and the retry are the libfaketime tax, not slack. Every
       # clock call — and every subprocess spawn, which inherits the LD_PRELOAD
@@ -149,7 +153,16 @@ jobs:
       # calendar fails identically on every attempt, because the clock is shifted
       # for the whole run. Only a slowness flake passes on the retry.
       - name: Run the unit suite with the real clock ${{ matrix.label }}
-        run: faketime -f '${{ matrix.offset }}' npm test -- --testTimeout=30000 --hookTimeout=30000 --retry=2
+        env:
+          # pnpm checks node_modules against the lockfile before `pnpm test`
+          # (`verifyDepsBeforeRun: error` in pnpm-workspace.yaml, #3673).
+          # libfaketime shifts file timestamps too, so that check can see a
+          # lockfile "newer" than the install and fail a run that tests
+          # nothing wrong. The frozen install step above has just run, so the
+          # check has nothing to add here; it is switched off for this one
+          # step rather than risk a red canary that is not about the clock.
+          pnpm_config_verify_deps_before_run: "false"
+        run: faketime -f '${{ matrix.offset }}' pnpm test --testTimeout=30000 --hookTimeout=30000 --retry=2
 
       - name: Explain a red canary
         if: failure()
@@ -171,7 +184,7 @@ jobs:
             echo '```bash'
             echo "sudo apt-get install -y faketime"
             echo "FAKETIME_DONT_FAKE_MONOTONIC=1 faketime -f '${{ matrix.offset }}' \\"
-            echo "  npm test -- --testTimeout=30000 --hookTimeout=30000 --retry=2"
+            echo "  pnpm test --testTimeout=30000 --hookTimeout=30000 --retry=2"
             echo '```'
             echo
             echo "Fix the test so it reads the frozen clock. See docs/TESTING.md,"

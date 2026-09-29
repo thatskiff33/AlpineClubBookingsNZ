@@ -35,9 +35,9 @@ Layout:
 Quick start against the throwaway staging stack:
 
 ```bash
-npm run test:e2e:prepare   # app on http://localhost:3001, Postgres on 5433
+pnpm run test:e2e:prepare   # app on http://localhost:3001, Postgres on 5433
 BASE_URL=http://localhost:3001 LOAD_TEST_CONFIRM_TARGET=1 \
   LOAD_USER_PASSWORD=<demo seed password> \
   PEAK_VUS=5 RAMP_UP=10s STEADY=30s k6 run load/scenarios/public-browse.js
-npm run test:e2e:down      # tear down, discarding load-created bookings
+pnpm run test:e2e:down      # tear down, discarding load-created bookings
 ```

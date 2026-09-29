@@ -16,7 +16,7 @@
  *   4. TRANSITION ONLY — it edits `CHANGELOG.md` directly (see the note on
  *      `editsChangelogDirectly` below).
  *
- * Runs before `npm ci` in the `verify` job, so it uses Node built-ins only.
+ * Runs before `pnpm install --frozen-lockfile` in the `verify` job, so it uses Node built-ins only.
  */
 import process from "node:process";
 import { pathToFileURL } from "node:url";
