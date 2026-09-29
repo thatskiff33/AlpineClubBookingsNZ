@@ -693,11 +693,12 @@ each lodge's cap plus a top-level default for the single-lodge case).
 ## Capacity Configuration
 
 Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`):
-active configured beds when the Bed Allocation module is on, else the
-per-lodge `LodgeSettings.capacity` override, else the club-config bed
-total for the default lodge only (additional lodges resolve to 0 until
-beds or an override exist, so an unconfigured lodge can never be
-overbooked). The per-lodge override is editable in core lodge config on
+active configured beds when the Bed Allocation module is on (capped by the
+lodge's own capacity when that is lower), else the per-lodge
+`LodgeSettings.capacity`, else 0 for every lodge, default included —
+`club.json` is not a runtime fallback since #1982, so an unconfigured lodge
+can never be overbooked. A lodge is created with its own `LodgeSettings`
+row carrying the capacity Add lodge asked for (#3407). The per-lodge override is editable in core lodge config on
 the lodge hub (`/admin/lodges/[id]`) regardless of the Bed Allocation
 module, and on `/admin/setup`. Public and admin booking surfaces cap
 guests against the _selected_ lodge's capacity (the public booking-request

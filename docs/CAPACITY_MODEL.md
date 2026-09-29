@@ -216,8 +216,12 @@ Effective capacity is decided in this order:
 2. **Bed Allocation off, or on with no active beds** → the per-lodge
    `LodgeSettings.capacity` (source `capacity_override`).
 3. **Neither** → **0** (source `unconfigured_lodge`), for **every** lodge
-   including the default. A freshly created (or un-backfilled) lodge is
-   unbookable rather than overbookable until configured.
+   including the default. An un-backfilled lodge, or one created before #3407
+   made capacity part of Add lodge, is unbookable rather than overbookable
+   until configured. Every party-size refusal there says the lodge is not set
+   up for bookings yet instead of quoting a limit of zero, and the member
+   calendar says the same instead of offering Waitlist or Full
+   (`src/lib/lodge-booking-readiness.ts`). The booking rule is unchanged.
 
 **DB-only capacity (#1982).** The DB is the *sole* runtime source of a lodge's
 booking capacity — `club.json` is no longer read at runtime. The default lodge
