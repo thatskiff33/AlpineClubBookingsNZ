@@ -50,7 +50,12 @@ same **lodge edit** permission as the properties above.
    remaining step can be skipped and completed later.
 2. With Bed Allocation off, the wizard's **Capacity** step lets you confirm or
    change the figure. Its last step says the lodge is ready only when it can
-   take a booking; otherwise it says what is missing.
+   take a booking, and states how many guests it can take; otherwise it says
+   what is missing.
+3. With Bed Allocation on, the wizard's **Rooms & beds** step seeds the beds
+   instead. The capacity you entered on Add lodge is then a ceiling: the lodge
+   takes up to that many guests even when more beds are seeded, so the figure
+   the last step states is the lower of the two.
 
 ### Edit a lodge's identity
 
