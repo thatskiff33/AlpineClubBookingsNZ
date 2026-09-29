@@ -52,14 +52,23 @@ reason: the Club Config check now names every active lodge that is not set
   `setup-readiness-db.ts`.
 
 file: src/app/(admin)/admin/book/page.tsx
-lines: 1691
-reason: one prop line passing the lodge's capacity-settings link to the
-  calendar's not-set-up notice. The link is admin-only, so it has to be chosen
-  by this page; the href builder lives beside the notice.
+lines: 1692
+reason: two lines. One reads the capacity-settings link through the
+  lodge-access-gated hook, so a bookings-only officer is never sent to a page
+  that refuses them; one passes it to the calendar's not-set-up notice. The
+  link is admin-only, so this page has to choose it; the href and the gate live
+  in `src/components/admin/lodge-capacity-settings-link.ts`.
 
 file: src/lib/config-transfer/categories/lodge-config.ts
-lines: 1039
+lines: 1041
 reason: the lodge.json `capacity` field's call sites in the export, the
   batch read, the validation, the plan and the apply. The field's rules and
   its write live in `categories/lodge-capacity.ts`; what is left has to sit
-  in the per-lodge passes it takes part in.
+  in the per-lodge passes it takes part in, including the preview warning for
+  a lodge created without a capacity.
+
+file: src/app/(admin)/admin/lodges/[id]/page.tsx
+lines: 631
+reason: one import line for `LODGE_CAPACITY_OVERRIDE_FIELD_ID`, so the
+  capacity field's id and the not-set-up notice's link to it are one
+  definition instead of two strings that had already drifted apart.
