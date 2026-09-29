@@ -332,7 +332,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     "src/components/admin/lodge-capacity-card.tsx",
     "src/components/admin/lodge-capacity-guidance.tsx",
     // #3407: a config import validates a bundle's capacity with the same bounds.
-    "src/lib/config-transfer/categories/lodge-config.ts",
+    "src/lib/config-transfer/categories/lodge-capacity.ts",
     "src/lib/lodge-capacity.ts",
   ] as const;
 

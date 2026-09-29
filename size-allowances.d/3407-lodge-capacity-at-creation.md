@@ -34,13 +34,14 @@ lines: 2943
 reason: one import line for the shared not-set-up refusal message.
 
 file: src/app/(admin)/admin/lodges/[id]/setup/page.tsx
-lines: 960
+lines: 964
 reason: the new Capacity step's card. Its state, save, readiness read and
   Finish heading already live in `_components/wizard-capacity.tsx`; the card
   stays in the page because its Save button is a static view-only opt-out that
   must sit in the same file as the wizard's own banner
   (`view-only-banner-contract.test.ts`), and splitting it out would need a
-  vouching parent for one button.
+  vouching parent for one button. Four more lines give the identity step the
+  same Skip every other step has, so a view-only admin can leave it.
 
 file: src/lib/setup-readiness.ts
 lines: 2287
@@ -49,3 +50,16 @@ reason: the Club Config check now names every active lodge that is not set
   beside the two branches that share it, inside the one check that owns the
   default-lodge warning; the resolver call itself lives in
   `setup-readiness-db.ts`.
+
+file: src/app/(admin)/admin/book/page.tsx
+lines: 1691
+reason: one prop line passing the lodge's capacity-settings link to the
+  calendar's not-set-up notice. The link is admin-only, so it has to be chosen
+  by this page; the href builder lives beside the notice.
+
+file: src/lib/config-transfer/categories/lodge-config.ts
+lines: 1039
+reason: the lodge.json `capacity` field's call sites in the export, the
+  batch read, the validation, the plan and the apply. The field's rules and
+  its write live in `categories/lodge-capacity.ts`; what is left has to sit
+  in the per-lodge passes it takes part in.
