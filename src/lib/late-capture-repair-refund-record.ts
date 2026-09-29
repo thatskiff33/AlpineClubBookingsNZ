@@ -25,7 +25,7 @@ export interface RepairedLateCaptureXeroOutcome {
  * refund is.
  *
  *  1. FIRST, per refunded intent, the webhook's own record
- *     (`recordAutomaticLateCaptureRefund`, the #2760/#2773 row). That row is
+ *     (`recordAutomaticLateCaptureRefund`, the automatic-refund record row). That row is
  *     what makes the intent a KNOWN late capture (`findLateCapturePaymentIntents`),
  *     so the note-eligible cash (`resolveRefundNoteEligibleCash`) leaves its
  *     refund out and no payment-wide note or nightly self-heal can name the

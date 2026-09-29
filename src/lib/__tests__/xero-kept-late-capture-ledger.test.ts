@@ -107,7 +107,7 @@ const h = vi.hoisted(() => {
         for (const row of rows) Object.assign(row, data);
         return { count: rows.length };
       },
-      // The #2760/#2773 record writer's create (#3635 C2).
+      // The automatic-refund record writer's create (#3635 C2).
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const row = { id: id(name), ...data } as Row;
         table(name).push(row);
