@@ -650,22 +650,17 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     // though the row appears in the list. `refundedCents` is deliberately wider:
     // every matched row, cancelled bookings included, which is what the
     // "Refunded / Credited" tile beside it says it is. The two tiles are not a
-    // subtraction of one another, and their hints say so.
+    // subtraction of one another, and their hints say so. Both are read from
+    // `summarizeCollectedCash`, so neither tile folds refunds by hand.
     const retained = summarizeCollectedCash(
-      filteredCandidates
-        .filter((payment) => payment.booking.status !== "CANCELLED")
-        .map((payment) => ({
-          status: payment.status,
-          amountCents: payment.amountCents,
-          refundedAmountCents: payment.refundedAmountCents,
-        }))
+      filteredCandidates.filter(
+        (payment) => payment.booking.status !== "CANCELLED"
+      )
     );
+    const matched = summarizeCollectedCash(filteredCandidates);
     const summary = {
       netCollectedCents: retained.netCollectedCents,
-      refundedCents: filteredCandidates.reduce(
-        (sum, payment) => sum + payment.refundedAmountCents,
-        0
-      ),
+      refundedCents: matched.refundedCents,
       count: filteredCandidates.length,
     };
 
