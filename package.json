@@ -39,6 +39,7 @@
     "stale-containers": "node scripts/stale-containers.mjs",
     "worktree:remove": "node scripts/remove-worktree.mjs",
     "pr:check": "node scripts/ci/check-pr-body.mjs",
+    "epic:sync-body": "node scripts/ci/epic-sync-body.mjs",
     "ci:workflowcheck": "node scripts/ci/check-workflow-suite-checkout-depth.mjs",
     "audit:deps": "node scripts/ci/audit-dependencies.mjs",
     "test": "vitest run",
