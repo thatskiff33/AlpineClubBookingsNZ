@@ -5,6 +5,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
+import { lodgeCapacitySettingsHref } from "@/components/lodge-not-set-up-notice";
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1089,6 +1090,7 @@ export default function AdminBookPage() {
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
               allowFullDates
+              lodgeSettingsHref={lodgeCapacitySettingsHref(lodgeId)}
             />
           </CardContent>
         </Card>

@@ -71,6 +71,9 @@ interface BookingCalendarProps {
   // to be able to reach the waitlist through it. What this flag still decides is
   // what the day is CALLED and what happens at submit.
   allowFullDates?: boolean;
+  // Admin booking page only (#3407): links the not-set-up notice to the lodge's
+  // capacity settings. The member calendar never passes it.
+  lodgeSettingsHref?: string;
 }
 
 /**
@@ -169,7 +172,7 @@ const EMPTY_AVAILABILITY: LodgeAvailabilityState = {
   capacity: null,
 };
 
-export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false }: BookingCalendarProps) {
+export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false, lodgeSettingsHref }: BookingCalendarProps) {
   /**
    * The month the calendar opens on, and the day it treats as "today", both come
    * from the CLUB's calendar (CT-4, #2870; INV-CONFIG-002).
@@ -482,7 +485,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         {lodgeNotSetUp ? null : selecting === "checkIn" ? "Select check-in date" : "Select check-out date"}
       </div>
 
-      <LodgeNotSetUpNotice show={lodgeNotSetUp} />
+      <LodgeNotSetUpNotice show={lodgeNotSetUp} settingsHref={lodgeSettingsHref} />
 
       <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
         {formatClubWeekdayHeaders(clubTime.format).map((d) => (

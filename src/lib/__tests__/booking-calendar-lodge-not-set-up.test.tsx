@@ -10,7 +10,11 @@ import {
 } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+
 import { BookingCalendar } from "@/components/booking-calendar";
+import { lodgeCapacitySettingsHref } from "@/components/lodge-not-set-up-notice";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
 
@@ -125,5 +129,61 @@ describe("a lodge with no capacity says it is not set up yet (#3407)", () => {
     const button = dayButton(DAY);
     expect(button.getAttribute("aria-label")).toContain("availability not loaded");
     expect(screen.getByTestId("lodge-not-set-up").textContent).toBe("");
+  });
+});
+
+describe("the not-set-up notice links an officer to the capacity settings (#3407)", () => {
+  it("links /admin/book's calendar to the lodge's capacity field", async () => {
+    serveCapacity(0);
+    render(
+      <BookingCalendar
+        onDateSelect={() => {}}
+        lodgeId="lodge 2"
+        allowFullDates
+        lodgeSettingsHref={lodgeCapacitySettingsHref("lodge 2")}
+      />,
+    );
+    await nextMonth();
+
+    const link = await screen.findByRole("link", { name: "Set this lodge's capacity" });
+    expect(link.getAttribute("href")).toBe("/admin/lodges/lodge%202#lodge-capacity");
+    expect(lodgeCapacitySettingsHref(null)).toBe("/admin/lodges");
+  });
+
+  it("shows the member calendar the notice with no link", async () => {
+    serveCapacity(0);
+    render(<BookingCalendar onDateSelect={() => {}} />);
+    await nextMonth();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("lodge-not-set-up").textContent).toContain(
+        LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
+      ),
+    );
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("is passed only by the admin booking page, never a member or public surface", () => {
+    // Disk census: every production file that hands the calendar or the notice
+    // a settings link. The member calendar (/book) and the public request and
+    // school forms render the same notice, and a link there would be wrong.
+    const root = join(process.cwd(), "src");
+    const passers: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+          if (/\b(?:lodgeSettingsHref|settingsHref)=\{/.test(readFileSync(full, "utf8"))) {
+            passers.push(relative(process.cwd(), full).split("\\").join("/"));
+          }
+        }
+      }
+    };
+    walk(root);
+    expect(passers.sort()).toEqual([
+      "src/app/(admin)/admin/book/page.tsx",
+      "src/components/booking-calendar.tsx",
+    ]);
   });
 });
