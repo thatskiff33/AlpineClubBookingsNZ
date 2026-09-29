@@ -94,12 +94,14 @@ import type { ClubFormat } from "@/lib/club-format";
  * amount is written inside that same claim, so an amount can no more be applied
  * twice than a status can.
  *
- * Deliberately holds NO advisory lock, and that is `docs/CONCURRENCY_AND_LOCKING.md`
- * speaking rather than an omission: serialising this against the Stripe webhook
- * would require holding `pg_advisory_xact_lock(1)` across a provider round trip,
- * which the bounded-exception rule in that document forbids. The structural
- * `updateMany` claim is the whole single-flight guarantee, which is why #3030
- * added nothing to it.
+ * Holds NO advisory lock across a provider round trip, and that is
+ * `docs/CONCURRENCY_AND_LOCKING.md` speaking rather than an omission: the
+ * Stripe refund and the Xero leg run after the commit. The structural
+ * `updateMany` claim is the single-flight guarantee. Since #3582 an
+ * `EDIT_FINANCIAL_REVIEW` closure takes `pg_advisory_xact_lock(1)` as its first
+ * lock, inside the transaction only, because it may post booking-ledger lines
+ * and must ask whether the booking is confirmed on the ledger under the key the
+ * settle asks it under.
  */
 export async function resolveManualRefundTask(
   input: ManualRefundTaskResolution,
@@ -214,6 +216,19 @@ export async function resolveManualRefundTask(
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
+    if (isEditReview) {
+      // #3582: an edit review's closure may post the booking-ledger lines its
+      // re-price and its share record, and "is this booking confirmed on the
+      // ledger yet?" must be asked under the key the settle asks it under, or an
+      // edit review and a first settle could both see "not yet" and both post.
+      // Taken HERE — before the route is chosen, before the claim, before any
+      // row is written or locked — so it is this transaction's FIRST lock, as
+      // it is on every edit door (`INV-LOCK-002`: global before anything
+      // narrower, including the promotion key the re-price takes). No provider
+      // is called inside this transaction: the Stripe refund and the Xero leg
+      // run after the commit (`executeEditReviewSettlement`).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    }
 
     // #3030 (owner decision D2): work out the amount this completion closes at,
     // BEFORE the claim, so it is written inside the same status-fenced update and
@@ -506,6 +521,7 @@ export async function resolveManualRefundTask(
         hasIssuedXeroInvoice,
         settlementRoute,
         settlementAmountCents: settlement?.amountCents ?? null,
+        settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
     }

@@ -153,9 +153,9 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
+  computeModificationPricing,
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
@@ -1168,9 +1168,9 @@ export async function POST(
        * just WRITTEN, re-read here so the new guests' identity, category, rate
        * and night prices are exactly what landed. A parked add stores none.
        */
-      const priceLines = parked
-        ? null
-        : await computeModificationPriceLines(
+      const { priceLines, sides: pricingSides } = parked
+        ? { priceLines: null, sides: null }
+        : await computeModificationPricing(
             { bookingId, site: "guest-add" },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
@@ -1188,18 +1188,18 @@ export async function POST(
                 },
               });
               const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
-              return diffBookingPricing(
-                  pricingSideFromStoredGuests(booking.guests, {
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode,
-                  }),
-                  pricingSideFromWrittenGuests(writtenGuests, {
-                    promoAdjustmentCents: newPromoAdjustmentCents,
-                    promoCode: promoRemoved ? null : promoCode,
-                  }),
-                  priceDiffCents,
-                );
+              return {
+                before: pricingSideFromStoredGuests(booking.guests, {
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode,
+                }),
+                after: pricingSideFromWrittenGuests(writtenGuests, {
+                  promoAdjustmentCents: newPromoAdjustmentCents,
+                  promoCode: promoRemoved ? null : promoCode,
+                }),
+              };
             },
+            priceDiffCents,
             logger,
           );
 
@@ -1236,6 +1236,20 @@ export async function POST(
           changeFeeCents: 0,
           ...(priceLines ? { priceLines } : {}),
         },
+      });
+
+      // #3582: the same before and after, per night, on the booking ledger —
+      // under the `lock(1)` this transaction took first. A parked add posts
+      // nothing (`INV-MOD-040`); its review's closure does.
+      await postModificationLedgerLines({
+        store: tx,
+        bookingId,
+        lodgeId: booking.lodgeId,
+        bookingModificationId: bookingModification.id,
+        sides: pricingSides,
+        priceDiffCents,
+        changeFeeCents: 0,
+        site: "guest-add",
       });
 
       /**

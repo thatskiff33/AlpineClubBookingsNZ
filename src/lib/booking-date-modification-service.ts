@@ -150,9 +150,9 @@ import {
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
+  computeModificationPricing,
   loadModificationLinesAuditFields,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
@@ -1281,17 +1281,16 @@ export async function modifyBookingDates({
      * were rewritten above) against the breakdown it priced, index-aligned
      * with `guestsForPricing`. A parked edit moved no money and stores none.
      */
-    const priceLines = parked
-      ? null
-      : await computeModificationPriceLines(
+    const { priceLines, sides: pricingSides } = parked
+      ? { priceLines: null, sides: null }
+      : await computeModificationPricing(
           { bookingId, site: "date-change" },
-          () =>
-            diffBookingPricing(
-              pricingSideFromStoredGuests(booking.guests, {
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: booking.promoRedemption?.promoCode.code ?? null,
-              }),
-              pricingSideFromPriceBreakdown(
+          () => ({
+            before: pricingSideFromStoredGuests(booking.guests, {
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption?.promoCode.code ?? null,
+            }),
+            after: pricingSideFromPriceBreakdown(
                 booking.guests.map((g) => ({
                   guestKey: g.id,
                   name: `${g.firstName} ${g.lastName}`.trim(),
@@ -1304,8 +1303,8 @@ export async function modifyBookingDates({
                     : (booking.promoRedemption?.promoCode.code ?? null),
                 },
               ),
-              priceDiffCents,
-            ),
+          }),
+          priceDiffCents,
           logger,
         );
 
@@ -1343,6 +1342,20 @@ export async function modifyBookingDates({
         changeFeeCents,
         ...(priceLines ? { priceLines } : {}),
       },
+    });
+
+    // #3582: the same before and after, per night, on the booking ledger —
+    // under the `lock(1)` this transaction took first. A parked change posts
+    // nothing (`INV-MOD-040`); its review's closure does.
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModificationId: bookingModification.id,
+      sides: pricingSides,
+      priceDiffCents,
+      changeFeeCents,
+      site: "date-change",
     });
 
     /**

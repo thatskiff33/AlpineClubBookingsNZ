@@ -102,10 +102,10 @@ import {
 // this authoritative gate. The gate itself is unchanged.
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import logger from "@/lib/logger";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
+  computeModificationPricing,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
   type ModificationLine,
@@ -1125,19 +1125,19 @@ export async function removeBookingGuestInTransaction({
    * as the breakdown priced them, index-aligned with `guestsForPricing`. A
    * parked removal priced nothing and stores none.
    */
-  const priceLines =
+  const { priceLines, sides: pricingSides } =
     priceBreakdown === null
-      ? null
-      : await computeModificationPriceLines(
+      ? { priceLines: null, sides: null }
+      : await computeModificationPricing(
           { bookingId, site: "guest-removal" },
           () => {
             const promoCode = booking.promoRedemption?.promoCode.code ?? null;
-            return diffBookingPricing(
-              pricingSideFromStoredGuests(booking.guests, {
+            return {
+              before: pricingSideFromStoredGuests(booking.guests, {
                 promoAdjustmentCents: booking.promoAdjustmentCents,
                 promoCode,
               }),
-              pricingSideFromPriceBreakdown(
+              after: pricingSideFromPriceBreakdown(
                 remainingGuests.map((guest) => ({
                   guestKey: guest.id,
                   name: `${guest.firstName} ${guest.lastName}`.trim(),
@@ -1148,9 +1148,9 @@ export async function removeBookingGuestInTransaction({
                   promoCode: promoResult.promoRemoved ? null : promoCode,
                 },
               ),
-              priceDiffCents,
-            );
+            };
           },
+          priceDiffCents,
           logger,
         );
 
@@ -1193,6 +1193,20 @@ export async function removeBookingGuestInTransaction({
       changeFeeCents: 0,
       ...(priceLines ? { priceLines } : {}),
     },
+  });
+
+  // #3582: the same before and after, per night, on the booking ledger — under
+  // the `lock(1)` this function took first. A parked removal posts nothing
+  // (`INV-MOD-040`); its review's closure does.
+  await postModificationLedgerLines({
+    store: tx,
+    bookingId,
+    lodgeId: booking.lodgeId,
+    bookingModificationId: bookingModification.id,
+    sides: pricingSides,
+    priceDiffCents,
+    changeFeeCents: 0,
+    site: "guest-removal",
   });
 
   /**
