@@ -61,8 +61,9 @@ export const ALERT_NOBODY_ELIGIBLE_RETRY_MS = 86_400_000;
 
 /**
  * Give back a claim this caller took at `claimedAt` and could not use — the
- * send threw before reaching anyone, or (#3643) reached nobody for a hold that
- * stays a candidate — so the next run can claim and send again (#3672).
+ * send threw before reaching anyone — so the next run can claim and send
+ * again (#3672). A send that reached nobody is deferred instead
+ * (`deferAlertCooldown`), never given back (#3635 F1).
  * Deletes only a row still stamped with this caller's own claim, so a newer
  * claim by another sender is never released.
  */
@@ -126,19 +127,48 @@ export async function markAlertOwed({
   }
 }
 
+/**
+ * The owed markers under `prefix` that are due: last marked or attempted at
+ * least `retryAfterMs` before `now` (#3635 F1), so an alert nobody can
+ * receive is tried at most once per `retryAfterMs`, never every run.
+ */
 export async function listOwedAlertKeys({
   prefix,
+  now = new Date(),
+  retryAfterMs,
   store = prisma,
 }: {
   prefix: string;
+  now?: Date;
+  retryAfterMs: number;
   store?: Pick<typeof prisma, "alertCooldown">;
 }): Promise<string[]> {
   const rows = await store.alertCooldown.findMany({
-    where: { key: { startsWith: prefix } },
+    where: {
+      key: { startsWith: prefix },
+      lastAlertedAt: { lte: new Date(now.getTime() - retryAfterMs) },
+    },
     select: { key: true },
+    orderBy: { lastAlertedAt: "asc" },
     take: 50,
   });
   return rows.map((row) => row.key);
+}
+
+/**
+ * Stamp an owed marker as attempted at `now` without settling it (#3635 F1):
+ * the drain tried and nobody received it, so it waits `retryAfterMs` again.
+ */
+export async function noteOwedAlertAttempt({
+  key,
+  now = new Date(),
+  store = prisma,
+}: {
+  key: string;
+  now?: Date;
+  store?: Pick<typeof prisma, "alertCooldown">;
+}): Promise<void> {
+  await store.alertCooldown.updateMany({ where: { key }, data: { lastAlertedAt: now } });
 }
 
 export async function settleOwedAlert({

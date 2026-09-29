@@ -401,8 +401,15 @@ export async function releaseExpiredInternetBankingHolds(
   // #3643: only a booking the release could act on is asked about — one no
   // longer CONFIRMED is skipped by the transaction's guard set, and an alert
   // about it would be false — and at most the per-run read cap of those.
+  // #3635 (C1): nor is a stay that has started. The release never cancels one
+  // (INV-PAY-016), whatever Xero says, and such a hold stays a candidate until
+  // somebody reconciles it, so reading it would spend the read cap and the
+  // daily budget every run and starve the holds that can be released.
+  const stayStarted = (candidate: (typeof candidates)[number]) =>
+    bookingStayHasStarted(candidate.booking.checkIn, clubToday);
   const actionable = candidates.filter(
-    (candidate) => candidate.booking.status === BookingStatus.CONFIRMED,
+    (candidate) =>
+      candidate.booking.status === BookingStatus.CONFIRMED && !stayStarted(candidate),
   );
   const toRead = new Set(selectHoldsToRead(actionable, now));
   // #3643 (D4): alerts an earlier run could not deliver for holds it released.
@@ -411,6 +418,14 @@ export async function releaseExpiredInternetBankingHolds(
 
   for (const candidate of candidates) {
     const confirmed = candidate.booking.status === BookingStatus.CONFIRMED;
+    // #3635 (C1): a started stay is answered before any Xero read or budget.
+    // The release transaction's own check under lock(1) stays the backstop
+    // for a date moved between this read and the lock.
+    if (confirmed && stayStarted(candidate)) {
+      result.skippedStarted += 1;
+      await alertStartedStayHoldOnce(candidate, format);
+      continue;
+    }
     if (confirmed && !toRead.has(candidate)) continue;
     // #3643 (D9): the club-wide daily budget of live hold reads.
     if (confirmed && !(await takeHoldReadBudget())) {

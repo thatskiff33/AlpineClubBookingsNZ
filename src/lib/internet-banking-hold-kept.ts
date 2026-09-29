@@ -16,9 +16,12 @@
  */
 import { PaymentSource } from "@prisma/client";
 import {
+  ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   ALERT_ONCE_EVER_WINDOW_MS,
+  deferAlertCooldown,
   listOwedAlertKeys,
   markAlertOwed,
+  noteOwedAlertAttempt,
   releaseAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
@@ -28,6 +31,7 @@ import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
 import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
+import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import type { ClubFormat } from "@/lib/club-format";
 import { sendAdminInternetBankingHoldKeptAlert } from "@/lib/email";
 import type { InternetBankingHoldKeptReason } from "@/lib/email-message-notes";
@@ -83,7 +87,8 @@ export function decideExpiredHold(
   if (evidence.kind === "unreadable") {
     const holdUntil = hold.internetBankingHoldUntil ?? now;
     const boundPassed =
-      hold.booking.checkIn <= clubToday ||
+      // The one started-stay derivation (INV-PAY-016), never a raw Date compare.
+      bookingStayHasStarted(hold.booking.checkIn, clubToday) ||
       now.getTime() >= holdUntil.getTime() + UNREADABLE_HOLD_BOUND_DAYS * DAY_MS;
     return boundPassed ? { action: "release-at-bound" } : { action: "keep", reason: "unreadable" };
   }
@@ -105,10 +110,11 @@ export function selectHoldsToRead<T>(candidates: T[], now: Date, cap = HOLD_READ
 /**
  * Reasons whose subject no later run selects again: the hold was released, or
  * the booking was cancelled. An undelivered alert for one of these is marked
- * OWED and drained by the next run (`drainOwedHoldAlerts`), and is audited on
+ * OWED and drained by a later run (`drainOwedHoldAlerts`), and is audited on
  * the first attempt regardless of delivery (#3643 delta D4). Every other reason
- * belongs to a hold that stays a candidate, so its claim is given back instead
- * and the next run retries through the ordinary path.
+ * belongs to a hold that stays a candidate, so its claim is given back (a send
+ * that threw) or held a day (one that reached nobody), and a later run retries
+ * through the ordinary path.
  */
 const AFTER_COMMIT_REASONS: ReadonlySet<InternetBankingHoldKeptReason> = new Set([
   "released-unreadable",
@@ -121,13 +127,20 @@ function owedAlertKey(reason: InternetBankingHoldKeptReason, paymentId: string):
   return `${OWED_ALERT_PREFIX}${reason}:${paymentId}`;
 }
 
+/**
+ * `send-threw` is the send failing before it reached anyone (the claim is
+ * given back, as `sendAdminAlertOnceEver` does); `undelivered` is a send that
+ * ran and reached nobody, which a retry every run would only repeat (F1).
+ */
+type HoldAlertSendOutcome = AdminAlertSendOutcome | "send-threw";
+
 async function sendHoldAlert(
   hold: ExpiredHoldView,
   evidence: HoldPaymentEvidence,
   reason: InternetBankingHoldKeptReason,
   memberName: string,
   format: ClubFormat,
-): Promise<AdminAlertSendOutcome> {
+): Promise<HoldAlertSendOutcome> {
   return sendAdminInternetBankingHoldKeptAlert(
     {
       reason,
@@ -148,7 +161,7 @@ async function sendHoldAlert(
       { err, bookingId: hold.bookingId, paymentId: hold.id, reason },
       "Failed to alert admins about an Internet Banking hold",
     );
-    return "undelivered" as const;
+    return "send-threw" as const;
   });
 }
 
@@ -172,9 +185,10 @@ function readOwner(hold: ExpiredHoldView): { memberName: string; memberId: strin
 /**
  * Tell the treasurer, once per hold per reason. The claim is taken first (so
  * two instances do not both send).
- *  - A hold that stays a candidate: when recipients existed but none was
- *    reached, the claim is GIVEN BACK and the next run retries; the audit entry
- *    is written once the alert settles.
+ *  - A hold that stays a candidate: when the send threw, the claim is GIVEN
+ *    BACK and the next run retries; when it ran and reached nobody, the claim
+ *    is held for a day (`ALERT_NOBODY_ELIGIBLE_RETRY_MS`, #3635 F1). The
+ *    audit entry is written once the alert settles.
  *  - A released hold or a cancelled booking (`AFTER_COMMIT_REASONS`): audited
  *    on the first attempt whatever happened, and an undelivered send is marked
  *    owed for the next run to deliver.
@@ -188,8 +202,9 @@ function readOwner(hold: ExpiredHoldView): { memberName: string; memberId: strin
  *    released hold is never selected again, where the helper skips;
  *  - nobody eligible (`no-recipients`, `skipped-by-policy`) KEEPS the claim,
  *    where the helper holds it a day and tries again;
- *  - undelivered to recipients who existed is given back NOW for a candidate
- *    hold, which the next run re-selects, rather than deferred a day;
+ *  - a send that threw is given back and one that reached nobody is held a
+ *    day, as in the helper (#3635 F1), but the helper cannot tell them from
+ *    the four-way outcome this caller audits;
  *  - undelivered after commit is marked OWED and drained next run, which the
  *    helper has no notion of, and the caller needs the four-way outcome for
  *    the audit row's `alertDelivery`.
@@ -226,13 +241,29 @@ export async function alertExpiredHold(
   });
   if (!holdsClaim) return;
 
-  const outcome = await sendHoldAlert(hold, evidence, reason, owner.memberName, format);
+  const sendOutcome = await sendHoldAlert(hold, evidence, reason, owner.memberName, format);
+  const outcome: AdminAlertSendOutcome =
+    sendOutcome === "send-threw" ? "undelivered" : sendOutcome;
   const afterCommit = AFTER_COMMIT_REASONS.has(reason);
 
   if (outcome === "undelivered") {
     if (!afterCommit) {
-      await releaseAlertCooldown({ key, claimedAt }).catch((err) =>
-        logger.error({ err, ...context }, "Failed to give back an undelivered hold alert's claim"),
+      // #3635 (F1): a send that threw is given back for the next run; one that
+      // ran and reached nobody (every address suppressed, a non-production
+      // withhold) is held for a day, as `sendAdminAlertOnceEver` holds it, so
+      // a kept hold never costs an email attempt and a critical audit row
+      // every 15 minutes.
+      const settle =
+        sendOutcome === "send-threw"
+          ? releaseAlertCooldown({ key, claimedAt })
+          : deferAlertCooldown({
+              key,
+              claimedAt,
+              windowMs: ALERT_ONCE_EVER_WINDOW_MS,
+              retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+            });
+      await settle.catch((err) =>
+        logger.error({ err, ...context }, "Failed to give back or defer an undelivered hold alert's claim"),
       );
       return;
     }
@@ -286,12 +317,16 @@ export async function alertExpiredHold(
  * Deliver the alerts an earlier run marked owed (D4). Runs at the start of the
  * hold-expiry job, outside every transaction; never throws. The marker is
  * settled once the alert is delivered, muted by the club's rules, or has
- * nobody to go to; a still-undelivered one stays for the next run.
+ * nobody to go to; a still-undelivered one stays owed and is tried again at
+ * most once a day (#3635 F1: `listOwedAlertKeys` returns only due markers).
  */
 export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
   let keys: string[];
   try {
-    keys = await listOwedAlertKeys({ prefix: OWED_ALERT_PREFIX });
+    keys = await listOwedAlertKeys({
+      prefix: OWED_ALERT_PREFIX,
+      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+    });
   } catch (err) {
     logger.error({ err }, "Failed to read owed Internet Banking hold alerts");
     return;
@@ -322,7 +357,12 @@ export async function drainOwedHoldAlerts(format: ClubFormat): Promise<void> {
         notFound: false,
       };
       const outcome = await sendHoldAlert(hold, evidence, reason, readOwner(hold).memberName, format);
-      if (outcome !== "undelivered") await settleOwedAlert({ key });
+      if (outcome === "undelivered" || outcome === "send-threw") {
+        // #3635 (F1): tried and still owed; the next attempt is a day away.
+        await noteOwedAlertAttempt({ key });
+      } else {
+        await settleOwedAlert({ key });
+      }
     } catch (err) {
       logger.error({ err, key }, "Failed to deliver an owed Internet Banking hold alert");
     }
