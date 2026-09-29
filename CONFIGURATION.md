@@ -522,7 +522,8 @@ below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
 per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
-**0** (unbookable) and the setup-readiness Club Config check warns.
+**0** (unbookable) and the setup-readiness Club Config check warns, naming every
+active lodge in that state — the default lodge and any additional one (#3407).
 
 Since #1982 the DB is the **sole runtime source** of booking capacity —
 `beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
@@ -1312,6 +1313,11 @@ still surfaces loudly as **blocked**. When the database is not reachable
 (pre-migration), the DB-backed steps are reported as "not checked" and the
 club-config step is a warning that points at `/admin/setup` rather than a hard
 block.
+
+The club-config step also warns when any **active lodge** resolves as not set up
+for bookings (no capacity and no active beds, through the same resolver every
+booking path reads), and lists those lodges by name so each can be given a
+capacity on its configuration page (#3407).
 
 After signing in as an administrator, open `/admin/setup` to review:
 

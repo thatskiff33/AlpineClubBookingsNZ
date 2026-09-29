@@ -235,7 +235,9 @@ resolves via step 2. `club.json beds[]` survives only as a **seed template**
 step 3 is genuinely unconfigured (its boot self-heal was skipped — e.g. a
 non-primary `club.json`); the setup-readiness **Club Config** check flags it
 loudly (a warning) rather than handing it phantom capacity that could silently
-overbook.
+overbook. The same check names every **additional** active lodge that resolves
+to 0 as well — one created before capacity was asked at creation, imported
+without settings, or cleared to no capacity (#3407).
 
 The self-heal backfill is **gated**: it fills the default lodge's null capacity
 only when the lodge would *otherwise resolve to 0* (Bed Allocation off, or on
