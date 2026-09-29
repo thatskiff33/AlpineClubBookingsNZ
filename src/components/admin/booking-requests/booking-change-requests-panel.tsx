@@ -8,10 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { bookingOwner } from "@/lib/booking-owner";
-import {
-  formatPaidRefundedBreakdown,
-  getPaymentNetOfRefundsCents,
-} from "@/lib/booking-payment-state";
+import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -422,14 +419,6 @@ export function BookingChangeRequestsPanel({
               request.requestedChanges?.requested?.summary ||
               "Locked-period booking change";
             const reviewedAt = formatDateTime(request.reviewedAt);
-            const payment = request.booking.payment;
-            const paidRefundedBreakdown = payment
-              ? formatPaidRefundedBreakdown(
-                  payment.amountCents,
-                  payment.refundedAmountCents,
-                  (cents) => formatCents(cents, format),
-                )
-              : null;
             // #3369: a school presents through the owner projection; `id` is a
             // MEMBER id and is absent for one, which is what the link asks.
             const owner = bookingOwner(request.booking).member;
@@ -467,27 +456,7 @@ export function BookingChangeRequestsPanel({
                       <span className="text-muted-foreground">Booking total:</span>{" "}
                       {formatCents(request.booking.finalPriceCents, format)}
                     </div>
-                    {/* #3372: NET of refunds and credits, the shape #3364 gave
-                        the payments board. An officer reads this while deciding
-                        what to charge, and a gross figure beside "Booking total"
-                        sizes the balance wrongly by exactly the refund - the
-                        #3340 misreading. Gross and refunded print beneath, so only
-                        the headline changed; the " net" suffix and that line share
-                        one guard, the breakdown being present. */}
-                    <div>
-                      <span className="text-muted-foreground">Payment:</span>{" "}
-                      {payment
-                        ? `${payment.status} (${formatCents(
-                            getPaymentNetOfRefundsCents(payment),
-                            format,
-                          )}${paidRefundedBreakdown ? " net" : ""})`
-                        : "No payment"}
-                      {paidRefundedBreakdown ? (
-                        <div className="text-xs text-muted-foreground">
-                          {paidRefundedBreakdown}
-                        </div>
-                      ) : null}
-                    </div>
+                    <ChangeRequestPaymentLine payment={request.booking.payment} />
                   </div>
 
                   <div className="rounded-md border bg-muted p-3 text-sm">
