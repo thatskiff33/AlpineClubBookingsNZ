@@ -49,7 +49,7 @@ The design builds on, and must not replace, what #3272 and #3530 landed:
 | `PaymentTransaction` (`PRIMARY` / `ADDITIONAL`, `carriedAskCents`) | a settlement line per capture, or an *ask* (an obligation, not money) | captures post `SETTLEMENT` lines; an ask is **not** a line (§5.3) |
 | `PaymentRefund` | a negative settlement line, card method | posts `SETTLEMENT` lines with `method = CARD`, sign −1 |
 | `MemberCredit` (`CANCELLATION_REFUND`, `BOOKING_MODIFICATION_REFUND`, `ADMIN_ADJUSTMENT`, `BOOKING_APPLIED`) | credit issued (−, `ACCOUNT_CREDIT`) or applied (+, `ACCOUNT_CREDIT`) | stays the member's credit ledger (`INV-PAY-019`: account credit lives solely in `MemberCredit`); the booking ledger posts the booking-side leg and links the credit row |
-| `ManualRefundTask` `EDIT_FINANCIAL_REVIEW` shares (`INV-MOD-055`, `INV-PAY-061`) | a person's settlement decision on a parked edit | posts one `ADJUSTMENT` line per completed share, anchored on the task |
+| `ManualRefundTask` `EDIT_FINANCIAL_REVIEW` shares (`INV-MOD-055`, `INV-PAY-061`) | a person's settlement decision on a parked edit | posts one `ADJUSTMENT` line per completed share, anchored on the task, where no closure re-price already records that money (§5.3) |
 | `INV-MONEY-030` / `INV-MONEY-031` (stored readers record their source; verdicts are derived) | the reader discipline the ledger generalises | the projection guard is this verdict extended to settlement |
 
 The one-line test for every later child: **if the row already exists, the
@@ -222,14 +222,40 @@ prose says where it is actually posted. §5.2's preface is the case in point.
 
 ### 5.1 Pricing the stay (CHARGE)
 
+**How C3 (#3582) actually posts an edit, which corrects the table as first
+written.** `ModificationLine` runs fold across guests and nights, while C1
+posts one line per guest-night and a reversal names exactly one line — so "a
+reversal per removed run" cannot be built. Each priced edit posts **per
+guest-night, from its own before and after**, through `diffGuestNights`, the
+per-night step extracted from `diffBookingPricing` so the stored lines and the
+ledger read one differ (`INV-SSOT`): one reversal per removed or repriced night
+naming that night's **live** line (never one an earlier edit already
+reversed), keyed `reversal:<lineId>`; one `GUEST_NIGHT` per added night, keyed
+on the modification. Every line is anchored on the edit's `BookingModification`,
+reversals included, so an edit's slice is what that edit changed. **Sum or
+nothing**: the lines must add up to `priceDiffCents + changeFeeCents`, and a
+night with no live line, a live line at a different price, or any other
+disagreement posts nothing and is logged for C4 (#3583) to count. Only a
+booking already confirmed on the ledger posts (§4.1a), asked under `lock(1)`.
+The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
+`booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
+
+**The review closure's re-price and the admin price rebase are one event.**
+`rebaseBookingPriceFromStrands` has exactly one caller, the closure of an
+`EDIT_FINANCIAL_REVIEW`, so the two rows below post once. Its before is the
+ledger's own live lines — an open review fences every edit door
+(`INV-PAY-066`), so nothing else moved the booking since the park — and the sum
+check (the lines must equal the re-base's own movement of the final price)
+proves the ledger was in step rather than assuming it. The completion takes
+`lock(1)` as its first lock for this (`docs/CONCURRENCY_AND_LOCKING.md`).
+
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
 | Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero; one `GROUP_DISCOUNT` (−) for `discountCents` when non-zero; one `CHANGE_FEE` (+) when `changeFeeCents > 0` | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
-| Booking edited and priced (four doors + batch, `INV-MOD-044`) | for each `ModificationLine` in `priceLines`: a **reversal** line (−) per removed run that names the original `GUEST_NIGHT` line(s) it reverses, and a fresh `GUEST_NIGHT` (+) per added run; a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
+| Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night (see above): a **reversal** (−) of each removed or repriced night's live `GUEST_NIGHT` line, and a fresh `GUEST_NIGHT` (+) per added night; a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one — all or nothing against `priceDiffCents + changeFeeCents` | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
-| Review closed by re-pricing (`INV-MOD-055`) | the edit's lines as above, from the re-based strands | `MODIFICATION` | `edit-financial-review` closure |
-| Admin price rebase (`booking-review-price-rebase.ts`) | reversal of every `GUEST_NIGHT` the rebase changed + re-post at the new figure | `MODIFICATION` (the rebase already writes its own `BookingModification` history row, both money components zero) | the rebase |
+| Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
 ### 5.2 Moving money (SETTLEMENT)
 
@@ -300,12 +326,27 @@ the database makes — and its lines cascade with it.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Review share completed `CHARGE_TO_MEMBER` (+) or `REFUND_TO_MEMBER` (−) (`INV-PAY-061`, `INV-PAY-069`; the only two directions today) | `AGREED_ADJUSTMENT` (± the share) with the task note as narration; the *settlement* that follows — the ask, the card refund, the account credit, the hand-back — posts its own line through §5.2 | `REVIEW_TASK` | task completion |
-| Review share dismissed (`INV-PAY-099`) | nothing; a dismissal moves no money and can be reopened | — | — |
+| Review share completed `CHARGE_TO_MEMBER` (+) or `REFUND_TO_MEMBER` (−) (`INV-PAY-061`, `INV-PAY-069`; the only two directions today) | `AGREED_ADJUSTMENT` (± the share) with the task note as narration, naming the officer — **only where the closure's re-price (§5.1) records no price movement**; where it does, those lines already carry the share and this line would count it twice. Never a settlement line: the card refund, the account credit and the hand-back post their own through §5.2, and the ask is no line | `REVIEW_TASK` | the closure, beside the re-price |
+| Review share dismissed (`INV-PAY-099`) | nothing for the share; a dismissal moves no money and can be reopened. Its closure's re-price, if any, still posts (§5.1) | — | — |
 | Admin credit adjustment (`ADMIN_ADJUSTMENT`, `INV-MONEY-007`) | not a booking-ledger event unless applied to a booking, when it posts `CREDIT_APPLIED` | `MEMBER_CREDIT` | — |
 | Additional-payment ask raised (`INV-PAY-062`, `INV-PAY-098`) | **no line.** `owed(b)` already states it. The ask row (`PaymentTransaction` `ADDITIONAL`, PENDING) is the *instrument* — the intent, the reminder clock, the Xero supplementary invoice — and stays a row about collection, not about money | — | — |
 | Ask withdrawn (#3528, `INV-ADDPAY-040`) | no line; the debt is not written off (`INV-PAY-093`) — `owed(b)` is unchanged and a later ask can re-collect it | — | — |
 | Late capture on a deleted booking (`INV-ADDPAY-036`) | `CARD_CAPTURE` (+) as any capture; the task that queues it for a person is the instrument | `PAYMENT_TRANSACTION` | the webhook |
+
+**Which money the closure's two lines record (#3582, settled from the code).**
+Where the officer typed night prices, `checkStoredNightPriceRepair` requires them
+to come to the strand's stored total plus or minus exactly the share
+(`settlementDeltaCents`), and the re-base moves the booking's price to the
+strands (`INV-MOD-055`, D1) — so the re-price's lines carry the share. Where no
+boxes were offered, the share settles the parked structural change the re-price
+also records (a removed guest's nights). Either way, once the re-price posts a
+movement the share's money is on the ledger, and `owed(b)` reaches zero when the
+settlement line follows. The `AGREED_ADJUSTMENT` is the record only where the
+re-price declined, wrote no row, moved nothing, or could not be planned. What it
+does not settle: a share that differs from the re-price's movement (a fee kept
+back, a goodwill figure) leaves `owed(b)` off by that difference, exactly as an
+unparked removal with a policy-retained amount does today — naming what the club
+keeps is #3611's owner decision, not this line's.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`
 is retired (it is `max(0, owed(b))`), but the `ADDITIONAL` transaction row
@@ -462,7 +503,7 @@ No row is "unknown". Codes:
 | 055, 081–090 | L | one attempt = one `PaymentTransaction` = at most one `CARD_CAPTURE` line (anchor uniqueness per transaction id) |
 | 056, 091, 092 | U | recovery terminality |
 | 057, 093, 094, 095 | L | withdrawal cancels the instrument; `owed(b)` is unchanged (§5.3) — 093 "never writes off the debt" is structural |
-| 061, 069 | L | a completion posts an `AGREED_ADJUSTMENT`; the direction is the line's sign; the settlement path chosen at completion posts the §5.2 line |
+| 061, 069 | L | a completion posts an `AGREED_ADJUSTMENT` where no closure re-price records its money (§5.3); the direction is the line's sign; the settlement path chosen at completion posts the §5.2 line |
 | 062, 098 | L | one edit raises one ask for `max(0, owed(b))`; a replacement ask's "carried" figure is the same derivation, `carriedAskCents` retires |
 | 101 | L | `settlementMethod` on the line is the recorded decision the document names |
 | 070, 063, 071, 072 | L | the Xero leg bills the anchor's slice; a shortfall is a slice whose lines post after the invoice was sent |

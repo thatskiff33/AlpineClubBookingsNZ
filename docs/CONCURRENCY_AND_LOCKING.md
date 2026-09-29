@@ -2877,7 +2877,8 @@ re-read `Booking.deletedAt` outside it.
 `COMPLETED` `ManualRefundTask` on this capture, which means an operator has already
 paid the member back by hand and refunding again would pay them twice. It takes no
 lock, and it CANNOT be made to close its own window: `resolveManualRefundTask` (the
-hand-completion) holds no advisory key either, so serialising them would require the
+hand-completion) holds no advisory key either (since #3582 only an
+`EDIT_FINANCIAL_REVIEW` completion takes one, below), so serialising them would require the
 webhook to hold `lock(1)` across the Stripe refund round trip — the bounded-exception
 rule in this document forbids exactly that. So the fence is documented as a
 **window-narrowing** guard rather than a mutual exclusion: it shrinks the exposure
@@ -3068,6 +3069,35 @@ against the booking, takes no lock, and is only reached after the fenced
 `updateMany` has claimed the change - so it cannot exist for a re-price that did
 not commit. Since #3257 it is also skipped where the recomputed figures matched
 the stored ones, which removes a write rather than adding one.
+
+**#3582 ADDS `lock(1)` TO AN EDIT REVIEW'S COMPLETION — INSIDE THE TRANSACTION,
+AS ITS FIRST LOCK, AND NEVER ACROSS THE PROVIDER CALL.** The closure now posts
+booking-ledger lines (the re-price's reversal and re-post, anchored on the
+`PRICE_REBASE` row, and the agreed share where nothing else records it), and a
+poster may post only for a booking already confirmed on the ledger
+(`bookingHasConfirmationLines`). The settle asks that question under `lock(1)`;
+a closure asking it without the key could see "not yet" while a first settle
+does too, and both would post. So `resolveManualRefundTask` takes
+`pg_advisory_xact_lock(1)` for an `EDIT_FINANCIAL_REVIEW` task only, and:
+
+- **first**: after the unlocked task read and before the route is chosen, the
+  claim, the payment-row allocation, the repair's guest and night row locks and
+  the re-price's promo-row lock. That is the order every edit door takes the same
+  resources in (global, then anything narrower — `INV-LOCK-002`), so it closes no
+  cycle against them; the old guest/night-row-versus-promo-row shape against a
+  waitlist confirm that holds `lock(1)` is now serialised by the key instead;
+- **inside the transaction only**: the Stripe refund and the Xero leg run after
+  the commit (`executeEditReviewSettlement`), so the bounded-exception rule about
+  provider round trips is not engaged; the key is released at commit;
+- **not a replacement for the claim**: two completions of one task now queue on
+  the key, but each read the task `OPEN` before it, so the status-guarded
+  `updateMany` is still what refuses the second
+  (`edit-financial-review-races.realdb.test.ts`). Legacy hand-back kinds take no
+  key, exactly as before.
+
+Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
+(`INV-LOCK-002`). The four edit doors and the batch path post their own lines
+under the `lock(1)` they already take first; no other writer changes.
 
 **#3257 WIDENS WHEN THAT PROMO ROW LOCK IS TAKEN, AND CHANGES NOTHING ELSE ABOUT
 IT.** The re-price used to be invoked only from the night-price repair, so only a

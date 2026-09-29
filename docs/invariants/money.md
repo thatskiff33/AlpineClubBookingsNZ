@@ -541,6 +541,30 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
   writers and the real resolver.
 
+## INV-MONEY-036
+
+- **An edit posts its own lines, per guest-night, or none; a review closure
+  records the share's money once** (#3582). Each priced edit (the four doors and
+  the batch path) posts, from the same before and after its `priceLines` are
+  computed from (`diffGuestNights`, `INV-SSOT`): a reversal of each removed or
+  repriced night's LIVE line — never one already reversed — a `GUEST_NIGHT` per
+  added night, a promotion reversal and re-post, and a `CHANGE_FEE`, all
+  anchored on its `BookingModification`. The lines must sum to
+  `priceDiffCents + changeFeeCents` or none post and the gap is logged. Only a
+  booking already confirmed on the ledger posts, asked under `lock(1)`; a parked
+  edit posts nothing (`INV-MOD-040`).
+
+  **A closure's re-price and its share never both post.** Where the closure
+  re-prices (`INV-MOD-055`) its lines are anchored on the `PRICE_REBASE` row, and
+  the strands they post from already carry the settled share (the repair's typed
+  nights must equal the stored total plus or minus it), so the share posts no
+  `AGREED_ADJUSTMENT`. Only where no re-price records a movement does the share
+  post one, signed by direction, naming the officer, with the note as narration.
+  No review share posts a settlement line; its route's own writer does
+  (`INV-MONEY-034`, `INV-MONEY-035`). `booking-ledger-modification-sync.test.ts`
+  holds a fixture per direction; `booking-ledger-modification.realdb.test.ts`
+  proves an edit door against PostgreSQL.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and
