@@ -78,15 +78,23 @@ export async function GET(request: Request) {
   // it may say a lodge is ready: the configured figure alone cannot answer that
   // with Bed Allocation on, where active beds count too. Only for an explicit
   // lodge — the legacy no-lodgeId read has no lodge to resolve.
-  const setUpForBookings = lodgeId
-    ? isLodgeSetUpForBookings((await getLodgeCapacityStatus(lodgeId)).capacity)
+  // The resolved figure goes with it, so "ready" can state the real capacity
+  // (with Bed Allocation on, the lower of the beds and the typed ceiling).
+  const resolvedCapacity = lodgeId
+    ? (await getLodgeCapacityStatus(lodgeId)).capacity
     : undefined;
+  const setUpForBookings =
+    resolvedCapacity === undefined
+      ? undefined
+      : isLodgeSetUpForBookings(resolvedCapacity);
   return NextResponse.json({
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     schoolGroupSoftCap: settings.schoolGroupSoftCap,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
-    ...(setUpForBookings === undefined ? {} : { setUpForBookings }),
+    ...(setUpForBookings === undefined
+      ? {}
+      : { setUpForBookings, resolvedCapacity }),
   });
 }
 

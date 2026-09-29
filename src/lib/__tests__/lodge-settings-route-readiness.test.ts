@@ -62,11 +62,14 @@ describe("GET /api/admin/lodge-settings — setUpForBookings (#3407)", () => {
 
     expect(mocks.getLodgeCapacityStatus).toHaveBeenCalledWith("lodge-2");
     expect(body.setUpForBookings).toBe(expected);
+    // The figure itself, so the wizard's "ready" states the real capacity.
+    expect(body.resolvedCapacity).toBe(capacity);
   });
 
   it("omits it on the legacy read that names no lodge", async () => {
     const body = await (await get("")).json();
     expect(body).not.toHaveProperty("setUpForBookings");
+    expect(body).not.toHaveProperty("resolvedCapacity");
     expect(mocks.getLodgeCapacityStatus).not.toHaveBeenCalled();
   });
 });

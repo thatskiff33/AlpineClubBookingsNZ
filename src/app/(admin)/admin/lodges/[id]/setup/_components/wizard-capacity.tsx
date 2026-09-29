@@ -47,6 +47,10 @@ export function useWizardCapacity(options: {
   const [setUpForBookings, setSetUpForBookings] = useState<boolean | null>(
     null,
   );
+  // The figure the lodge really resolves to, so "ready" states it; and whether
+  // the readiness read failed, which is "could not check", never "not set up".
+  const [resolvedCapacity, setResolvedCapacity] = useState<number | null>(null);
+  const [readinessCheckFailed, setReadinessCheckFailed] = useState(false);
 
   // Tolerant: a failed read leaves the field blank to be filled in, and must
   // not take the rest of the wizard down with it.
@@ -71,13 +75,24 @@ export function useWizardCapacity(options: {
     if (!onFinishStep) return;
     let cancelled = false;
     setSetUpForBookings(null);
+    setResolvedCapacity(null);
+    setReadinessCheckFailed(false);
     fetch(settingsUrl(lodgeId), { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (cancelled || typeof data?.setUpForBookings !== "boolean") return;
+        if (cancelled) return;
+        if (typeof data?.setUpForBookings !== "boolean") {
+          setReadinessCheckFailed(true);
+          return;
+        }
         setSetUpForBookings(data.setUpForBookings);
+        if (typeof data.resolvedCapacity === "number") {
+          setResolvedCapacity(data.resolvedCapacity);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setReadinessCheckFailed(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -122,7 +137,16 @@ export function useWizardCapacity(options: {
     }
   }
 
-  return { capacityInput, setCapacityInput, saveCapacity, setUpForBookings };
+  const parsedSaved = parseConfiguredLodgeCapacity(savedCapacityInput);
+  return {
+    capacityInput,
+    setCapacityInput,
+    saveCapacity,
+    setUpForBookings,
+    resolvedCapacity,
+    readinessCheckFailed,
+    savedCapacity: parsedSaved.kind === "valid" ? parsedSaved.capacity : null,
+  };
 }
 
 export function WizardCapacityField(props: {
@@ -135,6 +159,7 @@ export function WizardCapacityField(props: {
       <Label htmlFor="wizard-capacity">Capacity (maximum guests)</Label>
       <Input
         id="wizard-capacity"
+        aria-describedby="wizard-capacity-hint"
         type="number"
         inputMode="numeric"
         min={MIN_CONFIGURED_LODGE_CAPACITY}
@@ -144,8 +169,24 @@ export function WizardCapacityField(props: {
         onChange={(e) => props.onChange(e.target.value)}
         disabled={props.disabled}
       />
+      <p id="wizard-capacity-hint" className="text-sm text-muted-foreground">
+        How many guests the lodge can sleep. Bookings are refused above it, and
+        a lodge without one cannot take a booking.
+      </p>
     </div>
   );
+}
+
+/**
+ * The Rooms step's line about capacity. With Bed Allocation on, beds set the
+ * capacity only up to the figure typed on Add lodge, which caps them
+ * (`capped_beds`, INV-CAP-003); saying "beds set the capacity" alone would be
+ * untrue once more beds are seeded than that figure.
+ */
+export function wizardRoomsCapacityLine(savedCapacity: number | null): string {
+  return savedCapacity === null
+    ? "Active beds set the lodge's booking capacity."
+    : `Active beds set the lodge's booking capacity, up to the ${savedCapacity} guests entered for it: beds above that figure are not bookable.`;
 }
 
 /**
@@ -155,9 +196,23 @@ export function WizardCapacityField(props: {
 export function WizardFinishHeading(props: {
   lodgeName: string;
   setUpForBookings: boolean | null;
+  resolvedCapacity: number | null;
+  readinessCheckFailed: boolean;
   bedAllocationOn: boolean;
 }) {
-  const { lodgeName, setUpForBookings, bedAllocationOn } = props;
+  const { lodgeName, setUpForBookings, resolvedCapacity, bedAllocationOn } = props;
+  if (props.readinessCheckFailed) {
+    return (
+      <>
+        <CardTitle>Setup steps finished</CardTitle>
+        <CardDescription>
+          Whether {lodgeName} can take bookings could not be checked just now.
+          Its configuration page shows its capacity, and anything skipped here
+          can be finished there.
+        </CardDescription>
+      </>
+    );
+  }
   return (
     <>
       <CardTitle>
@@ -178,7 +233,11 @@ export function WizardFinishHeading(props: {
           </>
         ) : (
           <>
-            {setUpForBookings === true ? `${lodgeName} is ready. ` : null}
+            {setUpForBookings === true
+              ? resolvedCapacity !== null
+                ? `${lodgeName} is ready: it can take up to ${resolvedCapacity} guests. `
+                : `${lodgeName} is ready. `
+              : null}
             The configuration page shows what exists at this lodge and links
             into every editor — anything skipped here can be finished there.
           </>

@@ -360,7 +360,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
   function handleDayClick(day: number) {
     const dateStr = formatCalendarDayOnly(currentMonth.year, currentMonth.month, day);
 
-    if (lodgeNotSetUp || dayRole(dateStr) === "unreachable") return;
+    if (dayRole(dateStr) === "unreachable") return;
 
     if (selecting === "checkIn") {
       setCheckIn(dateStr);

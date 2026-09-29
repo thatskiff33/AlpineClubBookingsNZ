@@ -27,6 +27,7 @@ import {
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   WizardCapacityField,
+  wizardRoomsCapacityLine,
   WizardFinishHeading,
   useWizardCapacity,
 } from "./_components/wizard-capacity";
@@ -546,7 +547,7 @@ export default function LodgeSetupWizardPage() {
       </ol>
 
       {error && (
-        <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
+        <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
         </div>
       )}
@@ -638,8 +639,8 @@ export default function LodgeSetupWizardPage() {
             <CardTitle>Rooms &amp; beds</CardTitle>
             <CardDescription>
               Quick-seed the lodge&apos;s layout — &quot;we have 4 rooms of 4
-              beds&quot; — and fine-tune names later. Active beds set the
-              lodge&apos;s booking capacity.
+              beds&quot; — and fine-tune names later.{" "}
+              {wizardRoomsCapacityLine(capacity.savedCapacity)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -908,6 +909,8 @@ export default function LodgeSetupWizardPage() {
             <WizardFinishHeading
               lodgeName={lodge.name}
               setUpForBookings={capacity.setUpForBookings}
+              resolvedCapacity={capacity.resolvedCapacity}
+              readinessCheckFailed={capacity.readinessCheckFailed}
               bedAllocationOn={modules.bedAllocation === true}
             />
           </CardHeader>

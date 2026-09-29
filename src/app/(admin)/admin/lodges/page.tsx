@@ -120,6 +120,11 @@ export default function AdminLodgesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<LodgeFormState>(emptyForm);
+  // #3407 review: the capacity field is marked invalid, and pointed at the
+  // page's error, only after a refused save; and its hint says what the figure
+  // means when Bed Allocation is on, where it caps the beds.
+  const [capacityInvalid, setCapacityInvalid] = useState(false);
+  const [bedAllocationOn, setBedAllocationOn] = useState(false);
 
   const loadLodges = useCallback(async () => {
     setLoading(true);
@@ -146,6 +151,12 @@ export default function AdminLodgesPage() {
     setCreating(true);
     setEditingId(null);
     setForm(emptyForm);
+    setCapacityInvalid(false);
+    // Tolerant: without the answer the hint simply omits the module sentence.
+    fetch("/api/admin/modules")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBedAllocationOn(data?.settings?.bedAllocation === true))
+      .catch(() => {});
   }
 
   function startEdit(lodge: LodgeRecord) {
@@ -172,8 +183,10 @@ export default function AdminLodgesPage() {
     const typedCapacity = parseConfiguredLodgeCapacity(form.capacity);
     if (creating && typedCapacity.kind !== "valid") {
       setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      setCapacityInvalid(true);
       return;
     }
+    setCapacityInvalid(false);
     setSaving(true);
     setError(null);
     try {
@@ -313,7 +326,7 @@ export default function AdminLodgesPage() {
       </div>
 
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
+        <p id="lodges-page-error" className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
@@ -350,8 +363,13 @@ export default function AdminLodgesPage() {
                   min={MIN_CONFIGURED_LODGE_CAPACITY}
                   max={MAX_CONFIGURED_LODGE_CAPACITY}
                   step={1}
-                  required
-                  aria-describedby="lodge-capacity-hint"
+                  aria-required="true"
+                  aria-invalid={capacityInvalid || undefined}
+                  aria-describedby={
+                    capacityInvalid && error
+                      ? "lodge-capacity-hint lodges-page-error"
+                      : "lodge-capacity-hint"
+                  }
                   value={form.capacity}
                   onChange={(event) =>
                     setForm((prev) => ({ ...prev, capacity: event.target.value }))
@@ -364,6 +382,9 @@ export default function AdminLodgesPage() {
                   How many guests the lodge can sleep. Bookings are refused
                   above it, and a lodge without one cannot take a booking. You
                   can change it later on the lodge&apos;s configuration page.
+                  {bedAllocationOn
+                    ? " With Bed Allocation on, this is the most the lodge may sleep: beds above it are not bookable."
+                    : null}
                 </p>
               </div>
             ) : null}
