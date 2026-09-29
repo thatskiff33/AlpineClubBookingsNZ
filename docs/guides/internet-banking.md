@@ -89,9 +89,9 @@ started, whatever the invoice shows.
 **Groups work the same way.** When an organiser pays for a group with one
 combined Internet Banking invoice and the settlement runs out of time while Xero
 cannot show that invoice, the group keeps its beds for up to seven days past the
-deadline, then is released. Once the group's check-in date arrives, the group is
-never released by the app, even if Xero shows the invoice unpaid or no longer
-has it: it is kept, and the treasurer gets one email, because the organiser may
+deadline, then is released. Once the check-in date of a group with an invoice
+arrives, the group is never released by the app, even if Xero shows the invoice
+unpaid or no longer has it: it is kept, and the treasurer gets one email, because the organiser may
 already have paid by bank transfer (#3635).
 
 The email goes to admins with the **payment failure** notification switched on.

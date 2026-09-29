@@ -15,7 +15,7 @@
   booking's hold (#3635).** If the group settlement runs out of time while the
   group's combined invoice cannot be read, the group now keeps its beds for up
   to seven days past the deadline, the same as a single booking's hold. Once
-  check-in arrives, the group is kept rather than released, whether Xero
+  check-in arrives, a group with an invoice is kept rather than released, whether Xero
   shows the invoice unpaid, no longer has it, or cannot be read, and the
   treasurer gets one email. The organiser may already have paid by bank
   transfer. Before this change the group was released at check-in and its

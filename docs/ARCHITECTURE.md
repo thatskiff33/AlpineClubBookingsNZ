@@ -3001,8 +3001,8 @@ credit-note work, emails the member, records history/audit, and processes
 waitlists. A hold whose invoice Xero shows any payment against is kept instead
 and admins are alerted once; one Xero cannot read is kept up to seven days past
 the deadline, and never released once its stay has started (`INV-PAY-016`,
-which an Internet Banking organiser-pays group follows too, whatever Xero shows
-of its invoice). Cancelling a
+which an Internet Banking organiser-pays group with an invoice follows too,
+whatever Xero shows of it). Cancelling a
 part-paid booking records the Xero
 cash as captured, so the cancellation policy applies to it (#3643,
 `INV-PAY-107`).
