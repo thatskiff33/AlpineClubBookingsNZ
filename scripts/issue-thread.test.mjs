@@ -11,7 +11,7 @@ import {
 } from "./issue-thread.mjs";
 
 /**
- * Unit coverage for the pure half of `npm run issue` — decision detection and
+ * Unit coverage for the pure half of `pnpm run issue` — decision detection and
  * the stale-body detection it exists to raise.
  *
  * The fixtures are modelled on #2777, the canonical case: a body offering four

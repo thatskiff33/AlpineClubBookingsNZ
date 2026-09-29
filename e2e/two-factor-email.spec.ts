@@ -32,7 +32,7 @@ test("first login forces enrollment and completes email-code enrollment", async 
   expect(
     page.url(),
     `${enrollee.email} should be un-enrolled on a fresh demo seed — ` +
-      "run npm run test:e2e:prepare to reset the database",
+      "run pnpm run test:e2e:prepare to reset the database",
   ).toContain("/login/enroll");
 
   await expect(

@@ -86,7 +86,7 @@
  * pinned sets for no safety gained. No site in the tree uses either shape
  * today; if one appears, those two booleans are the ones to revisit.
  *
- * Run it: `npm run audit:census` prints a deterministic TSV of every site.
+ * Run it: `pnpm run audit:census` prints a deterministic TSV of every site.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";

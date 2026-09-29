@@ -35,7 +35,7 @@
  * supposed to be structurally incapable of writing, and a deployment that has not
  * provisioned the role has not established that. The module ships default-off, so
  * no existing deployment changes behaviour — an operator turning Diagnostics on
- * runs `npm run diagnostics:provision-role` as part of setup, which is exactly the
+ * runs `pnpm run diagnostics:provision-role` as part of setup, which is exactly the
  * documented step ADR-007 §3 calls for, and this endpoint is what tells them so.
  */
 

@@ -3,7 +3,7 @@
  * 21 Aug 2026).
  *
  * WHY THIS EXISTS. #2979 deleted `scripts/quality/file-size-baseline.txt` and,
- * with it, `npm run quality:budget:update` — the one way to say "yes, this file
+ * with it, `pnpm run quality:budget:update` — the one way to say "yes, this file
  * grows, I mean it". The issue called the result "today's semantics"; it was
  * not. Today there IS an escape, and removing it would leave **283 over-budget
  * files** — most of the modules people work in daily — unable to gain a single

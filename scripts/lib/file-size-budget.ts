@@ -36,7 +36,7 @@ export const ROUTE_HANDLER_LIMIT = 250;
 export const ROUTE_PAGE_LIMIT = 500;
 
 /** The command name quoted in every failure message. */
-export const CHECK_COMMAND = "npm run quality:budget";
+export const CHECK_COMMAND = "pnpm run quality:budget";
 
 export type BudgetCategory =
   "domain module" | "route handler" | "route page shell";
@@ -359,8 +359,8 @@ export function findOversizedProductionFiles(
  * This is the figure the deleted ledger used to give away as a side effect of
  * existing, and it is the one thing worth keeping from it: a number to point at
  * and watch shrink. It is now COMPUTED ON DEMAND rather than committed, which is
- * the whole change — `npm run quality:budget -- --report` prints it and
- * `npm run quality:report` embeds it, and neither writes anything down for the
+ * the whole change — `pnpm run quality:budget --report` prints it and
+ * `pnpm run quality:report` embeds it, and neither writes anything down for the
  * next branch to conflict on.
  *
  * Both callers come through here for the same reason the classifier is shared

@@ -50,7 +50,7 @@
  *
  * ## Safety envelope — the same as its sibling harnesses
  *
- * OFF by default and a no-op in ordinary `npm test`:
+ * OFF by default and a no-op in ordinary `pnpm test`:
  *   - the proof describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`;
  *   - it reads ONLY `CONCURRENCY_RACE_DATABASE_URL` and requires a loopback
  *     host, port 55442+, and the dedicated `concurrency_race_1881` marker;
@@ -64,7 +64,7 @@
  *     -p 127.0.0.1:55442:5432 postgres:16-alpine
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
- *     npx vitest run src/lib/__tests__/migration-lock-timeout.realdb.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/migration-lock-timeout.realdb.test.ts
  *
  * It needs no migrations deployed: it owns its own scratch table.
  */
@@ -141,7 +141,7 @@ describe("migration lock-timeout proof DB safety guard (#3377)", () => {
 });
 
 /**
- * Link 1 of the chain. No database, so it runs in ordinary `npm test` and is the
+ * Link 1 of the chain. No database, so it runs in ordinary `pnpm test` and is the
  * check that fails first when someone edits the option off the service.
  */
 describe("the migrate service carries the deploy guard's lock timeout (#3377)", () => {

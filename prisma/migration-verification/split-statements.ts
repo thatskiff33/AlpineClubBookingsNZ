@@ -4,7 +4,7 @@
  *
  * WHY THIS EXISTS ALONGSIDE scripts/lib/split-sql-statements.awk
  *
- * The awk splitter serves the shell gates: it must run before `npm ci`, with no
+ * The awk splitter serves the shell gates: it must run before `pnpm install --frozen-lockfile`, with no
  * Node, and it normalises each statement onto one line because its consumers
  * only ever *read* statements (does this one start with UPDATE, does that one
  * mention CURRENT_TIMESTAMP). Normalising is exactly wrong for EXECUTION: a

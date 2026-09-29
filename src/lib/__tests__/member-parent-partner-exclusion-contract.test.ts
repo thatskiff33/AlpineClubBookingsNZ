@@ -197,7 +197,7 @@ describe("parent/partner database backstop contract (#3292)", () => {
       "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881",
     );
     expect(step).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
     expect(step).not.toContain("continue-on-error");
 
