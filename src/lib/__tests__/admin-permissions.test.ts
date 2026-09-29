@@ -517,7 +517,9 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     const source = bookingPageSource();
 
     expect(source).toMatch(
-      /booking\.payment &&\s*isBookingOwner &&\s*!isDeleted &&\s*isAdditionalPayableBookingStatus\(booking\.status\) &&[\s\S]{0,200}?isAdditionalAmountUncollected\(booking\.payment\) && \(\s*<AdditionalPaymentCard/,
+      // #3641: the lifecycle and deleted checks are the pay door's booking
+      // half, called rather than restated.
+      /booking\.payment &&\s*isBookingOwner &&\s*isAdditionalPaymentDoorOpenForBooking\(\{[\s\S]{0,200}?\}\) &&[\s\S]{0,200}?isAdditionalAmountUncollected\(booking\.payment\) && \(\s*<AdditionalPaymentCard/,
     );
     // The ask half is a CALL, never a restatement: a second copy of the rule on
     // this page is what #3340 removed (`INV-SSOT-001`).

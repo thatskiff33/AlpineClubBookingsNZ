@@ -36,7 +36,13 @@ const tx = {
     updateMany: mocks.txBookingUpdateMany,
     update: mocks.txBookingUpdate,
   },
-  payment: { create: mocks.txPaymentCreate, upsert: vi.fn() },
+  // #3638: the pay route's mint attach re-reads the payment's source under
+  // lock(1) before writing on this handle.
+  payment: {
+    create: mocks.txPaymentCreate,
+    upsert: vi.fn().mockResolvedValue({ id: "payment-1" }),
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -132,7 +138,9 @@ vi.mock("@/lib/payment-transactions", () => ({
   findPaymentTransactionByIntentId: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
 }));
-vi.mock("@/lib/booking-status", () => ({
+vi.mock("@/lib/booking-status", async (importOriginal) => ({
+  // #3638: the mint attach reads the real payable-status rule.
+  ...((await importOriginal()) as typeof import("@/lib/booking-status")),
   bookingHasCapacityOverride: vi.fn().mockReturnValue(false),
 }));
 vi.mock("@/lib/booking-payment-cleanup", () => ({

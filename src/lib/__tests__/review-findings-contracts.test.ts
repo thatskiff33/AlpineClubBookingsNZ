@@ -1344,7 +1344,9 @@ describe("review finding source/schema contracts", () => {
     expect(schema).toContain("stripePaymentIntentId");
     expect(schema).toContain("currency");
     expect(schema).toContain("status");
-    expect(paymentTransactions).toContain("paymentRefund.upsert");
+    // #3640: inserted with ON CONFLICT DO NOTHING, so the insert itself says
+    // whether this writer recorded the refund (the mirror adds only then).
+    expect(paymentTransactions).toContain("paymentRefund.createMany");
     expect(paymentTransactions).toContain("recordStripeRefundLedgerEntry");
     expect(stripeWebhook).toContain("listRefundsForCharge");
     expect(stripeWebhook).toContain("syncRefundsFromStripeCharge");

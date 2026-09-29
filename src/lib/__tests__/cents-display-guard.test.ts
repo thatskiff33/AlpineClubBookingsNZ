@@ -414,7 +414,7 @@ describe("cents-display guard: the declared exemptions", () => {
     }
   });
 
-  it("swaps in the money-MODULE arm, not the narrow one, for the three MONEY_DOMAIN_MODULES overlaps", async () => {
+  it("swaps in the money-MODULE arm, not the narrow one, for the MONEY_DOMAIN_MODULES overlaps", async () => {
     // `LAYERED_FILE` is also a `finance-*` member, so its resolved config must
     // still carry `MONEY_MODULE_RESTRICTIONS` (the broad arm) even though it
     // drops `CENTS_DISPLAY_RESTRICTIONS` — proving the two exemption blocks

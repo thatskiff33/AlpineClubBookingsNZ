@@ -269,6 +269,104 @@ describe("stored preferences still gate delivery (#2548)", () => {
   });
 });
 
+/**
+ * #3672 (delta review D1): `sendToAdmins` says what happened to each
+ * recipient, so a caller holding a once-only claim can tell "an admin has it,
+ * or the email retry cron will send it" from "nobody can receive it".
+ */
+describe("sendToAdmins reports each recipient's fate (#3672)", () => {
+  const treasurers = [
+    enumRole("a@club.test", "FINANCE_ADMIN"),
+    enumRole("b@club.test", "FINANCE_ADMIN"),
+    enumRole("c@club.test", "FINANCE_ADMIN"),
+  ];
+
+  beforeEach(() => {
+    mocks.recordEscalation.mockResolvedValue(undefined);
+  });
+
+  function send(templateName = "admin-group-joiner-started-stay") {
+    return sendToAdmins({
+      subject: "Alert",
+      html: "<p>alert</p>",
+      templateName,
+      preferenceKey: "adminPaymentFailure",
+    });
+  }
+
+  it("counts sent, queued for the retry cron, and not delivered separately", async () => {
+    mocks.findMany.mockResolvedValue(treasurers);
+    mocks.sendEmail
+      .mockResolvedValueOnce({ status: "sent" })
+      .mockRejectedValueOnce(new Error("SMTP down"))
+      .mockResolvedValueOnce({ status: "suppressed" });
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 3,
+      sent: 1,
+      queuedForRetry: 1,
+      notDelivered: 1,
+    });
+  });
+
+  it("counts an environment fault as queued and a confirmed non-production copy as not delivered", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 2));
+    mocks.sendEmail
+      .mockResolvedValueOnce({ status: "withheld_for_environment", reason: "environment_unknown" })
+      .mockResolvedValueOnce({
+        status: "withheld_for_environment",
+        reason: "environment_non_production",
+      });
+
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 2,
+      sent: 0,
+      queuedForRetry: 1,
+      notDelivered: 1,
+    });
+  });
+
+  // A template whose EmailLog keeps no body is never replayed by the cron.
+  it("counts a failure nothing replays as not delivered", async () => {
+    mocks.findMany.mockResolvedValue(treasurers.slice(0, 1));
+    mocks.sendEmail.mockRejectedValueOnce(new Error("SMTP down"));
+
+    await expect(send("admin-email-failure")).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 1,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 1,
+    });
+  });
+
+  it("says when the delivery policy skipped it and when nobody is opted in", async () => {
+    mocks.shouldSendAdminSystemEmail.mockResolvedValueOnce({ send: false, mode: "disabled" });
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: false,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+
+    mocks.findMany.mockResolvedValue([
+      enumRole("a@club.test", "FINANCE_ADMIN", {
+        notificationPreference: { adminPaymentFailure: false },
+      }),
+    ]);
+    await expect(send()).resolves.toEqual({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+  });
+});
+
 
 /**
  * #2761 — the alert nobody may mute.

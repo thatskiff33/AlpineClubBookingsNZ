@@ -29,6 +29,13 @@ import {
   type BookingMoneyReconciliationView,
 } from "@/lib/booking-money-reconciliation-audience";
 import { useClubFormat } from "@/components/club-format-provider";
+import type { GroupSettlementInvoiceDisplay } from "@/lib/group-settlement-invoice-binding";
+import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
+import {
+  InvoiceBlockedNotice,
+  PaidGroupSummary,
+  PendingGroupInvoice,
+} from "@/components/group-booking/pending-group-invoice";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -48,12 +55,33 @@ interface JoinerRow {
    */
   moneyReconciliation: BookingMoneyReconciliationView;
   isMember: boolean;
+  /**
+   * #3672 (`INV-PAY-109`): this joiner pays for their own place — every joiner
+   * of an each-pays group, and a joiner of an organiser-pays group who arrived
+   * after the settlement was paid. Never on the organiser's bill.
+   */
+  paysOwn: boolean;
 }
 
 interface SettlementState {
   status: string;
   amountCents: number;
   paidAt: string | null;
+  /**
+   * #3642: the bank-transfer reference while the settlement waits on its
+   * emailed Internet Banking invoice, else null. Supplied by the server so a
+   * reload shows the pending invoice instead of offering the method picker
+   * again; the settle route refuses a re-size or card switch meanwhile.
+   */
+  internetBankingReference: string | null;
+  /**
+   * #3642: where that invoice has got to — being prepared, failed, raised, or
+   * actually emailed — so the card never says "emailed" before it is. Null
+   * when no invoice is outstanding.
+   */
+  invoiceDisplay: GroupSettlementInvoiceDisplay | null;
+  /** #3642: the last invoice could not be raised; the club is sorting it out. */
+  invoiceBlocked?: boolean;
 }
 
 export interface OrganiserGroupState {
@@ -231,10 +259,11 @@ export function OrganiserGroupBookingCard({
     }
   }
 
-  async function startSettle() {
+  async function startSettle(methodOverride?: SettlePaymentMethod) {
     if (!group) return;
     const usingInternetBanking =
-      internetBankingEnabled && settleMethod === "internet_banking";
+      methodOverride === "internet_banking" ||
+      (internetBankingEnabled && settleMethod === "internet_banking");
     setSettleBusy(true);
     setSettleError("");
     setSettleMessage("");
@@ -353,11 +382,38 @@ export function OrganiserGroupBookingCard({
   const activeJoiners = group.joiners.filter(
     (j) => j.status !== "CANCELLED" && j.status !== "BUMPED"
   );
-  const settledAlready =
-    settleComplete || group.settlement?.status === "SUCCEEDED";
-  const outstandingCents = activeJoiners
-    .filter((j) => j.status === "CONFIRMED" || j.status === "PAYMENT_PENDING")
-    .reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
+  // #3672: the shared "organiser has paid" (server and card agree).
+  const settledAlready = settleComplete || organiserHasPaidSettlement(group.settlement);
+  // #3642: the pending invoice this session just asked for, or the one the
+  // server says is still outstanding — never forgotten on a reload.
+  const pendingReference = settleReference ?? group.settlement?.internetBankingReference ?? null;
+  const pendingInvoiceCents =
+    settleAmountCents ??
+    (group.settlement?.internetBankingReference ? group.settlement.amountCents : null);
+  // Just asked for this session: being prepared. Otherwise the server says.
+  const invoiceDisplay: GroupSettlementInvoiceDisplay = settleReference
+    ? "preparing"
+    : (group.settlement?.invoiceDisplay ?? "preparing");
+  // #3672: joiners on the organiser's bill. One who joined after it was paid
+  // pays for themselves and is never counted as owed by the organiser.
+  const organiserPaidJoiners = activeJoiners.filter((j) => !j.paysOwn);
+  const paysOwnJoiners = activeJoiners.filter((j) => j.paysOwn);
+  // #3642: joiners the organiser has not paid for — while an invoice is
+  // outstanding, the ones not on it (PAYMENT_PENDING). Never hidden behind
+  // "everyone is confirmed".
+  const unsettledJoiners = organiserPaidJoiners.filter(
+    (j) => j.status === "PAYMENT_PENDING" || j.status === "CONFIRMED"
+  );
+  // Not after a settle this session, which just committed them.
+  const notOnInvoice = settleReference
+    ? []
+    : organiserPaidJoiners.filter((j) => j.status === "PAYMENT_PENDING");
+  const sumCents = (rows: JoinerRow[]) => rows.reduce((sum, j) => sum + (j.priceCents ?? 0), 0);
+  const invoiceTotalChanged =
+    !settleReference &&
+    pendingInvoiceCents != null &&
+    sumCents(organiserPaidJoiners.filter((j) => j.status === "CONFIRMED")) !== pendingInvoiceCents;
+  const outstandingCents = sumCents(unsettledJoiners);
 
   return (
     <Card>
@@ -493,50 +549,36 @@ export function OrganiserGroupBookingCard({
           )}
         </div>
 
-        {isOrganiserPays ? (
+        {isOrganiserPays && !isCancelled /* nothing to settle once cancelled */ ? (
           <div className="space-y-3 rounded-md border border-border p-3">
             <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (
-              <div className="flex items-start gap-2 text-success-11">
-                <Check className="h-5 w-5 shrink-0" />
-                <p className="text-sm font-medium">
-                  Paid in full
-                  {group.settlement
-                    ? ` — ${formatCents(group.settlement.amountCents, format)}`
-                    : ""}
-                  . Everyone in your group is confirmed.
-                </p>
-              </div>
-            ) : settleReference ? (
-              <div className="space-y-3">
-                <div className="flex items-start gap-2 text-success-11">
-                  <Check className="h-5 w-5 shrink-0" />
-                  <p className="text-sm font-medium">
-                    Invoice emailed
-                    {settleAmountCents != null
-                      ? ` — ${formatCents(settleAmountCents, format)}`
-                      : ""}
-                    .
-                  </p>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {/* #2919 review: every token this body may carry, not just the
-                      payment reference, and this booking's own lodge. */}
-                  {renderClientBookingMessage({
-                    template:
-                      bookingMessages["groupBooking.invoiceSent.description"],
-                    fallback:
-                      "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
-                    clubTokens: messageTokens,
-                    lodgeName,
-                    data: { paymentReference: settleReference },
-                  })}
-                </p>
-                <div className="rounded-md border border-border p-3 text-sm">
-                  <p className="font-medium text-foreground">Payment reference</p>
-                  <p className="mt-1 font-mono text-foreground">{settleReference}</p>
-                </div>
-              </div>
+              <PaidGroupSummary
+                amountCents={group.settlement?.amountCents ?? null}
+                settleComplete={settleComplete}
+                notPaidFor={unsettledJoiners.map((j) => j.name)}
+                paysOwn={paysOwnJoiners.map((j) => j.name)}
+              />
+            ) : pendingReference ? (
+              <PendingGroupInvoice
+                reference={pendingReference}
+                amountCents={pendingInvoiceCents}
+                display={invoiceDisplay}
+                notOnInvoice={notOnInvoice.map((j) => j.name)}
+                totalChanged={invoiceTotalChanged}
+                busy={settleBusy}
+                onSendUpdated={() => startSettle("internet_banking")}
+                // #2919 review: every token this body may carry, not just the
+                // payment reference, and this booking's own lodge.
+                invoiceSentDescription={renderClientBookingMessage({
+                  template: bookingMessages["groupBooking.invoiceSent.description"],
+                  fallback:
+                    "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment.",
+                  clubTokens: messageTokens,
+                  lodgeName,
+                  data: { paymentReference: pendingReference },
+                })}
+              />
             ) : settleClientSecret && settleAmountCents != null ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
@@ -562,6 +604,7 @@ export function OrganiserGroupBookingCard({
               </div>
             ) : (
               <>
+                {group.settlement?.invoiceBlocked ? <InvoiceBlockedNotice /> : null}
                 <p className="text-sm text-muted-foreground">
                   Pay for every joiner&apos;s beds in one combined payment. Their spots are
                   confirmed and held while you settle.
@@ -623,7 +666,7 @@ export function OrganiserGroupBookingCard({
                   </div>
                 ) : null}
 
-                <Button onClick={startSettle} disabled={settleBusy}>
+                <Button onClick={() => startSettle()} disabled={settleBusy}>
                   {settleBusy
                     ? "Preparing..."
                     : internetBankingEnabled && settleMethod === "internet_banking"
@@ -636,7 +679,10 @@ export function OrganiserGroupBookingCard({
               </>
             )}
             {settleError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div
+                role="alert"
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
                 {settleError}
               </div>
             ) : null}

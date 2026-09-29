@@ -17,19 +17,19 @@
 import { BookingStatus, Prisma } from "@prisma/client";
 import { hashActionToken, isActionTokenFormat } from "@/lib/action-tokens";
 import { prisma } from "@/lib/prisma";
+import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 
-/** A paid booking and a completed stay are both "already paid" for link purposes. */
-const PAID_LIKE_STATUSES: readonly BookingStatus[] = [
-  BookingStatus.PAID,
-  BookingStatus.COMPLETED,
-];
-
+/**
+ * A paid booking and a completed stay are both "already paid" for link
+ * purposes — the same answer as everywhere else (`isPaidLikeBookingStatus`,
+ * #3638), not a copy of it.
+ */
 export function isPaidLikeStatus(status: BookingStatus): boolean {
-  return PAID_LIKE_STATUSES.includes(status);
+  return isPaidLikeBookingStatus(status);
 }
 
 /** Booking statuses a payment link can still pay for. */
-const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
+export const PAYMENT_LINK_PAYABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,
@@ -43,7 +43,11 @@ export function isPayableByLink(status: BookingStatus): boolean {
 
 export class PaymentLinkError extends Error {
   status: number;
-  /** A machine-readable reason the page can branch on (#3567), when there is one. */
+  /**
+   * A machine-readable refusal code, when the refusal has one a client
+   * recognises (#3567: `PAYMENT_PROCESSING`; #3638: `SWITCHED_TO_INTERNET_BANKING`).
+   * The route sends it beside the message.
+   */
   code?: string;
 
   constructor(message: string, status: number, code?: string) {

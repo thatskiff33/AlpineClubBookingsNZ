@@ -142,3 +142,15 @@ export const UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE =
 /** What a member is told when the club's currency cannot be charged by card. */
 export const UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE =
   "Card payments are not available for this club's currency at the moment. Nothing was charged. Please contact the club to arrange payment.";
+
+/**
+ * The member refusal as a coded body (#3635), for a route whose client tells
+ * its 409s apart by `code` — the additional-payment card, where a bare 409 used
+ * to read as "already paid".
+ */
+export const UNSUPPORTED_CHARGE_CURRENCY_CODE = "UNSUPPORTED_CHARGE_CURRENCY" as const;
+
+export const UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY = Object.freeze({
+  code: UNSUPPORTED_CHARGE_CURRENCY_CODE,
+  error: UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE,
+});

@@ -29,6 +29,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import type { GroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 
 /**
  * One stay night, or the join deadline, rendered as the CALENDAR DAY it is
@@ -73,17 +74,12 @@ function formatStayDay(value: string, format: ClubDateFormat): string {
 
 type PaymentMethod = "stripe" | "internet_banking";
 
-interface GroupSummary {
-  code: string;
-  status: string;
-  paymentMode: "EACH_PAYS_OWN" | "ORGANISER_PAYS";
-  organiserFirstName: string;
-  lodgeName: string;
-  checkIn: string;
-  checkOut: string;
-  joinDeadline: string | null;
-  isJoinable: boolean;
-}
+/**
+ * What the summary route sends: the shared, derived type (#3672 review), so a
+ * field the route stops sending fails to compile here rather than reading as
+ * `undefined` in the browser.
+ */
+type GroupSummary = GroupBookingSummaryResponse;
 
 interface FamilyMember extends BookingFamilyMember {
   id: string;
@@ -117,6 +113,9 @@ export function MemberGroupJoinPanel({
   const [notFound, setNotFound] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // #3672: whether the organiser pays for the place just created — the
+  // server's answer, decided under its lock, not the summary read earlier.
+  const [joinedOrganiserSettled, setJoinedOrganiserSettled] = useState(false);
   const [error, setError] = useState("");
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("stripe");
@@ -211,7 +210,7 @@ export function MemberGroupJoinPanel({
   // The payment-method choice only applies when the joiner pays for their own
   // beds (EACH_PAYS_OWN) and the Internet Banking module is on.
   const showPaymentMethodChoice =
-    summary?.paymentMode === "EACH_PAYS_OWN" && internetBankingEnabled;
+    summary?.joinerPaymentMode === "EACH_PAYS_OWN" && internetBankingEnabled;
 
   async function submit() {
     setSubmitting(true);
@@ -253,6 +252,7 @@ export function MemberGroupJoinPanel({
         router.push(`/bookings/${data.bookingId}`);
         return;
       }
+      setJoinedOrganiserSettled(data.organiserSettled === true);
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to join right now.");
@@ -340,7 +340,7 @@ export function MemberGroupJoinPanel({
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  {summary.paymentMode === "ORGANISER_PAYS"
+                  {joinedOrganiserSettled
                     ? `${summary.organiserFirstName} is settling the beds for this group, so there's nothing more to pay. We've added you to the group.`
                     : "You've been added to the group."}
                 </p>
@@ -353,9 +353,11 @@ export function MemberGroupJoinPanel({
             <>
               <p className="text-sm text-muted-foreground">
                 Add yourself and your family to {summary.organiserFirstName}&apos;s group.
-                {summary.paymentMode === "ORGANISER_PAYS"
+                {summary.joinerPaymentMode === "ORGANISER_PAYS"
                   ? ` ${summary.organiserFirstName} is paying for the group, so you won't be charged.`
-                  : " You'll be taken to pay for your beds after joining."}
+                  : summary.paymentMode === "ORGANISER_PAYS"
+                    ? ` ${summary.organiserFirstName} has already paid for the group, so you'll pay for your own beds after joining.`
+                    : " You'll be taken to pay for your beds after joining."}
               </p>
 
               <div className="space-y-2">
@@ -468,7 +470,7 @@ export function MemberGroupJoinPanel({
               <Button onClick={submit} disabled={!canSubmit} className="w-full">
                 {submitting
                   ? "Joining..."
-                  : summary.paymentMode === "ORGANISER_PAYS"
+                  : summary.joinerPaymentMode === "ORGANISER_PAYS"
                     ? "Join group"
                     : showPaymentMethodChoice && paymentMethod === "internet_banking"
                       ? "Join (invoice by email)"

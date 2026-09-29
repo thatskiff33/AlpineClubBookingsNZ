@@ -108,7 +108,11 @@ const PROVENANCE_SCANNED_FILES = [
   "src/lib/email-message-notes.ts",
   "src/lib/email-templates/admin-finance.ts",
   "src/lib/email/admin-alerts-finance.ts",
+  // #3638: the second-instrument alert cites #2774's locking reasoning.
+  "src/lib/email/admin-alerts-settlement.ts",
   "src/components/admin/manual-refund-task-queue.tsx",
+  // #3635: the receipt rule cites the #2760/#2773 task row that names the intent.
+  "src/lib/late-capture-xero-receipt.ts",
   // The test files matter as much as the sources. A test docblock is what the next
   // implementor reads before touching this money path, and four of them carried the
   // fabricated "the owner chose to keep it" sentence.

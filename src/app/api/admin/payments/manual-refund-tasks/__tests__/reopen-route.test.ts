@@ -42,6 +42,8 @@ vi.mock("@/lib/manual-refund-task-reopen", () => ({
   MANUAL_PAYMENT_NOTE_MAX: 500,
 }));
 
+import { revalidatePath } from "next/cache";
+import { expectRevalidatesPageFile } from "@/lib/__tests__/support/revalidated-page";
 import { POST } from "../[id]/reopen/route";
 
 function request(body: unknown) {
@@ -94,6 +96,12 @@ describe("POST manual-refund-tasks/[id]/reopen (#3498 D2)", () => {
       actingMemberId: "admin-1",
       note: "  Closed by mistake.  ",
     });
+    // #3635: the booking detail page is refreshed - the pattern must name its
+    // file, route group included, or it refreshes nothing.
+    expectRevalidatesPageFile(
+      vi.mocked(revalidatePath),
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
+    );
   });
 
   it("refuses an unconfirmed body, so this is never a single-click accident", async () => {

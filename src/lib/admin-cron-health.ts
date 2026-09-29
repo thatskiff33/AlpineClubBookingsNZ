@@ -24,6 +24,7 @@ type CronHealthStatus =
   | "stale"
   | "failed"
   | "skipped"
+  | "warning"
   | "missing"
   | "disabled"
   | "untracked"
@@ -351,6 +352,44 @@ export function getAdminCronJobDefinitions(
       {
         jobName: "payment-recovery",
         label: "Stripe payment recovery",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // #3663. A task of the 15-minute payments cycle (`payments-cron-runner`),
+        // recorded under its own name so a missing release is visible.
+        jobName: "internet-banking-hold-release",
+        label: "Expired Internet Banking hold release",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // #3663. The third task of the same 15-minute payments cycle.
+        jobName: "xero-waiting-invoice-reaper",
+        label: "Stale waiting Xero invoice reaper",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // #3635. The fourth task of the same cycle: re-announces an OPEN held
+        // late-capture payment whose alert nobody has received yet.
+        jobName: "late-capture-held-alert",
+        label: "Held late payment alert",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
         expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
@@ -709,6 +748,13 @@ function createUnknownJobDefinition(jobName: string): AdminCronJobDefinition {
   };
 }
 
+function runWarning(run: AdminCronRun): string | null {
+  const summary = run.resultSummary;
+  if (!summary || typeof summary !== "object") return null;
+  const warning = (summary as { warning?: unknown }).warning;
+  return typeof warning === "string" && warning ? warning : null;
+}
+
 function classifyCronJob(
   definition: AdminCronJobDefinition,
   runs: AdminCronRun[],
@@ -801,6 +847,18 @@ function classifyCronJob(
       summary: latestSuccess
         ? "Latest run was skipped; the most recent successful run is still within the freshness threshold."
         : "Latest run was skipped and no successful run has been recorded yet.",
+    };
+  }
+
+  // #3663: a SUCCESS row whose task attached a `warning` (item failures it
+  // will retry) — the task ran, so freshness holds, but it is not healthy.
+  const warning = runWarning(latestRun);
+  if (latestRun.status === "SUCCESS" && warning) {
+    return {
+      ...base,
+      status: "warning",
+      severity: "warning",
+      summary: `Latest run completed with a warning: ${warning}`,
     };
   }
 
