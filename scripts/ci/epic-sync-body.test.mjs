@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { validateChangelogFragment } from "./check-pr-changelog-fragment.mjs";
 import { validateConcurrencyDeclaration } from "./check-pr-concurrency-declaration.mjs";
 import { parseArgs, readSyncMerge } from "./epic-sync-body.mjs";
-import { renderEpicSyncPrBody, renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
+import { COMMENT_OPEN, renderEpicSyncPrBody, renderHandSyncPrBody } from "./render-epic-sync-pr-body.mjs";
 
 const BRANCH = "epic/2943-group-trip-hosting";
 const HEAD = "1".repeat(40);
@@ -67,7 +67,7 @@ describe("the hand-opened sync description", () => {
     expect(workflow).not.toContain("Hand resolutions");
 
     for (const body of [hand, workflow]) {
-      expect(body).not.toMatch(/<!--/);
+      expect(body).not.toContain(COMMENT_OPEN);
       expect(body).not.toMatch(/__[A-Z][A-Z0-9_]*__/);
       expect(body).not.toMatch(/\n{3,}/);
     }

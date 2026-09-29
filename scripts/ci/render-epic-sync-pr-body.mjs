@@ -68,6 +68,9 @@ const KNOWN_PLACEHOLDERS = {
 
 const MODES = Object.keys(KNOWN_PLACEHOLDERS);
 
+/** The HTML comment opener, for string searches (see selectMode). */
+export const COMMENT_OPEN = "<!" + "--";
+
 const BRANCH_NAME = /^[\w.\-/]+$/;
 /** A full commit or tree id, as git prints it. */
 export const FULL_SHA = /^[0-9a-f]{40}$/;
@@ -85,9 +88,15 @@ function selectMode(text, mode) {
     out = out.replace(new RegExp(`^<!-- ${tag} -->\\r?\\n([\\s\\S]*?)^<!-- /${tag} -->\\r?\\n`, "gm"), keep);
     out = out.replace(new RegExp(`<!-- ${tag} -->([\\s\\S]*?)<!-- /${tag} -->`, "g"), keep);
   }
-  const stray = out.match(/<!-- \/?[a-z-]+ -->/);
-  if (stray) {
-    throw new Error(`renderEpicSyncPrBody: unbalanced or unknown mode marker ${stray[0]} in the template.`);
+  // Any comment still present is a marker that did not pair up, or a tag this
+  // renderer does not know. A plain string search, not a regex literal: a
+  // literal that opens with the HTML comment token is read as a comment by
+  // Semgrep's parser (JavaScript Annex B), which left this region unscanned.
+  const stray = out.indexOf(COMMENT_OPEN);
+  if (stray !== -1) {
+    const end = out.indexOf("-->", stray);
+    const marker = out.slice(stray, end === -1 ? stray + 40 : end + 3);
+    throw new Error(`renderEpicSyncPrBody: unbalanced or unknown mode marker ${marker} in the template.`);
   }
   return out.replace(/\n{3,}/g, "\n\n");
 }
