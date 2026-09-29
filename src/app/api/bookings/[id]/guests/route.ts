@@ -161,6 +161,7 @@ import {
   pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -241,7 +242,7 @@ export async function POST(
         details: {
           formErrors: [],
           fieldErrors: {
-            guests: [`A booking cannot exceed ${payloadCapacity} guests`],
+            guests: [lodgeGuestLimitMessage(payloadCapacity, (limit) => `A booking cannot exceed ${limit} guests`)],
           },
         },
       },
@@ -412,7 +413,7 @@ export async function POST(
       const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
       if (booking.guests.length + newGuests.length > lodgeCapacity) {
         throw new ApiError(
-          `A booking cannot exceed ${lodgeCapacity} guests`,
+          lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`),
           400,
         );
       }
