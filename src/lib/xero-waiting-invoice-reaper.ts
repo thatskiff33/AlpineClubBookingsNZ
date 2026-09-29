@@ -35,6 +35,7 @@ import {
 import { getPaymentIntent } from "@/lib/stripe";
 import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import {
   STALE_WAITING_PAYMENT_ERROR_CODE,
@@ -77,8 +78,11 @@ const PROVIDER_CAPTURE_UNRECORDED_ALERT_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Stamped on a waiting invoice whose capture Stripe reports and our rows never
- * recorded. It is the alert's claim (a guarded write, so the alert goes once),
- * and it stops further Stripe reads for that row. A later release clears it.
+ * recorded. It stops further Stripe reads for that row, and a later release
+ * clears it. It is NOT the alert's claim (#3635 C4): the alert goes through
+ * the one once-ever rule (`sendAdminAlertOnceEver`), so a stamped row is
+ * offered to it again each run and a send nobody received, or one that threw,
+ * is retried rather than lost behind the stamp.
  */
 const PROVIDER_CAPTURED_UNRECORDED_CODE = "PROVIDER_CAPTURED_UNRECORDED";
 
@@ -291,9 +295,10 @@ async function decideWaitingOperation(params: {
     return "retire";
   }
   if (!failed) return "keep";
-  // An officer has already been told Stripe holds this money; nothing a
-  // further read could add.
-  if (params.alreadyAlerted) return "keep";
+  // Stripe has already been read as holding this money; nothing a further
+  // read could add. Offered to the once-ever alert again, which sends nothing
+  // while its claim holds (#3635 C4).
+  if (params.alreadyAlerted) return "provider-captured-unrecorded";
   if (params.stripeReadsLeft <= 0) return "keep-deferred";
 
   params.onStripeRead();
@@ -328,37 +333,48 @@ async function decideWaitingOperation(params: {
 }
 
 /**
- * Claim-guarded (the stamp is written only onto a row still WAITING with no
- * code), so the alert goes once; best-effort after the claim.
+ * The row stamp (written only onto a row still WAITING with no code) marks the
+ * row as read; the alert itself goes through `sendAdminAlertOnceEver` (#3635
+ * C4), the one rule every once-per-condition money alert shares: kept once an
+ * admin has it or its copy is queued for the retry cron, held a day when
+ * nobody could receive it (muted, nobody opted in, every address suppressed),
+ * given back when the send throws. Never throws.
  */
 async function alertProviderCaptureUnrecorded(capture: {
   id: string;
   paymentIntentId: string;
 }): Promise<void> {
-  const claimed = await prisma.xeroSyncOperation.updateMany({
-    where: { id: capture.id, status: "WAITING_PAYMENT", lastErrorCode: null },
-    data: {
-      lastErrorCode: PROVIDER_CAPTURED_UNRECORDED_CODE,
-      lastErrorMessage:
-        "Stripe reports this payment captured, but it was never recorded here, so this invoice is still waiting.",
-    },
-  });
-  if (claimed.count !== 1) return;
-  logger.error(
-    { ...capture },
-    "Stripe reports a waiting Xero invoice's payment captured, but no capture was ever recorded",
-  );
   try {
-    await sendAdminXeroSyncErrorAlert({
-      errorType: "SUPPLEMENTARY_INVOICE_CAPTURE_UNRECORDED",
-      operation: `Supplementary invoice waiting on payment ${capture.paymentIntentId}`,
-      errorMessage: `Stripe has reported the card payment ${capture.paymentIntentId} as captured for more than three days, but this system never recorded it (the Stripe webhook did not arrive), so its waiting Xero supplementary invoice (outbox operation ${capture.id}) was never released. Stripe holds this money; check the Stripe webhook endpoint and record the payment, which releases the invoice.`,
-      timestamp: new Date(),
+    const stamped = await prisma.xeroSyncOperation.updateMany({
+      where: { id: capture.id, status: "WAITING_PAYMENT", lastErrorCode: null },
+      data: {
+        lastErrorCode: PROVIDER_CAPTURED_UNRECORDED_CODE,
+        lastErrorMessage:
+          "Stripe reports this payment captured, but it was never recorded here, so this invoice is still waiting.",
+      },
     });
+    if (stamped.count === 1) {
+      logger.error(
+        { ...capture },
+        "Stripe reports a waiting Xero invoice's payment captured, but no capture was ever recorded",
+      );
+    }
   } catch (err) {
     logger.error(
       { err, operationId: capture.id },
-      "Failed to send the unrecorded-capture alert",
+      "Failed to mark a waiting Xero invoice's unrecorded capture; alerting anyway",
     );
   }
+  await sendAdminAlertOnceEver({
+    key: `xero-waiting-invoice-capture-unrecorded:${capture.id}`,
+    label: "unrecorded-capture alert",
+    context: { operationId: capture.id, paymentIntentId: capture.paymentIntentId },
+    send: () =>
+      sendAdminXeroSyncErrorAlert({
+        errorType: "SUPPLEMENTARY_INVOICE_CAPTURE_UNRECORDED",
+        operation: `Supplementary invoice waiting on payment ${capture.paymentIntentId}`,
+        errorMessage: `Stripe has reported the card payment ${capture.paymentIntentId} as captured for more than three days, but this system never recorded it (the Stripe webhook did not arrive), so its waiting Xero supplementary invoice (outbox operation ${capture.id}) was never released. Stripe holds this money; check the Stripe webhook endpoint and record the payment, which releases the invoice.`,
+        timestamp: new Date(),
+      }),
+  });
 }
