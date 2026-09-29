@@ -19,7 +19,7 @@ export interface RepairedLateCaptureXeroOutcome {
    */
   recordFailed: string[];
   /**
-   * #2774's double-payment signal: an operator hand-completed the capture's
+   * The record's double-payment signal (`handCompletedAfterRefund`): an operator hand-completed the capture's
    * refund task while this refund ran. Escalated exactly as the webhook does.
    */
   doubleRefundSuspected: string[];
