@@ -70,7 +70,7 @@ export type ConfirmationPostingPlan = {
  * first routed this to `addDaysDateOnly`, which is the same arithmetic but
  * adds an importer to the escape-hatch census that may only ever shrink.
  */
-function morningAfter(storedNight: Date): Date {
+export function morningAfter(storedNight: Date): Date {
   return dateOnlyInstantOf(
     addCalendarDays(calendarDateOfDateOnlyInstant(storedNight), 1),
   );

@@ -21,8 +21,9 @@ export async function recordBookingPriceRebaseHistory({
   moneyBuildUpSelection: BookingMoneyBuildUpSelection;
   xeroInvoiceDiverged: boolean;
   store: Prisma.TransactionClient;
-}): Promise<void> {
-  await store.bookingModification.create({
+}): Promise<{ id: string }> {
+  // #3582: the row's id is what the re-price's ledger lines are anchored on.
+  return store.bookingModification.create({
     data: {
       bookingId,
       memberId: actingMemberId,
@@ -55,5 +56,6 @@ export async function recordBookingPriceRebaseHistory({
       priceDiffCents: 0,
       changeFeeCents: 0,
     },
+    select: { id: true },
   });
 }

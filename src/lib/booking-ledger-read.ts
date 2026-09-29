@@ -13,6 +13,7 @@
 import type { Prisma } from "@prisma/client";
 
 import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
+import type { PostedChargeLine } from "@/lib/booking-ledger-modification-posting";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -89,4 +90,40 @@ export async function findPostedCreditLines(
     where: { bookingId, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
     select: { postingKey: true, amountCents: true },
   });
+}
+
+/**
+ * The charge lines already posted for one booking — guest-nights and the
+ * promotion — with everything a reversal must copy (#3582). An edit reads
+ * these to find the LIVE line for each night it takes away: never one an
+ * earlier edit already reversed. No figure anyone sees comes from it.
+ */
+export async function findPostedChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedChargeLine[]> {
+  const rows = await store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: ["GUEST_NIGHT", "PROMOTION"] } },
+    select: {
+      id: true,
+      kind: true,
+      sign: true,
+      quantity: true,
+      unitCents: true,
+      bookingGuestId: true,
+      nightStart: true,
+      nightEndExclusive: true,
+      rateMembershipTypeId: true,
+      ageTier: true,
+      guestNames: true,
+      narration: true,
+      reversesLineId: true,
+    },
+  });
+  // As above: the database's CHECK makes any sign but 1 or -1 unrepresentable.
+  return rows.map((row) => ({
+    ...row,
+    kind: row.kind === "PROMOTION" ? "PROMOTION" : "GUEST_NIGHT",
+    sign: row.sign === -1 ? -1 : 1,
+  }));
 }
