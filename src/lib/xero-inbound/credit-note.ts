@@ -8,6 +8,7 @@ import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, build
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, getDerivedInboundAllocationRole, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance, resolvePaymentIdsByInvoiceTargets } from "./credit-note-repairs";
+import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 
 export async function reconcileXeroCreditNote(creditNoteId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -223,14 +224,13 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     const creditOwnerMemberId = bookingOwner(payment.booking).memberId;
     if (!creditOwnerMemberId) continue;
 
-    const bookingLabel = payment.bookingId.slice(0, 8);
     const backfilledCredits = await prisma.memberCredit.updateMany({
       where: {
         memberId: creditOwnerMemberId,
         sourceBookingId: payment.bookingId,
         amountCents: creditNoteAmountCents,
         type: CreditType.CANCELLATION_REFUND,
-        description: `Cancellation refund for booking ${bookingLabel}`,
+        description: cancellationCreditDescription(payment.bookingId),
         xeroCreditNoteId: null,
       },
       data: {

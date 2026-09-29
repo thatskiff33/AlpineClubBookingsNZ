@@ -31,3 +31,7 @@ export function readNumber(value: unknown): number | null {
 
   return null;
 }
+
+export function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}

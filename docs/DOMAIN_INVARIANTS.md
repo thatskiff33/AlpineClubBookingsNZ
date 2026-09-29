@@ -34,7 +34,7 @@ description, so you can find the right file without opening more than one.
 | [`analytics-and-privacy.md`](invariants/analytics-and-privacy.md) | `INV-PRIV` | analytics loading, the consent banner, the public Analytics preferences control, the analytics route policy, what leaves this application for Google, what personal data may appear in a log, the audit `category` a writer records and who may therefore read the row |
 | [`membership-lifecycle.md`](invariants/membership-lifecycle.md) | `INV-LIFE` (except `INV-LIFE-062`) | applications and nomination, cancellation, archive and deletion, roles and the admin lock-out guards, seasonal membership type and age tier, family groups, partner and parent/dependant links, email inheritance, inductions, member merge |
 | [`integrations.md`](invariants/integrations.md) | `INV-INT` | webhooks, cron idempotency, provider callbacks, Xero member grouping |
-| [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input |
+| [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input, mocking a money seam in a test that asserts money |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
 | [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 
@@ -217,6 +217,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-041` | Invoice minting is fenced at enqueue, at settle, and in the handler |
 | `INV-PAY-042` | Inbound Xero PAID on a manually settled booking is raised, never ignored |
 | `INV-PAY-043` | Duplicate capture on a cash-settled booking is auto-refunded, not silently kept |
+| `INV-PAY-102` | Card then bank: every card door fenced; inbound raises the conflict |
 | `INV-PAY-044` | Manually settled cancellation yields a durable `ManualRefundTask`, never a card refund |
 | `INV-PAY-045` | Reversal is permitted only while nothing has happened it could not undo |
 | `INV-PAY-046` | An outstanding upward-modification delta is asked about, never silently absorbed or dropped |
@@ -225,6 +226,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
+| `INV-PAY-103` | A card refund adds only newly recorded money, through one writer |
 | `INV-PAY-051` | An unpriceable edit holds the money as one typed review task |
 | `INV-PAY-052` | A replacement SetupIntent retires the previous card; a retired card stays retired |
 | `INV-PAY-073` | Minting a replacement clears the card; a succeeded intent is not proof |
@@ -289,9 +291,13 @@ Prefix `INV-PAY`.
 | `INV-PAY-014` | Stripe paths own PaymentIntents, SetupIntents, refunds, webhooks and recovery operations |
 | `INV-PAY-015` | Internet Banking bookings issue Xero invoices and reconcile through Xero state |
 | `INV-PAY-016` | Internet Banking defaults are non-holding and no-cutoff; an enabled hold releases idempotently |
-| `INV-PAY-017` | Hold-expiry release and its invoice-clearing credit-note outbox row commit in one transaction |
+| `INV-PAY-017` | Hold-expiry release and its allocated invoice-clearing note commit in one transaction |
+| `INV-PAY-107` | An expired hold with money against its invoice is kept, not released |
+| `INV-PAY-108` | A part payment under review is never handed back or credited twice |
 | `INV-PAY-018` | Cancelling never rewrites captured-payment truth; "captured" is decided on ledger evidence |
 | `INV-PAY-019` | Applied credit is conserved across every cancellation branch; restore is structurally idempotent |
+| `INV-PAY-106` | Nothing later re-decides what a cancellation settled: late Stripe notice, repair tool |
+| `INV-PAY-110` | A late capture a treasurer keeps is invoiced and paid in Xero |
 | `INV-PAY-020` | A confirmation reconciles against the member's statement: total minus credit equals settled |
 | `INV-PAY-021` | An unpaid confirmation defers to the invoice and promises nothing about it |
 | `INV-PAY-022` | Unpaid confirmation with applied credit states the netting, from the ledger |
@@ -303,6 +309,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-027` | Payment, refund and credit operations are idempotent across retries, replays and reruns |
 | `INV-PAY-028` | The Stripe webhook dedup claim is a processing lease, not "seen" |
 | `INV-PAY-029` | A FAILED Stripe payment keeps its WAITING_PAYMENT Xero op for 24h |
+| `INV-PAY-104` | Waiting invoice retired only when the pay door closes; captures never silent |
 | `INV-PAY-030` | External provider side effects require clear retry and idempotency behaviour |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
@@ -311,6 +318,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
+| `INV-PAY-109` | Joiners a paid organiser bill does not cover pay for themselves |
 
 ## Member-Guest Consent
 
@@ -851,6 +860,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
 | `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
+| `INV-INT-025` | Resolved in Xero means done: no automatic retry or re-mint |
 
 ## Operations
 
@@ -881,6 +891,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-011` | The dropped column's stored values were meaningless rather than frozen |
 | `INV-OPS-003` | Public CI and local validation must use test/demo credentials or placeholders |
 | `INV-OPS-004` | Production data, backups, live providers and webhooks are not test inputs |
+| `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 
 ## Product Configuration
 

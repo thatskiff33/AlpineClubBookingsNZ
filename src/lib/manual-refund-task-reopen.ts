@@ -3,7 +3,7 @@ import "server-only";
 import { ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { createAuditLog } from "@/lib/audit";
+import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
   MANUAL_PAYMENT_NOTE_MAX,
@@ -229,38 +229,14 @@ export async function reopenManualRefundTask({
       throw new ManualBookingPaymentError(REOPEN_RACED_MESSAGE, 409);
     }
 
-    await createAuditLog(
-      {
-        action: "booking-payment.manual-refund-task.reopen",
-        memberId: actingMemberId,
-        actorMemberId: actingMemberId,
-        subjectMemberId: bookingOwner(task.booking).memberId,
-        targetId: task.bookingId,
-        entityType: "ManualRefundTask",
-        entityId: task.id,
-        category: "payment",
-        // The same severity as the closure it undoes: it moves no money itself,
-        // and it puts a money question back in front of the club.
-        severity: "important",
-        outcome: "success",
-        summary: "Dismissed booking money task put back on the queue",
-        details: trimmedNote,
-        metadata: {
-          taskId: task.id,
-          bookingId: task.bookingId,
-          kind: task.kind,
-          amountCents: task.amountCents,
-          raisedAmountCents: task.raisedAmountCents,
-          // WHOSE decision was undone, and when they took it. Cleared from the
-          // row by the claim above, so this entry is the only place either
-          // survives - which is the whole reason they are recorded here.
-          dismissedByMemberId: task.completedByMemberId,
-          dismissedAt: task.completedAt?.toISOString() ?? null,
-          dismissalNote: task.note,
-        },
-      },
-      tx,
-    );
+    await recordManualRefundTaskReopenAudit({
+      task,
+      subjectMemberId: bookingOwner(task.booking).memberId,
+      actingMemberId,
+      summary: "Dismissed booking money task put back on the queue",
+      details: trimmedNote,
+      store: tx,
+    });
 
     return {
       taskId: task.id,

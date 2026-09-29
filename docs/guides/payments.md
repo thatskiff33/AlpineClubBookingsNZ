@@ -179,7 +179,7 @@ no Xero invoice.
 
 When a booking that was paid in cash is cancelled, there is no card charge to
 reverse, so the system raises a task instead of pretending money moved. It
-appears at the top of this page in the **Money to settle by hand** card, and the
+appears at the top of this page in the **Money to settle** card, and the
 member is told the club will arrange their refund.
 
 1. Pay the member back however the club normally does.
@@ -189,11 +189,36 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
-The card holds three kinds of row and says which is which. The paragraph about
-cash and bank transfers only appears when there is a cash hand-back waiting; the
-one below only appears when there is a booking change to price; and the third,
-described under "Check an amount the club may not have asked for", only appears
-when there is one of those. None of them speaks for the others.
+The card holds several kinds of row and says which is which: a cash hand-back
+(above), a part payment settled in Xero (next), a booking change to price
+("Decide a booking change the system would not price"), an amount the club may
+not have asked for ("Check an amount the club may not have asked for"), and a
+late card payment held for approval. Each kind's explaining paragraph appears
+only when a row of that kind is waiting, and none of them speaks for the others.
+
+### Settle a part payment an officer cancelled as unpaid
+
+When an officer cancels an internet banking booking while Xero shows a payment
+against its invoice that the club cannot hold as account credit — the booking
+belongs to an organisation, or Xero could not give the exact amount — the
+booking is cancelled as unpaid and a row with no amount appears in **Money to
+settle**, with its own paragraph explaining it
+([Internet Banking](internet-banking.md)).
+
+1. Settle the payment in Xero: refund it, or apply it where the club decides.
+2. Clear whatever the invoice still owes in Xero.
+3. Click **Close this item** and say what you did. A note is required. There is
+   no **Mark paid back** on this row, because nothing in the app moves money for
+   it. Closing it also stops the Xero repair tool listing the booking for review.
+
+If Xero later reports the invoice paid — because you cleared the rest, or more
+money arrived — the app does not credit or hand back anything for it by itself,
+because it cannot tell which of that money this row already covers. Instead the
+row says so: "Xero reported this invoice paid on …, with … of cash recorded
+against it". A row you had closed comes back onto the card with that line. Check
+the invoice in Xero, settle anything beyond the part payment, then close the row
+again. The app also tries to email the club, but the line on the row is the
+record, so do not wait for the email.
 
 ### Decide a booking change the system would not price
 
@@ -467,7 +492,7 @@ back and go out later at the full amount.
 So the club does not invoice the extra automatically, and that is deliberate
 rather than an oversight. If it did, and the first invoice then went out at the
 full figure after all, the member would be billed twice for the same change.
-Instead the amount becomes a row in the **Money to settle by hand** card for
+Instead the amount becomes a row in the **Money to settle** card for
 somebody to check.
 
 1. Open the booking's invoices in Xero.
@@ -498,7 +523,8 @@ Sometimes a member pays at the same moment the booking is being cancelled — or
 deleted. That happens both for a booking's own payment and for a payment for a
 change to it. The payment goes through against a booking that is on its way out, and
 Stripe hands the money straight back to the member on its own. Nobody decided that,
-and there is nothing for you to pay back.
+and there is nothing for you to pay back. (That is the default. A club can choose to
+have a treasurer approve these refunds instead — see the next section.)
 
 Those refunds appear on this page in a second card, **Refunded automatically —
 nothing to pay back**, above the filters. It lists the member, the amount, the day
@@ -537,6 +563,62 @@ the money went back and the stay, and it covers the last 30 days.
 4. **If it says it could not be loaded, reload.** A line in place of the card means
    the page could not read the record — not that there is nothing to see. The
    hand-back queue above it is unaffected.
+
+### When your club has a treasurer approve these refunds
+
+On the **Cancellation** policy page, **Payments that arrive after a booking was
+cancelled** can be set to **A treasurer approves each refund** (the default is
+**Refund them automatically**; see [Booking Policies](booking-policies.md)). Only
+someone with **finance edit** access can change it. With approval switched on, a
+payment like the ones above — the booking's own payment or a payment for a change
+to it — is **not** refunded. The money
+stays with the club and the payment appears in **Money to settle**, with a
+line saying it went through after the booking was cancelled. It counts towards the
+waiting-items badge in the sidebar like any other refund task.
+
+1. **Refund to card** sends the payment back to the card it came from, through
+   Stripe, straight away. It is exactly the refund the automatic setting would have
+   made, so it can never be paid twice, even if the setting is changed later or
+   Stripe repeats its notice. If Stripe is unreachable, it is retried automatically
+   and you are told so.
+2. **Close without refunding** closes the item and refunds nothing, for example
+   when the cancellation was a mistake and the booking is being put back. A note is
+   required. A closed item can be reopened later, like any other dismissed item.
+   **The club keeps the money, and the app records it in Xero** the way it records
+   any card payment: an invoice for what the card paid, dated the day Stripe took
+   the money, paid from the Stripe bank account on that day, so it reconciles with
+   the Stripe payout. For a payment for a change to a booking Xero had invoiced,
+   that is the change's own invoice. Otherwise it is a separate invoice reading
+   *Payment kept after cancellation*, on your hut-fees income account, billed to
+   whoever the booking's invoices go to: the member, or the organisation for an
+   organisation's booking. The booking's original invoice, and any note that
+   cleared it when the booking was cancelled, are left as they are, so the money
+   is counted once. Any refund of it, including one you made in the Stripe
+   dashboard, is recorded as an ordinary refund credit note against it, dated the
+   day the refund left Stripe. You do not need to record anything in Xero
+   yourself. If you reopen the item and then refund it, an invoice not yet sent
+   is withdrawn, and one already sent is credited back by the refund. A payment
+   Xero never received, because it was refunded before its invoice went out, gets
+   no refund note at all, and the nightly check for missing refund notes does not
+   ask for one.
+   **If Xero could not take the invoice and you recorded it by hand** and marked
+   the item *Resolved in Xero*, the app treats it as done. It never sends that
+   invoice, and it raises no refund note for the payment either: record any
+   refund of it by hand in Xero too. The Xero repair tool reminds you when one
+   has been refunded.
+3. **If you already refunded it in the Stripe dashboard**, use **Close without
+   refunding** and say so in the note. Xero then gets the payment and its refund
+   note, which net to nothing, so Xero matches what went through Stripe.
+   **Refund to card** refuses a payment that has already
+   been refunded, fully or in part, so it cannot refund it a second time.
+
+Once an item exists for a payment, it decides that payment. Switching the setting
+back to automatic does not refund a payment that is waiting for you, or one you
+chose to keep. Admins who receive payment alerts are emailed once when a payment
+is held (*Late payment held for approval*, naming the booking and the amount), and
+the item and the sidebar badge stay until someone decides it. A Full Admin can find each one in the audit log as a
+`booking.payment.late_capture_refund_held` entry, and each approved refund as
+`booking.payment.refunded_after_cancellation`.
 
 ### When you have already paid a late capture back yourself
 
@@ -597,6 +679,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
 | Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
+| Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 

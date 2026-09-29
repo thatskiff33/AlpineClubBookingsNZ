@@ -13,7 +13,11 @@ const mocks = vi.hoisted(() => ({
   getPaymentIntent: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   reconcilePaymentAggregates: vi.fn(),
-  queueSupersededAdditionalIntentCancellations: vi.fn(),
+  // #3341 (INV-OPS-015): the supersede runs for REAL; these are its leaves - the
+  // ledger read of asks to retire, and the durable + immediate cancel.
+  supersedeRead: vi.fn(),
+  enqueueCancel: vi.fn(),
+  cancelNow: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -25,9 +29,14 @@ vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
   reconcilePaymentAggregates: mocks.reconcilePaymentAggregates,
 }));
-vi.mock("@/lib/booking-payment-cleanup", () => ({
-  queueSupersededAdditionalIntentCancellations:
-    mocks.queueSupersededAdditionalIntentCancellations,
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    paymentTransaction: { findMany: (...a: unknown[]) => mocks.supersedeRead(...a) },
+  },
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) => mocks.enqueueCancel(...a),
+  runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
 }));
 
 import {
@@ -51,7 +60,9 @@ beforeEach(() => {
     client_secret: "pi_chf_secret",
   });
   mocks.upsertPaymentIntentTransaction.mockResolvedValue({});
-  mocks.queueSupersededAdditionalIntentCancellations.mockResolvedValue([]);
+  mocks.supersedeRead.mockResolvedValue([]);
+  mocks.enqueueCancel.mockResolvedValue({ id: "op-cancel-1" });
+  mocks.cancelNow.mockResolvedValue("succeeded");
   mocks.reconcilePaymentAggregates.mockResolvedValue(null);
 });
 
@@ -121,22 +132,52 @@ describe("reissueAdditionalIntentInClubCurrency", () => {
       reason: "edit_financial_review_charge",
       stripeCustomerId: "cus_1",
     });
-    expect(mocks.queueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
-      format: CLUB_FORMAT_TEST_OTHER,
-      bookingId: "bk1",
-      paymentId: "p1",
-      newPaymentIntentId: "pi_chf",
-    });
+    // The real supersede looks for every other live ask on the payment - never
+    // the one just minted.
+    expect(mocks.supersedeRead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentId: "p1",
+          kind: PaymentTransactionKind.ADDITIONAL,
+          stripePaymentIntentId: { not: "pi_chf" },
+        }),
+      }),
+    );
     expect(mocks.reconcilePaymentAggregates).toHaveBeenCalledWith({ paymentId: "p1" });
 
     const order = (m: { mock: { invocationCallOrder: number[] } }) => m.mock.invocationCallOrder[0]!;
     expect(order(mocks.createPaymentIntent)).toBeLessThan(order(mocks.upsertPaymentIntentTransaction));
     expect(order(mocks.upsertPaymentIntentTransaction)).toBeLessThan(
-      order(mocks.queueSupersededAdditionalIntentCancellations),
+      order(mocks.supersedeRead),
     );
-    expect(order(mocks.queueSupersededAdditionalIntentCancellations)).toBeLessThan(
+    expect(order(mocks.supersedeRead)).toBeLessThan(
       order(mocks.reconcilePaymentAggregates),
     );
+  });
+
+  it("cancels the stale ask it replaces, durably first and then at once (#3341: the supersede runs for real)", async () => {
+    mocks.supersedeRead.mockResolvedValue([
+      { id: "tx_nzd", stripePaymentIntentId: "pi_nzd", amountCents: 4500 },
+    ]);
+
+    await reissueAdditionalIntentInClubCurrency({
+      format: CLUB_FORMAT_TEST_OTHER,
+      bookingId: "bk1",
+      paymentId: "p1",
+      staleIntentId: "pi_nzd",
+      ask,
+      reason: "edit_financial_review_charge",
+      customerId: "cus_1",
+    });
+
+    expect(mocks.enqueueCancel).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "p1",
+      paymentTransactionId: "tx_nzd",
+      paymentIntentId: "pi_nzd",
+      amountCents: 4500,
+    });
+    expect(mocks.cancelNow).toHaveBeenCalledWith("op-cancel-1", CLUB_FORMAT_TEST_OTHER);
   });
 
   it("refuses a club currency without two decimal places before minting anything", async () => {
@@ -174,7 +215,7 @@ describe("reissueRaisedAskIfCurrencyChanged", () => {
     expect(mocks.getPaymentIntent).toHaveBeenCalledWith("pi_live");
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
-    expect(mocks.queueSupersededAdditionalIntentCancellations).not.toHaveBeenCalled();
+    expect(mocks.supersedeRead).not.toHaveBeenCalled();
   });
 
   it("re-issues the raised ask in the club's currency when the live intent is in another, keeping the intent's customer", async () => {

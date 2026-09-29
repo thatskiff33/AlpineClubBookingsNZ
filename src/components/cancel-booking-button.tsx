@@ -20,6 +20,10 @@ import {
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  ForcedCreditRefundNote,
+  NoRefundablePaymentNote,
+} from "@/components/cancel-booking-payment-notes";
 
 interface CancelPreview {
   refundAmountCents: number;
@@ -37,6 +41,18 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
+  /**
+   * The refund method the cancel will use whatever is chosen — "credit" for an
+   * internet banking payment, decided in `cancel-refund-method.ts` and returned
+   * by the preview. When set, the dialog shows only that option.
+   */
+  refundMethodForced?: "credit" | null;
+  /**
+   * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
+   * so an officer's cancel treats the booking as unpaid and the treasurer
+   * settles that payment by hand.
+   */
+  paymentSettledByHand?: boolean;
 }
 
 export function CancelBookingButton({
@@ -184,7 +200,7 @@ export function CancelBookingButton({
       }
       const data: CancelPreview = await res.json();
       setPreview(data);
-      setRefundMethod("card");
+      setRefundMethod(data.refundMethodForced ?? "card");
       setStep("preview");
     } catch {
       setErrorMsg("Failed to load cancellation details");
@@ -425,9 +441,7 @@ export function CancelBookingButton({
 
         {!preview.hasPayment ? (
           <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">
-              No payment has been taken for this booking. No refund applies.
-            </p>
+            <NoRefundablePaymentNote settledByHand={preview.paymentSettledByHand} />
             {preview.creditRestoredCents > 0 && (
               <p className="text-sm text-success-11">
                 {formatCents(preview.creditRestoredCents, format)} of previously applied
@@ -456,7 +470,14 @@ export function CancelBookingButton({
                 back to {onBehalfOfMember ? "the member" : "you"} directly.
               </p>
             )}
-            {!preview.manualRefund && hasCardRefund && (
+            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "credit" && (
+              <ForcedCreditRefundNote
+                creditRefundAmountCents={preview.creditRefundAmountCents}
+                creditRefundPercentage={preview.creditRefundPercentage}
+                format={format}
+              />
+            )}
+            {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">
                 <p className="font-medium text-muted-foreground">Choose refund method:</p>
                 <label className="flex items-start gap-2 cursor-pointer">
