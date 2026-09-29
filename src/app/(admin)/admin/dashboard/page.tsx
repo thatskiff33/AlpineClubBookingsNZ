@@ -363,8 +363,8 @@ export default async function AdminDashboardPage() {
     getPermissionMatrix(),
     clubFormat(),
   ]);
-  // #3372: exact cents, never `money.dollars` - a line of two rounded figures
-  // can disagree with the headline by a dollar.
+  // #3372: exact cents, never `money.dollars`, here and on the headline - a
+  // rounded figure can disagree with the line beneath it by a dollar.
   const netCollectedBreakdown = formatPaidRefundedBreakdown(
     stats.netCollectedThisMonth.capturedGrossCents,
     stats.netCollectedThisMonth.refundedCents,
@@ -732,13 +732,13 @@ export default async function AdminDashboardPage() {
                     Net Collected This Month
                   </div>
                   {/* #3372: NET of refunds and credits, the shape #3364 gave
-                      the payments board - gross and refunded print beneath, in
-                      exact cents, so the arithmetic is on the card. The subline
+                      the payments board - headline, gross and refunded all in
+                      exact cents, so the arithmetic on the card adds up. The subline
                       makes no claim about when money arrived: the month is the
                       one each payment record was created in. */}
                   <div className="text-right">
                     <div className="text-xl font-semibold text-foreground">
-                      {money.dollars(stats.netCollectedThisMonth.netCollectedCents)}
+                      {money.cents(stats.netCollectedThisMonth.netCollectedCents)}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       payments recorded this month, less refunds and credits on them

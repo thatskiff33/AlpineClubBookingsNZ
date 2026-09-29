@@ -263,11 +263,12 @@ describe("admin dashboard officer key cards", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    // $130.00 captured, $65.00 refunded → $65 net. The headline renders whole
-    // dollars (`money.dollars`), so `$65` is the headline and `$130` may appear
-    // only in the breakdown line, never as the headline.
-    expect(html).toContain(">$65</div>");
-    expect(html).not.toContain(">$130</div>");
+    // $130.00 captured, $65.00 refunded → $65.00 net. The headline is exact
+    // cents (`money.cents`), like the breakdown beneath it, so the card's
+    // arithmetic adds up; `$130.00` may appear only in the breakdown line.
+    expect(html).toContain(">$65.00</div>");
+    expect(html).not.toContain(">$65</div>");
+    expect(html).not.toContain(">$130.00</div>");
     // The breakdown is EXACT cents, never two rounded figures that could
     // disagree with the headline by a dollar.
     expect(html).toContain(">$130.00 paid, $65.00 refunded or credited</p>");
@@ -307,7 +308,7 @@ describe("admin dashboard officer key cards", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(html).toContain(">$1,234</div>");
+    expect(html).toContain(">$1,234.00</div>");
     expect(html).not.toContain(" paid, ");
     expect(html).not.toContain("refunded or credited");
   });
