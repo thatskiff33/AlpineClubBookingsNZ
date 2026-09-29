@@ -224,7 +224,7 @@ describe("the lodge setup wizard's Capacity step and Finish (#3407)", () => {
     const field = (await screen.findByLabelText(
       "Capacity (maximum guests)",
     )) as HTMLInputElement;
-    expect(field.value).toBe("12");
+    await waitFor(() => expect(field.value).toBe("12"));
 
     fireEvent.change(field, { target: { value: "18" } });
     fireEvent.click(screen.getByRole("button", { name: "Save and continue" }));
@@ -243,7 +243,10 @@ describe("the lodge setup wizard's Capacity step and Finish (#3407)", () => {
     stubWizardFetch({ bedAllocation: false, savedCapacity: 12, setUpForBookings: true, calls });
     render(<LodgeSetupWizardPage />);
     await finishIdentity();
-    await screen.findByLabelText("Capacity (maximum guests)");
+    const field = (await screen.findByLabelText(
+      "Capacity (maximum guests)",
+    )) as HTMLInputElement;
+    await waitFor(() => expect(field.value).toBe("12"));
     fireEvent.click(screen.getByRole("button", { name: "Save and continue" }));
 
     expect(await screen.findByText("Seasons & rates")).toBeInTheDocument();

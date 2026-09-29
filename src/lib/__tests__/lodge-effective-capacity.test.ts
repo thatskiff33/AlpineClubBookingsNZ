@@ -324,7 +324,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     "src/app/(admin)/admin/lodges/[id]/page.tsx",
     // #3407: Add lodge and the setup wizard's Capacity step are two more
     // editors of the field, and the create route enforces the same bounds.
-    "src/app/(admin)/admin/lodges/[id]/setup/page.tsx",
+    "src/app/(admin)/admin/lodges/[id]/setup/_components/wizard-capacity.tsx",
     "src/app/(admin)/admin/lodges/page.tsx",
     "src/app/api/admin/lodges/route.ts",
     "src/app/api/admin/lodge-settings/route.ts",

@@ -15,10 +15,8 @@ import {
   requireCalendarDate,
 } from "@/lib/club-time";
 import { formatCalendarDayOnly } from "@/lib/date-only";
-import {
-  LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
-  isLodgeSetUpForBookings,
-} from "@/lib/lodge-booking-readiness";
+import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
+import { LodgeNotSetUpNotice } from "@/components/lodge-not-set-up-notice";
 
 /**
  * A day button's accessible name, spelled out in full — long weekday, long month
@@ -330,18 +328,8 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
    * a rendering for that.
    */
   const lodgeCapacity = availability.capacity;
-
-  /**
-   * The lodge has no capacity at all: nobody has set how many guests it can
-   * take (`unconfigured_lodge`, #3407). Every night would otherwise compute as
-   * zero free beds and read "Waitlist" or "Full" — an invitation the server
-   * refuses before the waitlist is ever reached, because a party of one already
-   * exceeds a limit of zero. The owner's decision (14 Sep 2026) is that the
-   * calendar says the lodge is not set up yet instead, and offers no night.
-   * Only a RESOLVED zero counts: an unloaded capacity stays "not loaded".
-   */
-  const lodgeNotSetUp =
-    lodgeCapacity !== null && !isLodgeSetUpForBookings(lodgeCapacity);
+  // #3407: a RESOLVED zero is a lodge with no capacity; see LodgeNotSetUpNotice. Unloaded stays unloaded.
+  const lodgeNotSetUp = lodgeCapacity !== null && !isLodgeSetUpForBookings(lodgeCapacity);
 
   // The CLUB's calendar day, as a date-only string, so every selectability
   // comparison stays a lexicographic (== chronological) compare of `yyyy-MM-dd`
@@ -491,26 +479,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       </div>
 
       <div aria-live="polite" className="text-sm text-muted-foreground">
-        {lodgeNotSetUp
-          ? null
-          : selecting === "checkIn"
-            ? "Select check-in date"
-            : "Select check-out date"}
+        {lodgeNotSetUp ? null : selecting === "checkIn" ? "Select check-in date" : "Select check-out date"}
       </div>
 
-      {/*
-        #3407: permanently mounted so the live region exists before its content
-        does — a polite region injected already-populated is dropped by some
-        screen-reader/browser pairings.
-      */}
-      <div role="status" data-testid="lodge-not-set-up">
-        {lodgeNotSetUp ? (
-          <p className="rounded-md border border-warning-7 bg-warning-muted px-3 py-2 text-sm text-warning">
-            {LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE} No dates can be booked here
-            until it is.
-          </p>
-        ) : null}
-      </div>
+      <LodgeNotSetUpNotice show={lodgeNotSetUp} />
 
       <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
         {formatClubWeekdayHeaders(clubTime.format).map((d) => (
@@ -593,11 +565,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
                   : " — waitlist only"
                 : "";
           const dayLabel =
-            (lodgeNotSetUp
-              ? `${dateLabel}, lodge not set up for bookings yet`
-              : role === "unreachable"
-                ? `${dateLabel}, unavailable`
-                : `${dateLabel}, ${occupancyPhrase}${rolePhrase}`) +
+            (lodgeNotSetUp ? `${dateLabel}, lodge not set up for bookings yet` : role === "unreachable"
+              ? `${dateLabel}, unavailable`
+              : `${dateLabel}, ${occupancyPhrase}${rolePhrase}`) +
             retroSuffix +
             seasonSuffix +
             selectionSuffix;
@@ -669,8 +639,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         })}
       </div>
 
-      {/* Availability legend — swatches mirror the token-driven heat above.
-          Hidden at a lodge that is not set up: it has no heat to explain. */}
+      {/* Availability legend — swatches mirror the token-driven heat above; none at a lodge not set up */}
       {lodgeNotSetUp ? null : (
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="flex items-center gap-1">
