@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import {
   LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
   isLodgeSetUpForBookings,
@@ -93,6 +94,10 @@ describe("lodgeGuestLimitMessage — the refusal every party-size door shows", (
   The shape it polices: a template literal saying a party exceeds / is larger
   than a limit that interpolates a CAPACITY value directly. Inside the helper's
   callback the interpolation is `${limit}`, which this does not match.
+
+  Comments are stripped first (the shared `stripComments`): an odd number of
+  backticks in a comment would otherwise flip the literal pairing for the rest
+  of the file, and a comment naming the helper would count as a door.
 */
 describe("no party-size refusal interpolates a capacity directly (#3407)", () => {
   function sourceFiles(dir: string): string[] {
@@ -124,17 +129,24 @@ describe("no party-size refusal interpolates a capacity directly (#3407)", () =>
     const offenders: string[] = [];
     let helperCalls = 0;
     for (const file of files) {
-      const source = readFileSync(file, "utf8");
+      const source = stripComments(readFileSync(file, "utf8"));
       for (const literal of violations(source)) {
         offenders.push(`${relative(process.cwd(), file).split("\\").join("/")}: ${literal}`);
       }
-      helperCalls += (source.match(/lodgeGuestLimitMessage\(/g) ?? []).length;
+      // Call sites only: the helper's own definition is not a door.
+      if (!file.endsWith("lodge-booking-readiness.ts")) {
+        helperCalls += (source.match(/lodgeGuestLimitMessage\(/g) ?? []).length;
+      }
     }
     expect(offenders).toEqual([]);
-    // Vacuity guard: the sixteen doors this issue converted (fourteen member
-    // and officer refusals, the public school form's client-side one, and the
-    // group-discount policy's minimum-size check).
-    expect(helperCalls).toBeGreaterThanOrEqual(16);
+    // Vacuity guard, over real call sites only (comments stripped, the
+    // definition excluded): the fifteen doors that quote a limit today. This
+    // issue converted sixteen — fourteen member and officer refusals, the
+    // public school form's client-side one, and the group-discount policy's
+    // minimum-size check — and its review then deleted one of them, the
+    // add-guests payload pre-check, which measured the default lodge before
+    // the booking's own lodge was known.
+    expect(helperCalls).toBeGreaterThanOrEqual(15);
   });
 
   it("would flag the pre-#3407 spelling", () => {

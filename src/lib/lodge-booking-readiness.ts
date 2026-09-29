@@ -18,6 +18,14 @@ export const LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE =
   "This lodge is not set up for bookings yet: the club has not set how many guests it can take.";
 
 /**
+ * The same refusal for a check that has no lodge of its own and measures the
+ * club's DEFAULT lodge instead — the group-discount policy's minimum size. An
+ * officer editing a club-wide policy is not at "this lodge".
+ */
+export const DEFAULT_LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE =
+  "The club's default lodge is not set up for bookings yet: the club has not set how many guests it can take, so nothing can be checked against its capacity.";
+
+/**
  * Whether a lodge's RESOLVED capacity can take any booking at all.
  *
  * Keyed on the resolved figure rather than on the `source`, and the two are the
@@ -26,7 +34,11 @@ export const LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE =
  * `lodge-effective-capacity.ts` (minimum `MIN_CONFIGURED_LODGE_CAPACITY`, which
  * is 1) and a bed-derived figure needs at least one active bed. So a resolved 0
  * IS `unconfigured_lodge`; `lodge-booking-readiness.test.ts` pins that
- * equivalence over every source. Reading the number keeps this answerable by
+ * equivalence over every source. That is true of the resolver's LABEL, not
+ * always of the world: the resolver fails closed, turning an unreadable
+ * settings row into no capacity, so a database fault reads as "not set up"
+ * here too. The booking is refused either way; only the stated cause is
+ * imprecise, and the resolver carries no error signal to tell the two apart. Reading the number keeps this answerable by
  * every door that already holds it — including the member calendar, which is
  * sent the number and nothing else.
  */
@@ -43,8 +55,9 @@ export function isLodgeSetUpForBookings(resolvedCapacity: number): boolean {
 export function lodgeGuestLimitMessage(
   resolvedCapacity: number,
   configuredMessage: (limit: number) => string,
+  notSetUpMessage: string = LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
 ): string {
   return isLodgeSetUpForBookings(resolvedCapacity)
     ? configuredMessage(resolvedCapacity)
-    : LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE;
+    : notSetUpMessage;
 }

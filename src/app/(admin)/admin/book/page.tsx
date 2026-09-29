@@ -211,10 +211,9 @@ export default function AdminBookPage() {
    *
    * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
    * party above the lodge's capacity before the waitlist fallback, so at zero
-   * the create still fails — with "a booking cannot exceed 0 guests", which at
-   * least names the cause. Whether such a lodge should be bookable at all is a
-   * product question this issue does not settle; the member path meets the same
-   * refusal.
+   * the create still fails. Since #3407 (owner decision, 14 Sep 2026) the
+   * refusal says the lodge is not set up for bookings yet, and the calendar
+   * offers the officer no night there; the member path is the same.
    */
   const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
   /** Derived once, so the three add-guest affordances cannot disagree. */

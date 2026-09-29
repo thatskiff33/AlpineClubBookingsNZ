@@ -1,6 +1,6 @@
 # File-size allowances for #3407
 
-Nine party-size doors each gain the one import line for
+Eight party-size door files each gain the one import line for
 `lodgeGuestLimitMessage` (`src/lib/lodge-booking-readiness.ts`). The rule and
 its wording live in that module; the only thing left in each door is the call,
 which has to sit beside the check it explains.
