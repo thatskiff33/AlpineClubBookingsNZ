@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // R1 (#1982) regression pin, re-aimed at the mechanism that actually carries the
@@ -230,5 +230,32 @@ describe("a lodge with no capacity quotes no limit of zero on the public forms (
     expect(
       (screen.getByRole("button", { name: submitName }) as HTMLButtonElement).disabled,
     ).toBe(false);
+  });
+
+  it("school bookings: a group over the soft cap is not told about 'the lodge's 0'", async () => {
+    mockFetch({ lodges: [], defaultLodgeCapacity: 0 });
+    const { container } = render(<SchoolBookingForm club={embedClub()} />);
+    const count = await waitFor(() => {
+      const input = container.querySelector<HTMLInputElement>('input[id^="count-"]');
+      expect(input).not.toBeNull();
+      return input as HTMLInputElement;
+    });
+    fireEvent.change(count, { target: { value: "90" } });
+
+    await waitFor(() => expect(container.textContent).toContain("Total guests: 9"));
+    expect(container.textContent).not.toContain("School groups are capped at");
+  });
+
+  it("CONTROL school bookings: the same group at a configured lodge is told about the soft cap", async () => {
+    mockFetch({ lodges: [], defaultLodgeCapacity: DB_CAPACITY });
+    const { container } = render(<SchoolBookingForm club={embedClub()} />);
+    const count = await waitFor(() => {
+      const input = container.querySelector<HTMLInputElement>('input[id^="count-"]');
+      expect(input).not.toBeNull();
+      return input as HTMLInputElement;
+    });
+    fireEvent.change(count, { target: { value: "90" } });
+
+    await waitFor(() => expect(container.textContent).toContain("School groups are capped at"));
   });
 });
