@@ -349,7 +349,7 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 // below is where that judgement is made, once, in writing, per file — exactly
 // the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
 const CENTS_DISPLAY_MESSAGE =
-  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. A raw CSV or JSON export cell, and an amount prefixed with a provider's own currency code, are formatCentsPlain's output too. Only a genuinely different output, one neither helper returns, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason that names the difference in terms a reader can check against the code. The list is checked by money-cents-guard.test.ts. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. A raw CSV or JSON export cell, and an amount prefixed with a provider's own currency code, are formatCentsPlain's output too. Only a genuinely different output, one neither helper returns, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason that names the difference in terms a reader can check against the code. The list is checked by cents-display-guard.test.ts. Never an eslint-disable comment.";
 
 // #3533 — the OTHER way a person is shown the storage form: not a bad
 // division, but no division at all. `${refundAmountCents} cents` in an audit
@@ -367,7 +367,7 @@ const CENTS_DISPLAY_MESSAGE =
 // (`" cents-per-night rows"` is a row count, not an amount). The negative
 // fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
 const CENTS_IN_PROSE_MESSAGE =
-  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by cents-display-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
 
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
@@ -422,7 +422,7 @@ export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
 );
 
 /**
- * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
+ * The one arm as a bare selector array, for `cents-display-guard.test.ts` —
  * same reason `MONEY_GUARD_ARMS` is exported above: the suite resolves the
  * REAL config and checks the resolved rule still carries every selector this
  * array declares, so a copy nobody kept in sync cannot pass while the config
@@ -616,7 +616,7 @@ export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
  * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
  * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
  * writing why hand-rolled `(cents / 100).toFixed(n)` is allowed there.
- * `money-cents-guard.test.ts` reads THIS array and fails an entry with no
+ * `cents-display-guard.test.ts` reads THIS array and fails an entry with no
  * reason, and separately fails if a listed file no longer contains the
  * pattern — an exemption is deleted when its cause is, never left "for now".
  */
