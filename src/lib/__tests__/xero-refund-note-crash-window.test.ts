@@ -529,6 +529,25 @@ describe("a retry after a crash between saving the note id and completing (#3548
     expect(state.operations).toHaveLength(1);
   });
 
+  it("a note a REFUND_PAYMENT link already names is never paid again, whatever Xero now shows", async () => {
+    await firstAttemptDies("before-payment-decision");
+    // Inbound reconcile linked a payment, which an officer later deleted in Xero.
+    state.links.push({
+      localModel: "Payment",
+      localId: PAYMENT_ID,
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "pay_by_hand",
+      role: "REFUND_PAYMENT",
+      active: true,
+      metadata: { creditNoteId: "cn_1" },
+    });
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(completedRows()).toEqual([]);
+  });
+
   it("in per-delta mode the retry replays the same note by its key and settles it", async () => {
     await firstAttemptDies("before-payment-decision", { refundMethod: "card", watermarkCents: 5000 });
 
