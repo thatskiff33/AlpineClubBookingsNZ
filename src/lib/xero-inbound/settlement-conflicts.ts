@@ -31,7 +31,10 @@ import {
   sendAdminManualSettlementConflictAlert,
   sendAdminSecondInstrumentSettlementConflictAlert,
 } from "@/lib/email";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import {
+  SETTLEMENT_MONEY_ALERT_REPEAT_MS,
+  claimAlertCooldownFailOpen,
+} from "@/lib/alert-cooldown-fail-open";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   MANUAL_SETTLEMENT_CONFLICT_EVENT_KIND,
@@ -46,13 +49,13 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { buildDuplicateCaptureRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 import type { ClubFormat } from "@/lib/club-format";
 
-/**
- * B5 (#2262): repeat-alert window for the reciprocal fence. A webhook replay
- * must RE-COUNT the conflict (it is still unreconciled) without re-mailing the
- * admins every time Xero redelivers the same event. #3638's second-instrument
- * conflict shares it.
+/*
+ * B5 (#2262): the reciprocal fence's repeat-alert window is
+ * `SETTLEMENT_MONEY_ALERT_REPEAT_MS` (`alert-cooldown-fail-open.ts`, shared
+ * with #3642 since #3635). A webhook replay must RE-COUNT the conflict (it is still
+ * unreconciled) without re-mailing the admins every time Xero redelivers the
+ * same event.
  */
-const MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The marker already recorded for (booking, conflict kind, invoice), if any:
@@ -135,15 +138,13 @@ async function recordSettlementConflictMarker({
     });
   }
 
-  return claimAlertCooldown({
+  // Fail-open, deliberately: see `claimAlertCooldownFailOpen`.
+  return claimAlertCooldownFailOpen({
     key: `${alertCooldownKeyPrefix}:${paymentId}:${invoiceId}`,
-    windowMs: MANUAL_SETTLEMENT_CONFLICT_ALERT_COOLDOWN_MS,
-  }).catch((err) => {
-    logger.error(
-      { err, paymentId, invoiceId, kind: snapshot.kind },
-      "Failed to claim the settlement-conflict alert cooldown; sending anyway rather than staying silent about unreconciled money"
-    );
-    return true;
+    windowMs: SETTLEMENT_MONEY_ALERT_REPEAT_MS,
+    context: { paymentId, invoiceId, kind: snapshot.kind },
+    logMessage:
+      "Failed to claim the settlement-conflict alert cooldown; sending anyway rather than staying silent about unreconciled money",
   });
 }
 
@@ -550,15 +551,13 @@ export async function raiseSecondInstrumentSettlementAlert({
   format: ClubFormat;
 }) {
   if (marker.snapshot.alertSentAt) return;
-  const holdsClaim = await claimAlertCooldown({
+  // Fail-open, deliberately: see `claimAlertCooldownFailOpen`.
+  const holdsClaim = await claimAlertCooldownFailOpen({
     key: `second-instrument-alert:${marker.id}`,
     windowMs: SECOND_INSTRUMENT_ALERT_IN_FLIGHT_MS,
-  }).catch((err) => {
-    logger.error(
-      { err, markerId: marker.id, invoiceId },
-      "Failed to claim the second-instrument alert; sending anyway rather than staying silent about unreconciled money"
-    );
-    return true;
+    context: { markerId: marker.id, invoiceId },
+    logMessage:
+      "Failed to claim the second-instrument alert; sending anyway rather than staying silent about unreconciled money",
   });
   if (!holdsClaim) return;
 

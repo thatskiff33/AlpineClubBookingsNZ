@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   txPaymentFindUnique: vi.fn(),
   txLinkUpdateMany: vi.fn(),
   txLinkUpsert: vi.fn(),
+  operationUpdate: vi.fn(),
+  operationUpdateMany: vi.fn(),
+  operationFindUniqueOrThrow: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -33,6 +36,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.operationFindFirst,
       count: mocks.operationCount,
       create: mocks.operationCreate,
+      update: mocks.operationUpdate,
+      updateMany: mocks.operationUpdateMany,
+      findUniqueOrThrow: mocks.operationFindUniqueOrThrow,
     },
     $transaction: mocks.transaction,
   },
@@ -65,6 +71,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   buildXeroPayloadHash,
+  failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   recordXeroInboundEvent,
   sanitizeForJson,
@@ -824,5 +831,36 @@ describe("startXeroSyncOperation", () => {
     expect(mocks.operationCreate.mock.calls[0][0].data.queueType).toBe("MODIFICATION_CREDIT_NOTE");
     expect(mocks.operationCreate.mock.calls[1][0].data.queueType).toBe("REFUND_CREDIT_NOTE");
     expect(mocks.operationCreate.mock.calls[0][0].data).not.toHaveProperty("requestPayload.queueType");
+  });
+});
+
+// #3635 round-3 N5: the outbox's catch runs after its handler, and an approval
+// can withdraw a kept row in between; that withdrawal stands.
+describe("failXeroSyncOperation keepCancelled", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+  });
+
+  it("leaves a CANCELLED row as it is and answers null", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
+    ).resolves.toBeNull();
+    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_kept", status: { not: "CANCELLED" } },
+        data: expect.objectContaining({ status: "FAILED" }),
+      })
+    );
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+  });
+
+  it("fails any other row as before", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_kept", status: "FAILED" });
+    await expect(
+      failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
+    ).resolves.toMatchObject({ status: "FAILED" });
   });
 });

@@ -15,6 +15,13 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_ACCOUNT_CREDIT_NOTE",
   "CANCELLED_IN_FLIGHT_PAYMENT",
   "LATE_CAPTURE_AFTER_CANCELLATION",
+  // #3635: a late capture a treasurer kept on a cancelled booking, whose
+  // booking payment Xero has no invoice for.
+  "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+  // #3635 round-3 R5: a kept capture an officer recorded by hand in Xero was
+  // refunded; the app raises no note for it, so an officer records the refund
+  // by hand too. Report-only, never actionable.
+  "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -49,6 +56,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "SYNC_BOOKING_SCOPED_LINK",
   "REPAIR_CANCELLED_IN_FLIGHT_PAYMENT",
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
+  // #3635: the invoice, paid from Stripe, recording a kept late capture.
+  "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
   "MARK_MANUAL_REVIEW",
 ] as const;
 
@@ -424,6 +433,25 @@ export interface BookingClassificationContext {
    * the late-capture finding must not offer to refund it.
    */
   lateCaptureApprovalIntentIds: Set<string>;
+  /**
+   * #3635: of those, the ones a treasurer KEPT (task DISMISSED), by intent: the
+   * task and the Xero rows anchored on it. A kept booking payment is recorded
+   * by its own invoice, anchored on that task (`late-capture-kept-xero-rules.ts`).
+   */
+  keptLateCaptures: Map<
+    string,
+    { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
+  >;
+  /**
+   * #3635 round-3 N1/R5: EVERY #3639 approval task on this booking, whatever
+   * its status, by intent, with the Xero rows anchored on it. A kept invoice
+   * raised before a reopen and approval can still lack its payment, and one an
+   * officer recorded by hand can still have been refunded.
+   */
+  lateCaptureTasks: Map<
+    string,
+    { taskId: string; status: string; operations: XeroOperationRecord[] }
+  >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm
    * raised a `CANCELLED_BOOKING_HAND_BACK` task for. Beside a retired clearing

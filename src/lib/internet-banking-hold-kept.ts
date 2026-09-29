@@ -17,12 +17,12 @@
 import { PaymentSource } from "@prisma/client";
 import {
   ALERT_ONCE_EVER_WINDOW_MS,
-  claimAlertCooldown,
   listOwedAlertKeys,
   markAlertOwed,
   releaseAlertCooldown,
   settleOwedAlert,
 } from "@/lib/alert-cooldown";
+import { claimAlertCooldownFailOpen } from "@/lib/alert-cooldown-fail-open";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import type { AdminAlertSendOutcome } from "@/lib/email/admin-alert-send-result";
@@ -180,6 +180,22 @@ function readOwner(hold: ExpiredHoldView): { memberName: string; memberId: strin
  *    owed for the next run to deliver.
  * A `part-paid` hold the app cannot credit — an organisation's, or a payment
  * Xero could not size — is worded `part-paid-manual` (#3643 delta D5).
+ *
+ * WHY NOT `sendAdminAlertOnceEver` (#3635, decided and recorded): that helper is
+ * the once-ever rule for an alert a later run re-selects, and this one differs
+ * from it in four ways, each for its own reason (`INV-PAY-107`, #3643 D4):
+ *  - a failed CLAIM sends anyway (`claimAlertCooldownFailOpen`), because a
+ *    released hold is never selected again, where the helper skips;
+ *  - nobody eligible (`no-recipients`, `skipped-by-policy`) KEEPS the claim,
+ *    where the helper holds it a day and tries again;
+ *  - undelivered to recipients who existed is given back NOW for a candidate
+ *    hold, which the next run re-selects, rather than deferred a day;
+ *  - undelivered after commit is marked OWED and drained next run, which the
+ *    helper has no notion of, and the caller needs the four-way outcome for
+ *    the audit row's `alertDelivery`.
+ * Widening the helper with three options for this one caller would give its
+ * two other callers (the mid-stay joiner and started-stay hold alerts) a
+ * shape neither needs, so only the claim is shared.
  */
 export async function alertExpiredHold(
   hold: ExpiredHoldView,
@@ -199,20 +215,15 @@ export async function alertExpiredHold(
   const context = { bookingId: hold.bookingId, paymentId: hold.id, reason };
 
   const claimedAt = new Date();
-  const holdsClaim = await claimAlertCooldown({
+  const holdsClaim = await claimAlertCooldownFailOpen({
     key,
     // One alert per hold per reason per deadline (the key carries all three).
     windowMs: ALERT_ONCE_EVER_WINDOW_MS,
     now: claimedAt,
-  }).catch(
-    (err) => {
-      logger.error(
-        { err, ...context },
-        "Failed to claim the Internet Banking hold alert; sending anyway rather than staying silent about money on a held booking",
-      );
-      return true;
-    },
-  );
+    context,
+    logMessage:
+      "Failed to claim the Internet Banking hold alert; sending anyway rather than staying silent about money on a held booking",
+  });
   if (!holdsClaim) return;
 
   const outcome = await sendHoldAlert(hold, evidence, reason, owner.memberName, format);

@@ -837,7 +837,15 @@ export async function completeXeroSyncOperation(
 export async function failXeroSyncOperation(
   operationId: string,
   error: unknown,
-  responsePayload?: unknown
+  responsePayload?: unknown,
+  options?: {
+    /**
+     * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
+     * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
+     * approval can withdraw a kept row in between. Answers null then.
+     */
+    keepCancelled?: boolean;
+  }
 ) {
   const statusCode = getXeroErrorStatusCode(error);
   const rawMessage =
@@ -847,17 +855,24 @@ export async function failXeroSyncOperation(
         ? error
         : "Unknown Xero sync failure";
   const message = redactSensitiveText(rawMessage);
+  const data = {
+    status: "FAILED" as const,
+    lastErrorCode: statusCode ? String(statusCode) : null,
+    lastErrorMessage: message,
+    responsePayload: sanitizeForJson(responsePayload ?? error),
+    completedAt: new Date(),
+  };
 
-  const operation = await prisma.xeroSyncOperation.update({
-    where: { id: operationId },
-    data: {
-      status: "FAILED",
-      lastErrorCode: statusCode ? String(statusCode) : null,
-      lastErrorMessage: message,
-      responsePayload: sanitizeForJson(responsePayload ?? error),
-      completedAt: new Date(),
-    },
-  });
+  if (options?.keepCancelled) {
+    const failed = await prisma.xeroSyncOperation.updateMany({
+      where: { id: operationId, status: { not: "CANCELLED" } },
+      data,
+    });
+    if (failed.count === 0) return null;
+  }
+  const operation = options?.keepCancelled
+    ? await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
+    : await prisma.xeroSyncOperation.update({ where: { id: operationId }, data });
 
   try {
     const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");

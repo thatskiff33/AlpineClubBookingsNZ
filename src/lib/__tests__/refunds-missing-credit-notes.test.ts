@@ -15,12 +15,19 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
   readResolvedRefundCreditNoteCoverage: mocks.readResolvedRefundCreditNoteCoverage,
+  // The real composition, over the two mocked halves.
+  sumRefundCreditNoteCoverageCents: async (
+    paymentId: string,
+    resolved: { coveredCents: number },
+  ) => (await mocks.sumCovered(paymentId)) + resolved.coveredCents,
   findResolvedBookingInvoiceCreate: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: { findMany: mocks.findMany },
+    // #3635 round-3 R1: no refund row names a late capture unless a test says so.
+    paymentRefund: { findMany: async () => [] },
   },
 }));
 

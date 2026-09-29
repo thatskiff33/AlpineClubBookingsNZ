@@ -9,11 +9,15 @@
  * A supplementary invoice parked WAITING_PAYMENT on a PaymentIntent is released
  * by a captured payment on that intent. This sweep decides what happens to one
  * that is still waiting:
- *   - its payment was CAPTURED and the webhook KEPT it: released now (or, where
- *     the capture does not cover it, cancelled unsent with an alert);
- *   - its payment was captured and the webhook REFUNDED it (a cancelled
- *     booking, a superseded intent, `isLateCaptureRefunded`): retired, never
- *     sent with a receipt for money being handed back;
+ *   - its payment was CAPTURED and the club KEPT it: released now (or, where
+ *     the capture does not cover it, cancelled unsent with an alert). That
+ *     includes a cancelled booking's capture a treasurer kept (#3635);
+ *   - its payment was captured and REFUNDED (`lateCaptureRefundState`: an
+ *     approved treasurer task, or with no task a cancelled booking or a
+ *     superseded intent): retired, never sent with a receipt for money being
+ *     handed back;
+ *   - its payment was captured and a treasurer is still deciding (#3635): kept
+ *     waiting, so the decision is not pre-judged;
  *   - the member can still pay the ask: kept, however old, however many cards
  *     were declined against it;
  *   - Stripe has the money but our rows never recorded it for three days: kept,
@@ -21,7 +25,6 @@
  *   - the member can no longer pay it: retired (CANCELLED,
  *     `STALE_WAITING_PAYMENT`), the one state a later capture can revive.
  */
-import type Stripe from "stripe";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -30,11 +33,12 @@ import {
   type AdditionalPaymentDoorInput,
 } from "@/lib/additional-payment-chase";
 import { getPaymentIntent } from "@/lib/stripe";
+import { providerCaptureTime } from "@/lib/stripe-capture-date";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import {
   STALE_WAITING_PAYMENT_ERROR_CODE,
-  isLateCaptureRefunded,
+  lateCaptureRefundState,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
 } from "@/lib/xero-supplementary-invoice-late-capture";
 
@@ -241,14 +245,17 @@ async function decideWaitingOperation(params: {
 
   // Already paid: the capture's own release did not happen (the confirm route
   // failed and the webhook never arrived, or the intent was attached after the
-  // capture). Released only when the webhook KEPT the money; a refunded capture
-  // (cancelled booking, superseded intent, #3403 unchanged) is retired.
+  // capture). Released only when the club KEEPS the money; a refunded capture
+  // (an approved treasurer task, or with no task a cancelled booking or a
+  // superseded intent, #3403 unchanged) is retired; one a treasurer is still
+  // deciding (#3635) is kept waiting, whatever its age.
   if (transaction && isCapturedTransactionStatus(transaction.status)) {
-    const refunded = await isLateCaptureRefunded({
+    const refundState = await lateCaptureRefundState({
       paymentIntentId: params.paymentIntentId,
       bookingStatus: transaction.payment?.booking?.status,
     });
-    return refunded ? "retire" : "captured";
+    if (refundState === "awaiting-decision") return "keep";
+    return refundState === "refunded" ? "retire" : "captured";
   }
 
   const failed = transaction?.status === "FAILED";
@@ -318,14 +325,6 @@ async function decideWaitingOperation(params: {
     );
     return "keep";
   }
-}
-
-/** When Stripe took the money: the latest charge's time, else the intent's. */
-function providerCaptureTime(intent: Stripe.PaymentIntent): Date {
-  const charge = intent.latest_charge;
-  const seconds =
-    charge && typeof charge === "object" ? charge.created : intent.created;
-  return new Date(seconds * 1000);
 }
 
 /**

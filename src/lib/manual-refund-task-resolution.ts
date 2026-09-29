@@ -67,6 +67,12 @@ export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolu
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ClubFormat } from "@/lib/club-format";
 import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
+import { settleKeptLateCaptureRecordOnApproval } from "@/lib/xero-kept-late-capture-invoice";
+import {
+  finishKeptLateCaptureXeroRecord,
+  planKeptLateCaptureXeroRecord,
+  type KeptLateCaptureXeroPlan,
+} from "@/lib/late-capture-kept-xero";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -135,7 +141,10 @@ export async function resolveManualRefundTask(
     );
   }
 
-  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest()); // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window
+  // #3219 `INV-LOCK-004`: read outside the transaction; dates the promo window,
+  // and (#3635) the day a kept late capture's Xero receipt is dated.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const todayAtClub = clubToday(clubZone);
   const result = await prisma.$transaction(async (tx) => {
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
@@ -515,6 +524,28 @@ export async function resolveManualRefundTask(
       }
     }
 
+    // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
+    // inside this claim, so a replayed dismissal queues nothing.
+    const keptLateCaptureXeroPlan: KeptLateCaptureXeroPlan =
+      resolution === "dismissed" && task.lateCaptureApprovalIntentId
+        ? await planKeptLateCaptureXeroRecord({
+            manualRefundTaskId: task.id,
+            bookingId: task.bookingId,
+            paymentIntentId: task.lateCaptureApprovalIntentId,
+            actingMemberId,
+            clubZone,
+            store: tx,
+          })
+        : { kind: "none" };
+    // #3635: approving a reopened keep settles what that keep queued, here.
+    if (resolution === "completed" && task.lateCaptureApprovalIntentId) {
+      await settleKeptLateCaptureRecordOnApproval({
+        manualRefundTaskId: task.id,
+        paymentIntentId: task.lateCaptureApprovalIntentId,
+        store: tx,
+      });
+    }
+
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
     // re-prices on EVERY parked review closing. Why, and why the KIND is the
     // condition, is `recordReviewClosurePricing`'s docblock.
@@ -620,6 +651,7 @@ export async function resolveManualRefundTask(
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
           : ManualRefundTaskStatus.DISMISSED,
+      keptLateCaptureXeroPlan,
     };
   });
 
@@ -654,5 +686,9 @@ export async function resolveManualRefundTask(
       format,
     });
 
-  return { ...result, stripeRefundId, additionalPaymentIntentId };
+  // #3635: the kept capture's Xero record, after the commit; never returned.
+  const { keptLateCaptureXeroPlan, ...closed } = result;
+  await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
+
+  return { ...closed, stripeRefundId, additionalPaymentIntentId };
 }

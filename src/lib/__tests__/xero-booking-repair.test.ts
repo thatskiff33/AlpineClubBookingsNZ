@@ -278,7 +278,14 @@ function createDependencies(state: {
   // yet.
   onSupplementaryInvoiceEnqueue?: () => void;
   // #3639 review F3: treasurer-approval tasks, by the capture they own.
-  lateCaptureApprovalTasks?: { bookingId: string; lateCaptureApprovalIntentId: string }[];
+  lateCaptureApprovalTasks?: {
+    bookingId: string;
+    lateCaptureApprovalIntentId: string;
+    // #3635: which were kept, the id their invoice anchors on, the capture day.
+    id?: string;
+    status?: string;
+    createdAt?: Date;
+  }[];
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
   // #3643 (owner decision 28 Sep 2026): DECISION 2 part-payment review tasks.
@@ -439,6 +446,8 @@ function createDependencies(state: {
 
   return {
     prisma: {
+      // #3635: the kept-capture enqueue runs on a transaction of its own.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
       booking: {
         findMany: vi.fn().mockResolvedValue(state.bookings),
       },
@@ -545,6 +554,10 @@ function createDependencies(state: {
     }),
     enqueueXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_booking_update",
+      message: "queued",
+    }),
+    enqueueXeroKeptLateCaptureInvoiceOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_kept_late_capture",
       message: "queued",
     }),
     enqueueXeroSupplementaryInvoiceOperation,
@@ -3567,6 +3580,270 @@ describe("runBookingXeroRepair", () => {
     expect(control.passes[0].bookings[0].findings.map((f) => f.code)).toContain(
       "LATE_CAPTURE_AFTER_CANCELLATION"
     );
+  });
+
+  /**
+   * #3635 (owner and orchestrator decisions 29 Sep 2026, `INV-PAY-110`): a late
+   * capture a treasurer KEPT - the booking's own payment, or a change payment on
+   * a booking Xero never invoiced - is recorded by its own kept-capture invoice
+   * for the GROSS capture, anchored on the approval task, dated the capture day.
+   * The dismissal queues it; this queues one nobody queued, automatically, and
+   * the pass re-reads the task under its row lock before it does.
+   */
+  describe("a kept late capture recorded by its own invoice (#3635)", () => {
+    const RAISED_AT = new Date("2026-05-01T00:05:00Z");
+    const keptBooking = (
+      payment: Record<string, unknown> = {},
+      capture: Record<string, unknown> = {},
+    ) =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          transactions: [
+            {
+              id: "txn_primary",
+              paymentId: "payment_1",
+              kind: "PRIMARY",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_kept",
+              amountCents: 10000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: "pm_123",
+              reason: "cancelled_booking_late_capture",
+              createdAt: new Date("2026-05-01T00:00:00Z"),
+              updatedAt: new Date("2026-05-01T00:00:00Z"),
+              ...capture,
+            },
+          ],
+          ...payment,
+        },
+      });
+    const keptOperation = (status: string) => ({
+      id: "op_kept_invoice",
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      status,
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        bookingId: "booking_1",
+        manualRefundTaskId: "task_kept",
+        paymentIntentId: "pi_kept",
+        capturedCents: 10000,
+        capturedOn: "2026-05-01",
+      },
+      replayable: true,
+      manuallyResolvedAt: null,
+      createdAt: new Date("2026-05-02T00:00:00Z"),
+      updatedAt: new Date("2026-05-02T00:00:00Z"),
+    });
+    const run = async (
+      booking: ReturnType<typeof makeBooking>,
+      status: string,
+      operations: unknown[] = [],
+    ) => {
+      const deps = createDependencies({
+        bookings: [booking],
+        operations,
+        lateCaptureApprovalTasks: [
+          {
+            id: "task_kept",
+            bookingId: booking.id,
+            lateCaptureApprovalIntentId: "pi_kept",
+            status,
+            createdAt: RAISED_AT,
+          },
+        ],
+      });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+      });
+      return { bookingReport: report.passes[0].bookings[0], deps };
+    };
+    const keptFinding = (bookingReport: { findings: { code: string }[] }) =>
+      bookingReport.findings.find(
+        (finding) => finding.code === "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+      );
+
+    it("queues the kept invoice automatically, for the gross capture, anchored on the task, dated from its raise", async () => {
+      const { bookingReport } = await run(keptBooking(), "DISMISSED");
+
+      expect(keptFinding(bookingReport)).toMatchObject({
+        safeToAutoApply: true,
+        details: expect.objectContaining({
+          manualRefundTaskId: "task_kept",
+          paymentIntentId: "pi_kept",
+          capturedCents: 10000,
+        }),
+      });
+      expect(
+        bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE"),
+      ).toMatchObject({
+        safeToAutoApply: true,
+        payload: {
+          manualRefundTaskId: "task_kept",
+          bookingId: "booking_1",
+          paymentIntentId: "pi_kept",
+          capturedCents: 10000,
+          capturedAt: RAISED_AT.toISOString(),
+        },
+      });
+    });
+
+    it("records the gross even when the capture was refunded in the dashboard since (its refund is its own note)", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      expect(keptFinding((await run(refunded, "DISMISSED")).bookingReport)).toMatchObject({
+        details: expect.objectContaining({ capturedCents: 10000 }),
+      });
+    });
+
+    it("covers a kept change payment on a booking Xero never invoiced (review F3), not one on an invoiced booking", async () => {
+      const change = keptBooking({}, { kind: "ADDITIONAL", amountCents: 2500 });
+      expect(keptFinding((await run(change, "DISMISSED")).bookingReport)).toMatchObject({
+        details: expect.objectContaining({ captureKind: "ADDITIONAL", capturedCents: 2500 }),
+      });
+      const invoiced = keptBooking(
+        { xeroInvoiceId: "inv_primary" },
+        { kind: "ADDITIONAL", amountCents: 2500 },
+      );
+      expect(keptFinding((await run(invoiced, "DISMISSED")).bookingReport)).toBeUndefined();
+    });
+
+    it("reports nothing while the treasurer decides, after an approved refund, or once queued", async () => {
+      for (const status of ["OPEN", "COMPLETED"]) {
+        expect(keptFinding((await run(keptBooking(), status)).bookingReport)).toBeUndefined();
+      }
+      for (const status of ["PENDING", "RUNNING", "SUCCEEDED"]) {
+        const { bookingReport } = await run(keptBooking(), "DISMISSED", [keptOperation(status)]);
+        expect(keptFinding(bookingReport)).toBeUndefined();
+      }
+    });
+
+    it("asks again once a row was withdrawn (CANCELLED), and offers a failed one for retry instead", async () => {
+      const withdrawn = await run(keptBooking(), "DISMISSED", [keptOperation("CANCELLED")]);
+      expect(keptFinding(withdrawn.bookingReport)).toBeDefined();
+
+      const failed = await run(keptBooking(), "DISMISSED", [keptOperation("FAILED")]);
+      expect(keptFinding(failed.bookingReport)).toBeUndefined();
+      expect(
+        failed.bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION"),
+      ).toBeDefined();
+    });
+
+    // #3635 composition (`INV-INT-025`): an officer recorded the kept payment by
+    // hand in Xero and resolved the failed row. Done: never re-run, never queued
+    // again, and still reported at info level.
+    it("gives the info finding for a kept invoice resolved in Xero, and neither retries nor re-queues it", async () => {
+      for (const status of ["FAILED", "PARTIAL"]) {
+        const resolved = {
+          ...keptOperation(status),
+          manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+          manuallyResolvedReason: "Invoice raised by hand in Xero",
+        };
+        const { bookingReport } = await run(keptBooking(), "DISMISSED", [resolved]);
+        expect(keptFinding(bookingReport)).toBeUndefined();
+        expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+        expect(
+          bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE"),
+        ).toBeUndefined();
+        expect(
+          bookingReport.findings.find((finding) => finding.code === "RESOLVED_IN_XERO_BY_OFFICER"),
+        ).toMatchObject({
+          severity: "info",
+          safeToAutoApply: false,
+          details: expect.objectContaining({ operationId: "op_kept_invoice", paymentIntentId: "pi_kept" }),
+        });
+      }
+    });
+
+    // #3635 round-3 N1: an invoice raised before a reopen and approval whose
+    // Stripe payment never recorded is still offered its payment retry.
+    it("offers the payment retry of a raised kept invoice even once the task was reopened and approved", async () => {
+      const partial = { ...keptOperation("PARTIAL"), xeroObjectId: "inv_kept" };
+      const { bookingReport } = await run(keptBooking(), "COMPLETED", [partial]);
+      expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeDefined();
+      expect(
+        bookingReport.findings.find(
+          (finding) =>
+            finding.code === "BLOCKED_BY_XERO_OPERATION" &&
+            (finding.details as { operationId?: string }).operationId === "op_kept_invoice",
+        ),
+      ).toBeDefined();
+      // A FAILED one before its invoice was raised is not: the approval withdrew it.
+      const failed = await run(keptBooking(), "COMPLETED", [keptOperation("FAILED")]);
+      expect(failed.bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+    });
+
+    // #3635 round-3 R5: the app raises no refund note for a receipt an officer
+    // recorded by hand, so once it is refunded an officer is told to record
+    // that refund by hand too. Report-only.
+    it("asks for the refund to be recorded by hand once a kept invoice resolved by hand is refunded", async () => {
+      const resolved = {
+        ...keptOperation("FAILED"),
+        manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedReason: "Raised by hand in Xero",
+      };
+      const byHand = (report: { findings: { code: string }[] }) =>
+        report.findings.find((finding) => finding.code === "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND");
+
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [resolved]);
+      expect(byHand(bookingReport)).toMatchObject({
+        severity: "warning",
+        safeToAutoApply: false,
+        details: expect.objectContaining({ paymentIntentId: "pi_kept", refundedCents: 10000 }),
+      });
+      expect(bookingReport.actions).toEqual([]);
+
+      expect(byHand((await run(keptBooking(), "DISMISSED", [resolved])).bookingReport)).toBeUndefined();
+    });
+
+    it("applies it on a transaction of its own, where the enqueue re-reads the task under its lock", async () => {
+      const booking = keptBooking();
+      const deps = createDependencies({
+        bookings: [booking],
+        lateCaptureApprovalTasks: [
+          {
+            id: "task_kept",
+            bookingId: booking.id,
+            lateCaptureApprovalIntentId: "pi_kept",
+            status: "DISMISSED",
+            createdAt: RAISED_AT,
+          },
+        ],
+      });
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        dependencies: deps,
+        scope: { all: true },
+        apply: true,
+      });
+      expect(deps.prisma.$transaction).toHaveBeenCalled();
+      expect(deps.enqueueXeroKeptLateCaptureInvoiceOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manualRefundTaskId: "task_kept",
+          capturedCents: 10000,
+          capturedOn: "2026-05-01",
+          store: expect.anything(),
+        }),
+      );
+    });
   });
 
   it("raises no late-capture finding when the cancel recorded a credit-path refund decision (#1491)", async () => {

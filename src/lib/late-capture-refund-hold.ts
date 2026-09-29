@@ -12,7 +12,7 @@ import {
 } from "@/lib/deleted-booking-modification-payment";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { claimAlertCooldown } from "@/lib/alert-cooldown";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { bookingOwner } from "@/lib/booking-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { sendAdminLateCaptureHeldAlert } from "@/lib/email";
@@ -75,7 +75,7 @@ export function heldLateCaptureReason(capture: HeldLateCapture): string {
     capture.captureKind === "primary"
       ? `The booking's own payment ${capture.paymentIntentId}`
       : `A payment for a change to the booking (${capture.paymentIntentId})`;
-  return `${which} went through after the booking was cancelled and has NOT been refunded: it is held for a treasurer to approve. Refund it to the card through Stripe, or keep it with a note. Do not mark it paid back unless the club has already returned the money itself.`.slice(
+  return `${which} went through after the booking was cancelled and has NOT been refunded: it is held for a treasurer to approve. Refund it to the card through Stripe, or keep it with a note (keeping it records it in Xero as a paid invoice). Do not mark it paid back unless the club has already returned the money itself.`.slice(
     0,
     500,
   );
@@ -114,6 +114,12 @@ export async function holdLateCaptureForTreasurerIfRequired(
       },
       "Late capture on a cancelled booking already has a treasurer-approval task; no automatic refund (#3639)",
     );
+    // #3635: a still-open task re-announces, so an alert whose send failed
+    // or reached nobody is retried by the next notice; a kept claim makes this
+    // a no-op.
+    if (owned.status === ManualRefundTaskStatus.OPEN) {
+      await announceHeldLateCapture(capture);
+    }
     return true;
   }
   if (!(await readLateCaptureRefundNeedsApproval())) return false;
@@ -184,22 +190,26 @@ export async function holdLateCaptureForTreasurerIfRequired(
   return true;
 }
 
-/** Long enough that the claim means "once per payment", ever. */
-const HELD_ALERT_ONCE_MS = 10 * 365 * 24 * 60 * 60 * 1000;
-
 /**
  * #3639 (delta D7): the finance alert for a held capture, ONCE per payment
- * intent. The claim is taken before sending, so a Stripe redelivery, a cron
- * retry or a second instance never re-sends. Never throws: the task is the
- * record, and a failed mail must not fail the webhook or the cron over a nudge.
+ * intent, through the one once-ever rule (`sendAdminAlertOnceEver`, #3635 /
+ * #3672): the claim is kept once a copy was sent or queued for the retry cron,
+ * so a Stripe redelivery, a cron retry or a second instance never re-sends;
+ * held a day when nobody can receive it; given back when the send throws. The
+ * retry is driven by the next notice for the intent, which announces again
+ * from the task-already-exists branch while the task is OPEN, and by the
+ * payments cron's sweep (`reannounceHeldLateCaptures`), which re-selects every
+ * OPEN held task - so a claim held for a day really is tried again even when no
+ * Stripe notice ever comes. Never throws: the task is the record, and a failed
+ * mail must not fail the webhook or the cron over a nudge. Answers whether an
+ * admin has it (or its retry-cron copy) from this call.
  */
-async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> {
+async function announceHeldLateCapture(capture: HeldLateCapture): Promise<boolean> {
+  const context = {
+    bookingId: capture.bookingId,
+    paymentIntentId: capture.paymentIntentId,
+  };
   try {
-    const claimed = await claimAlertCooldown({
-      key: `late-capture-held:${capture.paymentIntentId}`,
-      windowMs: HELD_ALERT_ONCE_MS,
-    });
-    if (!claimed) return;
     const booking = await prisma.booking.findUnique({
       where: { id: capture.bookingId },
       select: {
@@ -209,24 +219,88 @@ async function announceHeldLateCapture(capture: HeldLateCapture): Promise<void> 
         organisation: { select: { name: true, email: true } },
       },
     });
-    if (!booking) return;
+    if (!booking) return false;
     const owner = bookingOwner(booking).member;
-    await sendAdminLateCaptureHeldAlert(
-      {
-        memberName: `${owner.firstName} ${owner.lastName}`,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        amountCents: capture.amountCents,
-        bookingId: capture.bookingId,
-      },
-      await clubFormatValues(),
-    );
+    return await sendAdminAlertOnceEver({
+      key: `late-capture-held:${capture.paymentIntentId}`,
+      label: "held late-capture alert",
+      context,
+      send: async () =>
+        sendAdminLateCaptureHeldAlert(
+          {
+            memberName: `${owner.firstName} ${owner.lastName}`,
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+            amountCents: capture.amountCents,
+            bookingId: capture.bookingId,
+          },
+          await clubFormatValues(),
+        ),
+    });
   } catch (err) {
     logger.error(
-      { err, bookingId: capture.bookingId, paymentIntentId: capture.paymentIntentId },
+      { err, ...context },
       "Failed to send the held late-capture alert; the task on the payments board still records it",
     );
+    return false;
   }
+}
+
+/** How many OPEN held tasks one sweep looks at. */
+const HELD_ALERT_SWEEP_LIMIT = 50;
+/** The payments cron's cadence, which the sweep's rotation steps by. */
+const HELD_ALERT_SWEEP_STEP_MS = 15 * 60 * 1000;
+
+/**
+ * #3635 (review F3): THE PAYMENTS CRON'S RE-SELECTING RUN for the held
+ * late-capture alert. Every OPEN task a #3639 hold raised is announced again
+ * through the once-ever rule: a claim already kept makes it a no-op, and one
+ * given back (the send threw) or held a day (nobody could receive it) is tried
+ * now. A bounded batch a run, taken from a STABLE order (oldest first) at an
+ * offset that ROTATES each cron step (round-3 N4), so with more OPEN tasks than
+ * one batch every task is still reached within a few runs instead of the first
+ * batch being tried for ever. Never throws for one task.
+ */
+export async function reannounceHeldLateCaptures(now: Date = new Date()): Promise<{
+  checked: number;
+  announced: number;
+}> {
+  const open = await prisma.manualRefundTask.findMany({
+    where: {
+      status: ManualRefundTaskStatus.OPEN,
+      lateCaptureApprovalIntentId: { not: null },
+      paymentId: { not: null },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      bookingId: true,
+      paymentId: true,
+      amountCents: true,
+      raisedAmountCents: true,
+      lateCaptureApprovalIntentId: true,
+    },
+  });
+  const step = Math.floor(now.getTime() / HELD_ALERT_SWEEP_STEP_MS);
+  const start = open.length > HELD_ALERT_SWEEP_LIMIT ? (step * HELD_ALERT_SWEEP_LIMIT) % open.length : 0;
+  const tasks = [...open.slice(start), ...open.slice(0, start)].slice(0, HELD_ALERT_SWEEP_LIMIT);
+  let announced = 0;
+  for (const task of tasks) {
+    const paymentIntentId = task.lateCaptureApprovalIntentId!;
+    const transaction = await prisma.paymentTransaction.findUnique({
+      where: { stripePaymentIntentId: paymentIntentId },
+      select: { kind: true, amountCents: true },
+    });
+    const sent = await announceHeldLateCapture({
+      bookingId: task.bookingId,
+      paymentId: task.paymentId!,
+      paymentIntentId,
+      amountCents: task.amountCents ?? task.raisedAmountCents ?? transaction?.amountCents ?? 0,
+      captureKind:
+        transaction?.kind === PaymentTransactionKind.PRIMARY ? "primary" : "modification",
+    });
+    if (sent) announced += 1;
+  }
+  return { checked: tasks.length, announced };
 }
 
 /**

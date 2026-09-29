@@ -8,6 +8,10 @@ import type { PaymentStatus, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
+import {
+  decideLateCapture,
+  type LateCaptureRefundState,
+} from "@/lib/late-capture-kept-xero-rules";
 import { classifyEditReviewChargeCapture } from "@/lib/xero-booking-repair-payments";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import {
@@ -64,12 +68,19 @@ export type CapturedAdditionalPaymentXeroOutcome =
   /** An earlier capture of this intent already told an officer; nothing new. */
   | "already-alerted"
   /**
-   * The capture is one the webhook REFUNDS rather than keeps
-   * (`isLateCaptureRefunded`: a CANCELLED booking, or a superseded intent), so
-   * no invoice is released or re-queued for it; a waiting one is left for the
-   * reaper to retire. The refund path's Xero correction counts on that.
+   * The capture is one that is REFUNDED rather than kept
+   * (`lateCaptureRefundState`: an approved treasurer task, or with no task a
+   * CANCELLED booking or a superseded intent), so no invoice is released or
+   * re-queued for it; a waiting one is left for the reaper to retire. The
+   * refund path's Xero correction counts on that.
    */
-  | "left-retired";
+  | "left-retired"
+  /**
+   * #3635: a treasurer is still deciding whether to refund or keep it (an OPEN
+   * #3639 approval task). Nothing is touched: a waiting invoice stays waiting
+   * and a retired one stays retired, until the decision releases or retires it.
+   */
+  | "awaiting-decision";
 
 type CaptureRefusal = "short-of-ask" | "not-captured" | "unreadable-invoice";
 
@@ -94,31 +105,42 @@ const ISSUE_REFUSAL_TEXT: Record<IssueRefusal, string> = {
 type CapturedTransaction = { status: PaymentStatus; amountCents: number } | null;
 
 /**
- * IS THIS A CAPTURE THE WEBHOOK REFUNDS RATHER THAN KEEPS? (#3641 review round,
- * delta D1.) Two populations, both refunded by design, whose waiting invoice
- * must retire, never be sent with a receipt for money being handed back:
- *   - a CANCELLED booking's late capture, refunded by
- *     `handleCancelledBookingAdditionalPaymentSucceeded`
- *     (`isLateCaptureRefundedBookingStatus`, the webhook's own routing test);
- *   - a SUPERSEDED intent's late capture (#3403), refunded through the
- *     supersede recovery: the intent carries a CANCEL_PAYMENT_INTENT (or
- *     REFUND_SUPERSEDED_PAYMENT) recovery, which is how the webhook finds it.
- * The late-capture release and the waiting-invoice reaper both ask this, so
- * "release only a capture the webhook kept" has one answer.
+ * WHAT HAPPENS TO THIS CAPTURE'S MONEY: refunded, awaiting a treasurer, or
+ * kept? (#3641 review round, delta D1; three-valued since #3635.) This loads
+ * the facts and asks the one decision, `decideLateCapture`
+ * (`late-capture-kept-xero-rules.ts`), which the dismissal, the kept-capture
+ * worker and the repair tool ask too (`INV-SSOT`).
+ *
+ * A DISMISSED task is kept even when the capture has since been refunded in
+ * the Stripe dashboard: the receipt is recorded gross and the refund is
+ * answered by its own refund credit note (orchestrator decision 29 Sep 2026).
+ * The superseded-intent read is taken only where it can change the answer.
  */
-export async function isLateCaptureRefunded(params: {
+
+export async function lateCaptureRefundState(params: {
   paymentIntentId: string;
   bookingStatus: string | null | undefined;
-}): Promise<boolean> {
-  if (isLateCaptureRefundedBookingStatus(params.bookingStatus)) return true;
-  const supersede = await prisma.paymentRecoveryOperation.findFirst({
-    where: {
-      paymentIntentId: params.paymentIntentId,
-      type: { in: ["CANCEL_PAYMENT_INTENT", "REFUND_SUPERSEDED_PAYMENT"] },
-    },
-    select: { id: true },
+}): Promise<LateCaptureRefundState> {
+  const task = await prisma.manualRefundTask.findUnique({
+    where: { lateCaptureApprovalIntentId: params.paymentIntentId },
+    select: { status: true },
   });
-  return supersede !== null;
+  const superseded =
+    !task && !isLateCaptureRefundedBookingStatus(params.bookingStatus)
+      ? (await prisma.paymentRecoveryOperation.findFirst({
+          where: {
+            paymentIntentId: params.paymentIntentId,
+            type: { in: ["CANCEL_PAYMENT_INTENT", "REFUND_SUPERSEDED_PAYMENT"] },
+          },
+          select: { id: true },
+        })) !== null
+      : false;
+  return decideLateCapture({
+    taskStatus: task?.status ?? null,
+    bookingStatus: params.bookingStatus,
+    superseded,
+    capture: null,
+  }).state;
 }
 
 /**
@@ -197,11 +219,14 @@ const SUPPLEMENTARY_INVOICE_CREATE = {
  * way or sent is not a reason to alert: that one covers the capture, and the
  * retired row is stamped covered so the second caller does not alert either.
  *
- * WHERE IT DOES NEITHER: a capture the webhook refunds (`isLateCaptureRefunded`:
- * a CANCELLED booking, or a superseded intent). Nothing is released or revived,
- * waiting or retired, because the refund path's Xero correction assumes the
- * invoice was never sent (`left-retired`). Every other status keeps the money,
- * so its invoice is released, re-queued or alerted like any booking.
+ * WHERE IT DOES NEITHER: a refunded capture (`lateCaptureRefundState`: an
+ * approved treasurer task, or with no task a CANCELLED booking or a superseded
+ * intent). Nothing is released or revived, waiting or retired, because the
+ * refund path's Xero correction assumes the invoice was never sent
+ * (`left-retired`). Nor while a treasurer is still deciding
+ * (`awaiting-decision`). A kept capture - including one on a CANCELLED booking
+ * whose treasurer task was dismissed (#3635) - is released, re-queued or
+ * alerted like any booking; the dismissal calls this itself.
  */
 export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
   paymentIntentId: string,
@@ -222,20 +247,27 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     ? { status: captured.status, amountCents: captured.amountCents }
     : null;
 
-  // Only a capture the webhook KEPT is invoiced. A refunded one (cancelled
-  // booking, superseded intent) releases and revives nothing: a waiting invoice
-  // is left for the reaper to retire, a retired one stays retired.
-  if (
-    await isLateCaptureRefunded({
-      paymentIntentId,
-      bookingStatus: captured?.payment?.booking?.status,
-    })
-  ) {
+  // Only a capture the club KEEPS is invoiced. A refunded one releases and
+  // revives nothing: a waiting invoice is left for the reaper to retire, a
+  // retired one stays retired. One awaiting a treasurer's decision is left
+  // exactly as it is.
+  const refundState = await lateCaptureRefundState({
+    paymentIntentId,
+    bookingStatus: captured?.payment?.booking?.status,
+  });
+  if (refundState === "refunded") {
     logger.warn(
       { paymentIntentId },
-      "Captured additional payment is one the webhook refunds; its Xero supplementary invoice is left unsent",
+      "Captured additional payment is one that is refunded; its Xero supplementary invoice is left unsent",
     );
     return { released: 0, queueOperationIds: [], outcome: "left-retired" };
+  }
+  if (refundState === "awaiting-decision") {
+    logger.info(
+      { paymentIntentId },
+      "Captured additional payment is awaiting a treasurer's refund decision; its Xero supplementary invoice is left as it is",
+    );
+    return { released: 0, queueOperationIds: [], outcome: "awaiting-decision" };
   }
 
   const waiting = await releaseWaitingInvoicesForCapture(

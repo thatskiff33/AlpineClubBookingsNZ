@@ -19,13 +19,15 @@ import {
 } from "@/lib/internet-banking-payment-cron";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-waiting-invoice-reaper";
+import { reannounceHeldLateCaptures } from "@/lib/late-capture-refund-hold";
 import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import { reportCronError } from "@/lib/observability-bridge";
 
 export type PaymentsCronJobName =
   | "payment-recovery"
   | "internet-banking-hold-release"
-  | "xero-waiting-invoice-reaper";
+  | "xero-waiting-invoice-reaper"
+  | "late-capture-held-alert";
 
 /** A task's result, or `null` when that task failed (its FAILURE row says why). */
 export interface PaymentsCronCycleResult {
@@ -36,6 +38,8 @@ export interface PaymentsCronCycleResult {
   xeroOutboxReap: Awaited<
     ReturnType<typeof reapStaleWaitingPaymentXeroOutboxOperations>
   > | null;
+  /** #3635: the held late-capture alert's re-selecting run. */
+  lateCaptureHeldAlert: Awaited<ReturnType<typeof reannounceHeldLateCaptures>> | null;
 }
 
 export interface PaymentsCronFailure {
@@ -112,6 +116,7 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     recovery: null,
     internetBankingHoldRelease: null,
     xeroOutboxReap: null,
+    lateCaptureHeldAlert: null,
   };
   const failures: PaymentsCronFailure[] = [];
 
@@ -133,6 +138,12 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     resultKey: "xeroOutboxReap",
     failureMessage: "Failed to reap stale WAITING_PAYMENT Xero outbox operations",
     work: () => reapStaleWaitingPaymentXeroOutboxOperations(),
+  });
+  await runRecordedTask(result, failures, {
+    jobName: "late-capture-held-alert",
+    resultKey: "lateCaptureHeldAlert",
+    failureMessage: "Failed to re-announce held late-capture payments",
+    work: () => reannounceHeldLateCaptures(),
   });
 
   if (failures.length > 0) {

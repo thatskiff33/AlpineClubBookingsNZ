@@ -167,6 +167,19 @@ function summarizeQueuedPayload(
       };
     }
 
+    case "KEPT_LATE_CAPTURE_INVOICE":
+      // #3635: a late card payment a treasurer kept, invoiced and paid in Xero.
+      facts
+        .add("Booking", shortId(req.bookingId))
+        .add("Refund task", shortId(req.manualRefundTaskId))
+        .add("Payment intent", readString(req.paymentIntentId))
+        .add("Captured", formatCentsValue(req.capturedCents, format))
+        .add("Captured on", readString(req.capturedOn));
+      return {
+        title: "Queued: invoice a kept late payment",
+        facts: facts.build(),
+      };
+
     case "GROUP_SETTLEMENT_INVOICE":
       facts.add("Settlement", shortId(req.settlementId));
       return {

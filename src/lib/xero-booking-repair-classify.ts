@@ -68,11 +68,18 @@ import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  decideLateCapture,
+  keptLateCaptureInvoiceAsked,
+  bookingHasPrimaryXeroInvoice,
+  keptLateCaptureRecordRoute,
+} from "@/lib/late-capture-kept-xero-rules";
 
 /**
  * #3643: a booking's invoice-clearing credit note create that still stands -
@@ -1826,6 +1833,155 @@ export function classifyBookingContext(
       },
       actionKeys: [action.key],
     });
+  }
+
+  // #3635 (owner decision 29 Sep 2026, `INV-PAY-110`): a late capture a
+  // treasurer KEPT is recorded by its own kept-capture invoice for the GROSS
+  // capture, paid from Stripe on the capture day, anchored on its approval task
+  // and queued by the dismissal: the booking's own payment, and a change
+  // payment on a booking Xero never invoiced (`keptLateCaptureRecordRoute`).
+  // Where none was asked for (the keep predates #3635, or a reopen withdrew
+  // it), this queues it automatically - the pass re-reads the task under its
+  // row lock before queueing. A failed one is retried. The same decision as the
+  // dismissal (`decideLateCapture`, `late-capture-kept-xero-rules.ts`).
+  if (booking.status === "CANCELLED" && payment) {
+    for (const transaction of capturedPaymentTransactions) {
+      if (!transaction.stripePaymentIntentId) continue;
+      const kept = context.keptLateCaptures.get(transaction.stripePaymentIntentId);
+      if (!kept) continue;
+      if (
+        keptLateCaptureRecordRoute({
+          captureKind: transaction.kind,
+          bookingHasPrimaryInvoice: bookingHasPrimaryXeroInvoice({
+            paymentXeroInvoiceId: payment.xeroInvoiceId,
+            paymentLinks,
+          }),
+        }) !== "kept-invoice"
+      ) {
+        continue;
+      }
+      const { recordCents } = decideLateCapture({
+        taskStatus: "DISMISSED",
+        bookingStatus: booking.status,
+        superseded: false,
+        capture: transaction,
+      });
+      if (recordCents === 0) continue;
+      if (keptLateCaptureInvoiceAsked(kept.operations)) {
+        const blockingOperation = getBlockingOperation(kept.operations, "INVOICE", "CREATE");
+        if (blockingOperation?.kind === "resolved") {
+          // `INV-INT-025`: an officer recorded it by hand in Xero; reported,
+          // never re-run, and never queued again (a resolved row is "asked").
+          addResolvedInXeroFinding(findings, blockingOperation.resolvedOperation, "kept-payment invoice", {
+            paymentIntentId: transaction.stripePaymentIntentId,
+          });
+        } else if (blockingOperation?.kind === "retryable") {
+          const action = addAction(actionMap, buildRetryAction(booking.id, blockingOperation));
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary:
+              "A failed or partial Xero invoice for a late payment a treasurer kept needs retrying.",
+            safeToAutoApply: true,
+            details: {
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+              paymentIntentId: transaction.stripePaymentIntentId,
+            },
+            actionKeys: [action.key],
+          });
+        }
+        continue;
+      }
+      const action = addAction(actionMap, {
+        key: `queue:kept-late-capture-invoice:${kept.taskId}`,
+        bookingId: booking.id,
+        type: "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+        description:
+          "Queue the Xero invoice, paid from the Stripe account on the capture day, that records a late card payment a treasurer kept.",
+        safeToAutoApply: true,
+        payload: {
+          manualRefundTaskId: kept.taskId,
+          bookingId: booking.id,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          capturedCents: recordCents,
+          capturedAt: kept.raisedAt.toISOString(),
+        },
+      });
+      addFinding(findings, {
+        code: "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+        severity: "critical",
+        summary:
+          "A treasurer kept a late card payment on this cancelled booking, and Xero has no invoice for it.",
+        safeToAutoApply: true,
+        details: {
+          paymentId: payment.id,
+          manualRefundTaskId: kept.taskId,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          captureKind: transaction.kind,
+          capturedCents: recordCents,
+        },
+        actionKeys: [action.key],
+      });
+    }
+  }
+
+  // #3635 round-3 N1/R5: every approval task, whatever its status now.
+  //  - A kept invoice raised in Xero whose Stripe payment was never recorded
+  //    (PARTIAL) is retried even after a reopen and approval: the cash was
+  //    really taken, and the retry records only the payment.
+  //  - A kept invoice an officer recorded by hand and resolved in Xero gets no
+  //    refund note from the app; once its capture is refunded, an officer is
+  //    told to record that refund by hand as well. Report-only.
+  if (booking.status === "CANCELLED" && payment) {
+    for (const transaction of capturedPaymentTransactions) {
+      if (!transaction.stripePaymentIntentId) continue;
+      const lateTask = context.lateCaptureTasks.get(transaction.stripePaymentIntentId);
+      if (!lateTask) continue;
+      const keptInvoice = getBlockingOperation(lateTask.operations, "INVOICE", "CREATE", {
+        payloadQueueType: XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
+      });
+      if (keptInvoice?.kind === "resolved") {
+        if (transaction.refundedAmountCents > 0) {
+          addFinding(findings, {
+            code: "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
+            severity: "warning",
+            summary:
+              "A late card payment an officer recorded by hand in Xero was refunded. The app raises no refund credit note for it: record the refund by hand in Xero too.",
+            safeToAutoApply: false,
+            details: {
+              paymentId: payment.id,
+              manualRefundTaskId: lateTask.taskId,
+              paymentIntentId: transaction.stripePaymentIntentId,
+              refundedCents: transaction.refundedAmountCents,
+              operationId: keptInvoice.resolvedOperation.id,
+            },
+            actionKeys: [],
+          });
+        }
+        continue;
+      }
+      if (
+        lateTask.status !== "DISMISSED" &&
+        keptInvoice?.kind === "retryable" &&
+        keptInvoice.operation.status === "PARTIAL"
+      ) {
+        const action = addAction(actionMap, buildRetryAction(booking.id, keptInvoice));
+        addFinding(findings, {
+          code: "BLOCKED_BY_XERO_OPERATION",
+          severity: "warning",
+          summary:
+            "A Xero invoice for a late card payment was raised but its Stripe payment was never recorded.",
+          safeToAutoApply: true,
+          details: {
+            operationId: keptInvoice.operation.id,
+            operationStatus: keptInvoice.operation.status,
+            paymentIntentId: transaction.stripePaymentIntentId,
+          },
+          actionKeys: [action.key],
+        });
+      }
+    }
   }
 
   if (

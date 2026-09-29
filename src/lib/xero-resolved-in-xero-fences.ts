@@ -6,6 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
+import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 
 type OperationReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
@@ -78,6 +79,24 @@ export async function readResolvedRefundCreditNoteCoverage(
     if (row.correlationKey) coverage.correlationKeys.push(row.correlationKey);
   }
   return coverage;
+}
+
+/**
+ * The one answer to "how much of this payment's cash refund do refund credit
+ * notes already cover" (#3635, `INV-INT-025`): the active refund-note links
+ * plus the recorded amounts of notes an officer resolved by hand in Xero. The
+ * enqueue's cap, the credit note's execution-time cap and the refund-gap reader
+ * all read it, so the note a kept late capture's refund queues
+ * (`creditBackLateCaptureRefunds`) and the gap the self-heal list reports agree.
+ * The resolved coverage is a REQUIRED argument, read first by the caller, which
+ * must refuse on its `unreadableOperationIds` before trusting this sum.
+ */
+export async function sumRefundCreditNoteCoverageCents(
+  paymentId: string,
+  resolved: ResolvedRefundCreditNoteCoverage,
+  db: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  return (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
 }
 
 /**

@@ -5,7 +5,7 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -21,7 +21,6 @@ import {
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
-  sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
@@ -54,8 +53,10 @@ import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
   readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -81,6 +82,7 @@ import {
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -793,6 +795,17 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * source: Stripe money can only have left through Stripe.
      */
     refundMethod?: CashRefundMethod;
+    /**
+     * #3635 round-3 R4: the late capture this note answers, recorded on the
+     * note so its refunds are noted once per capture
+     * (`sumLateCaptureNotedCents`), and the note names that capture's receipt.
+     */
+    paymentIntentId?: string;
+    /**
+     * #3635 round-3 R3: the club day the refund left Stripe (`YYYY-MM-DD`),
+     * for a note raised after the fact. Omitted, the note is dated today.
+     */
+    documentDate?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -865,13 +878,17 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // so capping the note to `cashRefundCents - coveredCents` yields this
     // delta while replays of an already-covered state — and account-credit
     // cancellations, whose cash evidence is zero — cap at zero.
-    const coveredCents =
-      (await sumCoveredRefundCreditNoteCents(paymentId, db)) +
-      resolvedCoverage.coveredCents;
-    const evidence = await resolveStripeCashRefundEvidence(payment, db);
+    const coveredCents = await sumRefundCreditNoteCoverageCents(
+      paymentId,
+      resolvedCoverage,
+      db
+    );
+    // #3635 round-3 R1: the cash a note may answer, which leaves out refunds of
+    // late captures the app never recorded in Xero (`INV-PAY-110`).
+    const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
     noteAmountCents = Math.max(
       0,
-      Math.min(refundAmountCents, evidence.cashRefundCents - coveredCents)
+      Math.min(refundAmountCents, eligibleCashCents - coveredCents)
     );
     watermarkCents = coveredCents + noteAmountCents;
     if (noteAmountCents <= 0) {
@@ -982,6 +999,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
       refundAmountCents: noteAmountCents,
       watermarkCents,
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
+      ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
+      ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2945,6 +2964,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.refundMethod && payload.refundMethod !== "account-credit"
               ? { refundMethod: payload.refundMethod }
               : {}),
+            ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
+            ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
           }
         );
       } else if (
@@ -2970,6 +2991,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,
+        });
+      } else if (payload?.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
+        // #3635: a late capture a treasurer kept, invoiced and paid in Xero.
+        await createXeroKeptLateCaptureInvoice({
+          syncOperationId: queuedOperation.id,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
         });
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
@@ -3083,8 +3110,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // reaching Xero.
         //
         // The un-claim must match the state the HANDLER left the row in, not the
-        // state the outbox expects. Twelve of the fifteen queue types own a
-        // `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`,
+        // state the outbox expects. Every queue type but the three named below
+        // owns a `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`
+        // (the kept late-capture invoice, #3635, self-fails like the rest),
         // and `failXeroSyncOperation` writes `status: FAILED` + `completedAt`
         // with no status guard — so by the time this branch runs the row is
         // already FAILED for those types, and a `status: "RUNNING"`-only guard
@@ -3183,9 +3211,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
       // payload shape, so failing fast here closes the dead-end for all
       // types.
       try {
+        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
+        // approval cancels a kept row it finds FAILED); CANCELLED stands.
         await failXeroSyncOperation(
           queuedOperation.id,
-          error instanceof Error ? error : new Error(String(error))
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          { keepCancelled: true }
         );
       } catch (failErr) {
         logger.error(

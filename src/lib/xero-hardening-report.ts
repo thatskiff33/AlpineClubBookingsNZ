@@ -34,9 +34,13 @@ import {
   findStripeSourcePaymentIds,
   isStripePerDeltaRefundCreditNoteLink,
 } from "./xero-hardening-canonical-links";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import {
+  readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
+} from "@/lib/xero-resolved-in-xero-fences";
 import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
-import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
+import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -717,35 +721,75 @@ export async function buildXeroReconciliationReport(
   // (#2902, INV-PAY-050), never the refundedAmountCents mirror — an
   // account-credit-only cancellation whose fictitious note exactly equals the
   // mirror is over-covered against a cash target of ZERO and must show here.
+  // #3635 round-3 R6: a hand-made note an officer resolved in Xero covers its
+  // recorded amount everywhere a note is sized, so it counts here too, and a
+  // payment covered ONLY by such notes is a candidate as well. The target is
+  // the cash a note may answer (`resolveRefundNoteEligibleCash`), the one
+  // figure the enqueue and the executor cap against (`INV-SSOT-002`).
+  const resolvedNotePaymentIds = (
+    await prisma.xeroSyncOperation.findMany({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        manuallyResolvedAt: { not: null },
+        OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
+      },
+      select: { localId: true },
+    })
+  ).flatMap((operation) => (operation.localId ? [operation.localId] : []));
+  const resolvedStripePaymentIds = await findStripeSourcePaymentIds(
+    Array.from(new Set(resolvedNotePaymentIds))
+  );
+  const overCoverageCandidateIds = new Set([...stripePaymentIds, ...resolvedStripePaymentIds]);
   const stripeRefundPaymentRows =
-    stripePaymentIds.size > 0
+    overCoverageCandidateIds.size > 0
       ? await prisma.payment.findMany({
-          where: { id: { in: Array.from(stripePaymentIds) } },
+          where: { id: { in: Array.from(overCoverageCandidateIds) } },
           select: { id: true, bookingId: true, refundedAmountCents: true },
         })
       : [];
   const overCoveredStripeRefundItems: XeroReconciliationIssueItem[] = [];
+  const overCoverageItem = (paymentId: string, detail: string): XeroReconciliationIssueItem => ({
+    label: `Payment ${paymentId}`,
+    localModel: "Payment",
+    localId: paymentId,
+    localUrl: buildLocalAdminUrl("Payment", paymentId),
+    xeroObjectType: null,
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    operationId: null,
+    operationStatus: null,
+    operationType: null,
+    correlationKey: null,
+    detail,
+    latestErrorMessage: null,
+    createdAt: null,
+  });
   for (const payment of stripeRefundPaymentRows) {
-    const coveredCents = await sumCoveredRefundCreditNoteCents(payment.id);
-    const evidence = await resolveStripeCashRefundEvidence(payment);
-    if (coveredCents > evidence.cashRefundCents) {
-      overCoveredStripeRefundItems.push({
-        label: `Payment ${payment.id}`,
-        localModel: "Payment",
-        localId: payment.id,
-        localUrl: buildLocalAdminUrl("Payment", payment.id),
-        xeroObjectType: null,
-        xeroObjectId: null,
-        xeroObjectNumber: null,
-        xeroObjectUrl: null,
-        operationId: null,
-        operationStatus: null,
-        operationType: null,
-        correlationKey: null,
-        detail: `Active refund credit-note coverage is ${formatCents(coveredCents, format)} against a provider-backed cash refund target of ${formatCents(evidence.cashRefundCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`,
-        latestErrorMessage: null,
-        createdAt: null,
-      });
+    const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
+    if (resolved.unreadableOperationIds.length > 0) {
+      // Never skipped silently: the coverage cannot be valued, so say so.
+      overCoveredStripeRefundItems.push(
+        overCoverageItem(
+          payment.id,
+          `A refund credit note resolved by hand in Xero on this payment has no readable amount (operation ${resolved.unreadableOperationIds.join(", ")}), so its refund-note coverage cannot be valued. Check the notes in Xero by hand.`
+        )
+      );
+      continue;
+    }
+    const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved);
+    const { evidence, eligibleCashCents } = await resolveRefundNoteEligibleCash(payment);
+    if (coveredCents > eligibleCashCents) {
+      const linkedCents = coveredCents - resolved.coveredCents;
+      overCoveredStripeRefundItems.push(
+        overCoverageItem(
+          payment.id,
+          `Refund credit-note coverage is ${formatCents(coveredCents, format)} (${formatCents(linkedCents, format)} from active notes, ${formatCents(resolved.coveredCents, format)} from notes resolved by hand in Xero) against a refund-note cash target of ${formatCents(eligibleCashCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`
+        )
+      );
     }
   }
   const overCoveredStripeRefundPayments = overCoveredStripeRefundItems.length;

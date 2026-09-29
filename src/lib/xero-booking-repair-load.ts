@@ -369,10 +369,24 @@ export async function loadAuditData(
             bookingId: { in: bookingIds },
             lateCaptureApprovalIntentId: { not: null },
           },
-          select: { bookingId: true, lateCaptureApprovalIntentId: true },
+          // #3635: the status says which were KEPT; the id anchors their
+          // invoice; the raise time is the capture day the receipt is dated.
+          select: {
+            id: true,
+            bookingId: true,
+            lateCaptureApprovalIntentId: true,
+            status: true,
+            createdAt: true,
+          },
         })
       : Promise.resolve(
-          [] as { bookingId: string; lateCaptureApprovalIntentId: string | null }[],
+          [] as {
+            id: string;
+            bookingId: string;
+            lateCaptureApprovalIntentId: string | null;
+            status: string;
+            createdAt: Date;
+          }[],
         ),
     // #3643 F2: the organisation late-cash arm's hand-back, any status - it is
     // the evidence that cash arrived after a retired clearing note.
@@ -497,12 +511,44 @@ export async function loadAuditData(
   }
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
+  const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string }>>();
+  const keptApprovalsByBookingId = new Map<string, Map<string, { id: string; createdAt: Date }>>();
   for (const task of lateCaptureApprovalTasks) {
     if (!task.lateCaptureApprovalIntentId) continue;
     const ids = approvalIntentIdsByBookingId.get(task.bookingId) ?? new Set<string>();
     ids.add(task.lateCaptureApprovalIntentId);
     approvalIntentIdsByBookingId.set(task.bookingId, ids);
+    const tasks =
+      lateCaptureTasksByBookingId.get(task.bookingId) ?? new Map<string, { id: string; status: string }>();
+    tasks.set(task.lateCaptureApprovalIntentId, { id: task.id, status: task.status });
+    lateCaptureTasksByBookingId.set(task.bookingId, tasks);
+    if (task.status === "DISMISSED") {
+      const kept =
+        keptApprovalsByBookingId.get(task.bookingId) ??
+        new Map<string, { id: string; createdAt: Date }>();
+      kept.set(task.lateCaptureApprovalIntentId, { id: task.id, createdAt: task.createdAt });
+      keptApprovalsByBookingId.set(task.bookingId, kept);
+    }
   }
+  // #3635: a kept booking payment's invoice anchors on its task, which no
+  // scope above reaches, so its rows are read by the approval task ids - every
+  // one, whatever its status (round-3 N1/R5).
+  const approvalTaskIds = [...lateCaptureTasksByBookingId.values()].flatMap((tasks) =>
+    [...tasks.values()].map((task) => task.id),
+  );
+  const keptTaskOperations =
+    approvalTaskIds.length > 0
+      ? ((await deps.prisma.xeroSyncOperation.findMany({
+          where: { localModel: "ManualRefundTask", localId: { in: approvalTaskIds } },
+          select: xeroOperationSelect,
+          orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+        })) as XeroOperationRecord[]).filter(
+          (operation) =>
+            operation.localModel === "ManualRefundTask" &&
+            operation.localId !== null &&
+            approvalTaskIds.includes(operation.localId),
+        )
+      : [];
 
   const handBackPaymentIdsByBookingId = new Map<string, Set<string>>();
   for (const task of handBackTasks) {
@@ -566,6 +612,30 @@ export async function loadAuditData(
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
     lateCaptureApprovalIntentIds:
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    keptLateCaptures: new Map(
+      [...(keptApprovalsByBookingId.get(booking.id) ?? new Map<string, { id: string; createdAt: Date }>())].map(
+        ([paymentIntentId, task]) => [
+          paymentIntentId,
+          {
+            taskId: task.id,
+            raisedAt: task.createdAt,
+            operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
+          },
+        ],
+      ),
+    ),
+    lateCaptureTasks: new Map(
+      [...(lateCaptureTasksByBookingId.get(booking.id) ?? new Map<string, { id: string; status: string }>())].map(
+        ([paymentIntentId, task]) => [
+          paymentIntentId,
+          {
+            taskId: task.id,
+            status: task.status,
+            operations: keptTaskOperations.filter((operation) => operation.localId === task.id),
+          },
+        ],
+      ),
+    ),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
     closedPartPaymentReviewPaymentIds:

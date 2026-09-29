@@ -793,12 +793,45 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `lateCaptureApprovalIntentId`. Approval is the automatic refund, same Stripe
   keys; a task of any status owns its capture, and the repair tool offers no
   refund behind it. A #2700 hand-back is refused once its capture was refunded.
+  Kept money is recorded in Xero (`INV-PAY-110`).
 - **The repair tool's cancelled-open-invoice arm** asks "was money captured?"
   of every source and skips a payment already carrying a refund or
   account-credit note, or such an operation queued or failed.
 - Pinned by `cancellation-settled-money.test.ts`, `stripe-webhook-alerts.test.ts`,
   `payment-recovery.test.ts`, `manual-refund-task.test.ts` and
   `xero-booking-repair.test.ts`.
+
+## INV-PAY-110
+
+**Related: `INV-PAY-106`** (who decides a late capture) **and `INV-PAY-104`**
+(the change payment's waiting invoice).
+
+- **A kept late capture is recorded as a card receipt** (owner and
+  orchestrator decisions 29 Sep 2026, [#3635](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3635)):
+  an invoice for the GROSS capture, paid from `stripeBankAccount`, both dated
+  the club day of the Stripe charge (`stripe-capture-date.ts`), stored on the
+  row before the send. Keeping is dismissing the #3639 task; one pure
+  `decideLateCapture` (`late-capture-kept-xero-rules.ts`) answers everywhere.
+- **Which document**: a change payment on an invoiced booking keeps its
+  supplementary invoice, also charge-dated; anything else gets a
+  `KEPT_LATE_CAPTURE_INVOICE` anchored on the task, touching neither the
+  booking's invoice nor its clearing note.
+- **Refunds** are the ordinary refund note, owed only once the APP recorded
+  the capture's receipt (`readLateCaptureXeroReceipt`), never because
+  `payment.xeroInvoiceId` exists. Noted per capture (`noteLateCaptureRefunds`),
+  naming its receipt, dated the refund's day. Refunds of a capture without one
+  are outside the note-eligible cash (`refund-note-eligible-cash.ts`), so the
+  self-heal never raises them.
+- **The task row is the lock**: the enqueue and the worker's send-time check
+  take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
+  task's status, by the repair tool too. An approval withdraws an unsent row;
+  one already past its check still sends, and its worker notes the refund.
+- **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+- **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
+  its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
+- Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
+  and the self-heal a day on), `xero-kept-late-capture-invoice.test.ts` and
+  `refund-note-eligible-cash.test.ts`.
 
 ## INV-PAY-019
 
@@ -1117,11 +1150,12 @@ it was).
   (`xero-waiting-invoice-reaper.ts`) retires only on `closed`, reading Stripe
   only for a FAILED ask (10s, 25 reads a run); a capture Stripe holds but our
   rows never recorded alerts once after three days.
-- **Only a capture the webhook kept is invoiced.** `isLateCaptureRefunded` (a
-  CANCELLED booking, or a superseded intent's supersede recovery) makes both
-  the reaper and `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent`
-  leave the invoice unsent, so it retires; #3403 is unchanged. A kept one is
-  released or re-queued, never retired. An invoice the capture does not cover
+- **Only a kept capture is invoiced.** `lateCaptureRefundState` answers from
+  the #3639 task owning the capture (OPEN undecided, COMPLETED refunded,
+  DISMISSED kept, recorded gross: `INV-PAY-110`), else from the booking
+  (CANCELLED or a supersede recovery refunds; #3403 unchanged). The reaper and
+  `releaseXeroSupplementaryInvoiceForCapturedPaymentIntent` both ask it:
+  refunded retires, undecided stays waiting, kept is released or re-queued. An invoice the capture does not cover
   is not issued, and an officer is told. A retired row is re-queued from
   **that row**, the largest ask per change, under
   `lockSupplementaryInvoiceAnchor`, once; it alerts once where another invoice

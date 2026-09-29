@@ -2,15 +2,15 @@ import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
-import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
+import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { readBookingInvoiceEvidenceForPayments } from "@/lib/xero-booking-invoice-evidence";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
-import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
   findResolvedBookingInvoiceCreate,
   readResolvedRefundCreditNoteCoverage,
+  sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import {
   STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
@@ -304,19 +304,20 @@ export async function readRefundCreditNoteGap(payment: {
   uncoveredCents: number;
 }> {
   // #2902: cash evidence first — an account-credit-only cancellation resolves
-  // to zero cash and is excluded before any coverage query runs.
-  const evidence = await resolveStripeCashRefundEvidence(payment);
-  if (evidence.cashRefundCents <= 0) {
+  // to zero cash and is excluded before any coverage query runs. #3635 round-3
+  // R1: the cash a note may answer, so a refund of a late capture Xero never
+  // received is not a gap - the self-heal must not raise it a day later.
+  const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment);
+  if (eligibleCashCents <= 0) {
     return { cashRefundCents: 0, coveredCents: 0, resolvedInXeroCents: 0, uncoveredCents: 0 };
   }
-  const linkedCents = await sumCoveredRefundCreditNoteCents(payment.id);
   const resolved = await readResolvedRefundCreditNoteCoverage(payment.id);
-  const coveredCents = linkedCents + resolved.coveredCents;
+  const coveredCents = await sumRefundCreditNoteCoverageCents(payment.id, resolved);
   return {
-    cashRefundCents: evidence.cashRefundCents,
+    cashRefundCents: eligibleCashCents,
     coveredCents,
     resolvedInXeroCents: resolved.coveredCents,
-    uncoveredCents: Math.max(0, evidence.cashRefundCents - coveredCents),
+    uncoveredCents: Math.max(0, eligibleCashCents - coveredCents),
   };
 }
 

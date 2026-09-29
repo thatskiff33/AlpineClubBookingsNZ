@@ -584,8 +584,32 @@ waiting-items badge in the sidebar like any other refund task.
 2. **Close without refunding** closes the item and refunds nothing, for example
    when the cancellation was a mistake and the booking is being put back. A note is
    required. A closed item can be reopened later, like any other dismissed item.
+   **The club keeps the money, and the app records it in Xero** the way it records
+   any card payment: an invoice for what the card paid, dated the day Stripe took
+   the money, paid from the Stripe bank account on that day, so it reconciles with
+   the Stripe payout. For a payment for a change to a booking Xero had invoiced,
+   that is the change's own invoice. Otherwise it is a separate invoice reading
+   *Payment kept after cancellation*, on your hut-fees income account, billed to
+   whoever the booking's invoices go to: the member, or the organisation for an
+   organisation's booking. The booking's original invoice, and any note that
+   cleared it when the booking was cancelled, are left as they are, so the money
+   is counted once. Any refund of it, including one you made in the Stripe
+   dashboard, is recorded as an ordinary refund credit note against it, dated the
+   day the refund left Stripe. You do not need to record anything in Xero
+   yourself. If you reopen the item and then refund it, an invoice not yet sent
+   is withdrawn, and one already sent is credited back by the refund. A payment
+   Xero never received, because it was refunded before its invoice went out, gets
+   no refund note at all, and the nightly check for missing refund notes does not
+   ask for one.
+   **If Xero could not take the invoice and you recorded it by hand** and marked
+   the item *Resolved in Xero*, the app treats it as done. It never sends that
+   invoice, and it raises no refund note for the payment either: record any
+   refund of it by hand in Xero too. The Xero repair tool reminds you when one
+   has been refunded.
 3. **If you already refunded it in the Stripe dashboard**, use **Close without
-   refunding** and say so in the note. **Refund to card** refuses a payment that has already
+   refunding** and say so in the note. Xero then gets the payment and its refund
+   note, which net to nothing, so Xero matches what went through Stripe.
+   **Refund to card** refuses a payment that has already
    been refunded, fully or in part, so it cannot refund it a second time.
 
 Once an item exists for a payment, it decides that payment. Switching the setting

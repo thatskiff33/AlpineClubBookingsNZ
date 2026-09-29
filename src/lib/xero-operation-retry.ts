@@ -5,6 +5,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
+  XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -125,6 +126,79 @@ function groupSettlementInvoiceRequeuePayload(
     return { ...queued };
   }
   return null;
+}
+
+/**
+ * #3635: a kept late capture's invoice is replayed from its queued payload,
+ * which its worker keeps: back to PENDING, where the worker re-uses an invoice
+ * already raised (the task's link) and records only a missing payment. FAILED
+ * or PARTIAL (the payment failed); null for any other row.
+ */
+function keptLateCaptureInvoiceRequeuePayload(
+  operation: RetryableOperation,
+): Record<string, unknown> | null {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "INVOICE" ||
+    operation.operationType !== "CREATE" ||
+    operation.localModel !== "ManualRefundTask"
+  ) {
+    return null;
+  }
+  const queued = readQueuedOutboxPayload(operation.requestPayload);
+  return queued?.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
+    ? {
+        queueType: queued.queueType,
+        bookingId: queued.bookingId,
+        manualRefundTaskId: queued.manualRefundTaskId,
+        paymentIntentId: queued.paymentIntentId,
+        capturedCents: queued.capturedCents,
+        capturedOn: queued.capturedOn,
+      }
+    : null;
+}
+
+/**
+ * Return an outbox row to PENDING with its queued payload, status-guarded, so
+ * the outbox claim stays the one execution authority. A lost guard, or the
+ * active-correlation-key index refusing a second live row (the caller's own
+ * flow already queued this attempt again), is a 409. The claim also loses to a
+ * resolve landing after the read (#3635, INV-INT-025), and says so through
+ * `throwLostRetryClaim`. Applied-credit rows are retry-only and stay outside
+ * this helper, with no resolved guard on their claim.
+ */
+async function requeueOutboxRowForRetry(
+  operationId: string,
+  requestPayload: Record<string, unknown>,
+  fromStatuses: Array<"FAILED" | "PARTIAL">,
+  label: string,
+): Promise<void> {
+  const queued = await prisma.xeroSyncOperation
+    .updateMany({
+      where: {
+        id: operationId,
+        status: fromStatuses.length === 1 ? fromStatuses[0] : { in: fromStatuses },
+        manuallyResolvedAt: null,
+      },
+      data: {
+        status: "PENDING",
+        requestPayload: requestPayload as Prisma.InputJsonValue,
+        startedAt: null,
+        completedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    })
+    .catch((error: unknown) => {
+      if (isPrismaUniqueConstraintError(error)) return { count: 0 };
+      throw error;
+    });
+  if (queued.count !== 1) {
+    await throwLostRetryClaim(
+      operationId,
+      `This ${label} operation was already queued or claimed by another retry.`,
+    );
+  }
 }
 
 export interface XeroOperationRetryMeta {
@@ -761,6 +835,21 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   ) {
     return { supported: true, reason: null };
   }
+  if (
+    operation.localModel === "ManualRefundTask" &&
+    (operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE ||
+      readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
+        XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE)
+  ) {
+    return keptLateCaptureInvoiceRequeuePayload(operation) &&
+      (operation.status === "FAILED" || operation.status === "PARTIAL")
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason:
+            "Only a failed or partial kept-payment invoice with its queued amount can be retried.",
+        };
+  }
   if (groupSettlementInvoiceRequeuePayload(operation)) {
     return operation.status === "FAILED"
       ? { supported: true, reason: null }
@@ -1095,33 +1184,27 @@ export async function retryXeroSyncOperation(
     };
   }
 
+  // #3635: the kept late capture's invoice and #3642's group invoice rows go
+  // back to the outbox the same way, through one requeue.
+  const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
+  if (keptLateCapturePayload) {
+    await requeueOutboxRowForRetry(
+      operation.id,
+      keptLateCapturePayload,
+      ["FAILED", "PARTIAL"],
+      "kept-payment invoice",
+    );
+    return { message: "Queued the kept-payment Xero invoice for retry." };
+  }
+
   const groupSettlementPayload = groupSettlementInvoiceRequeuePayload(operation);
   if (groupSettlementPayload) {
-    const queued = await prisma.xeroSyncOperation
-      .updateMany({
-        // #3635: a resolve landing after the read makes this claim lose.
-        where: { id: operation.id, status: "FAILED", manuallyResolvedAt: null },
-        data: {
-          status: "PENDING",
-          requestPayload: groupSettlementPayload as Prisma.InputJsonValue,
-          startedAt: null,
-          completedAt: null,
-          lastErrorCode: null,
-          lastErrorMessage: null,
-        },
-      })
-      .catch((error: unknown) => {
-        // The organiser's own settle already queued this attempt again: the
-        // active-correlation-key index refuses a second live row for it.
-        if (isPrismaUniqueConstraintError(error)) return { count: 0 };
-        throw error;
-      });
-    if (queued.count !== 1) {
-      await throwLostRetryClaim(
-        operation.id,
-        "This group settlement invoice operation was already queued or claimed by another retry.",
-      );
-    }
+    await requeueOutboxRowForRetry(
+      operation.id,
+      groupSettlementPayload,
+      ["FAILED"],
+      "group settlement invoice",
+    );
     return { message: "Queued the group settlement invoice operation for retry." };
   }
 
@@ -1510,6 +1593,8 @@ export async function retryXeroSyncOperation(
             ? { watermarkCents: deltaWatermarkCents }
             : {}),
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
+          ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
+          ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }

@@ -5,12 +5,14 @@ const {
   mockProcessPaymentRecoveryOperations,
   mockReleaseExpiredInternetBankingHolds,
   mockReapStaleWaitingPaymentXeroOutboxOperations,
+  mockReannounceHeldLateCaptures,
   mockCronJobRunCreate,
   mockReportCronError,
 } = vi.hoisted(() => ({
   mockProcessPaymentRecoveryOperations: vi.fn(),
   mockReleaseExpiredInternetBankingHolds: vi.fn(),
   mockReapStaleWaitingPaymentXeroOutboxOperations: vi.fn(),
+  mockReannounceHeldLateCaptures: vi.fn(),
   mockCronJobRunCreate: vi.fn(),
   mockReportCronError: vi.fn(),
 }));
@@ -46,6 +48,11 @@ vi.mock("@/lib/xero-operation-outbox", () => ({}));
 vi.mock("@/lib/xero-waiting-invoice-reaper", () => ({
   reapStaleWaitingPaymentXeroOutboxOperations: (...args: unknown[]) =>
     mockReapStaleWaitingPaymentXeroOutboxOperations(...args),
+}));
+
+// #3635: the fourth task, the held late-capture alert's re-selecting run.
+vi.mock("@/lib/late-capture-refund-hold", () => ({
+  reannounceHeldLateCaptures: (...args: unknown[]) => mockReannounceHeldLateCaptures(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -87,6 +94,7 @@ describe("POST /api/cron/payments", () => {
       bookingIds: [],
       paymentIds: [],
     });
+    mockReannounceHeldLateCaptures.mockResolvedValue({ checked: 0, announced: 0 });
     mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
       reaped: 0,
       released: 0,
@@ -114,7 +122,7 @@ describe("POST /api/cron/payments", () => {
     );
   }
 
-  it("runs all three payments tasks and records each under its own job name", async () => {
+  it("runs all four payments tasks and records each under its own job name", async () => {
     const { POST } = await import("@/app/api/cron/payments/route");
     const response = await POST(
       authorisedRequest("http://localhost/api/cron/payments?task=recovery")
@@ -125,12 +133,14 @@ describe("POST /api/cron/payments", () => {
     expect(mockProcessPaymentRecoveryOperations).toHaveBeenCalledOnce();
     expect(mockReleaseExpiredInternetBankingHolds).toHaveBeenCalledOnce();
     expect(mockReapStaleWaitingPaymentXeroOutboxOperations).toHaveBeenCalledOnce();
+    expect(mockReannounceHeldLateCaptures).toHaveBeenCalledOnce();
     expect(data.internetBankingHoldRelease).toMatchObject({ released: 0, failed: 0 });
     expect(data.xeroOutboxReap).toMatchObject({ reaped: 0 });
     expect(recordedRuns()).toEqual([
       expect.objectContaining({ jobName: "payment-recovery", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "internet-banking-hold-release", status: "SUCCESS" }),
       expect.objectContaining({ jobName: "xero-waiting-invoice-reaper", status: "SUCCESS" }),
+      expect.objectContaining({ jobName: "late-capture-held-alert", status: "SUCCESS" }),
     ]);
   });
 
@@ -161,6 +171,7 @@ describe("POST /api/cron/payments", () => {
     ["payment-recovery", mockProcessPaymentRecoveryOperations, "recovery"],
     ["internet-banking-hold-release", mockReleaseExpiredInternetBankingHolds, "internetBankingHoldRelease"],
     ["xero-waiting-invoice-reaper", mockReapStaleWaitingPaymentXeroOutboxOperations, "xeroOutboxReap"],
+    ["late-capture-held-alert", mockReannounceHeldLateCaptures, "lateCaptureHeldAlert"],
   ] as const)(
     "keeps running the other tasks when %s fails, and reports it as failed",
     async (failingJob, failingMock, resultKey) => {
@@ -185,7 +196,7 @@ describe("POST /api/cron/payments", () => {
         expect.objectContaining({ tag: failingJob })
       );
       const runs = recordedRuns();
-      expect(runs).toHaveLength(3);
+      expect(runs).toHaveLength(4);
       for (const run of runs) {
         expect(run.status).toBe(run.jobName === failingJob ? "FAILURE" : "SUCCESS");
       }

@@ -255,10 +255,37 @@ describe("xero operation outbox payload parsing", () => {
       "GROUP_SETTLEMENT_INVOICE",
       "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
+      "KEPT_LATE_CAPTURE_INVOICE",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
     );
+  });
+
+  it("#3635: reads a kept late-capture invoice's frozen gross cents and capture day, anchored on the approval task", () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_1",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    // Whole positive cents only (`INV-MONEY-001`); anything else is unreadable.
+    for (const capturedCents of [0, -100, 12.5]) {
+      expect(readQueuedOutboxPayload({ ...queued, capturedCents })).toBeNull();
+    }
+    // A receipt without its capture day would be dated on some later day.
+    for (const capturedOn of [undefined, "", "10/06/2026"]) {
+      expect(readQueuedOutboxPayload({ ...queued, capturedOn })).toBeNull();
+    }
+    expect(readQueuedOutboxPayload({ ...queued, manualRefundTaskId: undefined })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("KEPT_LATE_CAPTURE_INVOICE")).toEqual({
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModels: ["ManualRefundTask"],
+    });
   });
 
   it("routes every scanned queue type through the guarded expected-operation map (#1272)", () => {
@@ -281,6 +308,7 @@ describe("xero operation outbox payload parsing", () => {
       ["GROUP_SETTLEMENT_INVOICE", "INVOICE"],
       ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
+      ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(

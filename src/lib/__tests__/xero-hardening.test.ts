@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   sendRepeatedFailureAlert: vi.fn(),
   sendReconciliationReportAlert: vi.fn(),
   resolveStripeCashRefundEvidence: vi.fn(),
+  paymentRefundFindMany: vi.fn(),
 }));
 
 // #2902: the over-coverage drift class compares coverage against the
@@ -41,6 +42,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findMany: mocks.paymentFindMany,
+    },
+    paymentRefund: {
+      findMany: mocks.paymentRefundFindMany,
     },
     memberSubscription: {
       findMany: mocks.subscriptionFindMany,
@@ -250,6 +254,10 @@ describe("buildXeroReconciliationReport", () => {
     vi.clearAllMocks();
     mocks.inboundEventCount.mockResolvedValue(0);
     mocks.inboundEventFindMany.mockResolvedValue([]);
+    // #3635: no resolved refund note, and no refund row naming a late capture,
+    // unless a test says so.
+    mocks.operationFindMany.mockResolvedValue([]);
+    mocks.paymentRefundFindMany.mockResolvedValue([]);
     mocks.resolveStripeCashRefundEvidence.mockImplementation(
       async (payment: { refundedAmountCents: number }) => ({
         cashRefundCents: payment.refundedAmountCents,
@@ -703,6 +711,90 @@ describe("buildXeroReconciliationReport", () => {
     expect(drift?.items?.[0]?.detail).toContain("VOIDED/DELETED");
   });
 
+  /**
+   * #3635 round-3 R6: a hand-made refund note an officer resolved in Xero
+   * covers its recorded amount everywhere a note is sized, so over-coverage
+   * reads it too - alone, or on top of links - against the note-eligible cash,
+   * and an unreadable one is reported rather than skipped.
+   */
+  describe("over-coverage with refund notes resolved by hand in Xero (round-3 R6)", () => {
+    function armResolved(options: {
+      links: Array<{ amountCents: number }>;
+      resolved: Array<{ refundAmountCents: number } | null>;
+    }) {
+      mocks.memberFindMany.mockResolvedValue([]);
+      mocks.operationFindFirst.mockResolvedValue(null);
+      mocks.subscriptionFindMany.mockResolvedValue([]);
+      mocks.operationCount.mockResolvedValue(0);
+      mocks.paymentFindMany.mockImplementation(
+        async (args?: { where?: { source?: string }; select?: { refundedAmountCents?: boolean } }) => {
+          if (args?.select?.refundedAmountCents) {
+            return [{ id: "pay_stripe", bookingId: "booking_1", refundedAmountCents: 100 }];
+          }
+          if (args?.where?.source === "STRIPE") return [{ id: "pay_stripe" }];
+          return [{ id: "pay_stripe", xeroInvoiceId: null, xeroRefundCreditNoteId: null }];
+        }
+      );
+      mocks.linkFindMany.mockResolvedValue(
+        options.links.map((link, index) => ({
+          localModel: "Payment",
+          localId: "pay_stripe",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: `cn_${index}`,
+          role: "REFUND_CREDIT_NOTE",
+          metadata: { amountCents: link.amountCents, status: "AUTHORISED" },
+        }))
+      );
+      mocks.operationFindMany.mockImplementation(
+        async (args?: { where?: { entityType?: string; manuallyResolvedAt?: { not: null } } }) =>
+          args?.where?.entityType === "CREDIT_NOTE" && args.where.manuallyResolvedAt
+            ? options.resolved.map((row, index) => ({
+                id: `op_resolved_${index}`,
+                localId: "pay_stripe",
+                correlationKey: `payment:pay_stripe:refund-credit-note:${index}:v2`,
+                requestPayload: row ? { queueType: "REFUND_CREDIT_NOTE", ...row, watermarkCents: 0 } : null,
+              }))
+            : []
+      );
+    }
+    const overCoverage = async () => {
+      const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
+        now: new Date("2026-04-13T12:00:00Z"),
+      });
+      return {
+        count: report.summary.overCoveredStripeRefundPayments,
+        items:
+          report.issueSections.find((section) => section.id === "stripe-refund-over-coverage")?.items ?? [],
+      };
+    };
+
+    it("reports over-coverage from resolved notes alone", async () => {
+      armResolved({ links: [], resolved: [{ refundAmountCents: 150 }] });
+      const { count, items } = await overCoverage();
+      expect(count).toBe(1);
+      expect(items[0]?.detail).toContain("$0.00 from active notes, $1.50 from notes resolved by hand in Xero");
+    });
+
+    it("reports over-coverage from links and resolved notes together", async () => {
+      armResolved({ links: [{ amountCents: 90 }], resolved: [{ refundAmountCents: 50 }] });
+      const { count, items } = await overCoverage();
+      expect(count).toBe(1);
+      expect(items[0]?.detail).toContain("$0.90 from active notes, $0.50 from notes resolved by hand in Xero");
+    });
+
+    it("reports a resolved note whose amount cannot be read, never skipping it", async () => {
+      armResolved({ links: [], resolved: [null] });
+      const { count, items } = await overCoverage();
+      expect(count).toBe(1);
+      expect(items[0]?.detail).toContain("has no readable amount");
+    });
+
+    it("does not report a payment a resolved note covers exactly", async () => {
+      armResolved({ links: [], resolved: [{ refundAmountCents: 100 }] });
+      await expect(overCoverage()).resolves.toMatchObject({ count: 0 });
+    });
+  });
+
   it("flags a Stripe payment whose active refund-note coverage exceeds the refunded total (#2901 fix round)", async () => {
     mocks.memberFindMany.mockResolvedValue([]);
     mocks.operationFindFirst.mockResolvedValue(null);
@@ -838,7 +930,7 @@ describe("buildXeroReconciliationReport", () => {
       (issueSection) => issueSection.id === "stripe-refund-over-coverage"
     );
     expect(section?.items?.[0]?.detail).toContain(
-      "cash refund target of $0.00"
+      "cash target of $0.00"
     );
     expect(section?.items?.[0]?.detail).toContain("legacy-mirror");
   });

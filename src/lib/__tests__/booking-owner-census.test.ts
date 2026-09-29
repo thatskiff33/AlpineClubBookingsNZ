@@ -521,7 +521,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   "src/lib/member-guest-consent-service.ts:1226",
   "src/lib/payment-recovery.ts:2558",
   "src/lib/payment-recovery.ts:2610",
-  "src/lib/xero-admin-health.ts:371",
+  "src/lib/xero-admin-health.ts:372",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
@@ -792,6 +792,6 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:89",
   "src/lib/stuck-state-dashboard.ts:616",
-  "src/lib/xero-booking-repair-types.ts:176",
-  "src/lib/xero-inbound/settlement-conflicts.ts:152",
+  "src/lib/xero-booking-repair-types.ts:185",
+  "src/lib/xero-inbound/settlement-conflicts.ts:153",
 ];

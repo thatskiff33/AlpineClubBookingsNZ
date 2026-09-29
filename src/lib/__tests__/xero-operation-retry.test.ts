@@ -2190,6 +2190,93 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3635: a kept late capture's invoice goes back to the outbox from its
+  // queued payload, which its worker keeps beside the request it sent.
+  it("returns a failed or partial kept late-capture invoice to the outbox with its queued payload", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    for (const status of ["FAILED", "PARTIAL"] as const) {
+      mocks.updateManyOperation.mockReset();
+      const operation = makeOperation({
+        status,
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+      });
+      expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+      mocks.findUniqueOperation.mockResolvedValue(operation);
+      mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Queued the kept-payment Xero invoice for retry.",
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+      });
+    }
+
+    // Unreadable cents are never guessed.
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          localModel: "ManualRefundTask",
+          localId: "task_kept",
+          queueType: "KEPT_LATE_CAPTURE_INVOICE",
+          requestPayload: { ...queued, capturedCents: null },
+        }),
+      ).supported,
+    ).toBe(false);
+  });
+
+  // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
+  // recorded by hand in Xero is never re-run - refused on read, and a resolve
+  // landing between the read and the requeue makes the claim lose.
+  it("never re-runs a kept late-capture invoice resolved in Xero", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    const kept = makeOperation({
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+    });
+    const resolved = { ...kept, manuallyResolvedAt: RESOLVED_AT };
+    expect(getXeroOperationRetryMeta(resolved)).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(resolved);
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+
+    mocks.findUniqueOperation
+      .mockReset()
+      .mockResolvedValueOnce(kept)
+      .mockResolvedValueOnce({ ...resolved });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+  });
+
   // #3642: the combined group invoice's rows go back to the outbox; a failed
   // abandon VOID used to be terminal, with no Retry and no alert.
   it("returns a failed group settlement VOID to the outbox with its queued payload", async () => {

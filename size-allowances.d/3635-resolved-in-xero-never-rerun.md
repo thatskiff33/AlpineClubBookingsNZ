@@ -18,11 +18,17 @@ reason: it revalidates the real booking page through the one route-pattern
   constant instead of a path that does not exist; that costs its import.
 
 file: src/lib/xero-hardening-report.ts
-lines: 1108
+lines: 1152
 reason: the report's failure counts (repeated, failed, partial, unsupported)
   leave out an operation an officer resolved in Xero; the predicate's import,
   the selected column and one filter sit where the failure rows are read, and
-  the summary keeps the count of resolved rows it left out.
+  the summary keeps the count of resolved rows it left out. #3635 round-3 R6:
+  the over-coverage class reads resolved refund-note coverage too, takes
+  payments covered only by resolved notes as candidates, reports an
+  unreadable one, and targets the note-eligible cash; the coverage and cash
+  readers live in `xero-resolved-in-xero-fences.ts` and
+  `refund-note-eligible-cash.ts`, and what stays is the candidate query and
+  the item, beside the class it corrects.
 
 file: src/app/api/admin/subscription-billing/route.ts
 lines: 334
