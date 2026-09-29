@@ -19,8 +19,8 @@ isn't there.
 ## When you'd use it
 
 - You've just logged in and want the one-screen view of what needs doing today.
-- You want a quick count of active members, active bookings, or this month's
-  revenue without opening the detailed reports.
+- You want a quick count of active members, upcoming check-ins, or the money
+  collected this month net of refunds, without opening the detailed reports.
 - You want to jump to a pending queue (refund appeals, booking reviews, deletion
   requests) straight from the alert that surfaced it.
 
@@ -30,7 +30,7 @@ isn't there.
 
 1. Go to **Admin → Admin Dashboard**.
 
-   ![Admin dashboard showing attention cards, the member/booking/revenue stat cards, recent bookings, and quick-action shortcuts](../images/admin/admin-dashboard.png)
+   ![Admin dashboard showing attention cards, the officer cards, the members and net-collected stat cards, recent bookings, and quick-action shortcuts](../images/admin/admin-dashboard.png)
 
 2. Scan the **attention cards** at the top. Each is a shortcut to the queue that
    raised it — click through to act on it.
@@ -75,11 +75,12 @@ Stat cards (each links to its detail area):
 
 | Stat | What it counts |
 | --- | --- |
-| Members | Active members, with the total and inactive count |
-| Total Bookings | All-time bookings (excludes deleted) |
-| Active Bookings | Payment-pending, paid, confirmed, and hold statuses |
-| Net Collected This Month | Payments **recorded** this calendar month, **less the refunds and account credits on them**. A payment counts in the month its record was created, even if the money arrived later: an Internet Banking payment is recorded, as pending, when the booking is made, and counts in that month once it is paid. Only payments that have taken money count, so one still pending or failed is left out. Cancelled bookings are **included**, so a cancellation fee the club kept counts here — unlike the Payments page's **Net Collected Cash** card, which leaves cancelled bookings out. When anything has been refunded or credited, the amount paid and the amount refunded or credited are shown beneath the headline, in exact cents, so the arithmetic is on the card |
-| Upcoming Check-ins | Active bookings checking in within the next 7 NZ days |
+| Bookings | Bookings checking in within the next 7 NZ days (the same list **Bookings** opens to), with the count of active bookings (pending, payment-pending, confirmed, paid and awaiting review) and all-time bookings (excludes deleted) beneath |
+| Hut Leader Assignment | Upcoming nights (lodge-nights on a club with more than one active lodge) that have bookings but no hut leader |
+| Roster Assignment | Days in the next 7 days with no chores assigned |
+| Bed Allocation | Guests in the next 7 days still waiting for a bed |
+| Members | Active members, with the total beneath |
+| Net Collected This Month | Payments **recorded** this calendar month, **less the refunds and account credits on them**. A payment counts in the month its record was created, even if the money arrived later: an Internet Banking payment is recorded, as pending, when the booking is made, and counts in that month once it is paid. Only payments that have taken money count, so one still pending or failed is left out. Cancelled bookings are **included**, so a cancellation fee the club kept counts here — unlike the Payments page's **Net Collected Cash** card, which leaves cancelled bookings out. When anything has been refunded or credited, the amount paid and the amount refunded or credited are shown beneath the headline, in exact cents like the headline, so the arithmetic on the card adds up |
 
 ## Troubleshooting
 
