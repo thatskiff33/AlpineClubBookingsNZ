@@ -1,4 +1,4 @@
-- **A new lodge is created with its capacity, and a lodge without one says so.**
+- **A new lodge is created with its capacity, and a lodge without one says so (#3407).**
   **Add lodge** now asks how many guests the lodge can sleep, and the lodge is
   created with that figure already in place, so it can take bookings straight
   away. With Bed Allocation off, the setup wizard gains a **Capacity** step, and
