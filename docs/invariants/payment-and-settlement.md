@@ -824,7 +824,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   self-heal never raises them.
 - **The task row is the lock**: the enqueue and the worker's send-time check
   take it `FOR UPDATE`. A raised invoice's payment is retried whatever the
-  task's status, by the repair tool too. An approval withdraws an unsent row.
+  task's status, by the repair tool too. An approval withdraws an unsent row;
+  one already past its check still sends, and its worker notes the refund.
 - **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
 - **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
   its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
