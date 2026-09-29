@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * #3635 (F3, F4, `INV-SSOT`): "has this money been captured?" has two homes,
@@ -13,12 +14,17 @@ import { describe, expect, it } from "vitest";
  * or a named array. It cannot see a membership test on an ANONYMOUS array —
  * `[SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)` — which is
  * the copy #3643 wrote into the part-payment cancel claim. This guard covers
- * exactly that receiver and nothing the #3606 guard covers, so the two compose
- * rather than overlap; fold it into that guard once both are on `main`.
+ * exactly that receiver — bare, or parenthesised with a cast as TypeScript
+ * usually spells it (`([...] as const).includes(`) — and nothing the #3606
+ * guard covers, so the two compose rather than overlap; fold it into that
+ * guard once both are on `main`. Comments are stripped first with the one
+ * `stripComments` (`INV-SSOT-004`), so a comment recording the removed copy
+ * does not trip it.
  */
 const SOURCE_ROOT = join(process.cwd(), "src");
 const CAPTURED = ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] as const;
-const ANONYMOUS_INCLUDES = /\[([^[\]]{0,300})\]\s*\.includes\s*\(/g;
+const ANONYMOUS_INCLUDES =
+  /\[([^[\]]{0,300})\](?:\s+as\s+[^()]{0,120})?\s*\)?\s*\.includes\s*\(/g;
 
 type SourceFile = { readonly file: string; readonly source: string };
 
@@ -40,7 +46,7 @@ function productionSourceFiles(directory = SOURCE_ROOT): SourceFile[] {
 
 function inlineCapturedIncludes(files: readonly SourceFile[]): string[] {
   return files.flatMap(({ file, source }) =>
-    [...source.matchAll(ANONYMOUS_INCLUDES)]
+    [...stripComments(source).matchAll(ANONYMOUS_INCLUDES)]
       .filter(([, values]) =>
         CAPTURED.every((status) =>
           new RegExp(`\\b(?:PaymentStatus\\.)?${status}\\b`).test(values),
@@ -71,12 +77,35 @@ describe("INV-SSOT: captured-status lists are read from their one home (#3635)",
           source: 'const hit = ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status);',
         },
         {
+          file: "src/lib/mutated-as-const.ts",
+          source:
+            "const hit = ([PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED] as const).includes(status);",
+        },
+        {
+          file: "src/lib/mutated-as-array.ts",
+          source:
+            'const hit = (["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] as PaymentStatus[]).includes(status);',
+        },
+        {
+          // A comment recording the removed copy is history, not a copy.
+          file: "src/lib/comment-only.ts",
+          source:
+            "// was: [SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)
+/* ([SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED] as const).includes(s) */
+const ok = true;",
+        },
+        {
           // Two of the three is a different question and is left alone.
           file: "src/lib/not-captured.ts",
           source: 'const hit = ["SUCCEEDED", "REFUNDED"].includes(status);',
         },
       ]),
-    ).toEqual(["src/lib/mutated-enum.ts", "src/lib/mutated-string.ts"]);
+    ).toEqual([
+      "src/lib/mutated-enum.ts",
+      "src/lib/mutated-string.ts",
+      "src/lib/mutated-as-const.ts",
+      "src/lib/mutated-as-array.ts",
+    ]);
   });
 
   it("the refunded-total shortfall audit reads the aggregate's one captured list (F3)", () => {
