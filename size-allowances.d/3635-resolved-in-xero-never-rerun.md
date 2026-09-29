@@ -45,7 +45,11 @@ reason: force-sync of one booking is the single deliberate override of an
   `xero-resolved-in-xero-fences.ts`.
 
 file: src/lib/xero-refund-note-link-repair.ts
-lines: 883
+lines: 915
 reason: the blocker query stops waiting on a create resolved in Xero, and the
   comment that said resolving gates nothing is inverted in place; the rule
-  lives in `xero-operation-resolution.ts`.
+  lives in `xero-operation-resolution.ts`. The composed review's C3: the
+  coverage target is the note-eligible cash and coverage counts notes resolved
+  in Xero, read through `refund-note-eligible-cash.ts` and
+  `xero-resolved-in-xero-fences.ts`; what stays is the planner's use of them
+  and the refusal of an unreadable resolved note, beside the plan they size.
