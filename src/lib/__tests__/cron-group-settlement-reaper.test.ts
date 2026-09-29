@@ -86,11 +86,11 @@ vi.mock("@/lib/module-settings", () => ({
 // The 24-hour invoice alert is mocked; #3635's once-ever started-stay alert is
 // the real one, over a mocked claim store, so its claim rule is exercised.
 vi.mock("@/lib/group-settlement-invoice-alerts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/group-settlement-invoice-alerts")>()),
+  ...((await importOriginal()) as typeof import("@/lib/group-settlement-invoice-alerts")),
   alertGroupSettlementInvoice: mocks.alertInvoice,
 }));
 vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/alert-cooldown")>()),
+  ...((await importOriginal()) as typeof import("@/lib/alert-cooldown")),
   claimAlertCooldown: mocks.claimAlertCooldown,
   deferAlertCooldown: mocks.deferAlertCooldown,
   releaseAlertCooldown: mocks.releaseAlertCooldown,

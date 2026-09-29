@@ -254,7 +254,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/alert-cooldown")>()),
+  ...((await importOriginal()) as typeof import("@/lib/alert-cooldown")),
   claimAlertCooldown: mocks.claimAlertCooldown,
   deferAlertCooldown: mocks.deferAlertCooldown,
   releaseAlertCooldown: mocks.releaseAlertCooldown,
