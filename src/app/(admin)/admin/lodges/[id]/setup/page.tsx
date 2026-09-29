@@ -25,6 +25,12 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+  NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
 
 // New-lodge setup wizard (ADR-003 follow-up, implementation-plan "Future
 // Enhancements"): a guided flow over the existing hub building blocks —
@@ -34,7 +40,10 @@ import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 // reuses already-validated APIs; the wizard adds no new server surface.
 // Steps are gated by the same module flags as the hub, and every step can
 // be skipped — an unconfigured lodge is safe because it resolves to
-// capacity 0 (phase 3).
+// capacity 0 (phase 3). Safe is not the same as ready, though (#3407): the
+// Capacity step asks for the figure when Bed Allocation is off (the only mode
+// with no Rooms step to set it), and the Finish step asks the server whether
+// the lodge can take a booking before it may call the lodge ready.
 
 interface LodgeRecord {
   id: string;
@@ -81,10 +90,18 @@ interface ChoreRecord {
   active: boolean;
 }
 
-type StepKey = "identity" | "rooms" | "lockers" | "seasons" | "chores" | "finish";
+type StepKey =
+  | "identity"
+  | "capacity"
+  | "rooms"
+  | "lockers"
+  | "seasons"
+  | "chores"
+  | "finish";
 
 const ALL_STEPS: Array<{ key: StepKey; label: string }> = [
   { key: "identity", label: "Identity" },
+  { key: "capacity", label: "Capacity" },
   { key: "rooms", label: "Rooms & Beds" },
   { key: "lockers", label: "Lockers" },
   { key: "seasons", label: "Seasons & Rates" },
@@ -127,6 +144,18 @@ export default function LodgeSetupWizardPage() {
   const [doorCode, setDoorCode] = useState("");
   const [travelNote, setTravelNote] = useState("");
 
+  // Capacity step (#3407) — the lodge's configured capacity as saved, and as
+  // typed. Seeded from the lodge's settings, which Add lodge now writes.
+  const [capacityInput, setCapacityInput] = useState("");
+  const [savedCapacityInput, setSavedCapacityInput] = useState("");
+  // Whether the server says this lodge can take a booking at all (#3407).
+  // Null until the Finish step has asked: the wizard must not say "ready"
+  // about a lodge that resolves to zero, and it cannot know from here alone
+  // with Bed Allocation on, where active beds count too.
+  const [setUpForBookings, setSetUpForBookings] = useState<boolean | null>(
+    null,
+  );
+
   // Step 2 — rooms quick-seed. Names are unique per lodge, so plain
   // prefixes work; the lodge-name default just reads nicely on boards.
   const [roomCount, setRoomCount] = useState("4");
@@ -151,9 +180,12 @@ export default function LodgeSetupWizardPage() {
       setLoading(true);
       setLoadError(null);
       try {
-        const [lodgesRes, modulesRes] = await Promise.all([
+        const [lodgesRes, modulesRes, settingsRes] = await Promise.all([
           fetch("/api/admin/lodges"),
           fetch("/api/admin/modules"),
+          fetch(
+            `/api/admin/lodge-settings?lodgeId=${encodeURIComponent(lodgeId)}`,
+          ),
         ]);
         if (!lodgesRes.ok) throw new Error("Failed to load lodges");
         const lodgesData = await lodgesRes.json();
@@ -168,7 +200,16 @@ export default function LodgeSetupWizardPage() {
             if (typeof value === "boolean") flags[key] = value;
           }
         }
+        let savedCapacity = "";
+        if (settingsRes?.ok) {
+          const settingsData = await settingsRes.json();
+          if (typeof settingsData.capacity === "number") {
+            savedCapacity = String(settingsData.capacity);
+          }
+        }
         if (cancelled) return;
+        setCapacityInput(savedCapacity);
+        setSavedCapacityInput(savedCapacity);
         setLodge(found);
         setOtherLodges(
           (lodgesData.lodges ?? []).filter(
@@ -200,6 +241,10 @@ export default function LodgeSetupWizardPage() {
     () =>
       ALL_STEPS.filter((candidate) => {
         if (candidate.key === "rooms") return modules.bedAllocation === true;
+        // The mirror of the Rooms step (#3407): with Bed Allocation off there
+        // are no beds, so the typed capacity is the lodge's whole answer and
+        // this is the only place the wizard can ask for it.
+        if (candidate.key === "capacity") return modules.bedAllocation !== true;
         if (candidate.key === "lockers") return modules.lockers !== false;
         if (candidate.key === "chores") return modules.chores === true;
         return true;
@@ -251,6 +296,68 @@ export default function LodgeSetupWizardPage() {
       setSaving(false);
     }
   }
+
+  async function saveCapacity() {
+    const typed = parseConfiguredLodgeCapacity(capacityInput);
+    if (typed.kind !== "valid") {
+      setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      return;
+    }
+    // Dirty-gated (docs/ARCHITECTURE.md, Admin/member layer): the route audits
+    // every save, so an unchanged figure is not re-sent.
+    if (String(typed.capacity) === savedCapacityInput) {
+      goNext();
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin/lodge-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ capacity: typed.capacity, lodgeId }),
+      });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(
+          await apiErrorMessageFromResponse(res, "Failed to save capacity"),
+        );
+      }
+      setSavedCapacityInput(String(typed.capacity));
+      setCapacityInput(String(typed.capacity));
+      goNext();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save capacity");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Ask the server, on arriving at Finish, whether this lodge can take a
+  // booking (#3407). Re-asked every time Finish is reached, because a Back to
+  // Capacity or Rooms can change the answer.
+  useEffect(() => {
+    if (step !== "finish") return;
+    let cancelled = false;
+    setSetUpForBookings(null);
+    fetch(`/api/admin/lodge-settings?lodgeId=${encodeURIComponent(lodgeId)}`, {
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (typeof data.setUpForBookings === "boolean") {
+          setSetUpForBookings(data.setUpForBookings);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [step, lodgeId]);
 
   async function seedRooms() {
     setSaving(true);
@@ -494,8 +601,8 @@ export default function LodgeSetupWizardPage() {
         <h1 className="text-3xl font-bold mt-2">Set up {lodge.name}</h1>
         <p className="text-muted-foreground mt-1">
           A guided setup for the new lodge. Every step can be skipped and
-          finished later from the lodge configuration page — an unconfigured
-          lodge simply has no bookable capacity yet.
+          finished later from the lodge configuration page — but a lodge with
+          no capacity cannot take a booking until it has one.
         </p>
       </div>
 
@@ -574,6 +681,45 @@ export default function LodgeSetupWizardPage() {
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={saveIdentity} disabled={saving}>
                 {saving ? "Saving..." : "Save and continue"}
               </ViewOnlyActionButton>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {step === "capacity" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Capacity</CardTitle>
+            <CardDescription>
+              How many guests {lodge.name} can sleep. Bookings are refused above
+              it, and without it the lodge cannot take a booking at all.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2 max-w-xs">
+              <Label htmlFor="wizard-capacity">Capacity (maximum guests)</Label>
+              <Input
+                id="wizard-capacity"
+                type="number"
+                inputMode="numeric"
+                min={MIN_CONFIGURED_LODGE_CAPACITY}
+                max={MAX_CONFIGURED_LODGE_CAPACITY}
+                step={1}
+                value={capacityInput}
+                onChange={(e) => setCapacityInput(e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={goBack} disabled={saving}>
+                Back
+              </Button>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={saveCapacity} disabled={saving}>
+                {saving ? "Saving..." : "Save and continue"}
+              </ViewOnlyActionButton>
+              <Button variant="ghost" onClick={goNext} disabled={saving}>
+                Skip for now
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -852,11 +998,34 @@ export default function LodgeSetupWizardPage() {
       {step === "finish" && (
         <Card>
           <CardHeader>
-            <CardTitle>All set</CardTitle>
+            {/*
+              #3407: "ready" only when the server says the lodge can take a
+              booking. Until it has answered this claims nothing either way.
+            */}
+            <CardTitle>
+              {setUpForBookings === false
+                ? "Not ready for bookings yet"
+                : setUpForBookings === true
+                  ? "All set"
+                  : "Setup steps finished"}
+            </CardTitle>
             <CardDescription>
-              {lodge.name} is ready. The configuration page shows what exists
-              at this lodge and links into every editor — anything skipped
-              here can be finished there.
+              {setUpForBookings === false ? (
+                <>
+                  {lodge.name} is not set up for bookings yet: it has no
+                  capacity, so no booking can be made there.{" "}
+                  {modules.bedAllocation === true
+                    ? "Create its rooms and beds, or set a capacity on the configuration page."
+                    : "Go back to the Capacity step and enter how many guests it can take."}
+                </>
+              ) : (
+                <>
+                  {setUpForBookings === true ? `${lodge.name} is ready. ` : null}
+                  The configuration page shows what exists at this lodge and
+                  links into every editor — anything skipped here can be
+                  finished there.
+                </>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
-import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import {
+  CLUB_CONFIG_LODGE_CAPACITY,
+  getLodgeCapacityStatus,
+} from "@/lib/lodge-capacity";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
   MIN_CONFIGURED_LODGE_CAPACITY,
 } from "@/lib/lodge-effective-capacity";
+import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 import {
   loadLodgeSettings,
   updateLodgeSettings,
@@ -37,7 +41,9 @@ async function validateLodgeScope(lodgeId: string | null | undefined) {
 
 const settingsSchema = z
   .object({
-    // Null clears the override and falls back to the club config bed total.
+    // Null clears the override. Since #1982 nothing falls back to the club
+    // config bed total at runtime: a cleared lodge resolves from its active
+    // beds, or to 0 (`unconfigured_lodge`) when it has none.
     // The bounds are the shared ones (#2724, INV-SSOT-001), so the lodge
     // configuration screen can tell an officer whether a typed figure will be
     // accepted here without keeping its own copy of the limits.
@@ -67,11 +73,20 @@ export async function GET(request: Request) {
   if (!scope.ok) return scope.response;
 
   const settings = await loadLodgeSettings(prisma, lodgeId);
+  // Whether the named lodge can take a booking at all, from the one resolver
+  // every booking path reads (#3407). The lodge setup wizard reads it before
+  // it may say a lodge is ready: the configured figure alone cannot answer that
+  // with Bed Allocation on, where active beds count too. Only for an explicit
+  // lodge — the legacy no-lodgeId read has no lodge to resolve.
+  const setUpForBookings = lodgeId
+    ? isLodgeSetUpForBookings((await getLodgeCapacityStatus(lodgeId)).capacity)
+    : undefined;
   return NextResponse.json({
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     schoolGroupSoftCap: settings.schoolGroupSoftCap,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
+    ...(setUpForBookings === undefined ? {} : { setUpForBookings }),
   });
 }
 

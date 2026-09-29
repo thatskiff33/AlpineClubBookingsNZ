@@ -22,6 +22,12 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+  NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 
 /**
@@ -47,6 +53,8 @@ type LodgeFormState = {
   address: string;
   doorCode: string;
   travelNote: string;
+  /** Maximum guests, as typed. Sent on create only (#3407). */
+  capacity: string;
   /**
    * Which detail fields the record this form was seeded from actually carried
    * (#2925). A field missing here is OMITTED from the PATCH body rather than
@@ -70,6 +78,7 @@ const emptyForm: LodgeFormState = {
   address: "",
   doorCode: "",
   travelNote: "",
+  capacity: "",
   // A create starts from a blank form the admin filled in themselves, so all
   // three values are theirs to send.
   detailFields: LODGE_DETAIL_FIELDS,
@@ -81,6 +90,7 @@ function formFromLodge(lodge: LodgeRecord): LodgeFormState {
     address: lodge.address ?? "",
     doorCode: lodge.doorCode ?? "",
     travelNote: lodge.travelNote ?? "",
+    capacity: "",
     detailFields: LODGE_DETAIL_FIELDS.filter((field) => field in lodge),
   };
 }
@@ -155,6 +165,15 @@ export default function AdminLodgesPage() {
       setError("Lodge name is required.");
       return;
     }
+    // Required on create only (#3407): an existing lodge's capacity is edited
+    // on its configuration page, which explains it against the lodge's beds.
+    // The same parse that page uses, so the bounds cannot drift from the ones
+    // `POST /api/admin/lodges` enforces (INV-SSOT-001).
+    const typedCapacity = parseConfiguredLodgeCapacity(form.capacity);
+    if (creating && typedCapacity.kind !== "valid") {
+      setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -162,7 +181,11 @@ export default function AdminLodgesPage() {
         ? await fetch("/api/admin/lodges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
+            body: JSON.stringify({
+              ...formPayload(form),
+              capacity:
+                typedCapacity.kind === "valid" ? typedCapacity.capacity : null,
+            }),
           })
         : await fetch(`/api/admin/lodges/${editingId}`, {
             method: "PATCH",
@@ -317,6 +340,33 @@ export default function AdminLodgesPage() {
                 }
               />
             </div>
+            {creating ? (
+              <div className="space-y-2">
+                <Label htmlFor="lodge-capacity">Capacity (maximum guests)</Label>
+                <Input
+                  id="lodge-capacity"
+                  type="number"
+                  inputMode="numeric"
+                  min={MIN_CONFIGURED_LODGE_CAPACITY}
+                  max={MAX_CONFIGURED_LODGE_CAPACITY}
+                  step={1}
+                  required
+                  aria-describedby="lodge-capacity-hint"
+                  value={form.capacity}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, capacity: event.target.value }))
+                  }
+                />
+                <p
+                  id="lodge-capacity-hint"
+                  className="text-sm text-muted-foreground"
+                >
+                  How many guests the lodge can sleep. Bookings are refused
+                  above it, and a lodge without one cannot take a booking. You
+                  can change it later on the lodge&apos;s configuration page.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="lodge-address">Address</Label>
               <Textarea

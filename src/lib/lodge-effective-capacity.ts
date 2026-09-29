@@ -21,7 +21,10 @@
  * - `/api/admin/lodge-settings` reads the save bounds below, as do BOTH
  *   screens that edit the field — the lodge configuration hub and the Setup
  *   screen's lodge settings card — so a figure either screen calls acceptable
- *   is exactly a figure the schema accepts.
+ *   is exactly a figure the schema accepts;
+ * - since #3407 a lodge is created with a capacity, so `POST /api/admin/lodges`
+ *   enforces the same bounds, and Add lodge and the lodge setup wizard's
+ *   Capacity step parse the typed figure through `parseConfiguredLodgeCapacity`.
  *
  * Keep it free of Prisma, config and React imports: the client bundle imports
  * it directly.
@@ -81,9 +84,16 @@ export const MAX_CONFIGURED_LODGE_CAPACITY = 100_000;
  * is lint-restricted here (`INV-DATE-015`). The bound itself still comes from
  * the constant above, so there is one figure, not two.
  */
-const CONFIGURED_LODGE_CAPACITY_RANGE_MESSAGE = `Enter a whole number from ${MIN_CONFIGURED_LODGE_CAPACITY} to ${String(
+const CONFIGURED_LODGE_CAPACITY_RANGE = `a whole number from ${MIN_CONFIGURED_LODGE_CAPACITY} to ${String(
   MAX_CONFIGURED_LODGE_CAPACITY,
-).replace(/\B(?=(\d{3})+$)/g, ",")}, or clear it to fall back.`;
+).replace(/\B(?=(\d{3})+$)/g, ",")}`;
+const CONFIGURED_LODGE_CAPACITY_RANGE_MESSAGE = `Enter ${CONFIGURED_LODGE_CAPACITY_RANGE}, or clear it to fall back.`;
+
+/**
+ * The same bounds, worded for Add lodge, where the figure is REQUIRED and there
+ * is nothing to fall back to (#3407).
+ */
+export const NEW_LODGE_CAPACITY_REQUIRED_MESSAGE = `Enter how many guests this lodge can take: ${CONFIGURED_LODGE_CAPACITY_RANGE}. Without it the lodge cannot take a booking.`;
 
 export type ParsedConfiguredLodgeCapacity =
   /** Field cleared: the lodge falls back (club default, or 0). */
@@ -128,9 +138,9 @@ export function parseConfiguredLodgeCapacity(
  * With no active beds the configured capacity is the answer
  * (`capacity_override`); with neither, the lodge resolves to 0
  * (`unconfigured_lodge`) so it is unbookable rather than overbookable until it
- * is set up (#1982). That deliberate zero is a known rough edge for a lodge
- * whose capacity is simply not configured yet, tracked on #3407 — it is
- * preserved here exactly, not worked around.
+ * is set up (#1982). That deliberate zero is preserved here exactly: #3407
+ * closed the gap at creation (a lodge is created with a capacity) and made the
+ * zero explain itself (`lodge-booking-readiness.ts`), without changing it.
  */
 export function resolveEffectiveLodgeCapacity(
   input: EffectiveLodgeCapacityInput,

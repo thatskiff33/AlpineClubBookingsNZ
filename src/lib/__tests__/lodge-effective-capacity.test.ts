@@ -322,6 +322,11 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
 
   const EXPECTED_IMPORTERS = [
     "src/app/(admin)/admin/lodges/[id]/page.tsx",
+    // #3407: Add lodge and the setup wizard's Capacity step are two more
+    // editors of the field, and the create route enforces the same bounds.
+    "src/app/(admin)/admin/lodges/[id]/setup/page.tsx",
+    "src/app/(admin)/admin/lodges/page.tsx",
+    "src/app/api/admin/lodges/route.ts",
     "src/app/api/admin/lodge-settings/route.ts",
     "src/components/admin/lodge-capacity-card.tsx",
     "src/components/admin/lodge-capacity-guidance.tsx",
@@ -358,7 +363,7 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     return found;
   }
 
-  it("is read by exactly the five listed files, in any import form", () => {
+  it("is read by exactly the eight listed files, in any import form", () => {
     const importers = SCANNED_ROOTS.flatMap((root) =>
       sourceFiles(join(process.cwd(), root)),
     )
