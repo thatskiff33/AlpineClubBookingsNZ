@@ -510,6 +510,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "Accepting a request converts a held booking. Hold-release and cancel serialise on this key alone, so with only the per-lodge key a release could cancel the held booking out from under a converting accept.",
     invariant: "INV-LOCK-002",
   },
+  {
+    site: "holdBookingRequestSlots#1",
+    tier: "GLOBAL",
+    reason:
+      "#3413: a SCHOOL quote with unnamed adults creates capacity reservations linked to its AWAITING_REVIEW hold. It takes global before lodge so generic booking cancel, quote cancel, correction and accepted identity resolution cannot release or rewrite that hold across creation. Other holds retain the lodge-only path.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "resolveAcceptedSchoolPendingAdults#1",
+    tier: "GLOBAL",
+    reason:
+      "#3413: naming an accepted adult swaps an anonymous reservation for named guest nights without changing occupied beds. Global then immutable held-booking lodge excludes correction, decline, quote cancel, generic hold release and school approval before the under-lock version/status claim.",
+    invariant: "INV-LOCK-002",
+  },
 
   // ── Cron claims and releases ──────────────────────────────────────────────
   {

@@ -32,6 +32,7 @@ const schoolRequest: CorrectableBookingRequest = {
   schoolName: "Tokoroa Primary School",
   teachers: [{ firstName: "Ann", lastName: "Baker", email: "ann@example.test" }],
   pendingAdultCount: 0,
+  pendingAdultsWriteEnabled: true,
   cateringPreference: "QUOTE_BOTH",
   guests: [
     { firstName: "Ann", lastName: "Baker", ageTier: "ADULT" },
@@ -126,6 +127,13 @@ describe("opening the form", () => {
     // The child counts are derived from the stored party, not stored separately.
     expect(screen.getByLabelText("Children")).toHaveValue(1);
     expect(screen.getByLabelText("Adults whose names are pending")).toHaveValue(0);
+  });
+
+  it("keeps the pending-adult input closed before the maintenance cutover", async () => {
+    renderEditor({ ...schoolRequest, pendingAdultsWriteEnabled: false });
+    await openForm();
+    expect(screen.getByLabelText("Adults whose names are pending")).toBeDisabled();
+    expect(screen.getByText(/maintenance cutover/i)).toBeInTheDocument();
   });
 });
 

@@ -3739,6 +3739,22 @@ self-corrects — but a release that also flips booking status or moves money
 (cancel, hold-expiry) takes `lock(1)` for the status/money reason, not the
 capacity reason.
 
+### Pending school-adult beds (#3413)
+
+An unnamed adult on a SCHOOL request is a count, never a guest identity.
+`holdBookingRequestSlots` takes `lock(1)` before the immutable lodge key when
+the pending count is positive, re-reads and version-claims the request, then
+creates the `AWAITING_REVIEW` hold and its per-night anonymous reservation in
+one transaction. The canonical occupancy reader adds those counts to named
+guest nights. Generic hold cancellation and requester quote cancellation delete
+the reservation in the same global-then-lodge-locked transaction as the status
+flip. `resolveAcceptedSchoolPendingAdults` takes those tiers in the same order,
+checks the accepted snapshot, hold and reservation after locking, and claims the
+request version before replacing one anonymous slot with named guest nights.
+School and general approval both refuse a nonzero pending count or residual
+reservation under their own global-then-lodge locks. Provider calls are outside
+these transactions.
+
 ### Provisional reservations for held policy-exception requests (#2365)
 
 A held `POLICY_EXCEPTION` `BookingChangeRequest` (see `docs/STATE_MACHINES.md` →

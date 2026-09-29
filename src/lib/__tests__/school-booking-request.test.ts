@@ -375,6 +375,7 @@ function schoolRequest(overrides: Partial<Record<string, unknown>> = {}) {
     status: BookingRequestStatus.VERIFIED,
     schoolName: "New Plymouth Primary School",
     teachers: [{ firstName: "Tana", lastName: "Teacher", email: "tana@school.test" }],
+    pendingAdultCount: 0,
     contactFirstName: "Carol",
     contactLastName: "Contact",
     contactEmail: "office@school.test",
@@ -741,6 +742,18 @@ describe("approveSchoolBookingRequest", () => {
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
     // Default to no member-night conflict; individual tests override to reject.
     mockedAssertNoConflicts.mockResolvedValue(undefined);
+  });
+
+  it("refuses school conversion while an accepted adult still has no name", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest({
+      status: BookingRequestStatus.ACCEPTED,
+      pendingAdultCount: 1,
+      heldBookingId: "held-1",
+    }) as never);
+    await expect(approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }))
+      .rejects.toThrow(/Name the 1 pending adult/);
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
   });
 
   it("tells a teacher linked to a real member account that they are on the booking (MG4-D-b)", async () => {
@@ -3518,6 +3531,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
   it("leaves the submitted list alone when no counts are given", async () => {
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       lodgeId: "lodge-1",
       linkedGuestIndexes: [],
@@ -3531,8 +3545,27 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     expect(vi.mocked(getDefaultLodgeCapacity)).not.toHaveBeenCalled();
   });
 
+  it("counts pending adults without creating a named guest identity (#3413)", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      pendingAdultCount: 2,
+      childCounts: { INFANT: 0, CHILD: 2, YOUTH: 0 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
+    });
+
+    expect(resolution.guests).toHaveLength(4);
+    expect(resolution.party).toHaveLength(6);
+    expect(resolution.party.slice(-2)).toEqual([
+      { kind: "PENDING_ADULT", ageTier: "ADULT" },
+      { kind: "PENDING_ADULT", ageTier: "ADULT" },
+    ]);
+    expect(vi.mocked(getLodgeCapacity)).toHaveBeenCalled();
+  });
+
   it("keeps the named teachers and regenerates the children across tiers", async () => {
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { INFANT: 1, CHILD: 2, YOUTH: 0 },
       lodgeId: "lodge-1",
@@ -3556,6 +3589,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // arrived" is not "the party is different" — and only the latter may
     // rewrite the request or be refused under a hold.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 3 },
       lodgeId: "lodge-1",
@@ -3572,6 +3606,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 39 },
         lodgeId: "lodge-1",
@@ -3583,6 +3618,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // nothing at all and any 422 satisfied it (#3412 review, F6).
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 39 },
         lodgeId: "lodge-1",
@@ -3596,6 +3632,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 3 },
         lodgeId: null,
@@ -3611,6 +3648,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // would let a 30-child group be priced and invoiced for two.
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest({ guests: [{ firstName: "Broken" }] }),
         childCounts: { YOUTH: 18 },
         lodgeId: "lodge-1",
@@ -3622,6 +3660,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
   it("refuses an empty group", async () => {
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest({ teachers: [] }),
         childCounts: { INFANT: 0, CHILD: 0, YOUTH: 0 },
         lodgeId: "lodge-1",
@@ -3640,6 +3679,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
    */
   it("refuses a member linked to a row the new numbers renumber", async () => {
     const refusal = (await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       // Three youth become two children: every child row is renumbered or
       // retiered from index 2 on.
@@ -3663,6 +3703,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // Adding a fourth youth appends: rows 0-4 are byte-identical in both lists,
     // so nothing at those positions is renumbered and no link there is at risk.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 4 },
       lodgeId: "lodge-1",
@@ -3684,6 +3725,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
      * allowed a link there.
      */
     const refusal = (await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest({
         guests: [
           { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
@@ -3708,6 +3750,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // An unchanged list renumbers nobody, so a link anywhere in it is safe —
     // otherwise a correctly-linked row could never be re-saved at all.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 3 },
       lodgeId: "lodge-1",

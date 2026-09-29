@@ -626,6 +626,7 @@ export async function computeNightOccupancy(input: {
     from: input.from,
     toExclusive: input.toExclusive,
     nights: input.nights,
+    excludeBookingId: input.excludeBookingId,
     db,
   });
 

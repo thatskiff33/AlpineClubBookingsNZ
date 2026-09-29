@@ -7,31 +7,33 @@ module split belongs in a separate review because it would move established
 money and capacity paths while this issue changes their shared state.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2708
+lines: 2722
 reason: #3415's accepted request action and #3416's truthful school approval
-  toast sit in the existing request panel's status-specific controls;
+  toast and #3413's accepted-adult naming control sit in this panel's status-specific controls;
   extracting those states would duplicate its fetch and permission state.
 
 file: src/lib/booking-cancel.ts
-lines: 2532
-reason: the accepted-hold cancellation guard belongs with the existing
-  cancellation lock and hold-release branch it fences.
+lines: 2534
+reason: the accepted-hold guard and #3413 anonymous-reservation release belong
+  with the existing cancellation lock and hold-release branch they fence.
 
 file: src/lib/booking-request-quotes.ts
-lines: 2191
+lines: 2277
 reason: the accepted-quote claim, hold retention and response state share the
   existing quote transaction; extracting only this claim would split one
-  global-to-lodge lock protocol across modules.
+  global-to-lodge lock protocol across modules; #3413's anonymous quote lines
+  and held reservations use that same transaction.
 
 file: src/lib/booking-request.ts
-lines: 3053
+lines: 3072
 reason: #3415's accepted status and #3416's portable booking-policy setting
   join the established request queue and settings updater; moving those small
-  branches would split their atomic persistence and audit rules.
+  branches would split their atomic persistence and audit rules; #3413 adds a
+  conversion gate for unresolved school adults in the same approval claim.
 
 file: src/lib/school-booking-request.ts
-lines: 2968
+lines: 3006
 reason: #3415's accepted status and #3416's optional teacher assignment share
   the existing school conversion claim and contact reconciliation; moving
   either branch would split its organisation, booking and bed-allocation
-  transaction.
+  transaction; #3413's unresolved-adult guard also belongs there.

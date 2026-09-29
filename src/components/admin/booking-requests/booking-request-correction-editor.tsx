@@ -72,6 +72,7 @@ export type CorrectableBookingRequest = {
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
   pendingAdultCount: number;
+  pendingAdultsWriteEnabled?: boolean;
   guests: Array<{ firstName: string; lastName: string; ageTier: string }>;
   heldBookingId: string | null;
   /**
@@ -103,7 +104,6 @@ export function BookingRequestCorrectionEditor(props: {
   const isSchool = request.type === "SCHOOL";
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [contact, setContact] = useState({ first: "", last: "", email: "", phone: "" });
@@ -453,9 +453,7 @@ export function BookingRequestCorrectionEditor(props: {
               Adults whose names are pending
             </Label>
             <p className="text-xs text-muted-foreground">
-              Count adults included in the quote whose names the school has not
-              supplied yet. They reserve beds but are never created as teachers,
-              guests, contacts, or hut leaders until their real names arrive.
+              {request.pendingAdultsWriteEnabled ? "Unnamed adults reserve beds without creating contacts." : "Available after the maintenance cutover."}
             </p>
             <Input
               id={`correct-pending-adults-${request.id}`}
@@ -464,6 +462,7 @@ export function BookingRequestCorrectionEditor(props: {
               step={1}
               className="w-24"
               value={String(pendingAdultCount)}
+              disabled={!request.pendingAdultsWriteEnabled}
               onChange={(event) =>
                 setPendingAdultCount(
                   Math.max(0, Math.floor(Number(event.target.value) || 0)),
@@ -471,7 +470,6 @@ export function BookingRequestCorrectionEditor(props: {
               }
             />
           </div>
-
           <div className="space-y-1">
             <Label>Children attending</Label>
             <p className="text-xs text-muted-foreground">

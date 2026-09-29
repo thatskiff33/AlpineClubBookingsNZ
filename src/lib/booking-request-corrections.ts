@@ -160,6 +160,7 @@ import {
 } from "@/lib/school-organisation-preview";
 import { generateSchoolGuests } from "@/lib/school-booking-request";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 
 /**
  * The states a request may be corrected in: every state where it is live, in
@@ -339,6 +340,9 @@ export async function correctBookingRequest(
       "Pending adult count must be a whole number of zero or more.",
       422,
     );
+  }
+  if (pendingAdultCount > 0 && !isPendingSchoolAdultsWriteEnabled()) {
+    throw new BookingRequestError("Pending adult reservations are disabled until the maintenance-window cutover is complete.", 409);
   }
   if (guests.length === 0) {
     throw new BookingRequestError("A request needs at least one guest.", 422);

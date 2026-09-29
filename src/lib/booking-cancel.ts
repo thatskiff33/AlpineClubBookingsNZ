@@ -63,6 +63,7 @@ import {
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { releasePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 // `INV-SSOT` (#3030): the one home for `ManualRefundTask.reason`'s column width,
 // beside the same table's `note` width, which this repository already keeps there.
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
@@ -666,6 +667,7 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       if (wasAwaitingReview) {
+        await releasePendingAdultNights({ db: tx, bookingId });
         // Detach any booking-request pointer to this hold so a later re-quote
         // creates a fresh hold instead of reusing this now-cancelled row
         // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates

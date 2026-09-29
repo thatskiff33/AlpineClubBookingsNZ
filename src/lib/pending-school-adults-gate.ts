@@ -1,5 +1,3 @@
-import "server-only";
-
 /**
  * #3413 write gate for anonymous school-adult capacity reservations.
  *
@@ -7,6 +5,8 @@ import "server-only";
  * Both exact acknowledgements are therefore required at the point a write is
  * admitted. This deliberately does not reuse the migration override: a deploy
  * acknowledgement is not a durable permission to start accepting writes.
+ * Kept importable by Node cron/instrumentation paths that load quote services;
+ * only server-side services call it, and the browser receives the boolean.
  */
 export function isPendingSchoolAdultsWriteEnabled(
   env: Record<string, string | undefined> = process.env,

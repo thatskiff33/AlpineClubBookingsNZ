@@ -46,6 +46,20 @@ describe("pending school-adult capacity reservations", () => {
     });
   });
 
+  it("excludes the edited booking's own anonymous reservation", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    await findPendingAdultReservationNights({
+      lodgeId: LODGE,
+      from: parseDateOnly("2026-07-01"),
+      toExclusive: parseDateOnly("2026-07-02"),
+      excludeBookingId: "edited-booking",
+      db: { bookingRequestPendingAdultReservationNight: { findMany } } as never,
+    });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ bookingId: { not: "edited-booking" } }),
+    }));
+  });
+
   it("returns zero for an old partial capacity test double", async () => {
     const counter = await buildLodgePendingAdultReservationCounter({
       lodgeId: LODGE,

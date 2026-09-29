@@ -53,6 +53,11 @@ const mocks = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       findMany: vi.fn(),
     },
+    bookingRequestPendingAdultReservationNight: {
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+      findMany: vi.fn(),
+    },
     lodge: {
       findFirst: vi.fn(),
       count: vi.fn(),
@@ -722,6 +727,52 @@ describe("createBookingRequestQuote school group numbers (#3412)", () => {
       childCounts: { INFANT: 0, CHILD: 0, YOUTH: 2 },
     };
   }
+
+  it("prices pending adults as unnamed adult quote lines", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      schoolRequest({ pendingAdultCount: 2 }) as never,
+    );
+    armMemberFindMany(async () => []);
+    armQuoteCreate();
+    mocks.mockResolveSchoolGuestOverride.mockResolvedValue({
+      teachers: TEACHERS,
+      storedGuests: STORED_SCHOOL_GUESTS,
+      guests: STORED_SCHOOL_GUESTS,
+      party: [
+        ...STORED_SCHOOL_GUESTS.map((guest) => ({ kind: "NAMED", ageTier: guest.ageTier, guest })),
+        { kind: "PENDING_ADULT", ageTier: AgeTier.ADULT },
+        { kind: "PENDING_ADULT", ageTier: AgeTier.ADULT },
+      ],
+      pendingAdultCount: 2,
+      overridden: true,
+      changed: false,
+    });
+    await createBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      quote: {
+        pricingMode: BookingRequestPricingMode.PER_GUEST_NIGHT,
+        options: [{
+          cateringOption: SchoolCateringOption.NON_CATERED,
+          guestNightRates: [
+            { ageTier: AgeTier.ADULT, isMember: false, rateCents: 3500 },
+            { ageTier: AgeTier.YOUTH, isMember: false, rateCents: 3500 },
+          ],
+        }],
+        childCounts: { INFANT: 0, CHILD: 0, YOUTH: 4 },
+      },
+    });
+    const option = (vi.mocked(prisma.bookingRequestQuote.create).mock.calls[0][0].data.options as unknown as Array<{
+      totalCents: number;
+      guestBreakdown: Array<{ kind: string; firstName?: string; lastName?: string; ageTier: string }>;
+    }>)[0];
+    expect(option.totalCents).toBe(7 * 2 * 3500);
+    expect(option.guestBreakdown.slice(-2)).toEqual([
+      expect.objectContaining({ kind: "PENDING_ADULT", ageTier: AgeTier.ADULT }),
+      expect.objectContaining({ kind: "PENDING_ADULT", ageTier: AgeTier.ADULT }),
+    ]);
+    expect(option.guestBreakdown.slice(-2).every((entry) => !Object.hasOwn(entry, "firstName") && !Object.hasOwn(entry, "lastName"))).toBe(true);
+  });
 
   it("prices the adjusted numbers and persists them on the request", async () => {
     vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
@@ -2198,6 +2249,36 @@ describe("holdBookingRequestSlots owner role", () => {
     mockedAssertNoConflicts.mockResolvedValue(undefined);
   });
 
+  it("reserves one anonymous bed per night without minting a guest identity", async () => {
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    try {
+      const breakdown = [
+        { guestIndex: 0, kind: "NAMED", firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+        { guestIndex: 1, kind: "NAMED", firstName: "Sam", lastName: "Student", ageTier: AgeTier.CHILD, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+        { guestIndex: 2, kind: "PENDING_ADULT", ageTier: AgeTier.ADULT, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+      ];
+      vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(baseRequest({
+        type: BookingRequestType.SCHOOL,
+        pendingAdultCount: 1,
+        lodgeId: "lodge-1",
+        quotes: [{ options: [{ id: "NON_CATERED", label: "Non-catered", cateringOption: SchoolCateringOption.NON_CATERED, totalCents: 300, pricingMode: BookingRequestPricingMode.OVERALL_TOTAL, guestBreakdown: breakdown }] }],
+      }) as never);
+      await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+      const ranges = mockedCheckCapacity.mock.calls.at(-1)?.[3] as unknown[];
+      expect(ranges).toHaveLength(3);
+      const heldCreate = vi.mocked(prisma.booking.create).mock.calls.at(-1)?.[0] as { data: { guests: { create: unknown[] } } };
+      expect(heldCreate.data.guests.create).toHaveLength(2);
+      expect(prisma.bookingRequestPendingAdultReservationNight.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({ bookingId: "held-1", adultCount: 1, lodgeId: "lodge-1" }),
+        ]),
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("locks transaction-current linked members after lodge and before the versioned claim", async () => {
     const request = baseRequest({
       type: BookingRequestType.GENERAL,
@@ -2707,6 +2788,32 @@ describe("holdBookingRequestSlots owner role", () => {
     // A live hold is reused verbatim — nothing detached, nothing recreated.
     expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
     expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reuse a live school hold when its unnamed beds have no reservation rows", async () => {
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    try {
+      vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(baseRequest({
+        type: BookingRequestType.SCHOOL,
+        pendingAdultCount: 1,
+        heldBookingId: "held-live",
+      }) as never);
+      serveBooking({
+        id: "held-live",
+        lodgeId: "lodge-1",
+        status: BookingStatus.AWAITING_REVIEW,
+        checkIn: new Date("2026-08-01T00:00:00.000Z"),
+        checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      });
+      vi.mocked(prisma.bookingRequestPendingAdultReservationNight.findMany).mockResolvedValue([] as never);
+
+      await expect(holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" }))
+        .rejects.toThrow(/unnamed bed reservations changed/);
+      expect(prisma.booking.create).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("detaches a dead heldBookingId and creates a fresh hold when the pointed-to booking is no longer AWAITING_REVIEW (issue #1254)", async () => {

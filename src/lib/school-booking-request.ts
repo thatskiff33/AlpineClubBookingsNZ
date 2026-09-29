@@ -280,6 +280,10 @@ function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
 }
 
 /** What a school request's party is, once the officer's numbers are applied. */
+export type SchoolPartyParticipant =
+  | { kind: "NAMED"; ageTier: AgeTier; guest: BookingRequestGuest }
+  | { kind: "PENDING_ADULT"; ageTier: "ADULT" };
+
 export interface SchoolGuestResolution {
   /** The preserved named teachers/parent helpers, in stored order. */
   teachers: StoredTeacher[];
@@ -287,6 +291,9 @@ export interface SchoolGuestResolution {
   storedGuests: BookingRequestGuest[];
   /** The list to price, hold and convert against: regenerated, or the stored one. */
   guests: BookingRequestGuest[];
+  /** Anonymous adults are calculation entries, never stored guest identities. */
+  party: SchoolPartyParticipant[];
+  pendingAdultCount: number;
   /** The caller supplied child counts. */
   overridden: boolean;
   /** The resolved list differs from the stored one, so persisting it changes the party. */
@@ -337,6 +344,8 @@ export interface SchoolGuestResolution {
 export async function resolveSchoolGuestOverride(input: {
   /** The stored request row; only its two guest-shaped columns are read. */
   request: { teachers: unknown; guests: unknown };
+  /** The request's explicit anonymous ADULT count; never inferred from names. */
+  pendingAdultCount: number;
   /** The officer's adjusted bulk child counts, or undefined for "as submitted". */
   childCounts?: SchoolChildCounts;
   /**
@@ -360,12 +369,22 @@ export async function resolveSchoolGuestOverride(input: {
   const guests = input.childCounts
     ? generateSchoolGuests({ teachers, childCounts: input.childCounts })
     : storedGuests;
+  if (!Number.isSafeInteger(input.pendingAdultCount) || input.pendingAdultCount < 0) {
+    throw new BookingRequestError("Stored pending adult count is invalid", 500);
+  }
+  const party: SchoolPartyParticipant[] = [
+    ...guests.map((guest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
+    ...Array.from({ length: input.pendingAdultCount }, () => ({
+      kind: "PENDING_ADULT" as const,
+      ageTier: "ADULT" as const,
+    })),
+  ];
   if (guests.length === 0) {
     throw new BookingRequestError("At least one guest is required", 422);
   }
   if (overridden) {
     await assertSchoolGuestsWithinLodgeCapacity({
-      guestCount: guests.length,
+      guestCount: party.length,
       lodgeId: input.lodgeId,
       status: 422,
     });
@@ -396,6 +415,8 @@ export async function resolveSchoolGuestOverride(input: {
     teachers,
     storedGuests,
     guests,
+    party,
+    pendingAdultCount: input.pendingAdultCount,
     overridden,
     changed,
   };
@@ -785,6 +806,12 @@ export async function approveSchoolBookingRequest(input: {
       409
     );
   }
+  if (request.pendingAdultCount > 0) {
+    throw new BookingRequestError(
+      `Name the ${request.pendingAdultCount} pending adult${request.pendingAdultCount === 1 ? "" : "s"} before approving this school request.`,
+      409,
+    );
+  }
 
   // A policy edit affects later approvals, never one conversion halfway through.
   // Read outside the transaction: this transaction holds global -> lodge locks
@@ -817,6 +844,7 @@ export async function approveSchoolBookingRequest(input: {
   // approving. See `resolveSchoolGuestOverride`.
   const { teachers, guests } = await resolveSchoolGuestOverride({
     request,
+    pendingAdultCount: request.pendingAdultCount,
     childCounts: input.guestOverride?.childCounts,
     lodgeId: approvalLodgeId,
     // The STORED blob, because that is the map applied positionally against the
@@ -979,6 +1007,16 @@ export async function approveSchoolBookingRequest(input: {
       });
       if (!lockedRequest) {
         throw new BookingRequestError("Booking request not found", 404);
+      }
+      const residualPendingRows = typeof tx.bookingRequestPendingAdultReservationNight?.findMany === "function"
+        ? await tx.bookingRequestPendingAdultReservationNight.findMany({
+            where: { bookingRequestId: request.id },
+            select: { id: true },
+            take: 1,
+          })
+        : [];
+      if (lockedRequest.pendingAdultCount > 0 || residualPendingRows.length > 0) {
+        throw new BookingRequestError("Name every pending adult and reconcile the held beds before approving this school request.", 409);
       }
 
       // A concurrent successful approval legitimately changes updatedAt (and
