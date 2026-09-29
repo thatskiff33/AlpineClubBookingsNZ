@@ -773,7 +773,8 @@ export async function approveSchoolBookingRequest(input: {
   }
   if (
     request.status !== BookingRequestStatus.VERIFIED &&
-    request.status !== BookingRequestStatus.PRICED
+    request.status !== BookingRequestStatus.PRICED &&
+    request.status !== BookingRequestStatus.ACCEPTED
   ) {
     throw new BookingRequestError(
       "Only verified school booking requests can be approved",
@@ -1013,7 +1014,8 @@ export async function approveSchoolBookingRequest(input: {
       if (
         request.type !== BookingRequestType.SCHOOL ||
         (request.status !== BookingRequestStatus.VERIFIED &&
-          request.status !== BookingRequestStatus.PRICED)
+          request.status !== BookingRequestStatus.PRICED &&
+          request.status !== BookingRequestStatus.ACCEPTED)
       ) {
         throw new BookingRequestError(
           "This booking request has already been processed",
@@ -1060,7 +1062,7 @@ export async function approveSchoolBookingRequest(input: {
           // the integer version, not updatedAt (millisecond-collidable).
           version: request.version,
           status: {
-            in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED],
+            in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED, BookingRequestStatus.ACCEPTED],
           },
         },
         data: {

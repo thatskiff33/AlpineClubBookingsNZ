@@ -349,6 +349,26 @@ export function adminBookingRequestPendingTemplate(data: {
   `);
 }
 
+export function adminBookingRequestQuoteAcceptedTemplate(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Quote Accepted — Officer Review Required")}
+    ${paragraph("A requester accepted a public booking quote. Review and approve or decline it before any booking, invoice, or payment link is created.")}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+    ])}
+    ${button("Review Booking Requests", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
 export function adminSchoolManualInvoiceTemplate(data: {
   schoolName: string;
   contactEmail: string;

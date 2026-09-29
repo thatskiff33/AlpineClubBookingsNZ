@@ -14,7 +14,7 @@ Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 DRAFT -> PENDING or PAYMENT_PENDING -> CONFIRMED or PAID -> COMPLETED
 PENDING -> CONFIRMED/PAID or BUMPED/CANCELLED
 WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
-AWAITING_REVIEW -> PENDING (quote accepted, #1254) or PAYMENT_PENDING (officer approval, the only writer of this transition, #3500) or CONFIRMED/PAID or CANCELLED
+AWAITING_REVIEW -> PENDING or PAYMENT_PENDING (officer approval after quote acceptance, the only writer of this transition, #3415) or CONFIRMED/PAID or CANCELLED
 ```
 
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
@@ -1060,8 +1060,8 @@ A `BookingRequest` from the public form can be priced through one or more
 ```text
 DRAFT -> SENT (admin sends; a SHA-256 response token is issued, time-limited; the
                beds are auto-held as an AWAITING_REVIEW booking, #1254)
-SENT  -> ACCEPTED (requester accepts an option; booking conversion runs; the held
-               booking stays capacity-holding until payment)
+SENT  -> ACCEPTED (requester accepts an option atomically with the request; the
+               AWAITING_REVIEW hold stays capacity-holding until officer approval or decline)
 SENT  -> CANCELLED (requester cancels; the held booking is released and heldBookingId detached)
 SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issues a newer quote;
                the hold is retained across a re-quote for the same dates, but if the request
@@ -1084,7 +1084,7 @@ the booking-status section above).
 
 Decline and the hold (#1365, broadened #1423): the admin **decline** route
 declines a request in any of the six held/editor states its status-guarded flip
-claims — `VERIFIED`, `PRICED`, `QUOTED`, `QUOTE_SENT`, `QUERY_PENDING`,
+claims — `VERIFIED`, `PRICED`, `QUOTED`, `QUOTE_SENT`, `ACCEPTED`, `QUERY_PENDING`,
 `MODIFICATION_REQUESTED` (`DECLINABLE_BOOKING_REQUEST_STATUSES`). This is the same
 set the admin panel shows the Decline button for, and every one can carry a live
 `AWAITING_REVIEW` hold (a SCHOOL **manual** hold via `holdBookingRequestSlots`, or
@@ -1166,6 +1166,12 @@ Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other
 actor:
+
+**#3415 update.** `MODIFY` and `QUERY` now join the global lifecycle lock. They
+re-read and claim the loaded-version `SENT` quote and `QUOTE_SENT` request with
+no accepted pointer. A response that loses to acceptance, correction, decline,
+or cancellation returns `409` before changing either record; its held booking
+therefore remains protected for officer review.
 
 - **Primary — retire the quote atomically with the claim.** The decline flips the
   outstanding `SENT` quote to `SUPERSEDED` in the SAME transaction as the
@@ -1314,7 +1320,8 @@ Token-link outcomes the requester can see:
 
 - Valid `SENT` link: the quote is shown with options, price, and an expiry hint.
 - Not found: `404` "This quote is not valid."
-- Status no longer `SENT`: `409` "This quote is no longer active." (use the latest quote email).
+- Accepted quote: a durable read-only confirmation shows the accepted stay and total, including after the original token expires; the officer later approves or declines it.
+- Replaced or requester-cancelled quote: a named terminal response points to the club or the most recent quote.
 - Past expiry: `410` "This quote has expired." with a recover-by-contacting-the-club path.
 - Accept after the lodge fills: the request reverts to `QUOTE_SENT`, the link stays
   active, and the requester is told which nights are now full.
@@ -1332,8 +1339,9 @@ Token-link outcomes the requester can see:
 
 Every requester transition (accept, cancel, modification request, question) and the
 capacity-blocked accept revert is written to AuditLog with `actor: "requester"`. The
-parent `BookingRequest` moves NEW -> VERIFIED -> QUOTED -> QUOTE_SENT and then PRICED
-(accept), CANCELLED (cancel), MODIFICATION_REQUESTED, or QUERY_PENDING. When an admin
+parent `BookingRequest` moves NEW -> VERIFIED -> QUOTED -> QUOTE_SENT -> ACCEPTED
+(requester accept), then APPROVED/CONVERTED only after officer review; it may instead move to
+CANCELLED (cancel), MODIFICATION_REQUESTED, or QUERY_PENDING. When an admin
 sends a quote, the email-delivery result is recorded so the team can tell whether the
 requester actually received the link.
 
