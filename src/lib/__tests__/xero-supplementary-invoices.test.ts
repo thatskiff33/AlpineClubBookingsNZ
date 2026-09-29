@@ -881,6 +881,43 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     expect(sent.keptLateCaptureDay).toBe("2026-06-10");
   });
 
+  it("records a kept late capture's change payment on the day of its Stripe charge too", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({ status: "DISMISSED" });
+    mocks.readStripeCaptureDocumentDate.mockResolvedValue("2026-06-10");
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+      requestPayload: {
+        queueType: "SUPPLEMENTARY_INVOICE",
+        bookingId: "bk1",
+        priceDiffCents: 3000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_123",
+        recordPayment: true,
+        paymentIntentId: "pi_kept_change",
+      },
+    });
+    const createPayments = vi.fn().mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { createPayments } },
+      tenantId: "tenant_1",
+    });
+    mocks.retryXeroWriteWithContactRepair.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_supp", invoiceNumber: "INV-0042" }] },
+    });
+
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      syncOperationId: "op_q",
+    });
+
+    expect(createPayments).toHaveBeenCalledTimes(1);
+    expect(createPayments.mock.calls[0][1].payments[0].date).toBe("2026-06-10");
+  });
+
   it("leaves every other supplementary invoice dated today, with no Stripe read", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
 
