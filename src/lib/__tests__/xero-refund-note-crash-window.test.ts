@@ -325,6 +325,8 @@ import {
 } from "@/lib/xero-refund-note-unsettled";
 import { REFUND_UNSETTLED_NO_ACCOUNT_REASON } from "@/lib/xero-invoice-payments";
 import { retryXeroSyncOperation } from "@/lib/xero-operation-retry";
+import { addUnsettledRefundCreditNoteFindings } from "@/lib/xero-booking-repair-findings";
+import type { BookingXeroRepairAction, MutableFinding } from "@/lib/xero-booking-repair-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -727,6 +729,25 @@ describe("rows the pre-#3548 early return closed with neither (report and repair
 
     expect(state.xero.createPaymentsCalls).toEqual([expect.objectContaining({ creditNoteId: "cn_9", date: "2026-05-02" })]);
     expect(await findUnsettledRefundNoteRows()).toEqual([]);
+  });
+
+  it("the repair tool raises the finding with a settle action that is never auto-applied", () => {
+    seedHistoricBareRow();
+    const findings: MutableFinding[] = [];
+    const actions = new Map<string, BookingXeroRepairAction>();
+
+    addUnsettledRefundCreditNoteFindings(findings, actions, "cmbooking0001xyz", state.links as never, state.operations as never);
+
+    expect(findings).toEqual([
+      expect.objectContaining({ code: "REFUND_CREDIT_NOTE_UNSETTLED", safeToAutoApply: false }),
+    ]);
+    expect([...actions.values()]).toEqual([
+      expect.objectContaining({
+        type: "SETTLE_REFUND_CREDIT_NOTE",
+        safeToAutoApply: false,
+        payload: { operationId: "op_bare", paymentId: PAYMENT_ID, creditNoteId: "cn_9" },
+      }),
+    ]);
   });
 
   it("does not list a note whose outcome another row recorded, or a skip by design", async () => {
