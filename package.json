@@ -170,7 +170,7 @@
     "pg": "^8.23.0",
     "sharp": "catalog:",
     "tailwindcss": "^4",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^6",
     "vitest": "^5.0.1"
   }
