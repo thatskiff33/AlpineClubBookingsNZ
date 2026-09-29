@@ -489,6 +489,34 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expectNoSucceededRowWithNeither();
   });
 
+  it("a replayed enqueue of the crashed refund, run before the retry, is covered by the recorded note", async () => {
+    await firstAttemptDies("at-settlement");
+    // A webhook replay enqueues the same $50 again: the FAILED row is not
+    // PENDING or RUNNING, so the enqueue's dedupe does not absorb it.
+    queueRefundNote("op_replayed", 5000, 5000);
+    xeroForgetsKeys();
+
+    await dispatch("op_replayed");
+    await retry();
+
+    expect(state.xero.notes.size).toBe(1);
+    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
+    expect(row("op_replayed").responsePayload).toMatchObject({ coveredByExistingNote: true });
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+  });
+
+  it("links the first attempt's payment at the amount it paid, not the amount the row asked for", async () => {
+    state.eligibleCents = 3000; // $50 asked, only $30 of cash evidence uncovered
+    queueRefundNote("op_capped", 5000, 5000);
+
+    await dispatch("op_capped");
+
+    expect(state.xero.createPaymentsCalls).toEqual([expect.objectContaining({ amount: 30 })]);
+    expect(state.links).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", metadata: expect.objectContaining({ amountCents: 3000 }) })]),
+    );
+  });
+
   it("dates the healed payment on the note's own day, read back from Xero", async () => {
     await firstAttemptDies("at-settlement");
     state.xero.notes.get("cn_1")!.date = "2026-06-20";
