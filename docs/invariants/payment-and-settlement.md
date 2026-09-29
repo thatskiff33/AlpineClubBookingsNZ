@@ -318,7 +318,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 
   **THE CENSUS IS A REPORT, NOT A REPAIR.** `bookingLedgerCensusSql` lists every
   live booking with a captured payment whose residual is not zero, and
-  `npm run payments:audit-booking-ledger` runs it read-only. A POSITIVE residual
+  `pnpm run payments:audit-booking-ledger` runs it read-only. A POSITIVE residual
   is money the price says is owed that no ask is collecting; a NEGATIVE one is
   the club holding more than the price, which is the expected shape after a
   policy-retained or credit-settled reduction. Nothing repairs either
@@ -418,7 +418,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   directly.
 - Pinned by `payment-transactions-refunds.test.ts` and
   `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
-  are listed by `npm run payments:audit-refunded-total`, never repaired by code.
+  are listed by `pnpm run payments:audit-refunded-total`, never repaired by code.
 
 ## INV-PAY-002
 

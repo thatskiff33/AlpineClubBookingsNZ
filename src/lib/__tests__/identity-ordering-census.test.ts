@@ -27,7 +27,7 @@ import { stripComments, stripCommentsAndStrings } from "./support/strip-comments
  *
  * There is no import edge from this file to the files it scans, so the module
  * graph cannot select it and a lane's targeted local run will not include it.
- * CI owns it. Run it by name (`npm run test:named`) when you touch a comparator
+ * CI owns it. Run it by name (`pnpm run test:named`) when you touch a comparator
  * or an identity module.
  *
  * ## It STRIPS COMMENTS AND STRINGS BEFORE MATCHING, and must

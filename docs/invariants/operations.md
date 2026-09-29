@@ -346,8 +346,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
   could not go on the modules that matter most: **fourteen** operator CLI
-  entrypoints reach `@/lib/prisma` — `npm run setup:check`, the seed,
-  `npm run config:self-heal`, `npm run induction:baseline`, the finance, Xero
+  entrypoints reach `@/lib/prisma` — `pnpm run setup:check`, the seed,
+  `pnpm run config:self-heal`, `pnpm run induction:baseline`, the finance, Xero
   and credit repair tools, and both E2E seeds — and marking it would have
   aborted every one of them at startup with an error message about React that
   names nothing the operator did. A `server-only` edge added for a route's

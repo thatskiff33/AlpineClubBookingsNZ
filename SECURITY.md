@@ -32,7 +32,7 @@ This project uses:
 - Stripe PaymentIntents, SetupIntents, and webhooks
 - Xero OAuth and webhook integrations
 - AWS SES email and SNS feedback ingestion
-- gitleaks, Semgrep, npm audit, Trivy and CodeQL in CI
+- gitleaks, Semgrep, pnpm audit, Trivy and CodeQL in CI
 
 ## Which CI security checks block a merge
 
@@ -45,8 +45,8 @@ the live configuration rather than trusting a document:
   packs plus this repository's own rules in `.semgrep/rules/`. The same job
   first runs each custom rule against its must-fail/must-pass fixtures in
   `.semgrep/tests/`.
-- **`verify`** (required today) — lint, types, `npm test` and the build.
-- **`Dependency audit`** (**pending**) — `npm audit --audit-level=high` over the
+- **`verify`** (required today) — lint, types, `pnpm test` and the build.
+- **`Dependency audit`** (**pending**) — `pnpm audit --audit-level=high` over the
   committed lockfile, run through `scripts/ci/audit-dependencies.mjs` so that
   "the advisory service was unreachable" and "this branch ships a
   vulnerability" are told apart on the first line of the output rather than

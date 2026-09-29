@@ -51,7 +51,7 @@ import { describe, expect, it } from "vitest";
  * an operator copies from, and (since #2850) the scripts' own sources, where
  * the `--help` text and the shebang publish a command too. A root that reaches
  * `server-only` must ask for the `react-server` condition at EVERY one of
- * those sites, or be published as an `npm run` script that carries it. The
+ * those sites, or be published as a `pnpm run` script that carries it. The
  * repository
  * publishes one spelling, `--conditions=react-server`, because one form is
  * greppable — but the check accepts Node's space form and comma lists too,
@@ -538,7 +538,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
     // JSON quoting attached, so before `TOKEN_EDGE_PUNCTUATION` the npm scripts
     // — the commands this whole change publishes — contributed nothing and a
     // script stripped of its flag passed.
-    // No `.yml` here: every workflow runs its tooling through `npm run`, so
+    // No `.yml` here: every workflow runs its tooling through `pnpm run`, so
     // there is genuinely no direct `tsx` line in one today. Same for the
     // container definitions, the changelog fragments and (since #3382)
     // `.mjs`: `.mjs` joined this floor at #3186 because a hand-corrected line
@@ -602,7 +602,7 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         `without \`${REACT_SERVER_CONDITION}\`, so it THROWS the moment it ` +
         "starts — before it prints anything, with an error about React Server " +
         "Components that names nothing the operator did. Add the flag between " +
-        "`tsx` and the entrypoint, or publish the command as an `npm run` " +
+        "`tsx` and the entrypoint, or publish the command as a `pnpm run` " +
         "script that carries it (CT-5, #2869; #2850).\n\n" +
         violations.join("\n\n"),
     ).toEqual([]);
@@ -630,8 +630,8 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
       "A CLI root that reaches a `server-only` module opens with a `tsx` " +
         `shebang that does not ask for \`${REACT_SERVER_CONDITION}\`, so the ` +
         "command its own first line publishes throws at import. Delete the " +
-        "shebang and publish the `npm run` script instead, or spell it " +
-        "`#!/usr/bin/env -S npx tsx --conditions=react-server` (#2850).\n\n" +
+        "shebang and publish the `pnpm run` script instead, or spell it " +
+        "`#!/usr/bin/env -S pnpm exec tsx --conditions=react-server` (#2850).\n\n" +
         violations.join("\n"),
     ).toEqual([]);
   });

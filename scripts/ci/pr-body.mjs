@@ -2,7 +2,7 @@
  * Shared PR-body and changed-file plumbing for the pull-request gates in this
  * directory.
  *
- * Both gates run before `npm ci` in the `verify` job, so this module stays
+ * Both gates run before `pnpm install --frozen-lockfile` in the `verify` job, so this module stays
  * dependency-free and uses only Node built-ins.
  *
  * Extracted from `check-pr-concurrency-declaration.mjs` when the changelog

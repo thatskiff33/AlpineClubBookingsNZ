@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 //
 //  1. `evaluateRequireAdminMock`'s parameter is REQUIRED (it accepts undefined,
 //     because a route that passes no options is legitimate), so a bare
-//     `evaluateRequireAdminMock()` is a compile error. `npm run typecheck`
+//     `evaluateRequireAdminMock()` is a compile error. `pnpm run typecheck`
 //     catches that shape before this test runs.
 //  2. The type system cannot see the OTHER shapes.
 //     `evaluateRequireAdminMock({})` type-checks and is just as inert, and so

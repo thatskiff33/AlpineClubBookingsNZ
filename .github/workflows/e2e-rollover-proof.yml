@@ -113,14 +113,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
         uses: ./.github/actions/playwright-browsers
@@ -139,7 +143,7 @@ jobs:
       - name: Generate the Prisma client, so the specs can be imported
         env:
           DATABASE_URL: postgresql://placeholder:placeholder@127.0.0.1:1/placeholder
-        run: npx prisma generate
+        run: pnpm exec prisma generate
 
       # ---------------------------------------------------------------------
       # Which specs this clock can honestly run — settled BEFORE it moves.
@@ -294,9 +298,9 @@ jobs:
           SELECTED="$RUNNER_TEMP/rollover-list-selected.txt"
           # Playwright prints a native separator; normalise so the check reads
           # the same on any host.
-          E2E_EXCLUDE_SPECS='' npx playwright test --list --reporter=list "${ARGS[@]}" \
+          E2E_EXCLUDE_SPECS='' pnpm exec playwright test --list --reporter=list "${ARGS[@]}" \
             | tr '\\' '/' > "$BASELINE"
-          npx playwright test --list --reporter=list "${ARGS[@]}" \
+          pnpm exec playwright test --list --reporter=list "${ARGS[@]}" \
             | tr '\\' '/' > "$SELECTED"
           tail -n 1 "$BASELINE"
           tail -n 1 "$SELECTED"

@@ -140,15 +140,15 @@ what you are taking on.
 Both repositories should run the same core validation gates:
 
 ```bash
-npm run audit:deps            # the same gate CI runs, with the same threshold
-npm run lint
-npx prisma validate
-npm test
-npm run build
+pnpm run audit:deps            # the same gate CI runs, with the same threshold
+pnpm run lint
+pnpm exec prisma validate
+pnpm test
+pnpm run build
 git diff --check
 ```
 
-`npx prisma validate` and `npm run knip` both need `DATABASE_URL` set to some
+`pnpm exec prisma validate` and `pnpm run knip` both need `DATABASE_URL` set to some
 value so `prisma.config.ts` resolves; an unreachable dummy is fine and is what
 CI uses.
 

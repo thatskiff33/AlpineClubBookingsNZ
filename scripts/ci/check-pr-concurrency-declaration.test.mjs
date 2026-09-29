@@ -195,7 +195,7 @@ describe("PR concurrency declaration gate", () => {
       /SAME line as the label/,
     );
     expect(() => validateConcurrencyDeclaration(nextLineValue)).toThrow(
-      /npm run pr:check/,
+      /pnpm run pr:check/,
     );
   });
 

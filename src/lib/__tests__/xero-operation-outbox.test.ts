@@ -689,7 +689,7 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
     unrepresentable over policed, and the module next door already requires a
     typed context on every send for the same reason. `@ts-expect-error` reports
     an error when the line it guards does NOT error, so making the field
-    optional again fails `npm run typecheck`.
+    optional again fails `pnpm run typecheck`.
   */
   it("keeps the instruction a REQUIRED option, so a new enqueuer cannot omit it", () => {
     const omitsTheInstruction = () =>
