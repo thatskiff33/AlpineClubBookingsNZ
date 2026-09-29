@@ -622,7 +622,15 @@ function createDependencies(state: {
     // #3635 C2: the repaired late-capture refund's record and per-capture note.
     recordAndNoteRepairedLateCaptureRefunds: vi
       .fn()
-      .mockResolvedValue({ noted: [], byHand: [], notInXero: [] }),
+      .mockResolvedValue({
+        recordFailed: [],
+        doubleRefundSuspected: [],
+        noted: [],
+        alreadyNoted: [],
+        noteFailed: [],
+        byHand: [],
+        notInXero: [],
+      }),
     // #3635: the refund-note gap reader. By default every refunded cent is a
     // gap, which is what the missing-refund-note arm assumed before.
     readRefundCreditNoteGap: vi.fn().mockImplementation(
@@ -4226,51 +4234,55 @@ describe("runBookingXeroRepair", () => {
     expect(report.summary.bookingsWithFindings).toBe(0);
   });
 
-  it("refunds cancelled late captures through the shared multi-intent refund helper", async () => {
-    const booking = makeBooking({
-      status: "CANCELLED",
-      payment: {
-        ...makeBooking().payment,
-        amountCents: 13000,
-        refundedAmountCents: 0,
-        status: "SUCCEEDED",
-        xeroInvoiceId: null,
-        xeroInvoiceNumber: null,
-        additionalPaymentIntentId: "pi_additional_captured",
-        additionalAmountCents: 3000,
-        additionalPaymentStatus: "SUCCEEDED",
-        transactions: [
-          {
-            id: "txn_primary",
-            paymentId: "payment_1",
-            kind: "PRIMARY",
-            source: "STRIPE",
-            stripePaymentIntentId: "pi_primary_captured",
-            amountCents: 10000,
-            refundedAmountCents: 0,
-            status: "SUCCEEDED",
-            paymentMethodId: "pm_123",
-            reason: null,
-            createdAt: new Date("2026-05-01T00:00:00Z"),
-            updatedAt: new Date("2026-05-01T00:00:00Z"),
-          },
-          {
-            id: "txn_additional",
-            paymentId: "payment_1",
-            kind: "ADDITIONAL",
-            source: "STRIPE",
-            stripePaymentIntentId: "pi_additional_captured",
-            amountCents: 3000,
-            refundedAmountCents: 0,
-            status: "SUCCEEDED",
-            paymentMethodId: null,
-            reason: "date_change",
-            createdAt: new Date("2026-05-02T00:00:00Z"),
-            updatedAt: new Date("2026-05-02T00:00:00Z"),
-          },
-        ],
-      },
+  // The cancelled booking with two late captures the repair refunds.
+  const lateCaptureRefundBooking = () =>
+    makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          amountCents: 13000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          additionalPaymentIntentId: "pi_additional_captured",
+          additionalAmountCents: 3000,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [
+            {
+              id: "txn_primary",
+              paymentId: "payment_1",
+              kind: "PRIMARY",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_primary_captured",
+              amountCents: 10000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: "pm_123",
+              reason: null,
+              createdAt: new Date("2026-05-01T00:00:00Z"),
+              updatedAt: new Date("2026-05-01T00:00:00Z"),
+            },
+            {
+              id: "txn_additional",
+              paymentId: "payment_1",
+              kind: "ADDITIONAL",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_additional_captured",
+              amountCents: 3000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: null,
+              reason: "date_change",
+              createdAt: new Date("2026-05-02T00:00:00Z"),
+              updatedAt: new Date("2026-05-02T00:00:00Z"),
+            },
+          ],
+        },
     });
+
+  it("refunds cancelled late captures through the shared multi-intent refund helper", async () => {
+    const booking = lateCaptureRefundBooking();
     const deps = createDependencies({ bookings: [booking] });
 
     // #1491: the late-capture refund is never auto-applied — a plain --apply
@@ -4310,6 +4322,77 @@ describe("runBookingXeroRepair", () => {
     });
     expect(booking.payment.status).toBe("REFUNDED");
     expect(report.summary.bookingsWithFindings).toBe(0);
+  });
+
+  it("says it recorded the refund only for the intents whose record was written, and queued only a note that was queued (#3635 N4)", async () => {
+    const booking = lateCaptureRefundBooking();
+    const deps = createDependencies({ bookings: [booking] });
+    (deps.recordAndNoteRepairedLateCaptureRefunds as ReturnType<typeof vi.fn>).mockResolvedValue({
+      recordFailed: ["pi_primary_captured"],
+      doubleRefundSuspected: [],
+      noted: [],
+      alreadyNoted: ["pi_additional_captured"],
+      noteFailed: [],
+      byHand: [],
+      notInXero: [],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
+      dependencies: deps,
+      scope: { all: true },
+    });
+    const action = report.passes
+      .flatMap((pass) => pass.bookings.flatMap((bookingReport) => bookingReport.actions))
+      .find((item) => item.key === "late-capture-refund:booking_1:payment_1:13000");
+
+    // No note was queued, so the action is not "queued".
+    expect(action?.status).toBe("applied");
+    expect(action?.resultMessage).toContain(
+      "Recorded the refund of pi_additional_captured as the webhook does."
+    );
+    expect(action?.resultMessage).not.toContain("pi_primary_captured as the webhook does");
+    expect(action?.resultMessage).toContain("Could not record the refund of pi_primary_captured");
+    expect(action?.resultMessage).toContain(
+      "The Xero refund credit note for pi_additional_captured was already raised, so none was queued."
+    );
+    expect(action?.resultMessage).not.toContain("Queued the Xero refund credit note");
+  });
+
+  it("names a suspected double payment the record found, and reports queued only for a queued note (#3635 N4)", async () => {
+    const booking = lateCaptureRefundBooking();
+    const deps = createDependencies({ bookings: [booking] });
+    (deps.recordAndNoteRepairedLateCaptureRefunds as ReturnType<typeof vi.fn>).mockResolvedValue({
+      recordFailed: [],
+      doubleRefundSuspected: ["pi_primary_captured"],
+      noted: ["pi_additional_captured"],
+      alreadyNoted: [],
+      noteFailed: ["pi_primary_captured"],
+      byHand: [],
+      notInXero: [],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
+      dependencies: deps,
+      scope: { all: true },
+    });
+    const action = report.passes
+      .flatMap((pass) => pass.bookings.flatMap((bookingReport) => bookingReport.actions))
+      .find((item) => item.key === "late-capture-refund:booking_1:payment_1:13000");
+
+    expect(action?.status).toBe("queued");
+    expect(action?.resultMessage).toContain(
+      "hand-completed the refund task for pi_primary_captured while this refund ran, so the member may have been paid twice"
+    );
+    expect(action?.resultMessage).toContain(
+      "Queued the Xero refund credit note against the payment's own Xero receipt for pi_additional_captured."
+    );
+    expect(action?.resultMessage).toContain(
+      "Could not queue the Xero refund credit note for pi_primary_captured: raise it by hand in Xero."
+    );
   });
 
   it("never refunds a HELD capture's money through the partial path: the refund is pinned to the unheld one (#3639 delta D1)", async () => {
@@ -4555,6 +4638,7 @@ describe("runBookingXeroRepair", () => {
       refunds: [
         { paymentIntentId: "pi_newer_slice", refundId: "re_pi_newer_slice", amountCents: 6000 },
       ],
+      format: CLUB_FORMAT_TEST,
     });
 
     const firstRunActions = firstReport.passes.flatMap((pass) =>

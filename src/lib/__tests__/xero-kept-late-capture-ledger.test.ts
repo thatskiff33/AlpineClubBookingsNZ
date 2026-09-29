@@ -301,6 +301,7 @@ import {
 } from "@/lib/xero-kept-late-capture-invoice";
 import {
   creditBackLateCaptureRefunds,
+  noteLateCaptureRefunds,
   queueLateCaptureRefundCreditNote,
 } from "@/lib/late-capture-refund-credit-note";
 import {
@@ -794,6 +795,28 @@ describe("round 3: the nightly self-heal, one note per capture, and the days the
     // The worker's credit-back on a PARTIAL retry, and a second one.
     await creditBackLateCaptureRefunds(INTENT);
     await creditBackLateCaptureRefunds(INTENT);
+    await runOutbox();
+    expect(refundNotes().filter((d) => d.paymentIntentId === INTENT)).toEqual([
+      expect.objectContaining({ cents: 4000 }),
+    ]);
+  });
+
+  it("N4: the note writer says whether it queued a note, so a caller claims none it did not queue", async () => {
+    seed({});
+    // No receipt in Xero yet: nothing to note.
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "nothing-owed",
+    );
+    await keep();
+    await runOutbox();
+    takeStripeRefund(4000);
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "queued",
+    );
+    // The same refund again: already noted, nothing queued.
+    await expect(noteLateCaptureRefunds({ paymentId: PAYMENT, paymentIntentId: INTENT })).resolves.toBe(
+      "nothing-owed",
+    );
     await runOutbox();
     expect(refundNotes().filter((d) => d.paymentIntentId === INTENT)).toEqual([
       expect.objectContaining({ cents: 4000 }),

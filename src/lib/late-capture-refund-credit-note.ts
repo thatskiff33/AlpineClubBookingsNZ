@@ -39,15 +39,20 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
  * a refund credited back later lands in the period the payout does.
  *
  * NEVER THROWS. The money has already gone back to the member when this runs,
- * and a Xero outage must not undo or replay that.
+ * and a Xero outage must not undo or replay that. It says what it did (#3635
+ * N4) so a caller reporting to an operator claims no note it did not queue:
+ * `queued`, `nothing-owed` (no receipt, or every refunded cent already noted),
+ * or `failed` (logged; the note must be raised by hand).
  */
+export type LateCaptureNoteResult = "queued" | "nothing-owed" | "failed";
+
 export async function noteLateCaptureRefunds(params: {
   paymentId: string;
   paymentIntentId: string;
-}): Promise<void> {
+}): Promise<LateCaptureNoteResult> {
   const { paymentId, paymentIntentId } = params;
   try {
-    if (!(await hasXeroReceiptForLateCapture(paymentIntentId))) return;
+    if (!(await hasXeroReceiptForLateCapture(paymentIntentId))) return "nothing-owed";
     const refunds = await prisma.paymentRefund.findMany({
       where: { paymentId, stripePaymentIntentId: paymentIntentId },
       select: { amountCents: true, status: true, stripeCreatedAt: true, createdAt: true },
@@ -55,7 +60,7 @@ export async function noteLateCaptureRefunds(params: {
     const counted = refunds.filter((refund) => isRecordedRefundStatus(refund.status));
     const refundedCents = counted.reduce((sum, refund) => sum + Math.max(0, refund.amountCents), 0);
     const askCents = refundedCents - (await sumLateCaptureNotedCents(paymentId, paymentIntentId));
-    if (askCents <= 0) return;
+    if (askCents <= 0) return "nothing-owed";
     const latest = counted
       .map((refund) => refund.stripeCreatedAt ?? refund.createdAt)
       .reduce((max, at) => (at > max ? at : max));
@@ -65,14 +70,23 @@ export async function noteLateCaptureRefunds(params: {
       paymentIntentId,
       documentDate,
     });
-    if (queued.queueOperationId && (await isXeroConnected())) {
+    if (!queued.queueOperationId) {
+      // A refusal over an unreadable hand-resolved note is logged by the
+      // enqueue and wants the note raised by hand; anything else is covered.
+      return "resolvedInXeroOperationId" in queued && queued.resolvedInXeroOperationId
+        ? "failed"
+        : "nothing-owed";
+    }
+    if (await isXeroConnected()) {
       await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
     }
+    return "queued";
   } catch (err) {
     logger.error(
       { err, paymentId, paymentIntentId },
       "Failed to queue the corrective Xero refund credit note for a late capture on a cancelled booking",
     );
+    return "failed";
   }
 }
 

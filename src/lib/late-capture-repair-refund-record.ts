@@ -1,18 +1,34 @@
 import { PaymentTransactionKind } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
+  announceAutomaticLateCaptureRefund,
   recordAutomaticLateCaptureRefund,
   type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
+import type { ClubFormat } from "@/lib/club-format";
 import { noteLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import { readLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
-/** What Xero is told about each late capture the repair tool refunded. */
+/** What was recorded, and what Xero is told, for each late capture the repair tool refunded. */
 export interface RepairedLateCaptureXeroOutcome {
-  /** The capture's own Xero receipt exists: its refund note was queued. */
+  /**
+   * The webhook's record could not be written (its `critical` audit row names
+   * it): the intent is not a known late capture, so it is not noted (#3635 N4).
+   */
+  recordFailed: string[];
+  /**
+   * #2774's double-payment signal: an operator hand-completed the capture's
+   * refund task while this refund ran. Escalated exactly as the webhook does.
+   */
+  doubleRefundSuspected: string[];
+  /** The capture's own Xero receipt exists and its refund note was QUEUED now. */
   noted: string[];
+  /** A receipt exists, but every refunded cent is already noted: nothing queued. */
+  alreadyNoted: string[];
+  /** A receipt exists, but the note could not be queued (logged): raise it by hand. */
+  noteFailed: string[];
   /** An officer recorded the receipt by hand: its refund is recorded by hand too. */
   byHand: string[];
   /** Xero never received the capture: no note, since none may name it. */
@@ -37,14 +53,19 @@ export interface RepairedLateCaptureXeroOutcome {
  *
  * Never throws for a record or note failure (the money has already gone back):
  * the record writer audits its own failure at `critical`, and the note writer
- * logs. Provider calls stay in the outbox worker.
+ * logs. Provider calls stay in the outbox worker. The outcome says, per
+ * intent, what really happened (#3635 N4), so the operator's result message
+ * claims no record and no note that was not written, and a suspected double
+ * payment reaches the same critical audit row and conflict alert the webhook
+ * raises (`announceAutomaticLateCaptureRefund`).
  */
 export async function recordAndNoteRepairedLateCaptureRefunds(params: {
   bookingId: string;
   paymentId: string;
   refunds: ReadonlyArray<{ paymentIntentId: string; amountCents: number }>;
+  format: ClubFormat;
 }): Promise<RepairedLateCaptureXeroOutcome> {
-  const { bookingId, paymentId } = params;
+  const { bookingId, paymentId, format } = params;
   const refundedByIntent = new Map<string, number>();
   for (const refund of params.refunds) {
     if (!refund.paymentIntentId || refund.amountCents <= 0) continue;
@@ -53,7 +74,16 @@ export async function recordAndNoteRepairedLateCaptureRefunds(params: {
       (refundedByIntent.get(refund.paymentIntentId) ?? 0) + refund.amountCents,
     );
   }
-  const outcome: RepairedLateCaptureXeroOutcome = { noted: [], byHand: [], notInXero: [] };
+  const outcome: RepairedLateCaptureXeroOutcome = {
+    recordFailed: [],
+    doubleRefundSuspected: [],
+    noted: [],
+    alreadyNoted: [],
+    noteFailed: [],
+    byHand: [],
+    notInXero: [],
+  };
+  const recordedIntents: string[] = [];
   if (refundedByIntent.size === 0) return outcome;
 
   const booking = await prisma.booking.findUnique({
@@ -77,14 +107,32 @@ export async function recordAndNoteRepairedLateCaptureRefunds(params: {
       captureKind:
         transaction?.kind === PaymentTransactionKind.ADDITIONAL ? "modification" : "primary",
     };
-    await recordAutomaticLateCaptureRefund(capture);
+    const record = await recordAutomaticLateCaptureRefund(capture);
+    if (!record.recorded) {
+      outcome.recordFailed.push(paymentIntentId);
+      continue;
+    }
+    recordedIntents.push(paymentIntentId);
+    if (record.handCompletedAfterRefund) {
+      outcome.doubleRefundSuspected.push(paymentIntentId);
+      // Only the conflict arm is reached (the flag is set), so no ordinary
+      // "refunded automatically" email goes to an operator who ran the repair.
+      await announceAutomaticLateCaptureRefund(capture, record, format).catch((err) =>
+        logger.error(
+          { err, bookingId, paymentId, paymentIntentId },
+          "Failed to escalate a suspected double refund found by the late-capture repair",
+        ),
+      );
+    }
   }
 
-  for (const paymentIntentId of refundedByIntent.keys()) {
+  for (const paymentIntentId of recordedIntents) {
     const receipt = await readLateCaptureXeroReceipt(paymentIntentId);
     if (receipt.kind === "recorded") {
-      await noteLateCaptureRefunds({ paymentId, paymentIntentId });
-      outcome.noted.push(paymentIntentId);
+      const note = await noteLateCaptureRefunds({ paymentId, paymentIntentId });
+      if (note === "queued") outcome.noted.push(paymentIntentId);
+      else if (note === "nothing-owed") outcome.alreadyNoted.push(paymentIntentId);
+      else outcome.noteFailed.push(paymentIntentId);
     } else if (receipt.kind === "resolved-by-hand") {
       outcome.byHand.push(paymentIntentId);
     } else {
