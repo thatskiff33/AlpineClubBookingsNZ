@@ -1328,7 +1328,7 @@ export function classifyBookingContext(
     });
   }
 
-  if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, paymentLinks, paymentOperations);
+  if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations);
   if (payment && refundCreditNote) {
     const refundAmountCents = getCashCancellationRefundCandidateCents(booking);
     if (refundAmountCents !== null && refundAmountCents > 0) {

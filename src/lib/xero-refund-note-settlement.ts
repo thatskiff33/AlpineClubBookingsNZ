@@ -21,6 +21,7 @@
  * PARTIAL for the repair leg. Nothing records a second payment against a note
  * Xero shows paid, part-paid or allocated.
  */
+import type { Prisma } from "@prisma/client";
 import type { CreditNote as XeroCreditNote, Payment as XeroPayment } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -82,7 +83,13 @@ export interface RefundNotePaymentRecord {
 
 export interface RefundNoteSettlementOutcome {
   refundPaymentResponseBody: RefundPaymentBody | null;
-  /** Every live payment settling the note; each gets a `REFUND_PAYMENT` link. */
+  /**
+   * Every live payment settling the note; each gets a `REFUND_PAYMENT` link.
+   * Those links are single-active per payment by design
+   * (`normalizePaymentRefundLinkWithClient`), so only the latest stays active;
+   * every reader of "is this note's payment on record" reads them active or not
+   * (`refundPaymentLinkWhere`).
+   */
   payments: RefundNotePaymentRecord[];
   refundPaymentErr: unknown;
   /** Set when no payment is due: the note is complete, never a leg to repair. */
@@ -214,10 +221,14 @@ export function refundCreditNoteCompletion(input: {
       amountCents: payment.amountCents,
     },
   }));
+  // A refresh that finds the note fully settled drops the remainder an earlier
+  // part-settled read recorded, so the row stops reading as part-settled.
+  const prior: Record<string, unknown> = { ...(input.priorResponse ?? {}) };
+  delete prior.refundPaymentRemainingCents;
   return {
     status: outcome.refundPaymentErr ? "PARTIAL" : "SUCCEEDED",
     responsePayload: {
-      ...(input.priorResponse ?? {}),
+      ...prior,
       creditNote: input.creditNoteBody ?? input.priorResponse?.creditNote ?? null,
       allocation: null,
       allocationSkipped: true,
@@ -268,6 +279,23 @@ export function recordedRefundNoteOutcome(response: Record<string, unknown> | nu
 }
 
 export type EvidenceLink = { role: string; xeroObjectType: string; metadata: unknown };
+
+/**
+ * The payments' `REFUND_PAYMENT` links, ACTIVE OR NOT, deliberately (#3548
+ * round 3): the links are single-active per payment
+ * (`normalizePaymentRefundLinkWithClient`), so on a per-delta Stripe payment
+ * every note's payment link but the latest is inactive and still records that
+ * note's payment. The builder, the hardening report and the repair tool load
+ * `refundNoteSettlementOnRecord`'s links through this one filter.
+ */
+export function refundPaymentLinkWhere(paymentIds: string[]) {
+  return {
+    localModel: "Payment",
+    localId: { in: paymentIds },
+    xeroObjectType: "PAYMENT",
+    role: "REFUND_PAYMENT",
+  } satisfies Prisma.XeroObjectLinkWhereInput;
+}
 export type EvidenceOperation = {
   id: string;
   entityType: string;
@@ -284,7 +312,8 @@ export type EvidenceOperation = {
  * completed PARTIAL (the repair leg owns it), was resolved in Xero
  * (`INV-INT-025`), or recorded a payment or a skip by design (`INV-PAY-101`:
  * never re-repaired). Pure, over evidence the caller loaded, so the builder,
- * the hardening report and the repair tool ask one question.
+ * the hardening report and the repair tool ask one question. The links are
+ * read active or not (`refundPaymentLinkWhere`).
  */
 export function refundNoteSettlementOnRecord(
   creditNoteId: string,
@@ -322,7 +351,7 @@ export function refundNoteSettlementOnRecord(
 
 async function loadRefundNoteEvidence(paymentId: string) {
   const paymentLinks = await prisma.xeroObjectLink.findMany({
-    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "PAYMENT", role: "REFUND_PAYMENT" },
+    where: refundPaymentLinkWhere([paymentId]),
     select: { role: true, xeroObjectType: true, metadata: true, xeroObjectId: true },
   });
   const noteOperations = await prisma.xeroSyncOperation.findMany({
@@ -437,6 +466,11 @@ export async function settleRefundNoteFromXero(input: {
   refundMethodRecorded: boolean;
   /** Used only when Xero returns no readable date for the note. */
   fallbackPaymentDate: () => Promise<string>;
+  /**
+   * Record what Xero shows and never pay (#3548 round 3): the repair tool's
+   * refresh of a part-settled note. A note Xero shows no settlement on throws.
+   */
+  recordOnly?: boolean;
 }): Promise<{ outcome: RefundNoteSettlementOutcome; creditNoteBody: unknown; creditNoteNumber: string | null; totalCents: number }> {
   const { paymentId, creditNoteId } = input;
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -460,6 +494,11 @@ export async function settleRefundNoteFromXero(input: {
       "Xero refund credit note already carries a settlement in Xero; recording it without a second payment (#3548)"
     );
     return result(settledOutcome(state));
+  }
+  if (input.recordOnly) {
+    throw new Error(
+      `Refund credit note ${creditNoteId} for payment ${paymentId} shows no settlement in Xero now, so nothing was recorded and nothing was paid (#3548). Check the note in Xero.`
+    );
   }
   if (linkedPayment) {
     // The app recorded a payment for this note that Xero no longer shows (an
@@ -530,7 +569,9 @@ export async function settleRefundNoteFromXero(input: {
  * complete that row with the first attempt's payload shape (#3548). Used by
  * the builder for its own row, by the retry/repair leg, and by the repair
  * tool's operator-applied action. Throws for a voided or missing note; a
- * failed payment completes PARTIAL and is returned in the outcome.
+ * failed payment completes PARTIAL and is returned in the outcome. The PARTIAL
+ * write never lands over a row a concurrent leg already completed SUCCEEDED
+ * (`keepSucceeded`): the loser of two simultaneous retries is a no-op.
  */
 export async function finishRefundCreditNoteSettlement(input: {
   operationId: string;
@@ -542,6 +583,7 @@ export async function finishRefundCreditNoteSettlement(input: {
   refundMethodRecorded: boolean;
   fallbackPaymentDate: () => Promise<string>;
   priorResponse?: Record<string, unknown> | null;
+  recordOnly?: boolean;
 }): Promise<RefundNoteSettlementOutcome> {
   const settled = await settleRefundNoteFromXero(input);
   await completeXeroSyncOperation(
@@ -556,7 +598,8 @@ export async function finishRefundCreditNoteSettlement(input: {
       outcome: settled.outcome,
       priorResponse: input.priorResponse,
       extraResponse: { interruptedAttemptCompleted: true },
-    })
+    }),
+    settled.outcome.refundPaymentErr ? { keepSucceeded: true } : undefined,
   );
   return settled.outcome;
 }

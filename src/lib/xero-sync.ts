@@ -781,7 +781,15 @@ export async function deactivateXeroObjectLinks(params: {
 export async function completeXeroSyncOperation(
   operationId: string,
   completion: XeroSyncOperationCompletion,
-  options?: { store?: Prisma.TransactionClient },
+  options?: {
+    store?: Prisma.TransactionClient;
+    /**
+     * #3548 round 3: leave a row another writer already completed SUCCEEDED as
+     * it is, links and all, and answer null - so the loser of two concurrent
+     * legs never writes PARTIAL over the winner.
+     */
+    keepSucceeded?: boolean;
+  },
 ) {
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.
@@ -793,18 +801,25 @@ export async function completeXeroSyncOperation(
   );
 
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
-    const operation = await tx.xeroSyncOperation.update({
-      where: { id: operationId },
-      data: {
-        status: completion.status ?? "SUCCEEDED",
-        responsePayload: sanitizeForJson(completion.responsePayload),
-        xeroObjectType: completion.xeroObjectType ?? null,
-        xeroObjectId: completion.xeroObjectId ?? null,
-        xeroObjectNumber: completion.xeroObjectNumber ?? null,
-        xeroObjectUrl,
-        completedAt: new Date(),
-      },
-    });
+    const data = {
+      status: completion.status ?? "SUCCEEDED",
+      responsePayload: sanitizeForJson(completion.responsePayload),
+      xeroObjectType: completion.xeroObjectType ?? null,
+      xeroObjectId: completion.xeroObjectId ?? null,
+      xeroObjectNumber: completion.xeroObjectNumber ?? null,
+      xeroObjectUrl,
+      completedAt: new Date(),
+    };
+    if (options?.keepSucceeded) {
+      const claimed = await tx.xeroSyncOperation.updateMany({
+        where: { id: operationId, status: { not: "SUCCEEDED" } },
+        data,
+      });
+      if (claimed.count === 0) return null;
+    }
+    const operation = options?.keepSucceeded
+      ? await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
+      : await tx.xeroSyncOperation.update({ where: { id: operationId }, data });
 
     for (const link of completion.extraLinks ?? []) {
       await upsertXeroObjectLinkWithClient(tx, link);
@@ -816,7 +831,7 @@ export async function completeXeroSyncOperation(
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
 
-  if (operation.status === "PARTIAL") {
+  if (operation?.status === "PARTIAL") {
     try {
       const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");
       await maybeNotifyXeroRepeatedFailure(operation);

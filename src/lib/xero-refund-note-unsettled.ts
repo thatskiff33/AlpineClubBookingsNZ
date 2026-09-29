@@ -17,7 +17,10 @@ import type {
   XeroReconciliationIssueSection,
 } from "@/lib/xero-hardening-types";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
-import { readCashRefundMethod } from "@/lib/xero-payment-credit-note-payload";
+import {
+  parsePaymentCreditNoteRetryInput,
+  readCashRefundMethod,
+} from "@/lib/xero-payment-credit-note-payload";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
@@ -25,9 +28,26 @@ import {
   finishRefundCreditNoteSettlement,
   refundNoteSettlementInterrupted,
   refundNoteSettlementOnRecord,
+  refundPaymentLinkWhere,
   type EvidenceLink,
   type EvidenceOperation,
 } from "@/lib/xero-refund-note-settlement";
+
+/**
+ * Whether a credit-note create row raised a REFUND note (#3548 round 3). An
+ * account-credit (unapplied) note on a payment has the same entity, operation
+ * and model, and no settling payment is ever due on it: it is never listed,
+ * and never paid from the refund account. The one payload reader decides.
+ */
+function raisedRefundNote(operation: { requestPayload: unknown }): boolean {
+  return parsePaymentCreditNoteRetryInput(operation)?.kind === "refund";
+}
+
+/** A remainder a part-settled read recorded on the row, if any. */
+function recordedRemainingCents(responsePayload: unknown): number | null {
+  const remaining = readNumber(asRecord(responsePayload)?.refundPaymentRemainingCents);
+  return remaining !== null && remaining > 0 ? remaining : null;
+}
 
 /** A SUCCEEDED refund-note row whose note has neither its payment nor a skip on record, or is part-settled. */
 export interface UnsettledRefundNoteRow {
@@ -45,10 +65,20 @@ export interface UnsettledRefundNoteRow {
  * every SUCCEEDED refund-note create row whose note's outcome is not on record
  * (`refundNoteSettlementOnRecord`) — rows the pre-#3548 early return closed with
  * neither — and every row that recorded a part-settled note. One row per note,
- * the newest. Pure over loaded rows, so both readers share it.
+ * the newest. Refund notes only (`raisedRefundNote`), and the links are read
+ * active or not (`refundPaymentLinkWhere`). Pure over loaded rows, so both
+ * readers share it.
  */
 export function unsettledRefundNoteRows(
-  operations: Array<EvidenceOperation & { localModel: string | null; localId: string | null; xeroObjectNumber: string | null; createdAt: Date }>,
+  operations: Array<
+    EvidenceOperation & {
+      localModel: string | null;
+      localId: string | null;
+      xeroObjectNumber: string | null;
+      createdAt: Date;
+      requestPayload: unknown;
+    }
+  >,
   paymentLinks: Array<EvidenceLink & { localId: string }>,
 ): UnsettledRefundNoteRow[] {
   const byNote = new Map<string, UnsettledRefundNoteRow>();
@@ -59,13 +89,14 @@ export function unsettledRefundNoteRows(
       !operation.localId ||
       !operation.xeroObjectId ||
       operation.entityType !== "CREDIT_NOTE" ||
-      operation.operationType !== "CREATE"
+      operation.operationType !== "CREATE" ||
+      !raisedRefundNote(operation)
     ) {
       continue;
     }
     const paymentId = operation.localId;
-    const remaining = readNumber(asRecord(operation.responsePayload)?.refundPaymentRemainingCents);
-    const partSettled = remaining !== null && remaining > 0;
+    const remaining = recordedRemainingCents(operation.responsePayload);
+    const partSettled = remaining !== null;
     const onRecord = refundNoteSettlementOnRecord(operation.xeroObjectId, {
       paymentLinks: paymentLinks.filter((link) => link.localId === paymentId),
       noteOperations: operations.filter((candidate) => candidate.localId === paymentId),
@@ -106,6 +137,7 @@ export async function findUnsettledRefundNoteRows(): Promise<UnsettledRefundNote
       localId: true,
       xeroObjectId: true,
       xeroObjectNumber: true,
+      requestPayload: true,
       responsePayload: true,
       manuallyResolvedAt: true,
       createdAt: true,
@@ -114,7 +146,7 @@ export async function findUnsettledRefundNoteRows(): Promise<UnsettledRefundNote
   if (!operations?.length) return [];
   const paymentIds = [...new Set(operations.flatMap((operation) => (operation.localId ? [operation.localId] : [])))];
   const links = await prisma.xeroObjectLink.findMany({
-    where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "PAYMENT", role: "REFUND_PAYMENT" },
+    where: refundPaymentLinkWhere(paymentIds),
     select: { localId: true, role: true, xeroObjectType: true, metadata: true },
   });
   return unsettledRefundNoteRows(operations, links ?? []);
@@ -146,7 +178,7 @@ export async function buildUnsettledRefundNoteSection(
         whatWentWrong:
           "A refund credit note's operation completed with neither its settling payment nor a reason none is due, or Xero shows the note part-settled, so the refund may still read as owed in Xero.",
         howToFix:
-          'Check the note in Xero. Run the booking repair tool: its REFUND_CREDIT_NOTE_UNSETTLED finding offers a settle action, applied only by key, which reads the note back and never pays one already settled. Settle the remainder of a part-settled note in Xero by hand. Runbook: docs/MAINTENANCE.md, "Refund credit notes with no settlement on record (#3548)".',
+          'Check the note in Xero. Run the booking repair tool: its REFUND_CREDIT_NOTE_UNSETTLED finding offers a settle action, applied only by key, which reads the note back and never pays one already settled. Settle the remainder of a part-settled note in Xero by hand, then apply the action for that note to record it: for a part-settled note it only reads the note back, and never pays. Runbook: docs/MAINTENANCE.md, "Refund credit notes with no settlement on record (#3548)".',
         items: items.slice(0, topLimit),
       },
     ],
@@ -156,7 +188,9 @@ export async function buildUnsettledRefundNoteSection(
 /**
  * The repair tool's `SETTLE_REFUND_CREDIT_NOTE`, applied only by an operator
  * (`safeToAutoApply: false`). Re-reads the row and the evidence first, so a
- * note settled since the dry run is left alone.
+ * note settled since the dry run is left alone. Refuses an account-credit
+ * note. On a row that recorded a part-settled note it only re-reads the note
+ * (`recordOnly`), recording the payments Xero now shows, and never pays.
  */
 export async function applyRefundNoteSettlementRepair(
   payload: Record<string, unknown>,
@@ -175,7 +209,14 @@ export async function applyRefundNoteSettlementRepair(
   if (!operation || operation.xeroObjectId !== creditNoteId) {
     return { status: "failed", message: `Operation ${operationId} no longer names refund credit note ${creditNoteId}.` };
   }
-  if (!(await refundNoteSettlementInterrupted(paymentId, creditNoteId))) {
+  if (!raisedRefundNote(operation)) {
+    return {
+      status: "failed",
+      message: `Credit note ${creditNoteId} on operation ${operationId} is not a refund credit note, so no settling payment is ever recorded against it.`,
+    };
+  }
+  const partSettled = recordedRemainingCents(operation.responsePayload) !== null;
+  if (!partSettled && !(await refundNoteSettlementInterrupted(paymentId, creditNoteId))) {
     return { status: "skipped", message: "This refund credit note's settlement is already on record." };
   }
   const payment = await prisma.payment.findUnique({
@@ -201,6 +242,7 @@ export async function applyRefundNoteSettlementRepair(
     refundMethodRecorded,
     fallbackPaymentDate: async () => xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
     priorResponse: asRecord(operation.responsePayload),
+    recordOnly: partSettled,
   });
   if (outcome.refundPaymentErr) {
     return { status: "failed", message: "The settling payment failed in Xero; the row is PARTIAL for the repair leg." };

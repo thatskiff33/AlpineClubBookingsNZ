@@ -2659,9 +2659,10 @@ _Split from `INV-PAY-057` (#3220)._
   payment re-reads the note, else completes PARTIAL.
 - **What this does not cover, and why.** A replay that a recorded note already
   covers raised nothing, so it closes SUCCEEDED marked `coveredByExistingNote`,
-  naming the note whose own row carries the outcome. A crash between Xero's
-  reply and that transaction leaves nothing naming the note, so only Xero's key
-  replay (24 hours, `INV-INT-014`) stops a second one. Rows written before #3548
+  naming the note whose own row carries the outcome. Any failure between Xero
+  committing the note and that transaction (a crash, a lost or timed-out
+  response, a failed save) leaves nothing naming it, so only Xero's key replay
+  (24 hours, `INV-INT-014`) stops a second one. Rows written before #3548
   are listed by the reconciliation report and the repair tool
   (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
 - Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by

@@ -428,6 +428,13 @@ export interface BookingCancellationRefundRecoveryRecord {
 export interface BookingClassificationContext {
   booking: BookingRepairRecord;
   paymentLinks: XeroObjectLinkRecord[];
+  /**
+   * #3548 round 3: the payment's `REFUND_PAYMENT` links ACTIVE OR NOT
+   * (`refundPaymentLinkWhere`) - `paymentLinks` holds active links only, and
+   * these are single-active per payment - so the unsettled-refund-note finding
+   * reads the same evidence as the hardening report.
+   */
+  paymentRefundPaymentLinks: XeroObjectLinkRecord[];
   bookingLinks: XeroObjectLinkRecord[];
   modificationLinksById: Map<string, XeroObjectLinkRecord[]>;
   paymentOperations: XeroOperationRecord[];
