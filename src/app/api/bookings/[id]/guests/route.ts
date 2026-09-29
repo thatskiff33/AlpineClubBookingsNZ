@@ -17,10 +17,7 @@ import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
-import {
-  getDefaultLodgeCapacity,
-  getLodgeCapacity,
-} from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   type SeasonRateData,
@@ -233,22 +230,12 @@ export async function POST(
   // Absent for any non-admin caller (defence in depth behind the 403 gate).
   const notifyMember = isAdmin ? parsed.data.notifyMember : undefined;
 
+  // No party-size check here (#3407 review): the booking, and so its lodge, is
+  // not loaded yet, so the only capacity at hand would be the DEFAULT lodge's,
+  // which can only refuse wrongly at another lodge. The payload is bounded by
+  // the schema's `.max(200)`; the real rule is the per-lodge check inside the
+  // transaction below, under the lodge's capacity lock.
   const { guests: newGuests } = parsed.data;
-  const payloadCapacity = await getDefaultLodgeCapacity();
-  if (newGuests.length > payloadCapacity) {
-    return NextResponse.json(
-      {
-        error: "Invalid input",
-        details: {
-          formErrors: [],
-          fieldErrors: {
-            guests: [lodgeGuestLimitMessage(payloadCapacity, (limit) => `A booking cannot exceed ${limit} guests`)],
-          },
-        },
-      },
-      { status: 400 },
-    );
-  }
 
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
