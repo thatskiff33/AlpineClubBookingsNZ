@@ -26,6 +26,7 @@ import {
   projectMemberBookingChangeRequest,
 } from "@/lib/booking-change-request-member-view";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const createChangeRequestSchema = z.object({
   checkIn: z.string().optional(),
@@ -368,7 +369,7 @@ export async function POST(
     booking.guests.length - removeSet.size + (addGuests?.length ?? 0);
   if (proposedGuestCount > lodgeCapacity) {
     return NextResponse.json(
-      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
       { status: 400 },
     );
   }

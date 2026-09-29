@@ -63,7 +63,7 @@ Exportable categories:
 | Site content & appearance | CMS pages, keyed site content, club theme (embedded images travel in the bundle) |
 | Club settings | Club-wide singletons: modules, booking defaults, member fields, club identity, email message settings, etc. |
 | Booking policies | The complete club-wide and lodge-scoped minimum-stay policy set and the adult-member hosting setting for each scope, including whether each soft violation holds capacity or not |
-| Lodge configuration | Lodges, rooms, beds, seasons, season rates, lodge instructions, chore templates, and each lodge's auto-allocation switch plus ordered allocation priorities |
+| Lodge configuration | Lodges and each lodge's capacity, rooms, beds, seasons, season rates, lodge instructions, chore templates, and each lodge's auto-allocation switch plus ordered allocation priorities. A bundle from before capacity travelled leaves the target's capacity alone, and a lodge it creates is not set up for bookings until you set one |
 | Committee (roles) | `CommitteeRole` definitions only (not member-linked assignments) |
 | Induction checklists | Induction templates with their sections and items |
 | Membership fees (joining & annual) | Joining-fee and annual-fee schedules with invoice-line components (integer cents) |
