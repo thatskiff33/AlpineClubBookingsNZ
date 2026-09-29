@@ -19,8 +19,8 @@ import { describe, expect, it } from "vitest";
  * booking, and the row would then be one careless prop away from their screen.
  *
  * Disk-scanning, so it has no import edge to the loader it inspects and
- * `npm run test:related` cannot select it. CI-caught by design; run it locally
- * with `npm run test:named`.
+ * `pnpm run test:related` cannot select it. CI-caught by design; run it locally
+ * with `pnpm run test:named`.
  */
 
 const LOADER = path.join(

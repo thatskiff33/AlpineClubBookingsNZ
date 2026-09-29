@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
  * would throw on evaluation, because `node_modules/server-only/index.js` is a bare
  * `throw` — so an admin opening the affected screen gets a blank page.
  *
- * Nothing cheaper catches it. `npm run lint`, `npm run typecheck` and `npm run knip`
+ * Nothing cheaper catches it. `pnpm run lint`, `pnpm run typecheck` and `pnpm run knip`
  * are all clean on the violation, and every Vitest file has `server-only` mocked away
  * globally by `vitest.setup.ts`, so a component test renders the offending component
  * happily. That is how #2573's first cut shipped a `"use client"` admin card importing

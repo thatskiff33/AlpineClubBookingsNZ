@@ -183,7 +183,7 @@ describe("blocking CI wiring", () => {
     expect(verify, "ci.yml must contain a top-level verify job").not.toBe("");
     expect(
       verify.match(
-        /^        run: npm run quality:budget -- --base "\$BUDGET_BASE"\s*$/gm,
+        /^        run: pnpm run quality:budget --base "\$BUDGET_BASE"\s*$/gm,
       ) ?? [],
     ).toHaveLength(1);
   });

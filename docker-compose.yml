@@ -117,7 +117,7 @@ x-app-environment: &app-environment
   # `tac` above is a SUPERUSER, and the whole point of this credential is that the
   # database itself makes a diagnostics read incapable of writing or of reading the
   # encrypted credential store. Empty by default (the module ships off); provision
-  # with `npm run diagnostics:provision-role` and set it in the Compose .env.
+  # with `pnpm run diagnostics:provision-role` and set it in the Compose .env.
   # The app refuses every diagnostics read unless the server confirms the role is
   # least-privilege, so an empty or wrong value degrades safely.
   AI_DIAGNOSTICS_DATABASE_URL: ${AI_DIAGNOSTICS_DATABASE_URL:-}

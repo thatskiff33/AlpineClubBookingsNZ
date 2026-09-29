@@ -1053,7 +1053,7 @@ Do not open the window until the census prints `READY`.
    ```bash
    docker compose --profile migrate run --rm \
      -e DATABASE_URL="$DATABASE_URL" migrate \
-     npm run db:school-classification-census
+     pnpm run db:school-classification-census
    ```
 
    It must end `READY: every candidate is recorded, so the backfill will run.`
@@ -1124,7 +1124,7 @@ Two ways out, and the first is usually right.
    Then clear the failed row and migrate again:
 
    ```bash
-   docker compose --profile migrate run --rm      -e DATABASE_URL="$DATABASE_URL" migrate      npx prisma migrate resolve --rolled-back      20260928030000_backfill_school_bookings_to_organisations
+   docker compose --profile migrate run --rm      -e DATABASE_URL="$DATABASE_URL" migrate      pnpm exec prisma migrate resolve --rolled-back      20260928030000_backfill_school_bookings_to_organisations
    ```
 
    `--rolled-back` is the true statement here: the migration's transaction did

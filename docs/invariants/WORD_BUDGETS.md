@@ -7,7 +7,7 @@ register serves: [`SCHEME.md`](SCHEME.md) §8.1 · deciding issue: #2789.
 
 Every invariant entry is at most **300 words** and every index-row description
 at most **12 words** (`SCHEME.md` §8.1). This file is the only place an entry
-may be allowed more, and `npm run docs:indexcheck` reads it: an id listed here
+may be allowed more, and `pnpm run docs:indexcheck` reads it: an id listed here
 is held to the limit on its row, an id not listed here is held to 300, and the
 index cap has no register at all. **Nothing in this file is a rule and nothing
 here has an id**; it is an inventory the gate enforces exactly, so a row that is

@@ -168,7 +168,7 @@ describe("the migration lock timeout stays wired end to end (#3377)", () => {
     const harness = readRepoFile("src/lib/__tests__/concurrency-lock-races.realdb.test.ts");
     expect(harness).toContain('import "./migration-lock-timeout.realdb.test";');
     expect(readRepoFile(".github/workflows/ci.yml")).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
   });
 

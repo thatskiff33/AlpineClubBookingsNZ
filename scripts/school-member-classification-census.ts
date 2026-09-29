@@ -36,7 +36,7 @@
  * ## SAFE USAGE — a copy first, then the real database read-only
  *
  *   DATABASE_URL='postgresql://user:pass@host:5432/club' \
- *     npm run db:school-classification-census
+ *     pnpm run db:school-classification-census
  *
  * Reading production is the point of the exercise and is safe; the write flags
  * are what an officer runs deliberately, after reading.
@@ -336,7 +336,7 @@ async function main(): Promise<void> {
         ...cannotTellRows.map((row) => `  ${describeForAPerson(row)}`),
         "",
         "Record each one with, for example:",
-        "  npm run db:school-classification-census -- \\",
+        "  pnpm run db:school-classification-census \\",
         "    --classify <memberId> --as ORGANISATION \\",
         "    --by \"<your name>\" --because \"<what you checked>\"",
         "",

@@ -1,7 +1,7 @@
 /**
  * WHAT THE STORED NIGHT PRICES ARE MADE OF, AND WHAT PARKS EDITS (#3531
  * stage 3c, programme #3527) - two read-only summaries the money census
- * (`npm run booking-money:census`) reports beside `INV-MONEY-031`'s verdicts,
+ * (`pnpm run booking-money:census`) reports beside `INV-MONEY-031`'s verdicts,
  * so the effect of 3a (the gate's grain) and 3b (the rate-derived backfill) is
  * read off the database rather than asserted.
  *

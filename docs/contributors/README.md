@@ -142,7 +142,7 @@ in. Cite rules by id, never by line number.
 - [`../agents/CODEX_WORKFLOW.md`](../agents/CODEX_WORKFLOW.md) — the operating
   guide for Codex agents, including the Windows worktree runtime and
   dependency preflight, and lane-owned Docker teardown with the report-only
-  `npm run stale-containers` debris check.
+  `pnpm run stale-containers` debris check.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
   contracts: the human-first issue-body order, the four-question test for
   whether work is an atomic epic at all (and how an epic differs from a

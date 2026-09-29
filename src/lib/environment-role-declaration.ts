@@ -47,7 +47,7 @@
  * marked `server-only` (#3204), so the production build refuses it in a browser
  * bundle at any depth. It went unmarked for as long as it did because
  * `setup-readiness-db.ts` reaches the resolver from the `tsx` entrypoint
- * `npm run setup:check`, which the marker would have aborted at import; since
+ * `pnpm run setup:check`, which the marker would have aborted at import; since
  * #2850 that command carries `--conditions=react-server`, under which
  * `server-only` resolves to an empty module, and
  * `cli-server-only-reach-census.test.ts` fails any published invocation that

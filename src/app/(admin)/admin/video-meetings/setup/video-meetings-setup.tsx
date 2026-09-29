@@ -35,7 +35,7 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 // `mirotalk-settings-shared`, never `mirotalk-config`: the latter is
-// `server-only`, and importing a VALUE from it here fails `npm run build` with
+// `server-only`, and importing a VALUE from it here fails `pnpm run build` with
 // "'server-only' cannot be imported from a Client Component module". See that
 // module's header. It is NOT unguarded until then, as this comment used to
 // say: `client-server-boundary-census.test.ts` walks the real import graph from

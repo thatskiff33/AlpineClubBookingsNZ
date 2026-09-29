@@ -27,7 +27,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
   wait on, so its wall time scales with how many other vitest workers are
   competing for the box — not with anything about the tree it is checking.
 
-  Standalone the whole file runs in about 3s. Inside a full `npm test` on a
+  Standalone the whole file runs in about 3s. Inside a full `pnpm test` on a
   loaded machine the same work measured 24s for the file and 5.4s for its
   slowest test, which tripped vitest's 5s default: a red suite with no defect
   behind it. The suite-level hoisting further down cut the real cost (6.5s -> 3s

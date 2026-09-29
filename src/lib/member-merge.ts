@@ -682,7 +682,7 @@ export async function evaluateMemberMergeGuards(params: {
   // the "cannot tell" the census hands to a person: an unclassified row that
   // looks like a school is a question, and a merge is not the place to answer
   // one. An officer who knows it is a teacher records that with
-  // `npm run db:school-classification-census -- --classify <id> --as PERSON`,
+  // `pnpm run db:school-classification-census --classify <id> --as PERSON`,
   // which takes any member id, and the merge then proceeds.
   //
   // If a school really has been recorded twice, the two `Organisation` records
@@ -720,7 +720,7 @@ export async function evaluateMemberMergeGuards(params: {
     );
     const undecided = organisationSides.some((id) => !classifiedById.has(id));
     const howToProceed = undecided
-      ? " If it is really a person, record that decision first: npm run db:school-classification-census -- --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
+      ? " If it is really a person, record that decision first: pnpm run db:school-classification-census --classify <memberId> --as PERSON --by \"<you>\" --because \"<what you checked>\"."
       : "";
     blockers.push({
       code: "organisation_row",

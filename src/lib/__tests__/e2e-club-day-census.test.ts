@@ -196,7 +196,7 @@ describe("no second way to ask what day it is (#3221)", () => {
       'FIXTURE_DATE_FILE=".artifacts/e2e-fixture-date-${COMPOSE_PROJECT}"',
     );
     expect(prepare).toContain(
-      'E2E_FIXTURE_TODAY_NZ="$(npx --no-install tsx scripts/e2e-fixture-today.ts)"',
+      'E2E_FIXTURE_TODAY_NZ="$(pnpm exec tsx scripts/e2e-fixture-today.ts)"',
     );
     expect(prepare).toContain('export E2E_FIXTURE_TODAY_NZ');
     expect(prepare).toContain('printf \'%s\\n\' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"');

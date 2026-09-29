@@ -57,7 +57,7 @@ settings.
 **Install-time configuration** is the same lever, one layer down.
 `config/club.json` holds the values needed *before* an admin can sign in — club
 name, short name, public URL, contact addresses, bed capacity, age tiers and
-their integer-cent nightly rates. `npm run setup:wizard` writes it for you.
+their integer-cent nightly rates. `pnpm run setup:wizard` writes it for you.
 [`../../CONFIGURATION.md`](../../CONFIGURATION.md) is the full reference for it
 and for every environment variable. Some of these values, including club name
 and the hut-leader label, can be overridden later from Admin → Appearance →

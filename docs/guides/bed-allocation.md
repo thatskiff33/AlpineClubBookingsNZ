@@ -91,7 +91,7 @@ year in one go).
      still shows the Allocation preferences EDITOR on the board, where the link
      card now is; the alt text says so rather than describing the page as it is
      today, because a wrong substitute is worse for a screen-reader user than an
-     old one. Re-run `npm run docs:screenshots` and, in the same change, replace
+     old one. Re-run `pnpm run docs:screenshots` and, in the same change, replace
      "the Allocation preferences editor" below with "the Allocation preferences
      link card".
    -->

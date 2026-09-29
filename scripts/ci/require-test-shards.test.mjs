@@ -35,7 +35,7 @@ describe("required verify's independent test-shard gate", () => {
     expect(gateStep).toBeDefined();
     expect(gateStep?.if).toBeUndefined();
     expect(gateStep?.["continue-on-error"]).toBeUndefined();
-    expect(verify.steps.some((step) => /(?:^|\s)npm test(?:\s|$)/.test(step.run ?? ""))).toBe(false);
+    expect(verify.steps.some((step) => /(?:^|\s)p?npm test(?:\s|$)/.test(step.run ?? ""))).toBe(false);
     expect(matrixJob.if).toBeUndefined();
     expect(matrixJob["continue-on-error"]).toBeUndefined();
     // Both jobs run the suite/build under one effective test environment.
@@ -47,7 +47,7 @@ describe("required verify's independent test-shard gate", () => {
     expect(matrixJob.strategy.matrix.shard).toHaveLength(EXPECTED_SHARD_COUNT);
     expect(matrixJob.name).toBe(`Test shard (${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT})`);
     expect(matrixJob.steps.find((step) => step.uses?.startsWith("actions/checkout"))?.with?.["fetch-depth"]).toBe("0");
-    const testStep = matrixJob.steps.find((step) => step.run === `npm test -- --shard=${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT}`);
+    const testStep = matrixJob.steps.find((step) => step.run === `pnpm test --shard=${"${{ matrix.shard }}"}/${EXPECTED_SHARD_COUNT}`);
     expect(testStep).toBeDefined();
     expect(testStep?.if).toBeUndefined();
     expect(testStep?.["continue-on-error"]).toBeUndefined();

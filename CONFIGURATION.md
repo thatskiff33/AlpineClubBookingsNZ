@@ -26,7 +26,7 @@ configure a club is the admin UI at `/admin/setup` and its linked editors
 You can also run the setup wizard once the database is migrated and seeded:
 
 ```bash
-npm run setup:wizard
+pnpm run setup:wizard
 ```
 
 The wizard now **writes the club's configuration to the database**, not to a
@@ -58,7 +58,7 @@ The config loader (`src/config/club.ts`) never throws, so an absent or broken
 - **Malformed `club.json`** (present but invalid JSON or failing schema
   validation) → the app degrades to the built-in `SAFE_DEFAULT_CONFIG` and logs
   a warning. The `club.example.json` fallback is intentionally **skipped** in
-  this case so a broken primary is not silently masked, and `npm run setup:check`
+  this case so a broken primary is not silently masked, and `pnpm run setup:check`
   reports the Club Config step as **blocked**. Fix `config/club.json`.
 - **Absent `club.json`** → falls back to a valid `config/club.example.json`; if
   the example is also absent or malformed, the app boots on
@@ -140,7 +140,7 @@ never overwrites an admin edit. Healing runs **only from a valid primary
 `config/club.json`** — a boot that fell back to the example or the safe default
 (missing/malformed primary) skips healing so a placeholder identity is never
 frozen into the DB, and self-repairs on a later boot once the primary is fixed
-(the manual `npm run config:self-heal` exits non-zero on such a fallback skip).
+(the manual `pnpm run config:self-heal` exits non-zero on such a fallback skip).
 This is what lets later collapse work drop the file/env fallbacks without
 stranding a live deploy. See "Config self-heal on boot" in `docs/DEPLOYMENT.md`,
 `src/lib/config-self-heal.ts` (the runner) and `src/lib/config-self-heal-steps.ts`
@@ -153,7 +153,7 @@ timezone (#2989). The value it copies comes from `TZ` / `NEXT_PUBLIC_TZ`, not fr
 `club.json`, and since #1987 an absent `club.json` is normal for a database-first
 install — so gating it on the file would mean those installs never recorded their
 timezone at all. It therefore runs on every boot regardless of config provenance,
-and it can only ever CREATE the row, never overwrite one. `npm run
+and it can only ever CREATE the row, never overwrite one. `pnpm run
 config:self-heal` now prints the results of the steps that did run even on a
 provenance skip, and still exits non-zero, because a partial run is not a
 success.
@@ -1253,8 +1253,8 @@ test/demo mode or disabled:
 | `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`.   |
 | `SEED_ADMIN_LAST_NAME`  | Optional last name for the seeded admin; defaults to `User`.     |
 | `SEED_LODGE_PASSWORD`   | Initial password for the seeded shared lodge kiosk account.      |
-| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `npm run db:seed:demo`.       |
-| `DEMO_SEED_PASSWORD`    | Optional local-only password for `npm run db:seed:demo` users.   |
+| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `pnpm run db:seed:demo`.       |
+| `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
@@ -1284,7 +1284,7 @@ legacy `RESERVE` to Associate, historical `LIFE` to Life, `SCHOOL` to School,
 and `NON_MEMBER` to Non-Member) using create-if-missing assignments. Re-running
 the seed does not overwrite existing seasonal assignments.
 
-`npm run db:seed:demo` is separate from the first-run seed. It is intended only
+`pnpm run db:seed:demo` is separate from the first-run seed. It is intended only
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
@@ -1299,7 +1299,7 @@ password.
 Run this before bootstrapping a new install:
 
 ```bash
-npm run setup:check
+pnpm run setup:check
 ```
 
 The check validates environment variable presence/format, module capability
@@ -2638,7 +2638,7 @@ rate-limited, or temporarily unavailable.
 | `AUDIT_ARCHIVE_DATABASE_URL`          | Preferred optional archive database for audit retention.                    |
 | `AUDIT_LOG_ARCHIVE_DATABASE_URL`      | Backward-compatible archive database alias.                                 |
 | `SHADOW_DATABASE_URL`                 | Optional Prisma shadow database URL for migration validation.               |
-| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `npm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
+| `AI_DIAGNOSTICS_DATABASE_URL`         | Dedicated **non-superuser, SELECT-only** database role for AI Diagnostics tool reads (ADR-007). Required before the AI Diagnostics module can be used; never the app's `DATABASE_URL`. Provision with `pnpm run diagnostics:provision-role`. See [`docs/ai-diagnostics/deployment.md`](docs/ai-diagnostics/deployment.md). |
 
 > **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
 > region, access key/secret, retention window, restore-validation shadow
