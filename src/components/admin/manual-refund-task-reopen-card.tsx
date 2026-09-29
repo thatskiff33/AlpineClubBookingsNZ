@@ -195,8 +195,8 @@ export function ManualRefundTaskReopenCard({
                   : formatCents(task.amountCents, format)}
               </p>
               <p className="text-xs text-muted-foreground">
-                Stay {formatStayDate(task.checkIn)} to{" "}
-                {formatStayDate(task.checkOut)}
+                Stay {formatStayDate(task.checkIn, format)} to{" "}
+                {formatStayDate(task.checkOut, format)}
                 {task.bookingDeleted
                   ? " · this booking has since been deleted"
                   : ""}

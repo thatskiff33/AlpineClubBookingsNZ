@@ -280,7 +280,7 @@ export async function PUT(
     }
     if (err instanceof BookingMemberNightConflictError) {
       return NextResponse.json(
-        getBookingMemberNightConflictResponse(err.conflicts),
+        getBookingMemberNightConflictResponse(err.conflicts, format),
         { status: 409 },
       );
     }

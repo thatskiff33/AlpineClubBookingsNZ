@@ -112,7 +112,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
-| `INV-MONEY-016` | Membership type alone decides subscription liability; access role grants no exemption |
+| `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
 | `INV-MONEY-018` | Manual subscription mark-paid is cash-only, never clobbered; a Xero link reclaims authority |
 | `INV-MONEY-019` | Opt-in item-code look-through detects paid subscriptions from every fee-schedule component code |
@@ -158,7 +158,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, end to end |
 | `INV-DATE-015` | Rendering has one seam, `@/lib/club-time`; bare `toLocale*`, unzoned `Intl`, `date-fns` lint-blocked |
 | `INV-DATE-029` | Naming the environment zone is lint-blocked; escape-hatch ceilings are tight, only fall |
-| `INV-DATE-016` | The long spelled-out date shape is reserved for four named member-facing surfaces |
+| `INV-DATE-016` | The long spelled-out date shape is reserved for named member-facing surfaces |
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
 | `INV-CAP-001` | Capacity is per lodge; no path may sum beds across lodges |
@@ -759,6 +759,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-085` | Member photos: scoped endpoint only; public only when rostered and displayed |
 | `INV-LIFE-086` | Every stored image has EXIF/XMP metadata stripped; member-photo path fails closed |
 | `INV-LIFE-087` | Seasonal membership type governs pricing and lockout, never access or committee |
+| `INV-LIFE-093` | Full and Non-Member stay active with fixed booking rules; drift is repairable |
 | `INV-LIFE-020` | 2FA on: the JWT claim flips only via a server-minted challenge |
 | `INV-LIFE-021` | A `FamilyGroup` with no `FamilyGroupMember` rows is inert everywhere |
 | `INV-LIFE-022` | Family-group facts: the guest-eligibility correction, billing recipients, and memberless groups |

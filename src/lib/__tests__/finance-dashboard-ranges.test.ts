@@ -12,6 +12,7 @@ import {
 } from "@/lib/finance-dashboard-ranges";
 import { financeDashboardWindowDetail } from "@/lib/finance-dashboard-labels";
 import { parseDateOnly } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // 6 July 2026: the in-progress month is July, last completed month is June.
 const TODAY = parseDateOnly("2026-07-06");
@@ -23,6 +24,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option: "last-month",
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window).toMatchObject({
@@ -43,6 +45,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option,
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window.fromMonth).toBe(fromMonth);
@@ -54,6 +57,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option: "financial-year-to-date",
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window).toMatchObject({
@@ -70,6 +74,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option: "financial-year-to-date",
       today: parseDateOnly("2026-04-02"),
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window.fromMonth).toBe("2026-04");
@@ -81,6 +86,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option: "financial-year-to-date",
       today: TODAY,
       financialYearEndMonth: 12,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window.fromMonth).toBe("2026-01");
@@ -93,6 +99,7 @@ describe("resolvePrimaryFinanceRange", () => {
       option: "last-financial-year",
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window).toMatchObject({
@@ -111,6 +118,7 @@ describe("resolvePrimaryFinanceRange", () => {
       searchParams: { from: "2026-01", to: "2026-03" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
       warnings,
     });
 
@@ -130,6 +138,7 @@ describe("resolvePrimaryFinanceRange", () => {
       searchParams: { from: "2026-01-15", to: "2026-03-20" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
       warnings,
     });
 
@@ -146,6 +155,7 @@ describe("resolvePrimaryFinanceRange", () => {
       searchParams: { from: "2026-05", to: "2026-02" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
       warnings,
     });
 
@@ -159,12 +169,14 @@ describe("resolveComparisonFinanceRange", () => {
     option: "last-3-months",
     today: TODAY,
     financialYearEndMonth: MARCH_YEAR_END,
+    format: CLUB_FORMAT_TEST,
   });
 
   it("resolves previous-period to the same-length window immediately before", () => {
     const window = resolveComparisonFinanceRange({
       option: "previous-period",
       primary,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window).toMatchObject({
@@ -177,6 +189,7 @@ describe("resolveComparisonFinanceRange", () => {
     const window = resolveComparisonFinanceRange({
       option: "same-period-last-year",
       primary,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(window).toMatchObject({
@@ -187,7 +200,7 @@ describe("resolveComparisonFinanceRange", () => {
 
   it("resolves none to null", () => {
     expect(
-      resolveComparisonFinanceRange({ option: "none", primary })
+      resolveComparisonFinanceRange({ option: "none", primary, format: CLUB_FORMAT_TEST })
     ).toBeNull();
   });
 
@@ -195,6 +208,7 @@ describe("resolveComparisonFinanceRange", () => {
     const window = resolveComparisonFinanceRange({
       option: "custom",
       primary,
+      format: CLUB_FORMAT_TEST,
       searchParams: { compareFrom: "2024-04", compareTo: "2024-06" },
     });
 
@@ -210,6 +224,7 @@ describe("resolveFinanceDashboardSelection", () => {
     const selection = resolveFinanceDashboardSelection({
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(selection).toMatchObject({
@@ -228,6 +243,7 @@ describe("resolveFinanceDashboardSelection", () => {
       searchParams: { range: "last-quarter", compare: "previous-month" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(selection.range).toBe("last-3-months");
@@ -239,10 +255,11 @@ describe("resolveFinanceDashboardSelection", () => {
       searchParams: { compare: "none" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(selection.comparison).toBeNull();
-    expect(financeDashboardWindowDetail(selection.comparison)).toBe("None");
+    expect(financeDashboardWindowDetail(selection.comparison, CLUB_FORMAT_TEST)).toBe("None");
   });
 
   it("falls back to defaults on unknown option values", () => {
@@ -250,6 +267,7 @@ describe("resolveFinanceDashboardSelection", () => {
       searchParams: { range: "fortnightly", compare: "vibes" },
       today: TODAY,
       financialYearEndMonth: MARCH_YEAR_END,
+      format: CLUB_FORMAT_TEST,
     });
 
     expect(selection.range).toBe("last-month");
@@ -295,6 +313,7 @@ describe("the view resolver and the lodge-scope predicate", () => {
           searchParams,
           today: TODAY,
           financialYearEndMonth: MARCH_YEAR_END,
+          format: CLUB_FORMAT_TEST,
         }).view
       );
     }

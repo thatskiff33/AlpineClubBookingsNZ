@@ -40,20 +40,21 @@
 import {
   addCalendarDays,
   addCalendarMonths,
+  type CalendarDate,
   calendarDateFromParts,
   calendarDateParts,
   calendarDayOfWeek,
   clubCalendarDateOf,
+  type ClubDateFormat,
+  type ClubTimeZone,
   clubWallTimeOf,
   daysInCalendarMonth,
   endOfClubDayExclusive,
   formatClubDate,
   formatClubLongWeekday,
+  type Instant,
   instantForClubWallTime,
   parseInstant,
-  type CalendarDate,
-  type ClubTimeZone,
-  type Instant,
   type WallTimePolicy,
 } from "@/lib/club-time";
 
@@ -287,8 +288,8 @@ function ordinal(n: number): string {
  * `src/lib/club-time/**` belonged to another lane (#2870, group F3) is gone.
  * `booking-calendar.tsx` carried the same note and lost its copy the same way.
  */
-function longWeekdayOf(date: CalendarDate): string {
-  return formatClubLongWeekday(date);
+function longWeekdayOf(date: CalendarDate, format: ClubDateFormat): string {
+  return formatClubLongWeekday(date, format);
 }
 
 /** The 1-based ordinal of a weekday within its month, from a day number. */
@@ -308,8 +309,9 @@ function ordinalFromDayOfMonth(day: number): number {
  */
 export function recurrenceOptionsForDate(
   date: CalendarDate,
+  format: ClubDateFormat,
 ): Array<{ value: CalendarRecurrenceFrequency | "NONE"; label: string }> {
-  const weekday = longWeekdayOf(date);
+  const weekday = longWeekdayOf(date, format);
   const day = calendarDateParts(date).day;
   const nth = ordinalFromDayOfMonth(day);
   return [
@@ -364,11 +366,12 @@ export function describeRecurrence(
   rule: RecurrenceRule,
   anchor: Instant,
   zone: ClubTimeZone,
+  format: ClubDateFormat,
 ): string {
   const interval = Math.max(1, Math.floor(rule.interval || 1));
   const every = interval === 1 ? "" : `Every ${interval} `;
   const anchorDate = clubCalendarDateOf(anchor, zone);
-  const anchorWeekday = longWeekdayOf(anchorDate);
+  const anchorWeekday = longWeekdayOf(anchorDate, format);
   const anchorDay = calendarDateParts(anchorDate).day;
   const anchorNth = ordinalFromDayOfMonth(anchorDay);
   let base: string;
@@ -406,7 +409,7 @@ export function describeRecurrence(
     const untilLabel =
       untilInstant === null
         ? rule.until
-        : formatClubDate(clubCalendarDateOf(untilInstant, zone));
+        : formatClubDate(clubCalendarDateOf(untilInstant, zone), format);
     return `${base}, until ${untilLabel}`;
   }
   if (rule.endMode === "count" && rule.count) {

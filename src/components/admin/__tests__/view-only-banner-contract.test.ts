@@ -27,7 +27,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
   wait on, so its wall time scales with how many other vitest workers are
   competing for the box — not with anything about the tree it is checking.
 
-  Standalone the whole file runs in about 3s. Inside a full `npm test` on a
+  Standalone the whole file runs in about 3s. Inside a full `pnpm test` on a
   loaded machine the same work measured 24s for the file and 5.4s for its
   slowest test, which tripped vitest's 5s default: a red suite with no defect
   behind it. The suite-level hoisting further down cut the real cost (6.5s -> 3s
@@ -335,8 +335,10 @@ const FIGURES = {
    *
    * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
-   */
-  callSites: 365,
+    * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
+    * booking behavior for a drifted key-resolved built-in. MEASURED.
+    */
+   callSites: 366,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -439,9 +441,10 @@ const FIGURES = {
    *
    * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
    * is a new file and heads no banner - the same shape as the settle card it
-   * sits beside, where each button explains its own view-only state.
+    * sits beside, where each button explains its own view-only state.
+    * 54 -> 55 (#3408): the Membership Types repair button keeps its own reason.
    */
-  exceptions: 54,
+   exceptions: 55,
   exceptionFiles: 30,
   /**
    * The remainder bucket: neither a member detail card nor dialog-only.
@@ -1685,7 +1688,8 @@ describe("view-only section banner coverage (#2160)", () => {
       // the wrong permission — and an admin with membership edit but finance
       // view-only would get no banner at all.
       memberDetailCards: { controls: 4, files: 1 },
-      separateA11yContainer: { controls: 10, files: 5 },
+       // #3408 adds one repair control to the Membership Types editor.
+       separateA11yContainer: { controls: 11, files: 5 },
       // +1 control / +1 file vs 20/11: the #2259 "No emails" switch; then
       // +4 controls / +1 file: the four #2249 display-wizard step controls,
       // which the shell's render-callback indirection put out of reach of both

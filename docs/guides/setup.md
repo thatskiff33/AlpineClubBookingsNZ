@@ -41,6 +41,10 @@ enough — every sub-page is captured and detailed where it lives.
 2. Work through the **checklist categories**. A check can be marked done or
    skipped, and provider checks offer a **test** button (Stripe, SMTP, Sentry,
    Xero) that pings the live service and reports the result.
+   **Built-in Membership Types** warns if Full or Non-Member was archived or its
+   booking behavior changed before the guard existed. Follow its link to
+   [Membership Types](membership-types.md), reactivate the type, and restore the
+   expected booking behavior if prompted.
 3. Use the **hub cards** to open a configuration area: Initial Setup, Finance,
    Booking Rules, Operational Integrations, Membership & Members, Cancellation,
    or Email Messages / Notifications.
@@ -75,7 +79,7 @@ confirmed: the server's `TZ` named no actual place (`UTC`, `Etc/UTC`), so
 `Pacific/Auckland` was recorded and the checklist is asking you to confirm it —
 act on this one if the club is not in New Zealand. Still **blocked** after an
 upgrade means the application has not restarted since the migration; restart it,
-or run `npm run config:self-heal`.
+or run `pnpm run config:self-heal`.
 
 ## Troubleshooting
 
@@ -84,7 +88,7 @@ or run `npm run config:self-heal`.
 | A provider test fails | The credentials/config for that provider are missing or wrong | Fix them per [`CONFIGURATION.md`](../../CONFIGURATION.md); re-run the test |
 | A hub card is missing or greyed | Your role lacks the card's permission area | Ask a full admin, or an admin with that area, to complete it |
 | A check stays "blocked" | A required dependency isn't in place | Open the linked area and resolve the named requirement |
-| **Club Time Zone** stays blocked right after an upgrade | The application has not restarted since the migration, so the zone has not been recorded yet. The zone in use is still the right one | Restart the application, or run `npm run config:self-heal`. See the [Club Time Zone guide](club-time.md) |
+| **Club Time Zone** stays blocked right after an upgrade | The application has not restarted since the migration, so the zone has not been recorded yet. The zone in use is still the right one | Restart the application, or run `pnpm run config:self-heal`. See the [Club Time Zone guide](club-time.md) |
 | **Club Time Zone** shows a warning about confirming the zone | The server's `TZ` named no actual place, so `Pacific/Auckland` was recorded rather than guessed at from a value that names no location | If the club is in New Zealand, acknowledge the step. If not, set the real zone at [`/admin/club-time`](club-time.md) — this is the case that would otherwise put a non-NZ club's times out by hours |
 | Setup shows incomplete after go-live | Optional checks were left unskipped | Mark genuinely-skipped checks as skipped so the summary reflects reality |
 

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reconciliation";
-import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
@@ -28,8 +27,12 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
-import { calendarDayAsLocalDate } from "./_components/host-local-day";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import {
+  type ClubDateFormat,
+  formatClubDate,
+  formatClubDayMonth,
+  parseCalendarDate,
+} from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
 import {
@@ -156,35 +159,36 @@ function getAdditionalLedgerGapWarning(
  * A range bound (`yyyy-MM-dd`) in the house medium shape — "16 Apr 2026".
  *
  * WHICH FORMATTER, and the rule that decides it (CT-4 review, #2870). The
- * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through
- * `APP_LOCALE`, while a date-fns pattern string hard-codes English month names
+ * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through the
+ * club's persisted locale (#3566), while a date-fns pattern string hard-codes English month names
  * whatever the deployment is configured for. So a value in a house shape belongs
  * on the kernel — which is also what `payments/page.tsx` and
  * `subscriptions/page.tsx` did with this same "d MMM yyyy" shape, and leaving
  * this one behind would have put two contradictory rules in one change. For
  * `en-NZ` the two are byte-identical, so nothing visible changes here.
  *
- * The patterns that are NOT house shapes — the chart axes' `"MMM d"`,
- * `"EEE, MMM d yyyy"`, `"MMM d, yyyy"`, and the `"d MMM"` below — stay on
- * date-fns because the kernel has no equivalent to bend them onto. That IS a
- * locale limitation and it is a pre-existing one; this change neither adds to it
- * nor pretends it away.
+ * The chart axes' patterns — `"MMM d"`, `"EEE, MMM d yyyy"`, `"MMM d, yyyy"` in
+ * `report-charts.tsx` — are NOT house shapes and stay on date-fns: English
+ * whatever the club's locale, the one limitation `docs/guides/club-format.md`
+ * records. Everything on this page itself, the "Joined between" subtitle
+ * included, is on the kernel (#3566).
  *
  * The bounds come from the URL, so an unusable one renders as itself rather
  * than throwing a `RangeError` that blanks the report.
  */
-function formatRangeDay(value: string): string {
+function formatRangeDay(value: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(value);
-  return day === null ? value : formatClubDate(day);
+  return day === null ? value : formatClubDate(day, format);
 }
 
 /**
- * The same bounds through a date-fns pattern that is NOT a house shape. See
- * {@link formatRangeDay} for why these two exist side by side.
+ * "16 Apr" — the same range bound without its year, on the `dayMonth` house
+ * shape (#3566 review, B8). It was a date-fns `"d MMM"` pattern, English
+ * whatever the club's locale; byte-identical for `en-NZ`.
  */
-function formatRangeDayPattern(value: string, pattern: string): string {
-  const day = calendarDayAsLocalDate(value);
-  return day === null ? value : format(day, pattern);
+function formatRangeDayMonth(value: string, format: ClubDateFormat): string {
+  const day = parseCalendarDate(value);
+  return day === null ? value : formatClubDayMonth(day, format);
 }
 
 function StatCard({
@@ -562,8 +566,8 @@ export default function ReportsPage() {
           <div className="hidden print:block">
             <h1 className="text-2xl font-bold text-foreground">Reports</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Date range: {formatRangeDay(from)} to{" "}
-              {formatRangeDay(to)}
+              Date range: {formatRangeDay(from, clubFormat)} to{" "}
+              {formatRangeDay(to, clubFormat)}
             </p>
             <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
@@ -671,7 +675,7 @@ export default function ReportsPage() {
               <StatCard
                 title="New Members"
                 value={data.memberStats.newMembers}
-                subtitle={`Joined between ${formatRangeDayPattern(from, "d MMM")} and ${formatRangeDay(to)}`}
+                subtitle={`Joined between ${formatRangeDayMonth(from, clubFormat)} and ${formatRangeDay(to, clubFormat)}`}
                 icon={UserPlus}
               />
             </div>

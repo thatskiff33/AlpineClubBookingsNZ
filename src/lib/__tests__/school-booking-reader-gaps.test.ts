@@ -21,6 +21,7 @@
  * These are the regression tests for both. They assert against the real filter
  * builder and the real conflict query, not against a copy of their shapes.
  */
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Prisma } from "@prisma/client";
@@ -38,7 +39,7 @@ import {
 import { getOperationalRosterGuestsForDate } from "@/lib/roster-eligibility";
 
 const clubDay = adminBookingsClubDay(
-  bindClubTime(requireClubTimeZone("Pacific/Auckland")),
+  bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST),
 );
 
 /** Does `where` accept a row whose member is absent and whose owner is a school? */

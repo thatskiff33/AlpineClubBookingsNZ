@@ -61,7 +61,7 @@ export function AppProvidersClient({
             currencyCode={clubCurrencyCode}
             locale={clubLocale}
           >
-            <ClubTimeProvider zone={clubTimeZone}>
+            <ClubTimeProvider zone={clubTimeZone} locale={clubLocale}>
               <SessionProvider>{children}</SessionProvider>
               <Toaster richColors position="top-right" />
             </ClubTimeProvider>

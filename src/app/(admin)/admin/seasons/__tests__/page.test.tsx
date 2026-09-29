@@ -22,6 +22,7 @@
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
+import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
@@ -65,6 +66,7 @@ vi.mock("@/components/lodge-select", async (importOriginal) => {
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import SeasonsPage from "../page";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 type SeasonPayload = {
   id: string;
@@ -108,9 +110,11 @@ function mockApi(seasons: SeasonPayload[]) {
 
 function renderPage() {
   return render(
-    <ClubTimeProvider zone="Pacific/Auckland">
-      <SeasonsPage />
-    </ClubTimeProvider>,
+    <ClubFormatTestProvider>
+      <ClubTimeProvider zone="Pacific/Auckland" locale={CLUB_FORMAT_TEST.locale}>
+        <SeasonsPage />
+      </ClubTimeProvider>
+    </ClubFormatTestProvider>,
   );
 }
 
@@ -184,9 +188,11 @@ describe("Seasons page: the windows in order, with their holes", () => {
       season({ id: "after", name: "After", startDate: at(1), endDate: at(10) }),
     ]);
     const straddling = render(
-      <ClubTimeProvider zone={zone}>
-        <SeasonsPage />
-      </ClubTimeProvider>,
+      <ClubFormatTestProvider>
+        <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
+          <SeasonsPage />
+        </ClubTimeProvider>
+      </ClubFormatTestProvider>,
     );
     await screen.findByRole("heading", { name: "Before" });
     expect(screen.getByText(/No season covers/)).toBeInTheDocument();
@@ -198,9 +204,11 @@ describe("Seasons page: the windows in order, with their holes", () => {
       season({ id: "after", name: "After", startDate: at(0), endDate: at(10) }),
     ]);
     render(
-      <ClubTimeProvider zone={zone}>
-        <SeasonsPage />
-      </ClubTimeProvider>,
+      <ClubFormatTestProvider>
+        <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>
+          <SeasonsPage />
+        </ClubTimeProvider>
+      </ClubFormatTestProvider>,
     );
     await screen.findByRole("heading", { name: "Before" });
     expect(screen.queryByText(/No season covers/)).not.toBeInTheDocument();

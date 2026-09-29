@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
@@ -137,6 +138,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
 
     const plan = await prepareGuestPlan(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",
@@ -205,6 +207,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
 
     await prepareGuestPlan(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",
@@ -235,6 +238,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
 
     const plan = await prepareGuestPlan(tx, {
       today: FIXTURE_CLUB_TODAY,
+      format: CLUB_FORMAT_TEST,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",

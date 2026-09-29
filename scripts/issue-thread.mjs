@@ -3,8 +3,8 @@
  * Read a GitHub issue the way it has to be read: body AND every comment, in one
  * command, with the decision state called out.
  *
- *   npm run issue -- 2777
- *   npm run issue -- https://github.com/<owner>/<repo>/issues/2777
+ *   pnpm run issue 2777
+ *   pnpm run issue https://github.com/<owner>/<repo>/issues/2777
  *
  * ## Why this exists
  *
@@ -348,7 +348,7 @@ export function parseIssueArgument(argv) {
     );
   }
   if (positional.length !== 1) {
-    throw new Error("Usage: npm run issue -- <issue-number|issue-url>");
+    throw new Error("Usage: pnpm run issue <issue-number|issue-url>");
   }
   const match = /(?:^|\/|#)(\d{1,7})\s*$/.exec(positional[0]);
   if (!match) {

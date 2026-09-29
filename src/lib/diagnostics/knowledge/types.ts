@@ -37,7 +37,7 @@ export const KNOWLEDGE_BUNDLE_HASH_ALGORITHM = "sha256" as const;
  *
  * `.artifacts/` is deliberately NOT committed to git (see `.gitignore`) and is
  * excluded from the build context (see `.dockerignore`). The bundle is generated
- * IN THE DOCKER BUILDER by `npm run diagnostics:bundle` (the builder has the
+ * IN THE DOCKER BUILDER by `pnpm run diagnostics:bundle` (the builder has the
  * dependencies; a club server's `docker compose build` has no host Node), with
  * the commit SHA injected via the `GIT_COMMIT_SHA` build ARG because `.git` is
  * absent from the context. It is then written here, traced into `.next/standalone`

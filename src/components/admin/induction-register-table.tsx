@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/confirm-dialog";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useClubTime } from "@/components/club-time-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
@@ -85,6 +86,7 @@ const KIND_OPTIONS: InductionKind[] = [
 
 export function InductionRegisterTable() {
   const { hutLeaderLabel } = useClubIdentity();
+  const clubTime = useClubTime();
   const { prompt, confirmDialog } = useConfirm();
   const [rows, setRows] = useState<RegisterRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -509,7 +511,7 @@ export function InductionRegisterTable() {
                           : "—"}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {formatInductionDate(row.completedAt) ?? "—"}
+                        {formatInductionDate(row.completedAt, clubTime) ?? "—"}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">

@@ -596,7 +596,7 @@ describe("email-templates", () => {
 
   describe("choreRosterTemplate", () => {
     it("includes chore list", () => {
-      const html = choreRosterTemplate("Bob", "2026-07-15", [
+      const html = choreRosterTemplate("Bob", formatChoreRosterDate("2026-07-15"), [
         { name: "Dishes", description: "Wash all dishes" },
         { name: "Sweep", description: null },
       ]);
@@ -606,7 +606,7 @@ describe("email-templates", () => {
     });
 
     it("includes heater/fire safety reminder", () => {
-      const html = choreRosterTemplate("Test", "2026-07-15", []);
+      const html = choreRosterTemplate("Test", formatChoreRosterDate("2026-07-15"), []);
       expect(html).toContain("heaters and fire");
     });
 
@@ -614,7 +614,7 @@ describe("email-templates", () => {
       // De-duplicating this formatter with src/lib/email/chores.ts must not
       // change what the roster email says.
       expect(formatChoreRosterDate("2026-07-15")).toBe("Wednesday, 15 July 2026");
-      expect(choreRosterTemplate("Bob", "2026-07-15", [])).toContain(
+      expect(choreRosterTemplate("Bob", formatChoreRosterDate("2026-07-15"), [])).toContain(
         "Wednesday, 15 July 2026",
       );
     });

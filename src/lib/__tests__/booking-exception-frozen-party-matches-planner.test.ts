@@ -64,6 +64,7 @@ import { buildModificationProposalParties } from "@/lib/booking-exception-reques
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { eachDateOnlyInRange } from "@/lib/date-only";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -193,6 +194,7 @@ async function runRealPlanner(
   });
   const plan = await prepareGuestPlan(tx, {
     today: FIXTURE_CLUB_TODAY,
+    format: CLUB_FORMAT_TEST,
     booking,
     role: "ADMIN",
     actorId: "officer-1",

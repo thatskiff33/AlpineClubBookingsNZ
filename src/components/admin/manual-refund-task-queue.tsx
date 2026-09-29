@@ -33,6 +33,7 @@ import {
   formatClubDate,
   formatStayDate,
   type CalendarDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
@@ -233,10 +234,10 @@ function formatStoredNightPrice(priceCents: number | null, format: ClubFormat): 
 }
 
 /** A list of lodge nights, or an explicit "none" — never an empty bullet. */
-function formatNightList(dates: readonly CalendarDate[]): string {
+function formatNightList(dates: readonly CalendarDate[], format: ClubDateFormat): string {
   return dates.length === 0
     ? "none"
-    : dates.map((date) => formatClubDate(date)).join(", ");
+    : dates.map((date) => formatClubDate(date, format)).join(", ");
 }
 
 /**
@@ -331,10 +332,10 @@ function EditFinancialReviewStrandBlock({
       <p className="font-medium text-foreground">
         {EDIT_FINANCIAL_REVIEW_CAUSE_LABEL[strand.cause]}
       </p>
-      <p>Nights given back: {formatNightList(strand.surrenderedNightDates)}</p>
+      <p>Nights given back: {formatNightList(strand.surrenderedNightDates, format)}</p>
       <p>
         Nights added by the same change:{" "}
-        {formatNightList(strand.addedNightDates)}
+        {formatNightList(strand.addedNightDates, format)}
       </p>
       <p>
         Stored total for this guest:{" "}
@@ -349,7 +350,7 @@ function EditFinancialReviewStrandBlock({
           : strand.storedEvidence.nightPrices
               .map(
                 (night) =>
-                  `${formatClubDate(night.date)} ${formatStoredNightPrice(night.priceCents, format)}`,
+                  `${formatClubDate(night.date, format)} ${formatStoredNightPrice(night.priceCents, format)}`,
               )
               .join(" · ")}
       </p>
@@ -389,8 +390,8 @@ function EditFinancialReviewEvidenceBlock({
         heading={strandOrdinal(0, strandCount)}
       />
       <p>
-        Booked stay: {formatClubDate(evidence.bookingCheckIn)} to{" "}
-        {formatClubDate(evidence.bookingCheckOut)}
+        Booked stay: {formatClubDate(evidence.bookingCheckIn, format)} to{" "}
+        {formatClubDate(evidence.bookingCheckOut, format)}
       </p>
       {otherStrands.length > 0 ? (
         /*
@@ -665,8 +666,8 @@ function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
           : ""}
       </p>
       <p className="text-muted-foreground">
-        {formatStayDate(notice.checkIn)} to{" "}
-        {formatStayDate(notice.checkOut)} - booking{" "}
+        {formatStayDate(notice.checkIn, format)} to{" "}
+        {formatStayDate(notice.checkOut, format)} - booking{" "}
         <span className="font-mono text-xs">{notice.bookingId}</span>
       </p>
       {/*
@@ -1210,7 +1211,7 @@ export function ManualRefundTaskQueue() {
         : unreadableNightDates !== null
           ? {
               ok: false,
-              message: nightPriceRepairUnreadableMessage(unreadableNightDates),
+              message: nightPriceRepairUnreadableMessage(unreadableNightDates, format),
               // The ONE definition of what the blanks must come to, shared with
               // the checker rather than restated for this branch.
               targetCents: unpricedNightTargetCents(summary, deltaCents),
@@ -1502,8 +1503,8 @@ export function ManualRefundTaskQueue() {
                         ) : null}
                       </p>
                       <p className="text-muted-foreground">
-                        {formatStayDate(task.checkIn)} to{" "}
-                        {formatStayDate(task.checkOut)} ·{" "}
+                        {formatStayDate(task.checkIn, format)} to{" "}
+                        {formatStayDate(task.checkOut, format)} ·{" "}
                         {/*
                           #3033 (owner decision D3: a LINK to the booking's
                           payment and rate history). Offered only to an admin who

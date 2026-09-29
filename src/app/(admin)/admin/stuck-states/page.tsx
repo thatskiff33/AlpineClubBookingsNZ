@@ -27,9 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { APP_LOCALE } from "@/config/operational";
-import { parseInstant, type ClubTimeZone } from "@/lib/club-time";
-import { clubTimeZone } from "@/lib/club-time/server";
+import {
+  formatClubInstantCompactDateTime,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
+import { clubTime as resolveClubTime } from "@/lib/club-time/server";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
@@ -56,33 +59,24 @@ const severityLabels: Record<StuckStateSeverity, string> = {
   info: "Info",
 };
 
-// #2264: deliberately not `formatNZDateTime` — this "generated at" stamp sits in
-// a dense operations header, so it drops the year and keeps 2-digit fields to
-// match the system-health timestamps beside it.
-// CT-4 (#2870): `generatedAt` is a real INSTANT, so it is projected through
-// the club's PERSISTED zone (INV-CONFIG-002) rather than APP_TIME_ZONE. The
-// shape is not one of the kernel's house shapes, so the formatter is built
-// here and memoised per zone instead of frozen at module scope.
-const GENERATED_AT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function generatedAtFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
-  const cached = GENERATED_AT_FORMATTERS.get(zone);
-  if (cached) return cached;
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
-    timeZone: zone,
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  GENERATED_AT_FORMATTERS.set(zone, created);
-  return created;
-}
-
-function formatGeneratedAt(zone: ClubTimeZone, value: string) {
+// #2264: deliberately not the medium date-time — this "generated at" stamp sits
+// in a dense operations header, so it drops the year and keeps 2-digit fields to
+// match the system-health timestamps beside it. `generatedAt` is a real INSTANT,
+// projected through the club's PERSISTED zone (CT-4, #2870; INV-CONFIG-002).
+//
+// #3566 moved it onto the kernel's `compactDateTime` house shape, which the
+// health dashboard shares: it used to be a local formatter here, built from
+// `APP_LOCALE` — the build's locale, not the club's — beside an identical one on
+// the health page that already followed the club, so the two screens could
+// disagree about the same moment. The binding now carries the club's locale.
+function formatGeneratedAt(clubTime: BoundClubTime, value: string) {
   const instant = parseInstant(value);
   if (instant === null) return "an unknown time";
-  return generatedAtFormatter(zone).format(instant);
+  return formatClubInstantCompactDateTime(
+    instant,
+    clubTime.zone,
+    clubTime.format,
+  );
 }
 
 function severityBadgeVariant(severity: StuckStateSeverity) {
@@ -193,13 +187,13 @@ export default async function AdminStuckStatesPage() {
     ? hasAdminAreaAccess(session.user, { area: "membership", level: "view" })
     : false;
   const dashboard = await getStuckStateDashboard({ viewerCanViewMembership });
-  const zone = await clubTimeZone();
+  const clubTime = await resolveClubTime();
 
   return (
     <div className="space-y-8">
       <AdminPageHeader
         title="Stuck States"
-        description={`Generated ${formatGeneratedAt(zone, dashboard.generatedAt)}`}
+        description={`Generated ${formatGeneratedAt(clubTime, dashboard.generatedAt)}`}
         actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/admin/health">System Health</Link>

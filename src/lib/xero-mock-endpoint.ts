@@ -22,6 +22,7 @@ import {
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { getOperationalXeroRedirectUri } from "@/lib/xero-config";
 import { XERO_OAUTH_CALLBACK_NO_TENANT_MESSAGE } from "@/lib/xero-oauth-callback-messages";
+import { CLUB_CURRENCY_FALLBACK } from "@/lib/club-format";
 
 const MOCK_BASE_PATH = "/api/testing/xero-mock";
 
@@ -34,6 +35,10 @@ export const MOCK_XERO_ORG_FINANCIAL_YEAR_END_MONTH = 3;
 // like a real one (`!` + alphanumerics) so the E2E harness exercises the same
 // URL-encoding path as production.
 export const MOCK_XERO_ORG_SHORT_CODE = "!mock1";
+// Base currency (#3633): the shipped club currency, so the E2E stack's Xero
+// confirmation carries no base-currency warning unless a spec changes the
+// club's currency.
+export const MOCK_XERO_ORG_BASE_CURRENCY = CLUB_CURRENCY_FALLBACK;
 
 /**
  * True in a REAL production runtime (never the E2E staging stack). Used as a
@@ -302,6 +307,8 @@ export interface MockXeroOrganisation {
   financialYearEndMonth: number | null;
   /** Deep-link short code (#2261); absent on older mock payloads. */
   shortCode?: string | null;
+  /** Base currency (#3633); absent on older mock payloads. */
+  baseCurrency?: string | null;
 }
 
 /**
@@ -333,5 +340,7 @@ export async function fetchMockXeroOrganisation(
     name: body.name ?? null,
     financialYearEndMonth: month,
     shortCode: typeof body.shortCode === "string" ? body.shortCode : null,
+    baseCurrency:
+      typeof body.baseCurrency === "string" ? body.baseCurrency : null,
   };
 }

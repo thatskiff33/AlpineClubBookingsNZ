@@ -139,7 +139,11 @@
  * that does not seed the cache, pass the year-end.** The default will not tell
  * you it guessed.
  */
-import { calendarDateFromParts, formatClubShortMonth } from "@/lib/club-time";
+import {
+  calendarDateFromParts,
+  formatClubShortMonth,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import {
   getFinancialYearEndMonth,
   normalizeYearEndMonth,
@@ -158,25 +162,28 @@ const MONTH_NAME_ANCHOR_YEAR = 2001;
  * The months a membership season runs between - `"Apr-Mar"` for a March
  * year-end, `"Jan-Dec"` for a December one.
  *
- * The names come from the kernel's pinned formatter, so they follow `APP_LOCALE`
- * and read no timezone at all: a calendar day has none (`INV-DATE-019`).
+ * The names come from the kernel's pinned formatter, so they follow the club's
+ * locale (#3566) and read no timezone at all: a calendar day has none (`INV-DATE-019`).
  *
  * BOTH BOUNDS ARE THE FIRST OF THE MONTH IN ONE FIXED YEAR, and neither of those
  * choices is free. The fixed year is what stops the two names depending on which
  * season is being labelled. The day of month is NOT arbitrary "because only the
- * month is rendered" - that holds for a Gregorian locale and `APP_LOCALE` is
- * env-configurable: under `fa-IR` the Persian calendar renders `2001-03-01` as
+ * month is rendered" - that holds for a Gregorian locale and the club's locale
+ * is a setting: under `fa-IR` the Persian calendar renders `2001-03-01` as
  * Esfand and `2001-03-21` as Farvardin, two different months, and an Islamic
  * calendar shifts with the year as well. So under a non-Gregorian locale this
  * names the month CONTAINING each Gregorian season boundary, which is the only
  * answer available: the boundary itself is defined as a Gregorian month number.
  */
-export function seasonMonthsLabel(yearEndMonth: number): string {
+export function seasonMonthsLabel(
+  yearEndMonth: number,
+  format: ClubDateFormat,
+): string {
   const endMonth = normalizeYearEndMonth(yearEndMonth);
   const startMonth = seasonStartMonthOf(endMonth);
   const start = calendarDateFromParts(MONTH_NAME_ANCHOR_YEAR, startMonth, 1);
   const end = calendarDateFromParts(MONTH_NAME_ANCHOR_YEAR, endMonth, 1);
-  return `${formatClubShortMonth(start)}-${formatClubShortMonth(end)}`;
+  return `${formatClubShortMonth(start, format)}-${formatClubShortMonth(end, format)}`;
 }
 
 /**
@@ -200,7 +207,8 @@ export function seasonYearsLabel(
  */
 export function seasonSelectLabel(
   seasonYear: number,
+  format: ClubDateFormat,
   yearEndMonth: number = getFinancialYearEndMonth(),
 ): string {
-  return `${seasonYearsLabel(seasonYear, yearEndMonth)} (${seasonMonthsLabel(yearEndMonth)})`;
+  return `${seasonYearsLabel(seasonYear, yearEndMonth)} (${seasonMonthsLabel(yearEndMonth, format)})`;
 }

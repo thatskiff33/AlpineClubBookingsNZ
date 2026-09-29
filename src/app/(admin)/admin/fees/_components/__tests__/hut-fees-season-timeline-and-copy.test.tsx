@@ -22,6 +22,7 @@
  * against that instant rather than against the real calendar.
  */
 
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -150,7 +151,7 @@ function renderSection() {
       currencyCode={CLUB_CURRENCY_FALLBACK}
       locale={CLUB_LOCALE_FALLBACK}
     >
-      <ClubTimeProvider zone="Pacific/Auckland">
+      <ClubTimeProvider zone="Pacific/Auckland" locale={CLUB_FORMAT_TEST.locale}>
         <HutFeesSection canEdit={true} />
       </ClubTimeProvider>
     </ClubFormatProvider>,

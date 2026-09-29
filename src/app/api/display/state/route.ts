@@ -17,6 +17,7 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { clubFormatValues } from "@/lib/club-format-server";
 
 // GET /api/display/state?days=N — the lobby display's single data feed
 // (fork issues #28/#32/#52, design.md §5). Two callers:
@@ -174,7 +175,7 @@ async function loadLayoutRender(
     // authored template can `var(--brand-*)` (LTV-029). getWebsiteThemeRenderState
     // is best-effort (it swallows its own DB error and falls back to defaults),
     // so it never takes the layout render down.
-    const [template, theme] = await Promise.all([
+    const [template, theme, format] = await Promise.all([
       prisma.displayTemplate.findUnique({
         where: { id: templateId },
         select: {
@@ -187,6 +188,7 @@ async function loadLayoutRender(
         },
       }),
       getWebsiteThemeRenderState(),
+      clubFormatValues(), // the {{display-date}} token's format (#3566)
     ]);
     if (!template) {
       logger.warn(
@@ -205,7 +207,8 @@ async function loadLayoutRender(
         footerHtml: template.footerHtml,
         themeCss: theme.css,
       },
-      state
+      state,
+      format
     );
     return { ok: true, render };
   } catch (error) {

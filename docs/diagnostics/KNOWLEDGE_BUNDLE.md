@@ -153,7 +153,7 @@ toolchain). The flow:
    `GIT_COMMIT_SHA` and `KNOWLEDGE_BUNDLE_OBSERVED_AT` (see
    `.github/workflows/ci.yml` and `scripts/run-production-blue-green-deploy.sh`).
    The commit SHA is injected here because `.git` is not in the build context.
-2. **The builder generates the bundle** with `npm run diagnostics:bundle`
+2. **The builder generates the bundle** with `pnpm run diagnostics:bundle`
    (before `next build`), writing
    `.artifacts/diagnostics/knowledge-bundle.json`.
 3. **`next build` traces it** into `.next/standalone` via
@@ -216,7 +216,7 @@ rotation.
 ## Regenerating locally
 
 ```bash
-GIT_COMMIT_SHA="$(git rev-parse HEAD)" npm run diagnostics:bundle
+GIT_COMMIT_SHA="$(git rev-parse HEAD)" pnpm run diagnostics:bundle
 ```
 
 Runs with no database and no network. The output is git-ignored and never

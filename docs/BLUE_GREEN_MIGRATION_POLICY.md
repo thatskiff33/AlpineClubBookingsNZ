@@ -160,7 +160,7 @@ the same timestamp.
 ### Rehearsing an epic's deploy
 
 ```bash
-npm run db:rehearse-epic -- --database-url <throwaway> [--base <ref>] [--seed-sql <file>]
+pnpm run db:rehearse-epic --database-url <throwaway> [--base <ref>] [--seed-sql <file>]
 ```
 
 Creates and drops its own scratch database, applies the base ref's migrations,
@@ -277,7 +277,7 @@ Run it locally against any throwaway database (the suite creates and drops its o
 
 ```bash
 DATA_MIGRATION_VERIFICATION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
-  npx vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
+  pnpm exec vitest run src/lib/__tests__/data-migration-verification.realdb.test.ts
 ```
 
 Without that variable the real-database checks do not run, but the suite still fails if CI stops running them — and it fails outright inside its own CI job when the variable is missing, so the arrangement that runs the fixtures cannot quietly come undone.

@@ -7,7 +7,6 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_LOCALE } from "@/config/operational";
 
 /*
   #2930: the calendar no longer reads the club-identity bed count. That figure is
@@ -21,6 +20,7 @@ import { APP_LOCALE } from "@/config/operational";
 
 import { BookingCalendar } from "@/components/booking-calendar";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /*
   A day in the current month that is never in the past: tomorrow, clamped to the
@@ -43,7 +43,7 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
   `now.get*()` reader below keeps working unchanged and returns the club's
   year/month/day in any host zone.
 */
-const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE), CLUB_FORMAT_TEST).today();
 const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
 const now = new Date(clubYear, clubMonth - 1, clubDay);
 const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -52,7 +52,7 @@ const targetIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,
 
 function targetLabelPrefix() {
   const date = new Date(now.getFullYear(), now.getMonth(), targetDay);
-  return date.toLocaleDateString(APP_LOCALE, {
+  return date.toLocaleDateString(CLUB_FORMAT_TEST.locale, {
     weekday: "long",
     day: "numeric",
     month: "long",

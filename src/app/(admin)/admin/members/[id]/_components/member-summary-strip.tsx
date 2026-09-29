@@ -80,7 +80,7 @@ export function MemberSummaryStrip({
           value={formatAgeTierName(member.ageTier)}
           detail={
             member.dateOfBirth
-              ? `DOB: ${formatPayloadCalendarDay(member.dateOfBirth)}${memberExactAge ? ` (${memberExactAge})` : ""}`
+              ? `DOB: ${formatPayloadCalendarDay(member.dateOfBirth, format)}${memberExactAge ? ` (${memberExactAge})` : ""}`
               : null
           }
         />
@@ -88,7 +88,7 @@ export function MemberSummaryStrip({
           icon={IdCard}
           label="Membership"
           value={membershipLabel}
-          detail={`${seasonSelectLabel(member.currentSeasonYear)} season`}
+          detail={`${seasonSelectLabel(member.currentSeasonYear, format)} season`}
         />
         <SummaryItem
           icon={Wallet}
@@ -110,7 +110,7 @@ export function MemberSummaryStrip({
           label="Last Stay"
           value={
             member.stats.lastStay
-              ? formatPayloadCalendarDay(member.stats.lastStay)
+              ? formatPayloadCalendarDay(member.stats.lastStay, format)
               : "Never"
           }
         />

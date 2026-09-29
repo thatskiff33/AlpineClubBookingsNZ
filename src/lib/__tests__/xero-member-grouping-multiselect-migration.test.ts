@@ -81,7 +81,7 @@ describe("xero grouping multi-select age-tier migration (#2093)", () => {
 // Real-PostgreSQL behavior (env-gated). Requires PostgreSQL 15+ (NULLS NOT
 // DISTINCT). Point the env var at a disposable database:
 //   XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL=postgres://... \
-//     npx vitest run xero-member-grouping-multiselect-migration
+//     pnpm exec vitest run xero-member-grouping-multiselect-migration
 // ---------------------------------------------------------------------------
 
 const databaseUrl = process.env.XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL;

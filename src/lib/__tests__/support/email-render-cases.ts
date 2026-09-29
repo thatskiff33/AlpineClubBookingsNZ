@@ -662,9 +662,9 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "formatChoreRosterDate:minimal", fn: "formatChoreRosterDate", render: () =>
     formatChoreRosterDate("2026-04-16") },
   { id: "choreRosterTemplate:minimal", fn: "choreRosterTemplate", render: () =>
-    choreRosterTemplate("guestName-1", "2026-04-16", [{ name: "name-3", description: "description-4" }]) },
+    choreRosterTemplate("guestName-1", formatChoreRosterDate("2026-04-16"), [{ name: "name-3", description: "description-4" }]) },
   { id: "choreRosterTemplate:full", fn: "choreRosterTemplate", render: () =>
-    choreRosterTemplate("guestName-1", "2026-04-16", [{ name: "name-3", description: "description-4" }], "choreLink-5") },
+    choreRosterTemplate("guestName-1", formatChoreRosterDate("2026-04-16"), [{ name: "name-3", description: "description-4" }], "choreLink-5") },
   { id: "hutLeaderAssignmentTemplate:minimal", fn: "hutLeaderAssignmentTemplate", render: () =>
     hutLeaderAssignmentTemplate({ firstName: "firstName-1", startDate: new Date("2026-03-03T00:00:00.000Z"), endDate: new Date("2026-03-04T00:00:00.000Z"), pin: "pin-4", assignmentId: "assignmentId-5" }) },
   { id: "checkinReminderTemplate:minimal", fn: "checkinReminderTemplate", render: () =>

@@ -2,7 +2,7 @@
 
 import type { ComponentType } from "react";
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { render } from "@/lib/__tests__/support/club-time-render";
 import type {
   DisplayState,
   DisplayStateBooking,

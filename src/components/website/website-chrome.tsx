@@ -196,7 +196,7 @@ export async function WebsiteChrome({
         currencyCode={clubFormat.currencyCode}
         locale={clubFormat.locale}
       >
-        <ClubTimeProvider zone={clubZone}>
+        <ClubTimeProvider zone={clubZone} locale={clubFormat.locale}>
           <div
             className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
           >
@@ -258,7 +258,7 @@ export async function WebsiteChrome({
       currencyCode={clubFormat.currencyCode}
       locale={clubFormat.locale}
     >
-      <ClubTimeProvider zone={clubZone}>
+      <ClubTimeProvider zone={clubZone} locale={clubFormat.locale}>
         <div
           className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
         >

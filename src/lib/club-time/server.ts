@@ -40,6 +40,7 @@ import "server-only";
 
 import { cache } from "react";
 
+import { clubFormatValues } from "@/lib/club-format-server";
 import { getClubTimeZone } from "@/lib/club-time-zone-settings";
 
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
@@ -64,10 +65,23 @@ export const clubTimeZone = cache(async (): Promise<ClubTimeZone> => {
   return asClubTimeZone(resolved) ?? requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK);
 });
 
-/** The whole kernel with the club's persisted zone already supplied. */
-export const clubTime = cache(async (): Promise<BoundClubTime> =>
-  bindClubTime(await clubTimeZone()),
-);
+/**
+ * The whole kernel with the club's persisted zone AND date format already
+ * supplied.
+ *
+ * The format is the club's persisted `ClubFormatSettings.locale` (#3566),
+ * read through `clubFormatValues()` rather than the raw reader so that it
+ * shares the one memo the money kernel and the providers already use: a page
+ * that takes `clubTime()` and a chrome that takes `clubFormatValues()` cost one
+ * read between them, not two. The two reads run concurrently.
+ */
+export const clubTime = cache(async (): Promise<BoundClubTime> => {
+  const [zone, format] = await Promise.all([
+    clubTimeZone(),
+    clubFormatValues(),
+  ]);
+  return bindClubTime(zone, format);
+});
 
 /**
  * The club's today, encoded as the UTC-midnight `Date` a Prisma `@db.Date`

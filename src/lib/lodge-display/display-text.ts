@@ -1,4 +1,5 @@
 import {
+  type ClubDateFormat,
   formatClubLongWeekdayDayMonth,
   parseCalendarDate,
 } from "@/lib/club-time";
@@ -61,20 +62,23 @@ const PLACEHOLDER_PATTERN = /\{\{\s*(config:([a-z0-9][a-z0-9-]{0,63})|lodge-name
  * instead of receiving one. The raw-value fallback is for the same reason — an
  * unattended wall must render something rather than throw.
  */
-function displayDateToken(state: DisplayState): string {
+function displayDateToken(state: DisplayState, format: ClubDateFormat): string {
   const day = parseCalendarDate(state.window.start);
-  return day === null ? state.window.start : formatClubLongWeekdayDayMonth(day);
+  return day === null
+    ? state.window.start
+    : formatClubLongWeekdayDayMonth(day, format);
 }
 
 /** Resolve one matched value token to its raw (unescaped) replacement string. */
 function resolveToken(
   token: string,
   configKey: string | undefined,
-  state: DisplayState
+  state: DisplayState,
+  format: ClubDateFormat,
 ): string {
   const lower = token.toLowerCase();
   if (lower === "lodge-name") return state.lodge.name;
-  if (lower === "display-date") return displayDateToken(state);
+  if (lower === "display-date") return displayDateToken(state, format);
   // configKey is always set for the remaining `config:<key>` alternative.
   const value = state.config[configKey!.toLowerCase()];
   // An unset key renders a VISIBLE placeholder so misconfiguration is obvious
@@ -86,11 +90,15 @@ function resolveToken(
  * Resolve the display's value tokens to plain TEXT (for React text nodes).
  * Non-display tokens (site catalogue tokens, module embeds) are left verbatim.
  */
-export function resolveDisplayText(template: string, state: DisplayState): string {
+export function resolveDisplayText(
+  template: string,
+  state: DisplayState,
+  format: ClubDateFormat,
+): string {
   return template.replace(
     PLACEHOLDER_PATTERN,
     (_whole, token: string, configKey?: string) =>
-      resolveToken(token, configKey, state)
+      resolveToken(token, configKey, state, format)
   );
 }
 
@@ -246,7 +254,11 @@ function neutraliseTokenBearingUrlAttributes(
  * would miss. Either way a config value can never smuggle a `javascript:`/`data:`
  * scheme past the sanitiser that ran before it.
  */
-export function resolveDisplayHtml(template: string, state: DisplayState): string {
+export function resolveDisplayHtml(
+  template: string,
+  state: DisplayState,
+  format: ClubDateFormat,
+): string {
   // Snapshot which href/src attributes were token-bearing BEFORE resolution, so
   // phase 2 can positionally re-check exactly those (and leave literal `data:`
   // srcs — issue #161 — untouched).
@@ -257,7 +269,7 @@ export function resolveDisplayHtml(template: string, state: DisplayState): strin
   const resolved = template.replace(
     PLACEHOLDER_PATTERN,
     (_whole: string, token: string, configKey: string | undefined, offset: number, full: string) => {
-      const value = resolveToken(token, configKey, state);
+      const value = resolveToken(token, configKey, state, format);
       const guarded = opensUrlAttributeValue(full, offset)
         ? neutraliseUrlScheme(value)
         : value;

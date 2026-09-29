@@ -3,8 +3,16 @@
  *
  * Every zone-taking function in this kernel is deliberately explicit, which is
  * right at a boundary and tedious inside a component that formats fifteen
- * timestamps. `bindClubTime(zone)` hands back the same operations with the zone
- * closed over.
+ * timestamps. `bindClubTime(zone, format)` hands back the same operations with
+ * the zone AND the club's date format closed over (the format since #3566, stage
+ * 4 of programme #3205), so a bound call names neither.
+ *
+ * BOTH ARGUMENTS ARE REQUIRED. The locale is the club's persisted
+ * `ClubFormatSettings.locale`, and a one-argument `bindClubTime(zone)` would be
+ * the ambient-default shape the owner declined on #3566: nothing would prove
+ * every binding had been handed the club's locale. `.format` is exposed so a
+ * component holding a binding can pass the same locale to the calendar-date
+ * renderings, which take no zone and so are not bound here.
  *
  * THE SAME INTERFACE ON BOTH SIDES OF THE NETWORK. A server module gets one from
  * `clubTime()` in `./server`, which resolves the persisted zone once per render
@@ -39,6 +47,7 @@ import { stayWindow } from "./stay-window";
 import type {
   CalendarDate,
   ClubClock,
+  ClubDateFormat,
   ClubTimeOfDay,
   ClubTimeZone,
   ClubWallTime,
@@ -49,6 +58,8 @@ import type {
 
 export interface BoundClubTime {
   readonly zone: ClubTimeZone;
+  /** The club's date format, for the zone-free calendar renderings. */
+  readonly format: ClubDateFormat;
   today(clock?: ClubClock): CalendarDate;
   calendarDateOf(instant: Instant): CalendarDate;
   wallTimeOf(instant: Instant): ClubWallTime;
@@ -69,20 +80,32 @@ export interface BoundClubTime {
   stayWindow(checkIn: CalendarDate, checkOut: CalendarDate): StayWindow;
 }
 
-/** The kernel's zone-taking operations, with `zone` closed over. */
-export function bindClubTime(zone: ClubTimeZone): BoundClubTime {
+/**
+ * The kernel's zone-taking operations, with `zone` and `format` closed over.
+ *
+ * The format is COPIED down to its locale rather than kept by reference: a
+ * caller's `ClubFormat` also carries the currency, which no date depends on,
+ * and a frozen one-field object cannot be changed underneath the binding by
+ * whoever handed it in.
+ */
+export function bindClubTime(
+  zone: ClubTimeZone,
+  clubFormat: ClubDateFormat,
+): BoundClubTime {
+  const format: ClubDateFormat = Object.freeze({ locale: clubFormat.locale });
   return {
     zone,
+    format,
     today: (clock: ClubClock = systemClubClock) => clubToday(zone, clock),
     calendarDateOf: (instant) => clubCalendarDateOf(instant, zone),
     wallTimeOf: (instant) => clubWallTimeOf(instant, zone),
-    instantDate: (instant) => formatClubInstantDate(instant, zone),
-    instantDateTime: (instant) => formatClubInstantDateTime(instant, zone),
-    instantLongDate: (instant) => formatClubInstantLongDate(instant, zone),
-    instantTime: (instant) => formatClubInstantTime(instant, zone),
-    instantMonthYear: (instant) => formatClubInstantMonthYear(instant, zone),
+    instantDate: (instant) => formatClubInstantDate(instant, zone, format),
+    instantDateTime: (instant) => formatClubInstantDateTime(instant, zone, format),
+    instantLongDate: (instant) => formatClubInstantLongDate(instant, zone, format),
+    instantTime: (instant) => formatClubInstantTime(instant, zone, format),
+    instantMonthYear: (instant) => formatClubInstantMonthYear(instant, zone, format),
     instantWeekdayDate: (instant) =>
-      formatClubInstantWeekdayDate(instant, zone),
+      formatClubInstantWeekdayDate(instant, zone, format),
     startOfDay: (date) => startOfClubDay(date, zone),
     endOfDayExclusive: (date) => endOfClubDayExclusive(date, zone),
     noon: (date) => noonOfClubDay(date, zone),

@@ -16,7 +16,7 @@ import { pathToFileURL } from "node:url";
  * only in a browser console. `/display` (fork #54) and the global 404 (#2356)
  * have both hit this already.
  *
- * This runs against the real build output, after `npm run build`, because that
+ * This runs against the real build output, after `pnpm run build`, because that
  * is the only place the property is observable. It fails LOUDLY when the build
  * output is absent rather than passing quietly.
  */
@@ -164,7 +164,7 @@ export function auditPrerenderedHtml(artefacts, allowlist = KNOWN_UNNONCED_PRERE
 export function checkBuildOutput(distRoot) {
   if (!fs.existsSync(distRoot)) {
     throw new Error(
-      `No build output at ${distRoot}. This check must run AFTER \`npm run build\` — it cannot pass without one.`,
+      `No build output at ${distRoot}. This check must run AFTER \`pnpm run build\` — it cannot pass without one.`,
     );
   }
 

@@ -19,9 +19,11 @@ const mocks = vi.hoisted(() => {
   const eventFindMany = vi.fn();
   const transaction = vi.fn();
   const reportAiError = vi.fn();
+  const resvFindUnique = vi.fn();
   const dbShape = {
     $executeRaw: execRaw,
     diagnosticsBudgetReservation: {
+      findUnique: resvFindUnique,
       deleteMany: resvDeleteMany,
       aggregate: resvAggregate,
       create: resvCreate,
@@ -38,6 +40,7 @@ const mocks = vi.hoisted(() => {
     $transaction: transaction,
   } as Record<string, unknown> & { $transaction: typeof transaction };
   return {
+    resvFindUnique,
     execRaw,
     resvDeleteMany,
     resvAggregate,
@@ -57,6 +60,21 @@ const dbShape = mocks.dbShape;
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.dbShape }));
 vi.mock("@/lib/observability-bridge", () => ({ reportAiError: mocks.reportAiError }));
+
+// #3567 D6: the month boundary is the club's STORED zone, resolved once through
+// the server binding. Pinned here so a test can move it and prove it is read.
+const zoneMocks = vi.hoisted(() => ({ zone: "Pacific/Auckland", readFailed: false }));
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: async () => zoneMocks.zone,
+}));
+// The gates and writers resolve through the reader that reports a failed read.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  resolveClubTimeZoneOutsideRequest: async () => ({
+    zone: zoneMocks.zone,
+    source: "persisted",
+    readFailed: zoneMocks.readFailed,
+  }),
+}));
 
 // #3354: the NZD -> club-currency rate, identity unless a test sets otherwise.
 // Mocked at the reader so the conversion seam is exercised without a currency
@@ -99,9 +117,14 @@ import {
   resetDiagnosticsMeteringHealthForTests,
   settleDiagnosticsRoundtrip,
 } from "@/lib/ai-diagnostics-usage";
+import { requireClubTimeZone } from "@/lib/club-time";
+
+const AUCKLAND = requireClubTimeZone("Pacific/Auckland");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  zoneMocks.zone = "Pacific/Auckland";
+  zoneMocks.readFailed = false;
   resetDiagnosticsMeteringHealthForTests();
   rateMocks.loadAiSpendCurrency.mockResolvedValue(rateMocks.identity());
   mocks.execRaw.mockResolvedValue(1);
@@ -120,10 +143,38 @@ beforeEach(() => {
   );
 });
 
-describe("diagnosticsUsageMonthKey (Pacific/Auckland)", () => {
+describe("diagnosticsUsageMonthKey (the club's stored zone, #3567 D6)", () => {
   it("crosses the month at the NZ boundary, not UTC", () => {
-    expect(diagnosticsUsageMonthKey(new Date("2026-06-30T13:00:00Z"))).toBe("2026-07");
-    expect(diagnosticsUsageMonthKey(new Date("2026-07-31T11:59:00Z"))).toBe("2026-07");
+    expect(diagnosticsUsageMonthKey(new Date("2026-06-30T13:00:00Z"), AUCKLAND)).toBe("2026-07");
+    expect(diagnosticsUsageMonthKey(new Date("2026-07-31T11:59:00Z"), AUCKLAND)).toBe("2026-07");
+  });
+
+  it("FAILS CLOSED when the club's zone cannot be read: no lock, no reservation (#3567 review)", async () => {
+    zoneMocks.readFailed = true;
+    const result = await reserveDiagnosticsBudget({ reserveCents: 40, now: new Date("2026-07-01T02:00:00Z") });
+    expect(result).toMatchObject({ ok: false, reason: "metering_unavailable" });
+    expect(mocks.execRaw).not.toHaveBeenCalled();
+    expect(mocks.resvCreate).not.toHaveBeenCalled();
+  });
+
+  it("SETTLES into the reservation's own month, not the settle-time month (#3567 review)", async () => {
+    // Reserved in June (New York), settled after the club moved its zone: the
+    // spend and the lock follow the reservation.
+    mocks.resvFindUnique.mockResolvedValueOnce({ month: "2026-06" });
+    await settleDiagnosticsRoundtrip({
+      reservationId: "resv_1",
+      surface: "diagnostics",
+      model: "claude-opus-5",
+      success: true,
+      now: new Date("2026-07-15T02:00:00Z"),
+    });
+    expect(mocks.execRaw.mock.calls[0][1]).toBe("2026-06");
+  });
+
+  it("keys the reserve's advisory lock by the club's STORED zone month", async () => {
+    zoneMocks.zone = "America/New_York";
+    await reserveDiagnosticsBudget({ reserveCents: 40, now: new Date("2026-07-01T02:00:00Z") });
+    expect(mocks.execRaw.mock.calls[0][1]).toBe("2026-06");
   });
 });
 
@@ -491,7 +542,7 @@ describe("settle serialises against reserve on the per-month lock (money-safety 
 
   it("takes the per-month advisory lock as its FIRST statement, before release/event/rollup", async () => {
     const now = new Date("2026-08-15T00:00:00Z");
-    const month = diagnosticsUsageMonthKey(now);
+    const month = diagnosticsUsageMonthKey(now, AUCKLAND);
 
     await settleDiagnosticsRoundtrip({ ...settleInput, now });
 
@@ -514,7 +565,7 @@ describe("settle serialises against reserve on the per-month lock (money-safety 
 
   it("acquires the IDENTICAL lock key as reserve for the same month (mutual exclusion)", async () => {
     const now = new Date("2026-08-15T00:00:00Z");
-    const month = diagnosticsUsageMonthKey(now);
+    const month = diagnosticsUsageMonthKey(now, AUCKLAND);
 
     await reserveDiagnosticsBudget({ reserveCents: 40, now });
     await settleDiagnosticsRoundtrip({ ...settleInput, now });
@@ -566,14 +617,14 @@ describe("real-Postgres over-budget race proof stays wired into CI (#2532)", () 
 
     const workflow = repoFile(".github/workflows/ci.yml");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
     expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
   });
 
   it("keeps its opt-in + dedicated-loopback-database guards and its forced barrier", () => {
     const raceTest = repoFile(raceTestPath);
-    // Opt-in only, dedicated database only — ordinary `npm test` must never
+    // Opt-in only, dedicated database only — ordinary `pnpm test` must never
     // need a live PostgreSQL.
     expect(raceTest).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(raceTest).toContain("CONCURRENCY_RACE_DATABASE_URL");
@@ -642,7 +693,7 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
     // budget-race guard above so both edges of the chain are covered.
     const workflow = repoFile(".github/workflows/ci.yml");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
     expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
   });
@@ -651,7 +702,7 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
     const seamTest = repoFile(
       "src/lib/__tests__/ai-diagnostics-readonly-seam.realdb.test.ts",
     );
-    // Opt-in only, dedicated database only — ordinary `npm test` must never need a
+    // Opt-in only, dedicated database only — ordinary `pnpm test` must never need a
     // live PostgreSQL to keep this proof honest.
     expect(seamTest).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(seamTest).toContain("CONCURRENCY_RACE_DATABASE_URL");

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function readRepoFile(path: string): string {
@@ -36,9 +36,9 @@ describe("repository agent workflow contract", () => {
     expect(agents).toContain("takes both applicable tiers");
     expect(agents).toContain("physical, isolated `node_modules`");
     expect(agents).toContain("checkpoint outside the worktree");
-    expect(agents).toContain("PR CI owns the full `npm test`");
+    expect(agents).toContain("PR CI owns the full unit suite in four test shards");
     expect(agents).toMatch(/Do not\s+delay a draft PR/);
-    expect(agents).not.toContain("Run the **full** `npm test` before opening the PR");
+    expect(agents).not.toMatch(/Run the \*\*full\*\* `p?npm test` before opening the PR/);
     expect(agents).toContain("Keep a private 25% weekly reserve");
     expect(agents).toContain("Gate the blueprint by risk");
     expect(agents).toContain("Validate coherent batches");
@@ -194,14 +194,16 @@ describe("repository agent workflow contract", () => {
     }
     expect(agents).toContain("changelog.d/<pr-number>-<slug>.md");
     expect(agentsNormalized).toContain("a body edit does not re-run Actions");
-    expect(agents).toContain("npm run pr:check");
-    expect(agents).toContain("npm run test:related");
+    expect(agents).toContain("pnpm run pr:check");
+    expect(agents).toContain("pnpm run test:related");
 
     expect(codex).toContain("Root `AGENTS.md` is authoritative");
     expect(codex).toContain("last 10 merged PRs affecting the subsystem");
     expect(codex).toContain("Delegate bulk implementation to implementor subagents");
     expect(codex).toContain("## Windows worktree runtime and dependency preflight");
-    expect(codex).toContain("npm ci --ignore-scripts");
+    // #3673: pnpm runs only the `allowBuilds` packages, so the two-phase npm
+    // install is retired and the preflight is one frozen install.
+    expect(codex).toContain("pnpm install --frozen-lockfile");
     expect(codex).toContain("[IO.Directory]::Delete($modules)");
     expect(codex).toContain("Refusing unexpected junction target");
     expect(codex).toContain("expected target sentinel is missing");
@@ -222,7 +224,7 @@ describe("repository agent workflow contract", () => {
     */
     expect(codex).toContain("## Lane-owned Docker infrastructure");
     expect(codexNormalized).toContain("A lane that starts Docker infrastructure owns removing it");
-    expect(codex).toContain("npm run stale-containers");
+    expect(codex).toContain("pnpm run stale-containers");
     expect(codex).toContain("agent-lane.issue");
     expect(codex).toContain("agent-lane.shared=true");
     expect(codexNormalized).toContain("It never removes anything");
@@ -246,7 +248,7 @@ describe("repository agent workflow contract", () => {
     expect(agentsNormalized).toContain(
       "tear down any Docker infrastructure the lane started",
     );
-    expect(agentsNormalized).toContain("`npm run stale-containers` names what");
+    expect(agentsNormalized).toContain("`pnpm run stale-containers` names what");
     expect(agentsNormalized).toContain(
       "or Docker infrastructure a lane starts and must later tear down",
     );
@@ -273,7 +275,7 @@ describe("repository agent workflow contract", () => {
 
     expect(scopedContextNormalized).toContain("Inventory and content come only from `git ls-files`");
     expect(scopedContextNormalized).toContain("limited to one or two hops");
-    expect(scopedContext).toContain("npm run agent:context -- -- --base");
+    expect(scopedContext).toContain("pnpm run agent:context --base");
     expect(scopedContextNormalized).toContain("computed dynamic imports");
     expect(scopedContextNormalized).toContain("temporary sibling directory and renames it into place");
     expect(packageJson).toContain('"agent:context": "tsx scripts/agent-context.ts"');
@@ -403,5 +405,39 @@ describe("repository agent workflow contract", () => {
     // — nothing else notices that it stopped running on pull requests.
     expect(ci).toContain("Validate PR changelog entry");
     expect(ci).toContain("node scripts/ci/check-pr-changelog-fragment.mjs");
+  });
+
+  /*
+    #3673 review: a scripted edit turned the `\t` of `C:\path\to\...` in
+    CODEX_WORKFLOW.md into a literal TAB, so the published command named a path
+    that does not exist. Agents copy commands out of these files verbatim, so no
+    control character other than a line ending may appear in them.
+  */
+  it("keeps control characters out of the agent and contributor docs", () => {
+    const files = [
+      "AGENTS.md",
+      "CONTRIBUTING.md",
+      // Recursive: skills (`codex/**/SKILL.md`), profiles and the workflow and
+      // label examples are copied from as literally as the top-level guides.
+      ...readdirSync(resolve(process.cwd(), "docs/agents"), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.(?:md|toml|ya?ml)$/.test(entry.name))
+        .map((entry) =>
+          `${entry.parentPath}/${entry.name}`
+            .replace(/\\/g, "/")
+            .slice(resolve(process.cwd()).replace(/\\/g, "/").length + 1),
+        ),
+    ];
+    expect(files).toContain("docs/agents/CODEX_WORKFLOW.md");
+    expect(files).toContain("docs/agents/codex/skills/alpineclub-issue-worker/SKILL.md");
+    expect(files.some((file) => file.startsWith("docs/agents/examples/"))).toBe(true);
+    const found: string[] = [];
+    for (const file of files) {
+      readRepoFile(file)
+        .split("\n")
+        .forEach((line, index) => {
+          if (/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/.test(line)) found.push(`${file}:${index + 1}`);
+        });
+    }
+    expect(found, "control character (most likely a TAB from a mangled `\\t`) in an agent doc").toEqual([]);
   });
 });

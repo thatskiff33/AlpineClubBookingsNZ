@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
+import { useClubFormat } from "@/components/club-format-provider"
 import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 
 // #2264: deliberately not one of the shared house shapes — the printed chore
@@ -37,6 +38,7 @@ interface RosterData {
 }
 
 export default function PrintRosterPage() {
+  const format = useClubFormat()
   const club = useClubIdentity()
   const params = useParams()
   const searchParams = useSearchParams()
@@ -98,7 +100,7 @@ export default function PrintRosterPage() {
   const rosterDay = parseCalendarDate(dateStr)
   // The day comes from the URL, so a malformed one renders as itself rather
   // than throwing and blanking the print view behind an error boundary.
-  const formattedDate = rosterDay ? formatClubLongWeekdayDate(rosterDay) : dateStr
+  const formattedDate = rosterDay ? formatClubLongWeekdayDate(rosterDay, format) : dateStr
 
   return (
     <>

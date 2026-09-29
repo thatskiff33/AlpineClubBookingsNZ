@@ -43,6 +43,8 @@
  * unwrap to get at "the real date".
  */
 
+import type { ClubFormat } from "@/lib/club-format";
+
 declare const calendarDateBrand: unique symbol;
 declare const clubTimeZoneBrand: unique symbol;
 
@@ -71,6 +73,20 @@ export type ClubTimeZone = string & { readonly [clubTimeZoneBrand]: true };
  * `Date` rather than a wrapper.
  */
 export type Instant = Date;
+
+/**
+ * What a date rendering needs from the club's format: its LOCALE, and nothing
+ * else (stage 4 of programme #3205, #3566; INV-CONFIG-006).
+ *
+ * A `Pick` rather than the whole `ClubFormat` because a date does not depend on
+ * the currency, and a narrower parameter is one a caller can satisfy honestly
+ * with whatever it already holds: a `ClubFormat` from `clubFormatValues()` or
+ * `useClubFormat()`, or the `format` a `BoundClubTime` carries. It is required
+ * on every rendering, exactly as the money kernel's format is (#3565): there is
+ * no one-argument spelling, so a date that forgets the club's locale does not
+ * compile.
+ */
+export type ClubDateFormat = Pick<ClubFormat, "locale">;
 
 /** A wall-clock reading in the club's zone, with the calendar day it falls on. */
 export interface ClubWallTime {

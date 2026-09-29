@@ -285,7 +285,7 @@ function memberNightConflictError() {
       canSelfRemove: false,
       isSelfGuest: false,
     },
-  ]);
+  ], CLUB_FORMAT_TEST);
 }
 
 const GUESTS = [{ firstName: "Tara", lastName: "Tester", ageTier: "ADULT" as const }];
@@ -2073,7 +2073,8 @@ describe("approveBookingRequest", () => {
         checkIn: new Date("2026-08-01T00:00:00.000Z"),
         checkOut: new Date("2026-08-03T00:00:00.000Z"),
         excludeBookingId: undefined,
-      })
+      }),
+      CLUB_FORMAT_TEST
     );
     const guardGuests = mockedAssertNoConflicts.mock.calls[0][1].guests;
     expect(guardGuests).toHaveLength(1);
@@ -2288,7 +2289,8 @@ describe("approveBookingRequest", () => {
 
     expect(mockedAssertNoConflicts).toHaveBeenCalledWith(
       prisma,
-      expect.objectContaining({ excludeBookingId: "held-1" })
+      expect.objectContaining({ excludeBookingId: "held-1" }),
+      CLUB_FORMAT_TEST
     );
     // Reuse path preserves the held booking's guest rows (updates in place) and
     // does not destroy them, so bed allocations survive the accept (issue #1254).

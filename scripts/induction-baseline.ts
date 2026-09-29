@@ -22,7 +22,7 @@ function printUsage() {
   IFS= read -r BASELINE_DATE < /protected/path/baseline-date
   IFS= read -r PROVENANCE_NOTE < /protected/path/provenance-note
 
-  npm run induction:baseline -- \\
+  pnpm run induction:baseline \\
     --actor-member-id "$ACTOR_MEMBER_ID" \\
     --baseline-date "$BASELINE_DATE" \\
     --provenance-note "$PROVENANCE_NOTE"
@@ -32,7 +32,7 @@ function printUsage() {
   IFS= read -r CONFIRM_DB_NAME < /protected/path/confirm-db-name
   IFS= read -r CONFIRM_PLAN_DIGEST < /protected/path/confirm-plan-digest
 
-  npm run induction:baseline -- \\
+  pnpm run induction:baseline \\
     --apply \\
     --actor-member-id "$ACTOR_MEMBER_ID" \\
     --baseline-date "$BASELINE_DATE" \\

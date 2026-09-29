@@ -393,6 +393,7 @@ function normaliseGalleryDirectoryInput(value: string): string {
 
 async function listPhotoGalleryImagesFromDirectory(
   directoryInput: string,
+  format: ClubFormat,
 ): Promise<PhotoGalleryImage[]> {
   const relDir = normaliseGalleryDirectoryInput(directoryInput);
   const absDir = resolveInImagesRoot(relDir);
@@ -445,7 +446,9 @@ async function listPhotoGalleryImagesFromDirectory(
     }),
   );
 
-  images.sort((a, b) => a.alt.localeCompare(b.alt, "en-NZ"));
+  // Alphabetical in the CLUB's language (#3566, owner decision 6), not a
+  // hard-coded New Zealand English collation.
+  images.sort((a, b) => a.alt.localeCompare(b.alt, format.locale));
   return images;
 }
 
@@ -453,9 +456,10 @@ async function resolveGalleryImages(
   parameter: string | undefined,
   inlineImages: PhotoGalleryImage[],
   useInlineFallback: boolean,
+  format: ClubFormat,
 ): Promise<PhotoGalleryImage[]> {
   if (parameter) {
-    return listPhotoGalleryImagesFromDirectory(parameter);
+    return listPhotoGalleryImagesFromDirectory(parameter, format);
   }
 
   return useInlineFallback ? inlineImages : [];
@@ -509,6 +513,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
           parsed.parameter,
           inlineImages,
           hasInlineGalleryToken,
+          format,
         ),
       });
     } else if (parsed.token === "photo-slideshow") {
@@ -518,6 +523,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
           parsed.parameter,
           inlineImages,
           hasInlineGalleryToken,
+          format,
         ),
       });
     } else if (parsed.token === "annual-fees" || parsed.token === "membership-types") {
@@ -532,7 +538,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
       parts.push({ type: "hut-fees", tables: await loadPublicHutFees(format, feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
-      parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
+      parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(format, parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {
       parts.push({ type: "cancellation-policy", policy: await loadPublicCancellationPolicy(format, parsed.parameter) });
     } else if (parsed.token === "contact-form") {

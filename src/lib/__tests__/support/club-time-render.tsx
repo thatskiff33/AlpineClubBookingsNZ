@@ -139,7 +139,12 @@ export function ClubFormatTestProvider({ children }: { children: ReactNode }) {
 export function ClubTimeTestProvider({ children }: { children: ReactNode }) {
   return (
     <ClubFormatTestProvider>
-      <ClubTimeProvider zone={CLUB_TIME_TEST_ZONE}>{children}</ClubTimeProvider>
+      <ClubTimeProvider
+        zone={CLUB_TIME_TEST_ZONE}
+        locale={CLUB_FORMAT_TEST_LOCALE}
+      >
+        {children}
+      </ClubTimeProvider>
     </ClubFormatTestProvider>
   );
 }

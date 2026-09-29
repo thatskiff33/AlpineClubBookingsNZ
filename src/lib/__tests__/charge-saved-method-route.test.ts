@@ -161,6 +161,15 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #3567: the club's format is resolved through this double so a test can make
+// the club's currency one no card can be charged in. Its default (beforeEach)
+// is the house fixture, so every other case reads the format it always did.
+const clubFormatMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/club-format-server", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/club-format-server")),
+  clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
+}));
+
 // The transaction client the route receives inside prisma.$transaction, reusing
 // the same underlying mocks so assertions on booking.updateMany and the ledger
 // see the calls made inside the advisory-locked transactions too. Built by a
@@ -219,6 +228,7 @@ import {
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
+import { UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-currency";
 
 /** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
 const ATTEMPT_ROW_ID = "txn_attempt_1";
@@ -314,6 +324,7 @@ function orderOf(mock: { mock: { calls: unknown[][]; invocationCallOrder: number
 describe("POST /api/payments/charge-saved-method", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockIsValidCronSecret.mockReturnValue(false);
     primeBooking(makeBooking());
@@ -404,6 +415,19 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(releaseCall()).toBeUndefined();
   });
 
+  it("refuses a club currency without two decimal places with a 409 before the claim (#3567)", async () => {
+    clubFormatMock.mockResolvedValue({ currencyCode: "JPY", locale: "ja-JP" });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE });
+    expect(mockPrismaTransaction).not.toHaveBeenCalled();
+    expect(claimCall()).toBeUndefined();
+    expect(mockPaymentTransactionCreate).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+  });
+
   describe("the claim (#3267, the shape the cron and confirm-pending-guests already take)", () => {
     it("claims PENDING -> CONFIRMED under lock(1) then the lodge lock, re-checks capacity and mints the attempt row inside that transaction, all BEFORE Stripe is asked anything", async () => {
       mockChargePaymentMethod.mockResolvedValue({
@@ -478,9 +502,8 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(mockChargePaymentMethod).toHaveBeenCalledWith({
         amountCents: 12500,
-        // #3563 (INV-SSOT-003, D5): the currency default is gone and every
-        // caller states it. Same value the default supplied.
-        currency: "nzd",
+        // #3567 D1: no `currency` argument; the charge currency is worked out
+        // from `format` inside stripe.ts, so a caller cannot pass a second answer.
         customerId: "cus_123",
         paymentMethodId: "pm_123",
         metadata: { bookingId: "booking-1", memberId: "member-1" },

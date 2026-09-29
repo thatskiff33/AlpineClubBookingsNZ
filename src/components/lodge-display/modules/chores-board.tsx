@@ -1,16 +1,22 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { DisplayPanelOptions } from "./module-options";
 import { shortDay } from "./status-helpers";
+import type { ClubDateFormat } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 // The day's chore list (fork issue #31): renders DisplayState.chores exactly
 // as the privacy serialiser provided them — assignee labels are already
 // reduced (a minor's chore carries the family/group label, issue #28), and
 // this module never re-derives names from any other source (issue #31 AC1).
 
-function choreDayLabel(date: string, windowStart: string): string {
+function choreDayLabel(
+  date: string,
+  windowStart: string,
+  format: ClubDateFormat,
+): string {
   if (date === windowStart) return "Today";
   // The one shared column-head shape (`status-helpers.shortDay`).
-  return shortDay(date);
+  return shortDay(date, format);
 }
 
 export function ChoresBoard({
@@ -19,6 +25,7 @@ export function ChoresBoard({
   state: DisplayState;
   options?: DisplayPanelOptions;
 }) {
+  const format = useClubFormat();
   const byDate = new Map<string, DisplayState["chores"]>();
   for (const chore of state.chores) {
     const list = byDate.get(chore.date) ?? [];
@@ -38,7 +45,7 @@ export function ChoresBoard({
       {[...byDate.entries()].map(([date, chores]) => (
         <div key={date} className="display-chores-day">
           <span className="display-chores-date">
-            {choreDayLabel(date, state.window.start)}
+            {choreDayLabel(date, state.window.start, format)}
           </span>
           <ul className="display-card-list">
             {chores.map((chore, index) => (

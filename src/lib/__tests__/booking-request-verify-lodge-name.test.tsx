@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BookingRequestVerifyClient } from "@/app/(website-dynamic)/booking-requests/verify/[token]/booking-request-verify-client";

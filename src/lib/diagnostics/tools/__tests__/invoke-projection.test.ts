@@ -204,7 +204,7 @@ describe("a projection that breaks its contract discards the whole result (#2374
     // `JSON.stringify` throws on those — so it must be refused here, not later.
     // `BigInt(10)` rather than `10n`: the test tsconfig targets below ES2020, where
     // a bigint LITERAL is a compile error (`tsc -p tsconfig.test.json` catches it,
-    // `npm test` does not).
+    // `pnpm test` does not).
     ["a bigint", () => ({ big: BigInt(10) })],
     ["a function", () => ({ fn: () => 1 })],
     ["a symbol", () => ({ sym: Symbol("s") })],

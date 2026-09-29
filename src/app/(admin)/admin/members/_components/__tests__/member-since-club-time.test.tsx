@@ -6,11 +6,12 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import type { Member } from "../../_types";
 import { MemberTable } from "../member-table";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * "Member since" is the mandatory regression anchor on #2870 (CT-4) — the
@@ -46,7 +47,7 @@ import { MemberTable } from "../member-table";
  *    and the premise below asserts the opposition really exists rather than
  *    assuming it.
  * 2. **Zone authority** — the club's PERSISTED zone decided this, not
- *    `APP_TIME_ZONE`. That needs the club zone to DISAGREE with the environment,
+ *    the environment's zone. That needs the club zone to DISAGREE with the environment,
  *    and at UTC midnight there are only two possible days on earth, both of them
  *    already spoken for by claim 1. So on a behind-UTC host — `TZ=America/Denver`
  *    is the measured case — claim 2 is unsatisfiable at this fixture: the club's
@@ -160,7 +161,7 @@ function renderInClubZone(members: Member[], zone: string = CLUB_ZONE) {
     />,
     {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>
       ),
     },
   );
@@ -180,7 +181,7 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
     //
     // This premise is true on every host, because both readings are computed
     // from explicit zones and neither consults the machine.
-    const clubAnswer = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
+    const clubAnswer = bindClubTime(requireClubTimeZone(CLUB_ZONE), CLUB_FORMAT_TEST).instantDate(
       new Date(WIRE_VALUE),
     );
     expect(clubAnswer).toBe(DENVER_CIVIL_DAY);
@@ -224,8 +225,8 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
    * opposition fixture above cannot do this — see the file docblock.
    *
    * The host is pinned to the environment's own zone for the render. That is not
-   * a weakening: it collapses the two ways of being wrong ("read
-   * `APP_TIME_ZONE`" and "read the machine") into ONE answer, which the single
+   * a weakening: it collapses the two ways of being wrong ("read the
+   * environment's zone" and "read the machine") into ONE answer, which the single
    * assertion below then excludes. With the two left free, at date granularity
    * they can occupy both available days between them and no club zone can
    * contradict both.
@@ -243,20 +244,20 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
       // would render" through the kernel under test would let one kernel-wide
       // defect satisfy both sides. It also has to accept zones the kernel
       // rightly refuses as a CLUB zone — a runner with `TZ=UTC` makes
-      // `APP_TIME_ZONE` a fixed offset, which `requireClubTimeZone` throws on.
+      // the environment zone a fixed offset, which `requireClubTimeZone` throws on.
       answerFor: (zone) =>
-        new Intl.DateTimeFormat(APP_LOCALE, {
+        new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
           timeZone: zone,
           dateStyle: "medium",
         }).format(new Date(MID_DAY_INSTANT)),
     });
-    const environmentDay = new Intl.DateTimeFormat(APP_LOCALE, {
-      timeZone: APP_TIME_ZONE,
+    const environmentDay = new Intl.DateTimeFormat(CLUB_FORMAT_TEST.locale, {
+      timeZone: ENVIRONMENT_CLUB_ZONE,
       dateStyle: "medium",
     }).format(new Date(MID_DAY_INSTANT));
     expect(chosen.civilDay).not.toBe(environmentDay);
 
-    withTimeZone(APP_TIME_ZONE, () => {
+    withTimeZone(ENVIRONMENT_CLUB_ZONE, () => {
       renderInClubZone(
         [{ ...baseMember, joinedDate: null, createdAt: MID_DAY_INSTANT }],
         chosen.zone,

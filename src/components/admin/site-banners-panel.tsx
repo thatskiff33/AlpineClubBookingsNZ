@@ -46,7 +46,8 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { type ClubDateFormat, formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 type ApiBanner = {
   id: string;
@@ -113,12 +114,12 @@ const GROUPS = [
  * encoding, which is the identity for EVERY club, so the rendered string is
  * unchanged here and correct for a club the old argument did not cover.
  */
-function formatDateOnly(value: string): string {
+function formatDateOnly(value: string, format: ClubDateFormat): string {
   const day = parseCalendarDate(value);
   if (day === null) {
     return value;
   }
-  return formatClubDate(day);
+  return formatClubDate(day, format);
 }
 
 function excerpt(message: string, maxLength = 160): string {
@@ -160,6 +161,7 @@ function BannerPreview({
 }
 
 export function SiteBannersPanel() {
+  const format = useClubFormat();
   const canEdit = useAdminAreaEditAccess("content");
   const [groups, setGroups] = useState<ApiGroups | null>(null);
   const [loading, setLoading] = useState(true);
@@ -416,8 +418,8 @@ export function SiteBannersPanel() {
                             </Badge>
                           )}
                           <span className="text-xs text-muted-foreground">
-                            {formatDateOnly(banner.startDate)} -{" "}
-                            {formatDateOnly(banner.endDate)}
+                            {formatDateOnly(banner.startDate, format)} -{" "}
+                            {formatDateOnly(banner.endDate, format)}
                           </span>
                         </div>
                         <p className="text-sm text-foreground">

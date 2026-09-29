@@ -12,6 +12,7 @@ import {
   type BookingMemberNightConflict,
 } from "@/lib/booking-member-night-conflicts";
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in, rather than read by the guard under the
@@ -237,7 +238,7 @@ describe("findBookingMemberNightConflicts", () => {
     it("keeps every trace of the stranger's booking out of the 409 body", async () => {
       const conflict = await conflictFor("member-1");
       const body = JSON.stringify(
-        getBookingMemberNightConflictResponse([conflict]),
+        getBookingMemberNightConflictResponse([conflict], CLUB_FORMAT_TEST),
       );
 
       for (const secret of [
@@ -398,7 +399,7 @@ describe("findBookingMemberNightConflicts", () => {
       checkOut: parseDateOnly("2026-06-03"),
       // Deliberately out of order to prove sorted acquisition.
       guests: [{ memberId: "member-2" }, { memberId: "member-1" }],
-    });
+    }, CLUB_FORMAT_TEST);
 
     // Two per-member advisory locks were taken before the read.
     expect(db.$executeRaw).toHaveBeenCalledTimes(2);
@@ -442,7 +443,7 @@ describe("booking member-night conflict messages", () => {
   }
 
   it("tells the wizard path who, which nights, and what to do next", () => {
-    const body = getBookingMemberNightConflictResponse([conflictRow()]);
+    const body = getBookingMemberNightConflictResponse([conflictRow()], CLUB_FORMAT_TEST);
 
     expect(body.code).toBe("BOOKING_MEMBER_NIGHT_CONFLICT");
     expect(body.error).toBe(
@@ -460,7 +461,7 @@ describe("booking member-night conflict messages", () => {
       [conflictRow({ canSelfRemove: true, isSelfGuest: true })],
       [conflictRow(), conflictRow({ memberName: "Dana Patel" })],
     ]) {
-      expect(getBookingMemberNightConflictResponse(conflicts).error).not.toContain(
+      expect(getBookingMemberNightConflictResponse(conflicts, CLUB_FORMAT_TEST).error).not.toContain(
         "choose different dates",
       );
     }
@@ -469,7 +470,7 @@ describe("booking member-night conflict messages", () => {
   it("offers self-removal in the message when this viewer may take themselves off", () => {
     const body = getBookingMemberNightConflictResponse([
       conflictRow({ canSelfRemove: true, isSelfGuest: true, canOpenBooking: true }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(body.error).toContain("You are already on another booking");
     expect(body.error).toContain("Take yourself off that booking");
@@ -483,7 +484,7 @@ describe("booking member-night conflict messages", () => {
         canOpenBooking: true,
         canSelfRemove: false,
       }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(body.error).toBe(
       "You are already on another booking for 11 Jun 2026 and 12 Jun 2026. " +
@@ -493,10 +494,10 @@ describe("booking member-night conflict messages", () => {
   });
 
   it("carries the same message on the transactional 409 path", () => {
-    const error = new BookingMemberNightConflictError([conflictRow()]);
+    const error = new BookingMemberNightConflictError([conflictRow()], CLUB_FORMAT_TEST);
 
     expect(error.message).toBe(
-      getBookingMemberNightConflictResponse([conflictRow()]).error,
+      getBookingMemberNightConflictResponse([conflictRow()], CLUB_FORMAT_TEST).error,
     );
     expect(error.name).toBe("BookingMemberNightConflictError");
     expect(error.conflicts).toHaveLength(1);
@@ -508,7 +509,7 @@ describe("booking member-night conflict messages", () => {
     // but the copy layer gates independently — hand it a row that DOES carry
     // them with canOpenBooking false and the message must still not restate
     // them.
-    const body = getBookingMemberNightConflictResponse([conflictRow()]);
+    const body = getBookingMemberNightConflictResponse([conflictRow()], CLUB_FORMAT_TEST);
 
     expect(body.error).not.toContain("Carol Nguyen");
     expect(body.error).not.toContain("booking-2");
@@ -552,7 +553,7 @@ describe("booking member-night conflict messages", () => {
         memberName: "Dana Patel",
         conflictingNights: ["2026-06-11"],
       }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(body.error).toBe(
       "Bob Jones and Dana Patel are already on other bookings for 11 Jun 2026 and 12 Jun 2026. " +
@@ -566,7 +567,7 @@ describe("booking member-night conflict messages", () => {
     const body = getBookingMemberNightConflictResponse([
       conflictRow({ bookingId: "booking-2", conflictingNights: ["2026-06-11"] }),
       conflictRow({ bookingId: "booking-3", conflictingNights: ["2026-06-12"] }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(body.error).toContain(
       "Bob Jones is already on other bookings for 11 Jun 2026 and 12 Jun 2026.",

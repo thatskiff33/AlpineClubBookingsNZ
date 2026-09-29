@@ -16,6 +16,7 @@ import {
   emptyWhakapapaCurlData,
   type WhakapapaCurlData,
 } from "@/lib/whakapapa-report";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // Covers the Trails section UI: the difficulty key (green circle Beginner,
 // blue square Intermediate, black diamond Advanced, red diamond Expert) and the
@@ -276,12 +277,12 @@ describe("SkifieldWhakapapaWidget updated stamp (CT-4, #2870)", () => {
 
   function providerFor(zone: string) {
     return function PinnedClubTime({ children }: { children: ReactNode }) {
-      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+      return <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>;
     };
   }
 
   function spelledIn(zone: string): string {
-    return bindClubTime(requireClubTimeZone(zone)).instantDateTime(
+    return bindClubTime(requireClubTimeZone(zone), CLUB_FORMAT_TEST).instantDateTime(
       new Date(UPDATED),
     );
   }

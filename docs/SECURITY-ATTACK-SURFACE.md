@@ -2030,7 +2030,7 @@ lobby TV display (fork #54) and the global 404 (#2356).
     `NEXT_NOT_FOUND` string matched nothing and was corrected in this work) and
     `NEXT_REDIRECT`.
 - **Enforced by `scripts/ci/check-prerendered-script-nonces.mjs`**, run in the
-  `verify` job immediately after `npm run build` (the only point where the
+  `verify` job immediately after `pnpm run build` (the only point where the
   property is observable). It walks every `.html` under `server/app/**` and
   `server/pages/**` and fails on any inline `<script>` without a non-empty
   `nonce`. `nonce=""` counts as unnonced, because it matches no `'nonce-…'`
@@ -2675,7 +2675,7 @@ above.
 ### Guards
 
 - **`src/lib/__tests__/asset-url-404.test.ts`** holds the invariant in the ordinary
-  `npm test` run, with no stack required. It works at three depths, because each
+  `pnpm test` run, with no stack required. It works at three depths, because each
   catches a different regression:
   - it compiles the **shipped** rule array on the fly with the exact options
     `filesystem.js` uses (`strict`, `removeUnnamedParams`, `modifyRouteRegex`, and

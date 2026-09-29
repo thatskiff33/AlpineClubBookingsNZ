@@ -1146,7 +1146,7 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **98 components render a banner, and
-311 of the 365 `ViewOnlyActionButton` call sites opt out** of the per-button
+ 311 of the 366 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
 test currently pins, which is the only authority.) Those 311 split by WHICH rule
@@ -1156,13 +1156,13 @@ pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
-remaining **54 controls across 30 files deliberately keep the per-button
+remaining **55 controls across 30 files deliberately keep the per-button
 default** (`describeReason` left at `true`), in three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
   a separate accessibility container — focus is trapped and the page behind is
   commonly inert — so a banner rendered in the page body does not reach them.
-  (10 controls across 5 files, including the confirmed bed-allocation move
+  (11 controls across 5 files, including the confirmed bed-allocation move
   dialog, which the test enumerates by name; three further
   controls of this shape live in files counted under the next bucket, see
   there.)
@@ -1608,18 +1608,29 @@ and the boxes can already be out of date. What keeps stale display from becoming
 a stale WRITE is the changed-fields-only patch above, not the gate. What the
 gate adds is that the dirty comparison is against the card's own snapshot, which
 is what is on screen, so a stale box never arms Save by itself.
-The rule binds sections that are NEW
-or MODIFIED, so four pre-existing surfaces are acknowledged divergents it does
-not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
-older staged-but-ungated settings forms, and the age-tier and notification
-settings panels — the last two were previously written up as blanket exemptions
-"because they are list sections", which is no longer the reason: list sections
-are in scope (see the per-row shape below), those two simply have not been
-touched since. Booking Policies has NO divergent left. Every settings control in
-the area now stages behind a per-card Edit → Save/Cancel: the **Show indicative
-pricing** checkbox in `public-booking-requests-section.tsx` stopped persisting on
-change in #2162, and the two timing cards beside it (quote window / reminder
-lead, and the school-attendee prompts) — always editable with a dirty-gated Save
+The rule binds sections that are NEW or MODIFIED. Known departures that this
+rule does not itself retrofit are the `/admin/modules` grid (deliberate bulk
+toggles), the older staged-but-ungated settings forms, the age-tier and
+notification settings panels, and two capacity cards. The last two panels were
+previously written up as blanket exemptions "because they are list sections";
+that is no longer the reason: list sections are in scope (see the per-row shape
+below), and these panels have not yet been brought onto the pattern. The
+capacity cards were touched in #2724 but remain explicit, owner-accepted
+departures under #3441: `/admin/lodges/[id]` edits one per-lodge capacity field
+without Edit/Cancel and enables Save only when the value differs from the saved
+value; the setup `LodgeCapacityCard` edits capacity, hut-leader lookahead and
+school soft-cap fields without Edit/Cancel, and its Save is not dirty-gated.
+Once a lodge is selected, its own disabled prop checks loading or saving.
+Both retain a view-only banner and a permission-gated Save button. This
+inventory names known departures; it is not a measured assertion that the
+entire admin tree has no others. New or modified
+settings sections still owe the staged pattern unless an explicit decision
+records an exception. Booking Policies has NO divergent left. Every settings
+control in that area now stages behind a per-card Edit → Save/Cancel: the
+**Show indicative pricing** checkbox in `public-booking-requests-section.tsx`
+stopped persisting on change in #2162, and the two timing cards beside it
+(quote window / reminder lead, and the school-attendee prompts) — always
+editable with a dirty-gated Save
 and no Edit or Cancel until then — were Edit-gated in #2166 on the owner's
 decision. The only direct writes left in the area are discrete ACTIONS rather
 than staged fields: row-level Activate/Deactivate and Delete on the
@@ -2632,7 +2643,7 @@ a side effect of tightening their nonce.
 `src/app/(public)/layout.tsx` declares `export const dynamic = "force-dynamic"` for
 its whole group, and that line is measured rather than tidy: the `auth()` call it no
 longer makes was what kept those routes out of build-time prerendering, and without
-a replacement `npm run build` fails on an `Error occurred prerendering page` for one
+a replacement `pnpm run build` fails on an `Error occurred prerendering page` for one
 of the group's routes — a build has no database, and the layout's `headers()` read
 happens only after its own database reads have resolved, too late to bail out first.
 (The build error used to name `/booking-requests`; that page and `/school-bookings`
@@ -3248,7 +3259,7 @@ memory. It does this through a deterministic, versioned **knowledge bundle**
 overlay) source of the deployed commit, with per-file content hashes, sensitivity
 tags, symbols, and a bounded, individually-hashed excerpt index.
 
-The bundle is generated inside the Docker builder by `npm run diagnostics:bundle`
+The bundle is generated inside the Docker builder by `pnpm run diagnostics:bundle`
 (`docs/` and `.git` are dropped from the runtime image, so the commit SHA is
 injected at build time via `GIT_COMMIT_SHA`), traced into `.next/standalone`, and
 copied into the runner. It is:
@@ -3320,7 +3331,7 @@ refused unless the server itself confirms it holds no superuser, `CREATEDB`,
 `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, database `TEMPORARY`/`CREATE`, schema
 `CREATE`, file-reading function privilege, or escalating predefined-role
 membership. Provisioning is an operator step
-(`npm run diagnostics:provision-role`), not a migration: a database role is cluster
+(`pnpm run diagnostics:provision-role`), not a migration: a database role is cluster
 state, needs a secret the schema must never contain, and its `SELECT` allowlist is
 declared in public code so "which tables can Diagnostics read" is answerable by
 reading one file. The delivered support, booking/membership and finance packs
@@ -3459,6 +3470,6 @@ maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot aft
 an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
 registered as **not** requiring a primary `config/club.json`, because the value it
 copies comes from the environment rather than from that file. The
-`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
-#2988's later children migrate the display call sites off it and CT-6 retires
-it.
+transitional `APP_TIME_ZONE` constant is gone: #3567 deleted
+`src/config/operational.ts` once its last readers (the AI metering month keys)
+moved onto the stored zone.

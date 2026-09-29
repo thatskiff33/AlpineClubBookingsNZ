@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * CT-4 (#2870): THE NEW-BOOKING PROPOSAL FRAME, now whole. Group F2 closed two
@@ -79,22 +79,14 @@ import { describe, expect, it, vi } from "vitest";
  * the message now names NEITHER cause and states only what was established
  * (`INV-EXCEPT-035`).
  */
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
-  APP_LOCALE: "en-NZ",
-}));
-
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { buildProposalPartyFromGuests } from "@/lib/booking-exception-request-service";
 
 /**
- * The zone the `@/config/operational` factory above pins, named rather than left
- * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
- * asserts the two are still the same zone, so this constant cannot drift out of
- * step with the factory and leave the cases below passing for the wrong reason.
+ * A club zone behind Greenwich, named rather than left to the helper's
+ * `APP_TIME_ZONE` default, which #3123 deleted. (This file also used to pin
+ * that constant to the same zone with a module mock; the constant was deleted
+ * in #3567 and nothing reads it any more, so the mock is gone.)
  */
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
@@ -125,12 +117,9 @@ const ada = {
 };
 
 describe("the new-booking proposal's guest frame (CT-4, #2870, groups F2 + F4b)", () => {
-  it("PREMISE: the mocked club zone really does move a stored day", () => {
+  it("PREMISE: a club zone behind Greenwich really does move a stored day", () => {
     // Measured, not assumed. If `America/Denver` ever stopped shifting a
     // UTC-midnight day, every assertion below would hold for the wrong reason.
-    // The zone the removed call read is `APP_TIME_ZONE`, so the constant has to
-    // keep naming it.
-    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
     expect(formatDateOnlyForTimeZone(day(CHECK_IN), CLUB_ZONE_BEHIND_UTC)).toBe(
       "2026-07-03",
     );

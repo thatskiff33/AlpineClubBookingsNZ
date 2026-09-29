@@ -9,7 +9,11 @@ import {
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
-import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import {
+  parseInstant,
+  type BoundClubTime,
+  type ClubDateFormat,
+} from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -128,8 +132,8 @@ function formatInstant(clubTime: BoundClubTime, value: string | null) {
  * a club ahead of UTC, and one day EARLY for any club behind it. A birthday is
  * one of the mandatory regression anchors on #2870 for exactly that reason.
  */
-function formatDateOfBirth(value: string) {
-  return formatPayloadCalendarDay(value, value);
+function formatDateOfBirth(value: string, format: ClubDateFormat) {
+  return formatPayloadCalendarDay(value, format, value);
 }
 
 function statusLabel(status: ApplicationStatus) {
@@ -669,7 +673,7 @@ export default function MemberApplicationsPage() {
                             {familyMember.firstName} {familyMember.lastName}
                           </p>
                           <p className="text-muted-foreground">
-                            DOB {formatDateOfBirth(familyMember.dateOfBirth)}
+                            DOB {formatDateOfBirth(familyMember.dateOfBirth, clubTime.format)}
                           </p>
                         </div>
                       ))}

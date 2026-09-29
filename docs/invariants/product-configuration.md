@@ -62,10 +62,8 @@ home for that explanation and is not repeated here.
   effective* zone means and they are the only thing a first boot after the upgrade
   can copy from. Once a value is persisted they are not consulted for the club's
   civil time, so moving the container's clock cannot move the club's. The
-  transitional `APP_TIME_ZONE` constant still derives from them for the call sites
-  CT-2 to CT-5 have not migrated; CT-6 retires it, and until then
-  `club-time-zone-env-agreement.test.ts` pins the two readings together so they
-  cannot drift apart while both exist.
+  transitional `APP_TIME_ZONE` constant that also derived from them is gone
+  (#3567).
 - **The machine's timezone is deliberately irrelevant, and the fix is never to
   pin it harder.** A server, container, database session or browser in any zone
   must produce the same club-facing answer. Forcing the process zone would make
@@ -112,9 +110,8 @@ home for that explanation and is not repeated here.
   dates they already have.
 - **CT-6 (#2991) made the environment's silence mechanical, and counted what is
   left.** Naming `process.env.TZ`, `NEXT_PUBLIC_TZ` or an `APP_TIME_ZONE` import
-  is a lint error under `src/**` outside a nine-file ratchet — two structural
-  (the config module and CT-1's seed reader), seven measured callers each naming
-  the issue that blocks them. Two matrices prove the rule holds rather than
+  is a lint error under `src/**` outside a ratchet that started at nine files
+  and since #3567 holds one, CT-1's seed reader. Two matrices prove the rule holds rather than
   merely being written down: `host-process-zone-matrix.test.ts` runs the club's
   answers under six process zones spanning UTC-11 to UTC+14, and
   `browser-viewer-zone-matrix.test.ts` renders member and admin surfaces under
@@ -478,10 +475,11 @@ home for that explanation and is not repeated here.
   `ClubFormatSettings` (id `"default"`), read through `getClubFormat()` in
   [`club-format-settings.ts`](../../src/lib/club-format-settings.ts); validated
   by [`club-format.ts`](../../src/lib/club-format.ts).
-- **`CURRENCY` and `LOCALE` (and their `NEXT_PUBLIC_` twins) are a seed, not a
-  second opinion.** They are consulted only while nothing is persisted. Once the
-  row exists, editing them changes nothing, and the operator guide and the admin
-  screen must both say so (owner decision D3 on #3205).
+- **`CURRENCY` and `LOCALE` are a seed, not a second opinion.** They are
+  consulted only while nothing is persisted; the `NEXT_PUBLIC_` twins not at all
+  (#3567). Once the row exists, editing them changes nothing (D3 on #3205).
+- **Card charges take the stored currency** (#3567): `stripe.ts` derives it from
+  the required format, and refuses one without two decimal places.
 - **The row is never seeded in SQL.** A migration cannot read a process
   environment, so inserting `NZD` would silently re-denominate a club running on
   another currency. The copy happens at boot, create-if-absent, in
@@ -491,15 +489,13 @@ home for that explanation and is not repeated here.
   `NZD` / `en-NZ`, per field, so a row with one unusable value keeps the good
   half. The last-resort constants are not an `INV-CONFIG-001` breach, for the
   reason `CLUB_TIME_ZONE_FALLBACK` is not.
-- **Validation is shape, runtime probe, then shape again on the canonicalised
-  value** — never membership of `Intl.supportedValuesOf`. Reasoning:
-  `club-format.ts`.
+- **Validation is shape, probe, shape again** — never membership of
+  `Intl.supportedValuesOf` (`club-format.ts`).
 - **Changing either re-denominates nothing.** Stored amounts stay integer cents
   worth what they were; only how one is WRITTEN follows this.
 - **Any admin reads them (#3596); changing them is Full Admin, confirmed,
   audited, and excluded from config transfer as instance-local** — a bundle
   apply is none of those things.
-- Decided on #3563, stage 1 of programme #3205 (decisions D1-D6), which hold the
-  narrative and the rejected alternatives. #3564 moved ten screens onto it,
-  #3565 every amount; dates follow in #3566. Operator guide:
+- Decided on #3563 (programme #3205), which holds the narrative; #3564-#3567
+  moved every reader onto it. Operator guide:
   [`club-format.md`](../guides/club-format.md).

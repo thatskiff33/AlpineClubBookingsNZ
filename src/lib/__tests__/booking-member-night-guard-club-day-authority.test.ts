@@ -1,3 +1,4 @@
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { BookingStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -184,7 +185,7 @@ describe("the person-night guard never reads the club's timezone (#3123)", () =>
       // read-free as the returning one.
       actorMemberId: "member-1",
       today: SUPPLIED_CLUB_DAY,
-    }).catch(() => undefined);
+    }, CLUB_FORMAT_TEST).catch(() => undefined);
 
     // The per-member advisory lock really was taken, so this is the locked path
     // and not a vacuous run through a client that skipped it.

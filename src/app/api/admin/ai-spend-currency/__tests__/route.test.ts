@@ -223,3 +223,44 @@ describe("PUT /api/admin/ai-spend-currency", () => {
     });
   });
 });
+
+describe("#3566: the rate belongs to the club's STORED currency", () => {
+  it("PUT names the stored currency in the refusal", async () => {
+    const res = await PUT(makeReq({ clubUnitsPerNzd: "abc" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("AUD");
+  });
+
+  it("re-reads the currency THROUGH the transaction, which runs Serializable", async () => {
+    await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
+    expect(mocks.transaction.mock.calls[0][1]).toEqual({
+      isolationLevel: "Serializable",
+    });
+    // Once before the transaction (module client), once inside it (the tx).
+    expect(mocks.loadAiSpendCurrency).toHaveBeenCalledTimes(2);
+    expect(mocks.loadAiSpendCurrency.mock.calls[0]).toEqual([]);
+    expect(mocks.loadAiSpendCurrency.mock.calls[1][0]).toHaveProperty(
+      "aiSpendCurrencySettings",
+    );
+  });
+
+  it("refuses with 409 and writes nothing when the currency moved under the save", async () => {
+    // Read AUD before the transaction; a club-format save committed CHF (and
+    // cleared the rate) before this transaction re-read it.
+    mocks.loadAiSpendCurrency
+      .mockResolvedValueOnce(unconfiguredAud())
+      .mockResolvedValueOnce({ ...unconfiguredAud(), clubCurrency: "CHF" });
+    const res = await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
+    expect(res.status).toBe(409);
+    expect(mocks.settingsUpsert).not.toHaveBeenCalled();
+    expect(mocks.auditCreate).not.toHaveBeenCalled();
+  });
+
+  it("answers a serialisation failure with a retryable 503", async () => {
+    mocks.transaction.mockRejectedValue(
+      Object.assign(new Error("could not serialize access"), { code: "P2034" }),
+    );
+    const res = await PUT(makeReq({ clubUnitsPerNzd: "0.92" }));
+    expect(res.status).toBe(503);
+  });
+});

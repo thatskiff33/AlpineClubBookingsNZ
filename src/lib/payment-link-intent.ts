@@ -12,7 +12,6 @@ import {
 } from "@/lib/booking-owner";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { formatCents } from "@/lib/utils";
@@ -41,6 +40,9 @@ import {
 } from "@/lib/stripe";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
+import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
+import { PAYMENT_PROCESSING_CODE, PAYMENT_PROCESSING_MESSAGE } from "@/lib/payment-recovery-contract";
 
 export type PaymentLinkPaymentRecoveryKind =
   | "payment_received_finalisation_pending"
@@ -104,6 +106,8 @@ export async function createPaymentIntentForPaymentLink(
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // #3567: refused before the link is resolved or anything is written.
+  if (chargeCurrencyRefusal(format)) throw new PaymentLinkError(UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE, 409);
   const link = await resolvePaymentLink(token);
   const booking = link.booking;
 
@@ -208,10 +212,16 @@ export async function createPaymentIntentForPaymentLink(
       }
     }
 
+    // #3567: an old-currency intent still `processing` is never superseded — its
+    // cancellation fails and a fresh intent would charge the member twice.
+    if (repaySupersededIntentId === null && intentCurrencyDiffers(existingIntent, format) && staleIntentAction(existingIntent) === "in_flight") {
+      throw new PaymentLinkError(PAYMENT_PROCESSING_MESSAGE, 409, PAYMENT_PROCESSING_CODE);
+    }
     if (
       repaySupersededIntentId === null &&
       existingIntent.status !== "canceled" &&
-      existingIntent.amount !== booking.finalPriceCents
+      // #3567: minted in another currency is superseded like a stale amount.
+      (existingIntent.amount !== booking.finalPriceCents || intentCurrencyDiffers(existingIntent, format))
     ) {
       // The booking was modified after this intent was minted (#1161): a
       // stale client_secret would capture the old total. Queue the stale
@@ -221,6 +231,7 @@ export async function createPaymentIntentForPaymentLink(
           bookingId: booking.id,
           paymentId: booking.payment.id,
           newFinalPriceCents: booking.finalPriceCents,
+          ...(intentCurrencyDiffers(existingIntent, format) ? { wrongCurrencyPaymentIntentId: existingIntent.id } : {}),
         });
       }
     } else if (
@@ -383,7 +394,6 @@ export async function createPaymentIntentForPaymentLink(
   const paymentIntent = await createPaymentIntent({
     format,
     amountCents: booking.finalPriceCents,
-    currency: APP_STRIPE_CURRENCY,
     customerId: customer.id,
     metadata: {
       bookingId: booking.id,

@@ -418,7 +418,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   exports and per-booking Xero reconciliation input carry the same state and
   ordered reasons; the Xero invoice shape and every displayed or settled amount
   are unchanged. A read-only repeatable-read census
-  (`npm run booking-money:census`) reports state/reason counts, night rows by
+  (`pnpm run booking-money:census`) reports state/reason counts, night rows by
   provenance and strands by `INV-MOD-028` verdict per booking month, and edit
   reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
   names direct headline/component writers and rejects raw-SQL or
@@ -654,6 +654,13 @@ check the others.
   `Member.lifeMemberDate` is **informational only** and is never read by any
   subscription derivation — the Life exemption is the `LIFE` membership type
   (subscriptionBehavior `NOT_REQUIRED`).
+
+- **Archived stored role-default types govern unassigned members (#3685).**
+  Booking and billing resolve the stored row by role-default key regardless of
+  active status. Billing uses its `subscriptionBehavior` and effective fee. A
+  legacy family holder's `PER_MEMBER` basis can lift suppression. Explicit
+  season assignments take precedence. Missing rows, or missing fees when
+  billing is required, produce exceptions; booking's synthetic fallback cannot bill.
 
 ## INV-MONEY-017
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, AlertTriangle, Mountain, Lock } from "lucide-react";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useClubFormat } from "@/components/club-format-provider";
 import { formatClubLongWeekdayDate, requireCalendarDate } from "@/lib/club-time";
 
 // The chore sheet names the DAY OF THE WEEK in full ("Wednesday, 15 April
@@ -30,6 +31,7 @@ interface GuestChoreData {
 }
 
 export default function GuestChorePage() {
+  const format = useClubFormat();
   const club = useClubIdentity();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<GuestChoreData | null>(null);
@@ -85,7 +87,7 @@ export default function GuestChorePage() {
   // A date-only chore night. `requireCalendarDate` rather than
   // `parseCalendarDate`: `data.date` is the `@db.Date` day this page was fetched
   // for, and there is no sensible fallback heading to show in its place.
-  const formattedDate = formatClubLongWeekdayDate(requireCalendarDate(data.date));
+  const formattedDate = formatClubLongWeekdayDate(requireCalendarDate(data.date), format);
 
   // The catch-all bucket is held by name as well as by key — it IS the array
   // under `ANYTIME`, so pushing to it is the same write — which makes the

@@ -21,6 +21,7 @@ import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
+  isPaymentProcessing,
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
@@ -173,6 +174,10 @@ export default function PayByLinkPage() {
             heading: "Card transaction found - check payment status",
             message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
           });
+          return;
+        }
+        if (res.status === 409 && isPaymentProcessing(data)) {
+          setPaymentRecovery({ heading: "Payment being processed", message: data.error });
           return;
         }
         throw new Error(data.error || "Unable to start payment");
@@ -385,8 +390,8 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatStayDay(payable.checkIn)} to{" "}
-            {formatStayDay(payable.checkOut)}
+            Dates: {formatStayDay(payable.checkIn, format)} to{" "}
+            {formatStayDay(payable.checkOut, format)}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">

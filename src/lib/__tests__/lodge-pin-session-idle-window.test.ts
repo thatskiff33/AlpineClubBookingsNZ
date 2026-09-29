@@ -895,7 +895,7 @@ describe("hut-leader PIN session: the Lock control (#3228)", () => {
   exactly three places. That is the difference between a fix and a fix somebody
   can undo by copying a pattern from the next file along.
 
-  It reads the tree from disk, so `npm run test:related` cannot select it from a
+  It reads the tree from disk, so `pnpm run test:related` cannot select it from a
   diff — which is exactly why the sites it names are also asserted behaviourally
   above.
 */

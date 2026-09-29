@@ -411,6 +411,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       formatClubInstantDate(
         requireInstant(new Date("2026-07-01T00:00:00.000Z")),
         requireClubTimeZone("America/Denver"),
+        CLUB_FORMAT_TEST,
       ),
       "This fixture no longer distinguishes a calendar-day read from an instant " +
         "one, so the assertion below cannot fail for the right reason.",

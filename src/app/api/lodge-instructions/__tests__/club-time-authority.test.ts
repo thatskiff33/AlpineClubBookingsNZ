@@ -1,4 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/**
+ * The environment's zone, PINNED (#3567 review). `TZ` is stubbed to it around
+ * every test below, so this file answers the same on a machine whose own `TZ`
+ * is anything else. It is what `APP_TIME_ZONE` fell back to before #3567
+ * deleted it, and what the seed reader answers when no zone is stored.
+ */
+const ENVIRONMENT_CLUB_ZONE = "Pacific/Auckland";
+beforeEach(() => {
+  vi.stubEnv("TZ", ENVIRONMENT_CLUB_ZONE);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 import { NextRequest } from "next/server";
 
 /**
@@ -22,22 +35,15 @@ import { NextRequest } from "next/server";
  * status-code assertion cannot tell 30 June at UTC midnight from 30 June at
  * Denver midnight, and those two are exactly the pair INV-DATE-026 is about.
  *
- * `APP_TIME_ZONE` is pinned to `Pacific/Auckland` — the answer the replaced
- * helper would have given — and the persisted zone is `America/Denver`, so the
- * two disagree about what day it is under the frozen clock. Nothing here reads
- * the host's `TZ`: the mock supplies `APP_TIME_ZONE`, and a persisted row is
- * always present so `getClubTimeZone`'s environment seed is never reached.
+ * The environment's zone (`ENVIRONMENT_CLUB_ZONE`: `TZ`, else `Pacific/Auckland`)
+ * is the answer the replaced helper would have given, and the persisted zone is
+ * `America/Denver`, so the two disagree about what day it is under the frozen
+ * clock. The environment constant this file used to pin was deleted in #3567 and
+ * nothing reads it any more; a persisted row is always present so
+ * `getClubTimeZone`'s environment seed is never reached.
  */
 
-// Inlined literals: `vi.mock` factories hoist above every const in this file.
-vi.mock("@/config/operational", () => ({
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Pacific/Auckland",
-  APP_LOCALE: "en-NZ",
-}));
-
-const ENVIRONMENT_ZONE = "Pacific/Auckland";
+const ENVIRONMENT_ZONE = ENVIRONMENT_CLUB_ZONE;
 const PERSISTED_ZONE = "America/Denver";
 
 const {
@@ -80,7 +86,6 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { clubToday, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
 import { GET } from "@/app/api/lodge-instructions/route";
 
 function todayIn(zone: string) {
@@ -119,7 +124,6 @@ describe("the hut-leader window is bounded on club time (CT-4, #2870)", () => {
   it("PREMISE: the persisted zone and the environment's give different days", () => {
     // The ANSWERS have to differ, not merely the identifiers — two zones with
     // different names and the same offset would make every case below vacuous.
-    expect(APP_TIME_ZONE).toBe(ENVIRONMENT_ZONE);
     expect(todayIn(ENVIRONMENT_ZONE)).toBe("2026-07-01");
     expect(todayIn(PERSISTED_ZONE)).toBe("2026-06-30");
   });

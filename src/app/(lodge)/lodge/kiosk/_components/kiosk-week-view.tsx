@@ -16,7 +16,9 @@ import {
   formatClubLongWeekdayDayMonth,
   formatClubWeekdayDayMonth,
   requireCalendarDate,
+  type ClubDateFormat,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 import { formatDateOnly } from "@/lib/date-only";
 
 /*
@@ -176,17 +178,17 @@ export function weekHasAccessibleDay(
   );
 }
 
-function displayDay(dateKey: string): string {
-  return formatClubLongWeekdayDayMonth(requireCalendarDate(dateKey));
+function displayDay(dateKey: string, format: ClubDateFormat): string {
+  return formatClubLongWeekdayDayMonth(requireCalendarDate(dateKey), format);
 }
 
-function displayShortDay(dateKey: string): string {
-  return formatClubWeekdayDayMonth(requireCalendarDate(dateKey));
+function displayShortDay(dateKey: string, format: ClubDateFormat): string {
+  return formatClubWeekdayDayMonth(requireCalendarDate(dateKey), format);
 }
 
-function displayWeekRange(weekStart: string): string {
+function displayWeekRange(weekStart: string, format: ClubDateFormat): string {
   const weekEnd = addDaysToDateKey(weekStart, 6);
-  return `${formatClubDayMonth(requireCalendarDate(weekStart))} - ${formatClubDate(requireCalendarDate(weekEnd))}`;
+  return `${formatClubDayMonth(requireCalendarDate(weekStart), format)} - ${formatClubDate(requireCalendarDate(weekEnd), format)}`;
 }
 
 export function KioskWeekView({
@@ -204,6 +206,7 @@ export function KioskWeekView({
   onToday,
   onRefresh,
 }: KioskWeekViewProps) {
+  const format = useClubFormat();
   const dayByDate = new Map(days.map((day) => [day.date, day]));
   const weekDays = buildWeekDateKeys(weekStart).map(
     (date) => dayByDate.get(date) ?? { date, accessible: false as const }
@@ -219,7 +222,7 @@ export function KioskWeekView({
             </p>
           )}
           <h1 className="text-2xl font-bold text-kiosk-fg">Week View</h1>
-          <p className="text-lg text-kiosk-fg">{displayWeekRange(weekStart)}</p>
+          <p className="text-lg text-kiosk-fg">{displayWeekRange(weekStart, format)}</p>
           {readOnly && (
             <p className="mt-1 text-sm font-medium text-kiosk-accent">
               Read-only view
@@ -278,10 +281,10 @@ export function KioskWeekView({
                 className={`min-h-[160px] rounded-xl border border-kiosk-border bg-kiosk-page p-4 text-kiosk-muted-fg ${
                   isToday ? "ring-2 ring-kiosk-accent/60" : ""
                 }`}
-                aria-label={`${displayDay(day.date)} outside access`}
+                aria-label={`${displayDay(day.date, format)} outside access`}
               >
                 <p className="text-sm font-semibold uppercase">
-                  {displayShortDay(day.date)}
+                  {displayShortDay(day.date, format)}
                 </p>
                 <p className="mt-8 text-sm font-medium">Outside access</p>
               </div>
@@ -300,12 +303,12 @@ export function KioskWeekView({
                   ? "border-kiosk-accent bg-kiosk-card"
                   : "border-kiosk-border bg-kiosk-card"
               } ${isToday ? "ring-2 ring-kiosk-accent ring-offset-2 ring-offset-kiosk-page" : ""}`}
-              aria-label={`Open ${displayDay(day.date)}`}
+              aria-label={`Open ${displayDay(day.date, format)}`}
             >
               <div className="flex min-h-[48px] items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold uppercase text-kiosk-fg">
-                    {displayShortDay(day.date)}
+                    {displayShortDay(day.date, format)}
                   </p>
                   {isToday && (
                     <p className="mt-1 text-xs font-semibold uppercase text-kiosk-accent">

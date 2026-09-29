@@ -59,6 +59,8 @@
  * `server-only`, for the reason recorded there.
  */
 
+import { currencyHasTwoDecimalPlaces, NO_STORED_CURRENCY } from "@/lib/club-currency-minor-unit";
+
 /**
  * The generic New Zealand defaults — used ONLY where no prior effective
  * configuration exists at all. They are distribution defaults, not an assumption
@@ -239,9 +241,24 @@ export function normaliseClubLocale(
   return canonical;
 }
 
+/**
+ * The canonical code of a currency the club can actually USE, or `null`: it
+ * normalises AND counts in hundredths (#3567 review, D3). This is the rule the
+ * resolver, the first-boot seed and the admin provenance all apply, so a stored
+ * or seeded `JPY` is "Not usable" everywhere at once: display falls back exactly
+ * as for a hand-edited `dollars` (the environment seed, then `NZD`), and the
+ * STORED code travels on the format as `unusableStoredCurrency`, so every charge
+ * is refused until it is fixed (#3567 re-review) — never made in the fallback. `normaliseClubCurrencyCode` stays the
+ * SHAPE rule, so the save route can still say which of the two a value failed.
+ */
+export function usableClubCurrencyCode(value: string | null | undefined): string | null {
+  const code = normaliseClubCurrencyCode(value);
+  return code !== null && currencyHasTwoDecimalPlaces(code) ? code : null;
+}
+
 /** True when `value` is a usable club currency code. */
 export function isValidClubCurrencyCode(value: string | null | undefined): boolean {
-  return normaliseClubCurrencyCode(value) !== null;
+  return usableClubCurrencyCode(value) !== null;
 }
 
 /** True when `value` is a usable club locale. */
@@ -255,6 +272,14 @@ export interface ClubFormat {
   currencyCode: string;
   /** BCP 47, canonical — `en-NZ`. */
   locale: string;
+  /**
+   * Set ONLY when a currency is STORED and cannot be used (a hand-edited or
+   * seeded `JPY`, a `dollars`): the raw stored code (#3567 review, D3). Display
+   * falls back — `currencyCode` is the environment seed, then `NZD`, so pages
+   * still render — but no card is charged: `stripeChargeCurrency` refuses while
+   * this is set, until an administrator saves a usable currency.
+   */
+  unusableStoredCurrency?: string;
 }
 
 /**
@@ -276,7 +301,7 @@ export interface ClubFormatCandidate {
  *
  * THE PRECEDENCE IS THE WHOLE POINT (INV-CONFIG-006, owner decision D3 on
  * #3205). A valid persisted value wins outright: once the club has configured
- * its currency, `CURRENCY` and `NEXT_PUBLIC_CURRENCY` are not a second opinion,
+ * its currency, the server's `CURRENCY` is not a second opinion,
  * and editing the container's environment cannot move the club's money. The
  * environment is read ONLY while nothing is persisted — the window between
  * `prisma migrate deploy` and the first boot of the upgraded release, which is
@@ -302,15 +327,23 @@ export function resolveClubFormat(
   persisted: ClubFormatCandidate | null | undefined,
   environment: ClubFormatCandidate | null | undefined,
 ): ClubFormat {
+  const stored = persisted?.currencyCode;
+  const storedUsable = usableClubCurrencyCode(stored);
   return {
     currencyCode:
-      normaliseClubCurrencyCode(persisted?.currencyCode) ??
-      normaliseClubCurrencyCode(environment?.currencyCode) ??
+      storedUsable ??
+      usableClubCurrencyCode(environment?.currencyCode) ??
       CLUB_CURRENCY_FALLBACK,
     locale:
       normaliseClubLocale(persisted?.locale) ??
       normaliseClubLocale(environment?.locale) ??
       CLUB_LOCALE_FALLBACK,
+    // A ROW whose currency is unusable refuses charges — blank included, since
+    // the admin panel reports that as "Not usable" too (#3567 final check). No
+    // row (`null`/`undefined`) and the environment seed never do.
+    ...(persisted != null && storedUsable === null
+      ? { unusableStoredCurrency: (stored ?? "").trim().toUpperCase().slice(0, 16) || NO_STORED_CURRENCY }
+      : {}),
   };
 }
 
@@ -322,12 +355,16 @@ export function resolveClubFormat(
  * never disagree about a value the operator is shown, sorted so the list reads
  * the same on every runtime, and unioned with `CLUB_CURRENCY_FALLBACK` so the
  * documented default is always offerable even on a runtime whose list omits it.
+ * A currency that does not count in hundredths is not offered, because saving
+ * one is refused (#3567 D3; `club-currency-minor-unit.ts`).
  */
 export function listSelectableClubCurrencyCodes(): string[] {
   const offered = new Set<string>([CLUB_CURRENCY_FALLBACK]);
   try {
     for (const code of Intl.supportedValuesOf("currency")) {
-      if (hasCurrencyCodeShape(code)) offered.add(code.toUpperCase());
+      if (hasCurrencyCodeShape(code) && currencyHasTwoDecimalPlaces(code)) {
+        offered.add(code.toUpperCase());
+      }
     }
   } catch {
     // A runtime without supportedValuesOf still offers the documented default.

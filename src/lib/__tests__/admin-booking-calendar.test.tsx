@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // The component reads router/search params from next/navigation; provide
 // minimal stand-ins so it renders outside the App Router.
@@ -464,7 +465,7 @@ describe("AdminBookingCalendar opens on the CLUB's month (CT-4, #2870)", () => {
 
   function providerFor(zone: string) {
     return function PinnedClubTime({ children }: { children: ReactNode }) {
-      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+      return <ClubTimeProvider zone={zone} locale={CLUB_FORMAT_TEST.locale}>{children}</ClubTimeProvider>;
     };
   }
 

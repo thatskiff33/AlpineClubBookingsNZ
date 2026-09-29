@@ -22,7 +22,7 @@ export type AppRole = (typeof ROLE_VALUES)[number];
  * unlisted enum value (#2383). The other direction is closed in
  * `src/lib/__tests__/member-roles.test.ts`: its
  * `expectTypeOf<Exclude<Role, AppRole>>().toBeNever()` is checked by
- * `npm run typecheck` (the test project) and fails the moment the enum grows
+ * `pnpm run typecheck` (the test project) and fails the moment the enum grows
  * past this list, and the runtime assertion beside it pins the same property
  * against the generated enum object so a stale build cannot hide it either.
  * It used to be an unreferenced type alias here; `noUnusedLocals` (#2693) has

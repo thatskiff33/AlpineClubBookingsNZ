@@ -62,6 +62,7 @@ import {
   CLUB_LOCALE_FALLBACK,
 } from "@/lib/club-format";
 import { HutFeesSection } from "../hut-fees-section";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const FULL = {
   id: "type-full",
@@ -142,7 +143,7 @@ function renderSection() {
       currencyCode={CLUB_CURRENCY_FALLBACK}
       locale={CLUB_LOCALE_FALLBACK}
     >
-      <ClubTimeProvider zone="Pacific/Auckland">
+      <ClubTimeProvider zone="Pacific/Auckland" locale={CLUB_FORMAT_TEST.locale}>
         <HutFeesSection canEdit={true} />
       </ClubTimeProvider>
     </ClubFormatProvider>,

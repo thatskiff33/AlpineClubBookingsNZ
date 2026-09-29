@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The out-of-band `npm run config:self-heal` entrypoint
+ * The out-of-band `pnpm run config:self-heal` entrypoint
  * (`scripts/config-self-heal.ts`).
  *
  * Its whole job is to tell an operator what happened, so the behaviour worth

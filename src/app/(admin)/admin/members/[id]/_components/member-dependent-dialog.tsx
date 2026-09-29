@@ -32,6 +32,7 @@ import {
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers";
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
+import { useClubFormat } from "@/components/club-format-provider";
 import {
   DEPENDENT_PARENT_CREATE_ERRORS,
   DEPENDENT_PARENT_LINK_ERRORS,
@@ -137,6 +138,7 @@ export function MemberDependentDialog({
   onToggleLinkFamilyGroup,
   onSubmitLink,
 }: MemberDependentDialogProps) {
+  const format = useClubFormat();
   const { showTitle, showGender } = useMemberFieldsSettings();
   // #2282: the dialog states the block for ITSELF rather than trusting that the
   // button which opened it was disabled. The two tabs are two endpoints with
@@ -490,7 +492,7 @@ export function MemberDependentDialog({
                       <p className="mt-1 text-xs text-muted-foreground">
                         {linkSelected.canLogin ? "Can login" : "Non-login"}
                         {linkSelected.dateOfBirth
-                          ? ` · DOB ${formatPayloadCalendarDay(linkSelected.dateOfBirth)}`
+                          ? ` · DOB ${formatPayloadCalendarDay(linkSelected.dateOfBirth, format)}`
                           : ""}
                       </p>
                     </div>

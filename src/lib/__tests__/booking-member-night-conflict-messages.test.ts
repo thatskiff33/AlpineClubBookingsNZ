@@ -8,6 +8,7 @@ import {
   type BookingMemberNightConflictCopyInput,
 } from "@/lib/booking-member-night-conflict-messages";
 import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 // #2250 — the already-booked copy must say WHO is already booked, WHICH nights,
 // and WHAT to do next, without telling a viewer about a booking they are not
@@ -31,7 +32,7 @@ function conflict(
 
 describe("buildBookingMemberNightConflictMessage", () => {
   it("names the person, the nights, and what to do about somebody else's booking", () => {
-    const message = buildBookingMemberNightConflictMessage([conflict()]);
+    const message = buildBookingMemberNightConflictMessage([conflict()], CLUB_FORMAT_TEST);
 
     expect(message).toContain("Alice Smith");
     expect(message).toContain("1 Jun 2026 and 2 Jun 2026");
@@ -52,11 +53,11 @@ describe("buildBookingMemberNightConflictMessage", () => {
         canOpenBooking: true,
       }),
     ]) {
-      expect(buildBookingMemberNightConflictMessage([viewer])).not.toContain(
+      expect(buildBookingMemberNightConflictMessage([viewer], CLUB_FORMAT_TEST)).not.toContain(
         "choose different dates",
       );
       expect(
-        buildBookingMemberNightConflictMessage([viewer], {
+        buildBookingMemberNightConflictMessage([viewer], CLUB_FORMAT_TEST, {
           canChooseDifferentDates: true,
         }),
       ).toContain("choose different dates");
@@ -69,11 +70,11 @@ describe("buildBookingMemberNightConflictMessage", () => {
       conflict({ memberName: "Cara Lee", conflictingNights: ["2026-06-01"] }),
     ];
 
-    expect(buildBookingMemberNightConflictMessage(conflicts)).not.toContain(
+    expect(buildBookingMemberNightConflictMessage(conflicts, CLUB_FORMAT_TEST)).not.toContain(
       "choose different dates",
     );
     expect(
-      buildBookingMemberNightConflictMessage(conflicts, {
+      buildBookingMemberNightConflictMessage(conflicts, CLUB_FORMAT_TEST, {
         canChooseDifferentDates: true,
       }),
     ).toContain("choose different dates");
@@ -82,7 +83,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
   it("addresses the member in the second person when they can take themselves off", () => {
     const message = buildBookingMemberNightConflictMessage([
       conflict({ canSelfRemove: true, isSelfGuest: true, canOpenBooking: true }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain("You are already on another booking");
     expect(message).toContain("1 Jun 2026 and 2 Jun 2026");
@@ -101,7 +102,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
         canOpenBooking: true,
         canSelfRemove: false,
       }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain("You are already on another booking");
     expect(message).not.toContain("Alice Smith");
@@ -113,7 +114,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
     // member — "you" would be wrong.
     const message = buildBookingMemberNightConflictMessage([
       conflict({ isOwnBooking: true, canOpenBooking: true }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain("Alice Smith is already on a booking");
     expect(message).toContain("Open that booking and change it");
@@ -123,7 +124,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
     const message = buildBookingMemberNightConflictMessage([
       conflict({ conflictingNights: ["2026-06-02"] }),
       conflict({ memberName: "Cara Lee", conflictingNights: ["2026-06-01"] }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain("Alice Smith and Cara Lee are already");
     expect(message).toContain("1 Jun 2026 and 2 Jun 2026");
@@ -137,7 +138,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
     const message = buildBookingMemberNightConflictMessage([
       conflict({ conflictingNights: ["2026-06-01"] }),
       conflict({ conflictingNights: ["2026-06-05"] }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain(
       "Alice Smith is already on other bookings for 1 Jun 2026 and 5 Jun 2026.",
@@ -150,7 +151,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
     const own = buildBookingMemberNightConflictMessage([
       conflict({ conflictingNights: ["2026-06-01"], isSelfGuest: true }),
       conflict({ conflictingNights: ["2026-06-05"], isSelfGuest: true }),
-    ]);
+    ], CLUB_FORMAT_TEST);
     expect(own).toBe(
       "You are already on other bookings for 1 Jun 2026 and 5 Jun 2026. " +
         "Nobody can be on two bookings for the same night, so somebody has to come off one of the bookings.",
@@ -159,7 +160,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
     const mixed = buildBookingMemberNightConflictMessage([
       conflict({ conflictingNights: ["2026-06-01"], isSelfGuest: true }),
       conflict({ memberName: "Cara Lee", conflictingNights: ["2026-06-05"] }),
-    ]);
+    ], CLUB_FORMAT_TEST);
     expect(mixed).toContain("You and Cara Lee are already on other bookings");
   });
 
@@ -174,7 +175,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
           "2026-06-05",
         ],
       }),
-    ]);
+    ], CLUB_FORMAT_TEST);
 
     expect(message).toContain(
       "1 Jun 2026, 2 Jun 2026, 3 Jun 2026 and 2 more nights",
@@ -187,7 +188,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
       conflict({ canSelfRemove: true, isSelfGuest: true, canOpenBooking: true }),
       conflict({ isOwnBooking: true, canOpenBooking: true }),
     ]) {
-      const message = buildBookingMemberNightConflictMessage([viewer]);
+      const message = buildBookingMemberNightConflictMessage([viewer], CLUB_FORMAT_TEST);
       // The summary is composed only from what the requester already supplied:
       // the member they tried to book and the nights they chose.
       expect(message).not.toContain("Bob Jones");
@@ -196,7 +197,7 @@ describe("buildBookingMemberNightConflictMessage", () => {
   });
 
   it("stays useful with an empty conflict list", () => {
-    expect(buildBookingMemberNightConflictMessage([])).toContain(
+    expect(buildBookingMemberNightConflictMessage([], CLUB_FORMAT_TEST)).toContain(
       "already booked",
     );
   });
@@ -206,7 +207,7 @@ describe("buildBookingMemberNightConflictSummary", () => {
   it("states the situation without the next step, so the wizard banner does not repeat its own card", () => {
     // use-booking-wizard sets the banner from this while the per-conflict card
     // underneath renders describeBookingMemberNightConflictNextStep itself.
-    const summary = buildBookingMemberNightConflictSummary([conflict()]);
+    const summary = buildBookingMemberNightConflictSummary([conflict()], CLUB_FORMAT_TEST);
 
     expect(summary).toBe(
       "Alice Smith is already on a booking for 1 Jun 2026 and 2 Jun 2026.",
@@ -214,7 +215,7 @@ describe("buildBookingMemberNightConflictSummary", () => {
     expect(summary).not.toContain("Ask whoever made that booking");
     expect(summary).not.toContain("choose different dates");
     expect(
-      buildBookingMemberNightConflictMessage([conflict()]).startsWith(summary),
+      buildBookingMemberNightConflictMessage([conflict()], CLUB_FORMAT_TEST).startsWith(summary),
     ).toBe(true);
   });
 });
@@ -243,21 +244,22 @@ describe("describeBookingMemberNightConflictBooking", () => {
 
 describe("describeBookingMemberNightConflictNights", () => {
   it("renders date-only nights as club dates, never a browser-local timestamp", () => {
-    expect(describeBookingMemberNightConflictNights(conflict())).toBe(
+    expect(describeBookingMemberNightConflictNights(conflict(), CLUB_FORMAT_TEST)).toBe(
       "Already on a booking for 1 Jun 2026 and 2 Jun 2026.",
     );
     expect(
       describeBookingMemberNightConflictNights(
         conflict({ conflictingNights: ["2026-12-25"], isSelfGuest: true }),
+        CLUB_FORMAT_TEST,
       ),
     ).toBe("Already on another booking for 25 Dec 2026.");
   });
 
   it("formats nights with the shared kernel helper rather than its own month table", () => {
     /*
-      `formatClubDate` follows `APP_LOCALE`, which is configurable, so a
-      hardcoded English month list would silently stop matching every other date
-      on the page under a different locale.
+      `formatClubDate` follows the club's recorded locale, which is configurable,
+      so a hardcoded English month list would silently stop matching every other
+      date on the page under a different locale.
 
       THE ORACLE IS THE CALENDAR-DAY FORMATTER, AND THE CHOICE IS THE POINT.
       This case used to build its expectation with
@@ -277,8 +279,9 @@ describe("describeBookingMemberNightConflictNights", () => {
       expect(
         describeBookingMemberNightConflictNights(
           conflict({ conflictingNights: [night] }),
+          CLUB_FORMAT_TEST,
         ),
-      ).toBe(`Already on a booking for ${formatClubDate(requireCalendarDate(night))}.`);
+      ).toBe(`Already on a booking for ${formatClubDate(requireCalendarDate(night), CLUB_FORMAT_TEST)}.`);
     }
   });
 
@@ -286,11 +289,13 @@ describe("describeBookingMemberNightConflictNights", () => {
     expect(
       describeBookingMemberNightConflictNights(
         conflict({ conflictingNights: [] }),
+        CLUB_FORMAT_TEST,
       ),
     ).toContain("the nights you chose");
     expect(
       describeBookingMemberNightConflictNights(
         conflict({ conflictingNights: ["not-a-date"] }),
+        CLUB_FORMAT_TEST,
       ),
     ).toContain("not-a-date");
   });

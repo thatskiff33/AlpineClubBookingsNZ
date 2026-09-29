@@ -2,17 +2,17 @@
 /**
  * Fail-closed wrapper for running vitest suites by explicit path (#3120).
  *
- * `npx vitest run <path1> <path2>` silently DROPS a path that matches no test
+ * `pnpm exec vitest run <path1> <path2>` silently DROPS a path that matches no test
  * file as long as at least one other named path matches — it still exits 0
  * and reports a "passed" count with nothing in the output naming what was
  * skipped. Measured on vitest 4.1.10:
  *
- *   npx vitest run real.test.ts DOES-NOT-EXIST.test.ts
+ *   pnpm exec vitest run real.test.ts DOES-NOT-EXIST.test.ts
  *   -> Test Files  1 passed (1)
  *   -> exit 0
  *
  * `AGENTS.md` requires a lane to run disk-scanning census/contract suites by
- * name, precisely because `npm run test:related` cannot reach them through
+ * name, precisely because `pnpm run test:related` cannot reach them through
  * the module graph. That is exactly the invocation shape this vitest defect
  * corrupts: a mistyped, renamed, or stale path is silently skipped and the
  * lane reports a count that looks correct and is not (found on epic #2988,
@@ -33,7 +33,7 @@
  * opposite of fail-closed.
  *
  * Usage:
- *   npm run test:named -- <path> [<path> ...]
+ *   pnpm run test:named <path> [<path> ...]
  *   node scripts/run-named-tests.mjs <path> [<path> ...]
  *
  * Exit codes: 1 for a bad invocation or a refused (unresolved-path) run, and
@@ -50,7 +50,7 @@ const require = createRequire(import.meta.url);
 
 /**
  * Resolve vitest's own CLI entry script and run it with `process.execPath`,
- * rather than shelling out to `npx vitest` or `node_modules/.bin/vitest`.
+ * rather than shelling out to `pnpm exec vitest` or `node_modules/.bin/vitest`.
  * Spawning the `.cmd` shim without a shell fails on Windows with
  * `spawnSync ...vitest.cmd EINVAL` (Node's .cmd/.bat spawn restriction), and
  * `shell: true` would then need argument quoting to be right on both
@@ -82,7 +82,7 @@ const paths = process.argv.slice(2);
 if (paths.length === 0) {
   fail([
     "usage: node scripts/run-named-tests.mjs <path> [<path> ...]",
-    "  (or: npm run test:named -- <path> [<path> ...])",
+    "  (or: pnpm run test:named <path> [<path> ...])",
   ]);
 }
 

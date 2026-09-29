@@ -561,10 +561,12 @@ export default async function DashboardPage() {
               <div className="text-lg font-semibold">
                 {formatClubDayMonth(
                   calendarDateOfDateOnlyInstant(nextStay.checkIn),
+                  club.format,
                 )}
                 {" — "}
                 {formatClubDayMonth(
                   calendarDateOfDateOnlyInstant(nextStay.checkOut),
+                  club.format,
                 )}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -647,7 +649,7 @@ export default async function DashboardPage() {
                     className="flex items-baseline gap-2 text-sm"
                   >
                     <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">
-                      {formatClubDayMonth(club.calendarDateOf(event.startsAt))}
+                      {formatClubDayMonth(club.calendarDateOf(event.startsAt), club.format)}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-foreground">
                       {event.title}
@@ -861,10 +863,12 @@ export default async function DashboardPage() {
                       <p className="font-medium text-sm">
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkIn),
+                          club.format,
                         )}
                         {" — "}
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkOut),
+                          club.format,
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">
@@ -876,6 +880,7 @@ export default async function DashboardPage() {
                             Expires{" "}
                             {formatClubDayMonth(
                               club.calendarDateOf(booking.draftExpiresAt),
+                              club.format,
                             )}
                           </span>
                         )}
@@ -954,10 +959,12 @@ export default async function DashboardPage() {
                       <p className="font-medium text-sm">
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkIn),
+                          club.format,
                         )}
                         {" — "}
                         {formatClubDate(
                           calendarDateOfDateOnlyInstant(booking.checkOut),
+                          club.format,
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">

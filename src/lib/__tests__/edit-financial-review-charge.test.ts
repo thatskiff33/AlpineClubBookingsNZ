@@ -61,6 +61,9 @@ const mocks = vi.hoisted(() => ({
   enqueueAdditionalPaymentIntentRecovery: vi.fn(),
   createModificationAdditionalPaymentIntent: vi.fn(),
   updatePaymentIntentAmount: vi.fn(),
+  // #3567: the raise first asks whether the intent is in another currency.
+  getPaymentIntent: vi.fn(),
+  reissueRaisedAskIfCurrencyChanged: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -73,6 +76,10 @@ vi.mock("@/lib/booking-ledger-hand-back", () => ({
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/additional-intent-currency", () => ({
+  reissueRaisedAskIfCurrencyChanged: (...a: unknown[]) =>
+    mocks.reissueRaisedAskIfCurrencyChanged(...a),
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -920,7 +927,8 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
 
   beforeEach(() => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(secondShareTask());
-    // The first share's request, still unpaid.
+    // The first share's request, still unpaid, in the club's own currency.
+    mocks.reissueRaisedAskIfCurrencyChanged.mockResolvedValue(null);
     mocks.paymentTransactionFindFirst.mockResolvedValue(chargeRequestRow());
     // Both shares are settled by the time the second's post-commit sync reads.
     mocks.manualRefundTaskFindMany.mockResolvedValue([
@@ -947,6 +955,24 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     expect(
       mocks.createModificationAdditionalPaymentIntent,
     ).not.toHaveBeenCalled();
+  });
+
+  it("re-issues the raised ask in the club's currency when the request was minted in another (#3567)", async () => {
+    // The first share's intent was minted in AUD; the club now charges in NZD.
+    // Raising it would ask for more in AUD, so it is re-issued, never raised.
+    mocks.reissueRaisedAskIfCurrencyChanged.mockResolvedValue("pi_reissued");
+
+    const result = await settleSecondShare();
+
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(mocks.reissueRaisedAskIfCurrencyChanged).toHaveBeenCalledTimes(1);
+    const [call] = mocks.reissueRaisedAskIfCurrencyChanged.mock.calls[0] as [
+      { staleIntentId: string; ask: { amountCents: number; carriedCents: number }; reason: string },
+    ];
+    expect(call.staleIntentId).toBe("pi_additional_1");
+    // Shares plus whatever the first mint carried — the raise's own figure.
+    expect(call.ask.amountCents).toBe(23000);
+    expect(result.additionalPaymentIntentId).toBe("pi_reissued");
   });
 
   it("the payment's outstanding additional is rewritten to the total, on the same row", async () => {

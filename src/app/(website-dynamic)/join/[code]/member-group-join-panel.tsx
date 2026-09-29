@@ -26,7 +26,9 @@ import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseInstant,
+  type ClubDateFormat,
 } from "@/lib/club-time";
+import { useClubFormat } from "@/components/club-format-provider";
 
 /**
  * One stay night, or the join deadline, rendered as the CALENDAR DAY it is
@@ -53,7 +55,7 @@ import {
  * not the string "Invalid Date", which only `toLocaleDateString` produces — so
  * this fallback is a FIX rather than a preserved behaviour.
  */
-function formatStayDay(value: string): string {
+function formatStayDay(value: string, format: ClubDateFormat): string {
   // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
   // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
   // `TypeError` out of the guard that exists to stop a throw. The premise above
@@ -63,7 +65,7 @@ function formatStayDay(value: string): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
   } catch {
     return value;
   }
@@ -105,6 +107,7 @@ export function MemberGroupJoinPanel({
 }: {
   code: string;
 }) {
+  const format = useClubFormat();
   const router = useRouter();
 
   const [summary, setSummary] = useState<GroupSummary | null>(null);
@@ -294,7 +297,7 @@ export function MemberGroupJoinPanel({
             Join {summary.organiserFirstName}&apos;s group at {summary.lodgeName}
           </CardTitle>
           <CardDescription>
-            {formatStayDay(summary.checkIn)} to {formatStayDay(summary.checkOut)}
+            {formatStayDay(summary.checkIn, format)} to {formatStayDay(summary.checkOut, format)}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -304,7 +307,7 @@ export function MemberGroupJoinPanel({
               <p>
                 This group is no longer accepting new joiners
                 {summary.joinDeadline
-                  ? ` (the deadline was ${formatStayDay(summary.joinDeadline)})`
+                  ? ` (the deadline was ${formatStayDay(summary.joinDeadline, format)})`
                   : ""}
                 . Please contact the organiser if you think this is a mistake.
               </p>

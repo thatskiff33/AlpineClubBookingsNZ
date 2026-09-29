@@ -117,11 +117,10 @@ optional, and the compiler can. `club-format-kernel.test.ts` pins that with a
 `@ts-expect-error` per rendering, which turns a re-added optional parameter into
 an "unused directive" compile error under `tsc -p tsconfig.test.json`.
 
-**This stage is money only**, by the owner's decision on #3565: every currency
-amount, percentage and count. The DATE locale — `club-time/intl.ts`,
-`induction-display.ts` and the stuck-states page, which still read `APP_LOCALE`
-— is [#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566)'s
-to move, and nothing here touches it.
+**Stage 3 was money only**, by the owner's decision on #3565: every currency
+amount, percentage and count. The DATE locale moved in stage 4
+([#3566](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3566)) —
+see "Dates take the same format" below.
 
 The rules that make a required argument bearable, and that every call site now
 follows:
@@ -146,12 +145,90 @@ follows:
 
 A club on the shipped New Zealand defaults sees byte-identical output on every
 surface, including email bodies and the text written to Xero, which
-`club-format-kernel.test.ts` proves against the retired module constants and the
-email and Xero suites prove on their rendered output. `APP_CURRENCY` /
-`APP_LOCALE` remain only as the seed-only environment reading `resolveClubFormat`
-falls back to when nothing is persisted; #3567 retires them.
+`club-format-kernel.test.ts` proves against fixed `NZD` / `en-NZ` values with
+literal expected strings, and the email and Xero suites prove on their rendered
+output. The environment is only the seed `resolveClubFormat` falls back to
+while nothing is persisted (`club-format-env.ts`, reading `CURRENCY` / `LOCALE`
+alone). #3567 deleted `src/config/operational.ts` and its `APP_CURRENCY` /
+`APP_LOCALE` / `APP_STRIPE_CURRENCY` / `APP_TIME_ZONE` constants.
+
+## Card charges take the same format (#3567)
+
+`createPaymentIntent` and `chargePaymentMethod` in `stripe.ts` have no
+`currency` argument: `stripeChargeCurrency(format)` works the charge currency
+out from the club format both already require, so what a member is shown and
+what their card is charged cannot come from two places. It refuses a currency
+that does not count in hundredths (`club-currency-minor-unit.ts`, the one home
+of that rule, which the save route and the currency selector use too), because
+every amount here is an integer of hundredths and Stripe reads `amount` in the
+currency's own smallest unit. A refund row records Stripe's own currency;
+`PaymentRefund.currency` has had no default since migration 20261012010000.
+
+## Dates take the same format (#3566)
+
+Stage 4 made the club-time kernel's date renderings take the club's format the
+same way money does, by the owner's decision of 25 Sep 2026. Every exported
+rendering in `club-time/format.ts` ends in a **required** `format:
+ClubDateFormat` — `Pick<ClubFormat, "locale">`, so any `ClubFormat` satisfies
+it and a date does not depend on the currency — and `club-time/intl.ts` no
+longer imports `APP_LOCALE`. `house-shapes.test.ts` carries one
+`@ts-expect-error` per rendering, the same TS2578 lock as above.
+
+- **Bound calls did not change.** `bindClubTime(zone, format)` closes over
+  both, and `clubTime()` binds the persisted zone with `clubFormatValues()` —
+  the same memo the money kernel and the providers read — so
+  `clubTime.instantDate(x)` and friends take neither. `BoundClubTime.format`
+  hands the locale to the zone-free calendar renderings.
+- **In the browser**, `ClubTimeProvider` takes a required `locale` prop beside
+  `zone`, the value `ClubFormatProvider` receives. A prop rather than an internal
+  `useClubFormat()` read because the root-404 embeds mount it outside both
+  chromes, where no `ClubFormatProvider` exists.
+- **Emails** read the locale from the same boot-primed cache that gives them
+  the club's zone (`email-templates-club-time.ts`, owner decision 2), so their
+  date calls are unchanged. `/api/admin/club-format` re-primes that cache after
+  its save commits, so the process that took the save follows at once; another
+  running process (a blue/green twin) refreshes on the first read after its
+  five-minute TTL, and serves the old locale to that one read. The compiler does
+  not check this path — the render pins and the seam's own tests do.
+- **The projection formatters stay `en-US`.** `clubZoneParts` and
+  `clubZoneDateString` parse their parts back into numbers, and a club locale
+  with non-Latin digits would break that; they render nothing a person reads.
+- **The memo is keyed on the locale too** — `display|locale|zone|shape` — so the
+  first locale asked for cannot win for the life of the process.
+
+The AI spend conversion takes the club's STORED currency on the same terms
+(`loadAiSpendCurrency(clubCurrency, db?)`); its price table stays in NZD, the
+currency it is written in. A currency change clears the stored rate in the
+club-format route's own transaction, because the rate records no currency.
 
 ## Adding a new rendering
+
+Operator-facing Xero repair sentences are rendering surfaces too. The
+`CENTS_IN_PROSE_RESTRICTIONS` lint group in `eslint.config.mjs` refuses both
+`${amountCents} cents` and `${amountCents}c`; the bounded
+`operator-cents-message-census.test.ts` also catches bare cent-valued
+interpolations in the four original Xero repair paths plus the legacy applied-
+credit repair helper and rate-derived night-price backfill report covered by
+#3589. Its bounded identifier roster includes cent-valued aliases such as
+`existingTotal` and `upperBound`; a new alias needs classification and a census
+test, because a name without `Cents` or a literal suffix cannot be inferred as
+money from template syntax alone. Numeric payloads stay in integer cents. The
+report script resolves the club format before planning or applying; booking
+cancellation, edit, and cron callers pass their pre-lock format into the legacy
+repair helper rather than
+reading club settings inside a transaction. Because a bare interpolation has no
+distinctive suffix, this census is deliberately scoped to those message sources
+and must be extended when another operator repair message is added. The
+rounding-drift diagnostic deliberately pairs formatted currency with signed
+raw-cent drift; only its direct formatter return in
+`xero-invoice-rounding-audit.ts` has a file-scoped c-suffix lint exception, pinned
+by the guard test. It is not a general exemption for Xero reports.
+
+These repair messages use the club's current display format. The booking and
+credit amounts read by these repair paths do not carry a currency per amount,
+so a formatted repair message is not proof of the original document's currency
+after a club currency change; reconcile that from the source records. This
+presentation rule does not change stored cents or provider amounts.
 
 Declare the shape in `club-format-intl.ts` beside the others and expose it from
 the module the callers already import. **Never construct another

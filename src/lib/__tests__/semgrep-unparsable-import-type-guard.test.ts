@@ -14,7 +14,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
  * this rule is what removes the growth at source, which is the structural fix
  * `INV-SSOT-001` prefers over catching each new entry afterwards.
  *
- * WHY THIS SUITE EXISTS, given the rule already runs in `npm run lint`. Lint
+ * WHY THIS SUITE EXISTS, given the rule already runs in `pnpm run lint`. Lint
  * proves the tree is clean TODAY. It cannot prove the rule would object to the
  * spelling nobody has written yet, and that is the whole property being bought —
  * the allowlist grew four separate times while #2842 was in flight, three of
@@ -690,10 +690,10 @@ describe("#3345: the rule carries no per-file escape", () => {
   it("has no eslint-disable naming it anywhere in the tree", async () => {
     // `eslint.config.mjs` grants no allowlist and no exemption block, and until
     // #3345 that was the whole claim. An inline ESLint disable directive naming
-    // this rule is exactly such an escape: `npm run lint` is bare `eslint` and
+    // this rule is exactly such an escape: `pnpm run lint` is bare `eslint` and
     // `noInlineConfig` is not set, and 37 files already carry directives for
     // other rules. This is the #2685 money-guard census applied to the same
-    // hole — and `npm run lint` reports an unused directive, so a stale one
+    // hole — and `pnpm run lint` reports an unused directive, so a stale one
     // cannot hide here either.
     //
     // The residual it closes is asymmetric, which is why it is worth a test. For
@@ -799,7 +799,7 @@ describe("#3318: the rule reaches every surface Semgrep scans", () => {
       const level = Array.isArray(severity) ? severity[0] : severity;
       if (level !== 2 && level !== "error") {
         problems.push(
-          `${entry.file} (${entry.why}): severity is ${JSON.stringify(level)}, not error. \`npm run lint\` runs bare \`eslint\` with no --max-warnings, so a warning blocks nothing.`,
+          `${entry.file} (${entry.why}): severity is ${JSON.stringify(level)}, not error. \`pnpm run lint\` runs bare \`eslint\` with no --max-warnings, so a warning blocks nothing.`,
         );
       }
     }

@@ -39,7 +39,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  *     promotion writer, or it is named below with the reason it records
  *     nothing. A new night writer fails this census until it says which.
  *
- * `npm run test:related` cannot select this file — it reads the tree from disk —
+ * `pnpm run test:related` cannot select this file — it reads the tree from disk —
  * so it is CI-caught by design, like the stage-1 census.
  */
 

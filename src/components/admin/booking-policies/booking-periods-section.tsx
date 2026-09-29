@@ -34,6 +34,7 @@ import {
   type PeriodDraft,
 } from "./booking-period-draft"
 import { formatStayDateOrNull } from "@/lib/club-time"
+import { useClubFormat } from "@/components/club-format-provider"
 import type { BookingPeriod, PolicyRule } from "./types"
 
 function PeriodForm({
@@ -188,6 +189,7 @@ function PeriodForm({
 }
 
 export function BookingPeriodsSection() {
+  const format = useClubFormat()
   // Booking-policy config gates on the bookings area (its write route enforces
   // bookings:edit); a bookings:view admin sees it read-only (#1940).
   const canEdit = useAdminAreaEditAccess("bookings")
@@ -595,8 +597,8 @@ export function BookingPeriodsSection() {
                               </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {formatStayDateOrNull(period.startDate) ?? period.startDate} &mdash;{" "}
-                              {formatStayDateOrNull(period.endDate) ?? period.endDate}
+                              {formatStayDateOrNull(period.startDate, format) ?? period.startDate} &mdash;{" "}
+                              {formatStayDateOrNull(period.endDate, format) ?? period.endDate}
                               <span className="ml-3">
                                 Non-member hold:{" "}
                                 <strong>

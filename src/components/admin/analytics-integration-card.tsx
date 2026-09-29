@@ -34,7 +34,7 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 // `analytics-settings-shared`, never `analytics-settings`: the latter is
-// `server-only`, and importing a VALUE from it here fails `npm run build` with
+// `server-only`, and importing a VALUE from it here fails `pnpm run build` with
 // "'server-only' cannot be imported from a Client Component module" — and fails
 // `client-server-boundary-census.test.ts` first, in the REQUIRED `verify` check.
 import {
