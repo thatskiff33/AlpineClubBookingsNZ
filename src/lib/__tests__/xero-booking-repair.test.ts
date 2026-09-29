@@ -619,6 +619,10 @@ function createDependencies(state: {
     getPaymentIntent: vi.fn().mockResolvedValue({ status: "canceled" }),
     markPaymentIntentTransactionFailed,
     refundPaymentTransactions,
+    // #3635 C2: the repaired late-capture refund's record and per-capture note.
+    recordAndNoteRepairedLateCaptureRefunds: vi
+      .fn()
+      .mockResolvedValue({ noted: [], byHand: [], notInXero: [] }),
   };
 }
 
@@ -4523,8 +4527,8 @@ describe("runBookingXeroRepair", () => {
       });
 
     // First run: force the full 13000 late-capture refund. The older slice
-    // fails, so the action fails — but the 6000 that refunded and recorded must
-    // still get its Xero refund credit note.
+    // fails, so the action fails — but the 6000 that refunded must still be
+    // recorded and noted (#3635 C2: per capture, never payment-wide).
     const firstReport = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       apply: true,
       applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
@@ -4535,10 +4539,13 @@ describe("runBookingXeroRepair", () => {
     expect(deps.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_1", amountCents: 13000 })
     );
-    expect(deps.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "payment_1",
-      6000
-    );
+    expect(deps.recordAndNoteRepairedLateCaptureRefunds).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      refunds: [
+        { paymentIntentId: "pi_newer_slice", refundId: "re_pi_newer_slice", amountCents: 6000 },
+      ],
+    });
 
     const firstRunActions = firstReport.passes.flatMap((pass) =>
       pass.bookings.flatMap((bookingReport) => bookingReport.actions)
@@ -4561,20 +4568,26 @@ describe("runBookingXeroRepair", () => {
     expect(deps.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_1", amountCents: 7000 })
     );
-    expect(deps.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-      "payment_1",
-      7000
+    // Each capture is recorded and noted once: the completed 6000 slice, then
+    // the 7000 remainder, and never the full 13000 (#3635 C2).
+    const recorded = (
+      deps.recordAndNoteRepairedLateCaptureRefunds as ReturnType<typeof vi.fn>
+    ).mock.calls.map(([args]) =>
+      (args as { refunds: { paymentIntentId: string; amountCents: number }[] }).refunds.map(
+        (refund) => [refund.paymentIntentId, refund.amountCents]
+      )
     );
-
-    // No double-noting: exactly the completed 6000 then the 7000 remainder,
-    // and never the full 13000.
-    const refundNoteAmounts = (
-      deps.enqueueXeroRefundCreditNoteOperation as ReturnType<typeof vi.fn>
-    ).mock.calls
-      .filter((call) => call[0] === "payment_1")
-      .map((call) => call[1]);
-    expect(refundNoteAmounts).toEqual([6000, 7000]);
-    expect(refundNoteAmounts).not.toContain(13000);
+    expect(recorded).toEqual([[["pi_newer_slice", 6000]], [["pi_older_slice", 7000]]]);
+    // The late-capture arm's payment-wide note, which named the cleared
+    // invoice, is never raised for either slice. (The classifier's separate
+    // missing-refund-note arm may still ask for the payment's whole refunded
+    // total; the real enqueue caps that at the note-eligible cash, which
+    // leaves a recorded late capture out.)
+    expect(
+      (deps.enqueueXeroRefundCreditNoteOperation as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call) => call[0] === "payment_1" && (call[1] === 6000 || call[1] === 7000)
+      )
+    ).toEqual([]);
 
     // The remainder refund succeeded and the payment is fully refunded.
     expect(booking.payment.status).toBe("REFUNDED");
