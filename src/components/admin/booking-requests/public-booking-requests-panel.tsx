@@ -362,6 +362,7 @@ function statusBadgeClass(status: PublicBookingRequestData["status"]) {
     status === "PRICED" ||
     status === "QUOTED" ||
     status === "QUOTE_SENT" ||
+    status === "ACCEPTED" ||
     status === "QUERY_PENDING" ||
     status === "MODIFICATION_REQUESTED"
   ) return "border-warning-6 bg-warning-3 text-warning-11";
@@ -2444,7 +2445,8 @@ export function PublicBookingRequestsPanel({
                             actionsBlocked ||
                             (!memberWholeLodge &&
                               request.type !== "SCHOOL" &&
-                              request.status !== "PRICED") ||
+                              request.status !== "PRICED" &&
+                              request.status !== "ACCEPTED") ||
                             misplacedSchoolLinkOnApprove(request) !== null
                           }
                         >
@@ -2562,6 +2564,22 @@ export function PublicBookingRequestsPanel({
                       ) : null}
                     </div>
                     ) : null
+                  ) : null}
+
+                  {request.status === "ACCEPTED" ? (
+                    <div className="space-y-3 rounded-md border border-warning-6 bg-warning-3/30 p-3">
+                      <p className="text-sm text-warning-11">
+                        The requester accepted this quote. Review the accepted price and request details, then approve or decline it. Quote editing and contact changes are locked after acceptance.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => handleApprove(request)} disabled={actionsBlocked || misplacedSchoolLinkOnApprove(request) !== null}>
+                          {request.type === "SCHOOL" ? "Approve & invoice school" : "Approve & send payment link"}
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => openDeclineChoice(request)} disabled={isActioning}>
+                          Decline
+                        </Button>
+                      </div>
+                    </div>
                   ) : null}
 
                   {request.status === "DECLINED" ? (

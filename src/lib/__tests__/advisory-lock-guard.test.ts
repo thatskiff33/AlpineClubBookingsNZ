@@ -497,6 +497,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "respondToBookingRequestQuote#3",
+    tier: "GLOBAL",
+    reason:
+      "A requester modify or query can race quote acceptance. It re-reads and claims the same SENT/QUOTE_SENT pair under the global lifecycle key, so it cannot overwrite ACCEPTED or cause the stale-hold cron to release an accepted booking.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "approveBookingRequest#1",
     tier: "GLOBAL",
     reason:

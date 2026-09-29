@@ -337,6 +337,22 @@ describe("setup-readiness", () => {
     expect(readiness.status).toBe("warning");
   });
 
+  it("points a key-resolved membership type warning to its repair screen", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        keyResolvedRateHolderWarnings: ["Full (FULL) is archived; Reactivate it."],
+      },
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const check = findStep(readiness, "key-rate-holders");
+    expect(check?.status).toBe("warning");
+    expect(check?.href).toBe("/admin/membership-types");
+    expect(check?.details).toContain("Full (FULL) is archived; Reactivate it.");
+  });
+
   it("warns when the public hut-fees embed would show fewer than two rate columns (#2129)", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,
