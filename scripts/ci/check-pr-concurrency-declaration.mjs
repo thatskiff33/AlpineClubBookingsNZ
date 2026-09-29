@@ -27,6 +27,16 @@ const SENSITIVE_PATH = /^(?:src\/(?:app\/api|lib)\/.*(?:booking|capacity|payment
 // that also touches real sensitive source still needs the full declaration.
 const TEST_FILE = /(?:^|\/)__tests__\/|\.(?:test|spec)\.[cm]?[jt]sx?$/i;
 
+/**
+ * Whether a changed path obliges a full declaration: sensitive source, and not a
+ * pure test file. Exported so that anything writing a declaration on a pull
+ * request's behalf (`render-epic-sync-pr-body.mjs`, #3721) asks this gate's own
+ * question instead of keeping a second copy of the pattern.
+ */
+export function isConcurrencySensitivePath(file) {
+  return !TEST_FILE.test(file) && SENSITIVE_PATH.test(file);
+}
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -62,9 +72,7 @@ function fieldValuePattern(field) {
  */
 export function validateConcurrencyDeclaration(body, changedFiles = null) {
   const diffKnown = Array.isArray(changedFiles);
-  const sensitiveFiles = (diffKnown ? changedFiles : []).filter(
-    (file) => !TEST_FILE.test(file) && SENSITIVE_PATH.test(file),
-  );
+  const sensitiveFiles = (diffKnown ? changedFiles : []).filter(isConcurrencySensitivePath);
 
   // Anchor to the START OF A LINE. A plain indexOf also matches the heading text
   // quoted inside prose or a code span — and a PR body that explains this gate
