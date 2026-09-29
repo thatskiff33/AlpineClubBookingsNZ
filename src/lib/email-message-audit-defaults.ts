@@ -279,7 +279,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   // because the stay has started - reconcile by hand.
   "admin-internet-banking-hold-started-stay": {
     "defaultSubject": "Overdue internet-banking hold on a stay that has started",
-    "defaultBody": "Overdue Internet Banking Hold on a Stay That Has Started\n\nThis booking's internet banking payment deadline passed unpaid, but its check-in has already arrived, so it was NOT cancelled automatically. Check the bank account for the member's transfer and record it, or cancel the booking by hand.\n\nBooking: {{bookingReference}} ({{bookingId}})\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nHold deadline: {{holdUntil}}\nAmount owing: {{amountOwing}}\n\nView Payments: {{reviewUrl}}"
+    "defaultBody": "Overdue Internet Banking Hold on a Stay That Has Started\n\nThis booking's internet banking payment deadline passed without the app seeing it paid, but its check-in has already arrived, so it was NOT cancelled automatically. The invoice amount below is the amount on the invoice, before any payment the app has not seen: the member may already have paid part or all of it by bank transfer. Check the bank account and Xero for the member's transfer and record it, or cancel the booking by hand.\n\nBooking: {{bookingReference}} ({{bookingId}})\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nHold deadline: {{holdUntil}}\nInvoice amount: {{amountOwing}}\n\nView Payments: {{reviewUrl}}"
   },
   "admin-superseded-payment-refund": {
     "defaultSubject": "Superseded payment auto-refunded: {{memberName}}",
