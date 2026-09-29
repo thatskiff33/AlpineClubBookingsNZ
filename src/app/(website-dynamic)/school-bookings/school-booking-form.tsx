@@ -23,7 +23,11 @@ import {
   DEFAULT_SCHOOL_GROUP_SOFT_CAP,
   SCHOOL_CHILD_TIERS,
 } from "@/lib/school-booking-constants";
-import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import {
+  isLodgeSetUpForBookings,
+  lodgeGuestLimitMessage,
+} from "@/lib/lodge-booking-readiness";
+import { LodgeNotSetUpNotice } from "@/components/lodge-not-set-up-notice";
 
 
 interface TeacherInput {
@@ -134,6 +138,8 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
   const effectiveCapacity =
     selectedLodge?.capacity ?? defaultLodgeCapacity ?? club.lodgeCapacity;
   const effectiveSoftCap = selectedLodge?.schoolGroupSoftCap ?? defaultSoftCap;
+  // #3407: no "/0 max" or soft-cap sentence at a lodge with no capacity.
+  const lodgeNotSetUp = !isLodgeSetUpForBookings(effectiveCapacity);
 
   const childTierLabel = (tier: AgeTier) =>
     ageTierOptions.find((option) => option.tier === tier)?.label ?? tier;
@@ -484,10 +490,10 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
               ))}
             </div>
             <p className="text-sm text-muted-foreground">
-              Total guests: {totalGuests} / {effectiveCapacity} max ({validTeachers.length} teachers
+              Total guests: {totalGuests}{lodgeNotSetUp ? null : ` / ${effectiveCapacity} max`} ({validTeachers.length} teachers
               {" "}&amp; helpers, {totalChildren} children)
             </p>
-            {overSoftCap ? (
+            {overSoftCap && !lodgeNotSetUp ? (
               <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
                 School groups are capped at {effectiveSoftCap} beds (students plus teachers and
                 parent helpers) unless the remaining beds, up to the lodge&apos;s {effectiveCapacity},{" "}
@@ -509,7 +515,8 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
             />
           </div>
 
-          <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
+          <LodgeNotSetUpNotice show={lodgeNotSetUp} />
+          <Button type="submit" disabled={submitting || lodgeNotSetUp} className="w-full sm:w-auto">
             {submitting ? "Submitting..." : "Submit school request"}
           </Button>
         </form>

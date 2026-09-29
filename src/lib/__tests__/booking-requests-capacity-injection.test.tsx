@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // R1 (#1982) regression pin, re-aimed at the mechanism that actually carries the
@@ -36,6 +36,7 @@ import type { ClubIdentity } from "@/config/club-identity-types";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
 import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
 
 // The club identity a DEDICATED page injects: it resolves the real capacity and
 // spreads it over the identity before rendering. Only the fields the forms read
@@ -189,5 +190,45 @@ describe("the public settings endpoint serves the DB-resolved default lodge capa
     // It must come from the DB-backed resolver, never from the config constant
     // the whole regression is about.
     expect(route).not.toContain("FALLBACK_LODGE_CAPACITY");
+  });
+});
+
+describe("a lodge with no capacity quotes no limit of zero on the public forms (#3407)", () => {
+  // The endpoint's DB-resolved default is 0: the lodge nobody has given a
+  // capacity. The forms say it is not set up yet, rather than "/0 max", and do
+  // not offer a request the server would refuse.
+  it.each([
+    ["booking requests", () => <BookingRequestForm club={embedClub()} />, "Request for Price"],
+    ["school bookings", () => <SchoolBookingForm club={embedClub()} />, "Submit school request"],
+  ])("%s: shows the not-set-up notice, no '0 max', and cannot be submitted", async (_label, form, submitName) => {
+    mockFetch({ lodges: [], defaultLodgeCapacity: 0 });
+    const { container } = render(form());
+
+    await waitFor(() => {
+      expect(screen.getByTestId("lodge-not-set-up").textContent).toContain(
+        LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
+      );
+    });
+    expect(container.textContent).not.toMatch(/0 max/);
+    expect(container.textContent).not.toContain("up to the lodge");
+    expect(
+      (screen.getByRole("button", { name: submitName }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["booking requests", () => <BookingRequestForm club={embedClub()} />, "Request for Price"],
+    ["school bookings", () => <SchoolBookingForm club={embedClub()} />, "Submit school request"],
+  ])("CONTROL %s: a configured lodge shows its limit and no notice", async (_label, form, submitName) => {
+    mockFetch({ lodges: [], defaultLodgeCapacity: DB_CAPACITY });
+    const { container } = render(form());
+
+    await waitFor(() => {
+      expect(container.textContent).toMatch(new RegExp(`/ ?${DB_CAPACITY} max`));
+    });
+    expect(screen.getByTestId("lodge-not-set-up").textContent).toBe("");
+    expect(
+      (screen.getByRole("button", { name: submitName }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 });
