@@ -237,6 +237,10 @@ const PURE_CALLEES = [
   // while the global money key and the lodge capacity key are both held. It takes
   // the day its callers already resolved outside their own transactions.
   "src/lib/booking-linked-date-move-service.ts",
+  // #3640's payment-ledger writers. They run inside the caller's transaction
+  // whenever they are handed one (`withStoreTransaction`) - the cancel claim's,
+  // with `lock(1)` held - so they resolve no club day at all.
+  "src/lib/payment-transactions.ts",
 ] as const;
 
 /**
@@ -460,11 +464,18 @@ const PRODUCTION_SOURCES: ReadonlyMap<string, string> = new Map(
  * parameters include a function-typed one returns exactly these two. Re-run that
  * scan whenever a transaction helper is added — a wrapper this list has not heard
  * of is a span this file cannot see into.
+ *
+ * `withStoreTransaction(` is the third (#3640, `db-transaction.ts`): the
+ * payment-ledger writers commit a card refund's rows, its mirror
+ * compare-and-set and the payment aggregate together, inside the caller's
+ * transaction or one of their own. The scan below named its predecessor the day
+ * it was written, which is the point of deriving the set.
  */
 const TRANSACTION_OPENERS = [
   "$transaction(",
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
+  "withStoreTransaction(",
 ] as const;
 
 /**
@@ -543,11 +554,15 @@ function spansForOpener(
 
 /**
  * The callback-opening wrappers whose ENCLOSING FUNCTION is inside a transaction
- * whenever a caller supplies one. Today that is `withOptionalTransaction`, whose
- * whole reason for existing is that the caller may already have opened the
- * transaction (#2525).
+ * whenever a caller supplies one: `withOptionalTransaction`, whose whole reason
+ * for existing is that the caller may already have opened the transaction
+ * (#2525), and its sibling `withStoreTransaction` (#3640), which joins the
+ * transaction its `store` already is.
  */
-const CALLER_TRANSACTION_WRAPPERS = ["withOptionalTransaction("] as const;
+const CALLER_TRANSACTION_WRAPPERS = [
+  "withOptionalTransaction(",
+  "withStoreTransaction(",
+] as const;
 
 /** Column-0 declarations, which is where this codebase's exported services live. */
 const TOP_LEVEL_DECLARATION =
@@ -1044,16 +1059,19 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     // The caller-transaction scanner is separately losable: it keys on a
     // DIFFERENT needle and on a different boundary heuristic, so a renamed
     // wrapper or a reformat that moves a declaration off column 0 would leave
-    // its rule passing over nothing. Two files in the tree hand a caller
+    // its rule passing over nothing. Files in the tree hand a caller
     // transaction to `withOptionalTransaction` — `booking-create.ts` and
-    // `booking-batch-modification-service.ts` — and the derived population is
-    // what finds them, with the lists above agreeing that both are classified.
+    // `booking-batch-modification-service.ts` — or to `withStoreTransaction`
+    // (`payment-transactions.ts`, #3640), and the derived population is what
+    // finds them, with the lists above agreeing that each is classified.
     const callerSpans = CALLER_TRANSACTION_POPULATION.flatMap((file) =>
       callerTransactionSpans(read(file)),
     );
-    expect(callerSpans.length).toBeGreaterThanOrEqual(2);
+    expect(callerSpans.length).toBeGreaterThanOrEqual(3);
     for (const span of callerSpans) {
-      expect(span.body).toContain("withOptionalTransaction(");
+      expect(
+        CALLER_TRANSACTION_WRAPPERS.some((wrapper) => span.body.includes(wrapper)),
+      ).toBe(true);
       expect(span.body.length).toBeGreaterThan(200);
     }
 

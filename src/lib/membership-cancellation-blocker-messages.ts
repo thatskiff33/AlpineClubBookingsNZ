@@ -2,8 +2,8 @@
  * Membership-cancellation approval blockers: shared shapes and the plain-English
  * wording used to explain them (#2392).
  *
- * Deliberately free of Prisma, Xero and app config (its one import is the pure
- * `formatCentsPlain` from `@/lib/utils`) because the
+ * Deliberately free of Prisma, Xero and app config (its imports are the pure
+ * `formatCentsPlain` and the isomorphic minor-unit rule) because the
  * same types and sentences are used by the server (the approval refusal message
  * and its audit record) and by the admin review queue, which is a client
  * component. One source of truth means the reviewer reads on screen exactly what
@@ -15,6 +15,7 @@
  * reason for living here — the wording is written once and read by both sides.
  */
 
+import { currencyHasTwoDecimalPlaces } from "@/lib/club-currency-minor-unit";
 import { formatCentsPlain } from "@/lib/utils";
 
 /** The label of the setting that turns Xero contact archiving on or off. */
@@ -125,10 +126,22 @@ export function isInvoiceCheckUnavailableBlocker(
  * app currency, because a Xero invoice may be raised in any currency and a
  * mislabelled amount is worse than a plain one. A currency Xero did not report
  * is left off entirely rather than guessed.
+ *
+ * The figure is always hundredths of the MAJOR unit, whatever the currency:
+ * `providerAmountToCents` scales Xero's `AmountDue` by 100 for every invoice.
+ * So only a currency that really counts in hundredths gets the fixed two places.
+ * Any other one (#3722) prints the stored value unpadded — a yen invoice for
+ * 1200 reads "JPY 1200", not "JPY 1200.00" — because two forced decimals
+ * would claim a precision the currency does not have. The minor-unit rule is
+ * the one home in `club-currency-minor-unit`, not a list kept here.
  */
 export function formatBlockerAmount(cents: number, currency: string): string {
-  const amount = formatCentsPlain(cents);
-  return currency && currency !== "UNKNOWN" ? `${currency} ${amount}` : amount;
+  const known = Boolean(currency) && currency !== "UNKNOWN";
+  const amount =
+    !known || currencyHasTwoDecimalPlaces(currency)
+      ? formatCentsPlain(cents)
+      : String(cents / 100);
+  return known ? `${currency} ${amount}` : amount;
 }
 
 /**

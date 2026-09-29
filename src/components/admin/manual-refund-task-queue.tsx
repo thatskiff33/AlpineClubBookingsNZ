@@ -70,6 +70,7 @@ import {
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
+import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -94,6 +95,15 @@ interface ManualRefundTask {
    * null kind is treated as the hand-back it has always been.
    */
   kind?: string | null;
+  /** #3639: a late capture held for a treasurer. Optional: a cached bundle degrades. */
+  awaitingLateCaptureApproval?: boolean;
+  /** #3643: a part payment the club settles in Xero. Optional, as above. */
+  partPaymentReview?: boolean;
+  /**
+   * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
+   * cancel, and the invoice's cash then. Optional, as above.
+   */
+  partPaymentReviewXeroPaid?: { reportedAt: string; cashCents: number } | null;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -201,6 +211,28 @@ function isWithheldShare(task: ManualRefundTask): boolean {
 }
 
 /**
+ * #3639 (owner decision 26 Sep 2026): a card payment captured after its booking
+ * was cancelled, held for a treasurer because the club asked for approval
+ * instead of an automatic refund. Completing it refunds the CARD through Stripe
+ * - nothing is paid back by hand - so none of the hand-back wording fits it.
+ * Its kind is the #2700 late-capture kind; the route's flag is what marks it.
+ */
+function isLateCaptureApproval(task: ManualRefundTask): boolean {
+  return task.awaitingLateCaptureApproval === true;
+}
+
+/**
+ * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): an officer cancelled an
+ * internet banking booking as unpaid while Xero recorded a payment against its
+ * invoice that the app could not hand back as credit. The club settles that
+ * payment in Xero, so the row carries no amount and is closed by dismissal
+ * only. Its kind is the ordinary hand-back one; the route's flag marks it.
+ */
+function isPartPaymentReview(task: ManualRefundTask): boolean {
+  return task.partPaymentReview === true;
+}
+
+/**
  * #2797: how a task's amount reads in the queue. A priced task shows the money;
  * an unpriced EDIT_FINANCIAL_REVIEW task shows that it is waiting for the club
  * to price it, so nobody mistakes an unknown amount for a settled $0.00.
@@ -218,7 +250,9 @@ function formatTaskAmount(task: ManualRefundTask, format: ClubFormat): string {
     carried. Telling an officer that row is "awaiting pricing" would send them
     looking for a control that does not exist on it.
   */
-  return isWithheldShare(task) ? "Amount not known" : "Awaiting pricing";
+  return isWithheldShare(task) || isPartPaymentReview(task)
+    ? "Amount not known"
+    : "Awaiting pricing";
 }
 
 /**
@@ -540,9 +574,19 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
       // Xero, billed anything missing - and is recording that they did.
       return `Close this uncollected amount for ${task.memberName}?`;
     }
+    if (isLateCaptureApproval(task)) {
+      return `Close this payment from ${task.memberName} without refunding it here?`;
+    }
+    if (isPartPaymentReview(task)) {
+      return `Close this payment from ${task.memberName} as settled in Xero?`;
+    }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
       : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (isLateCaptureApproval(task) && task.amountCents !== null) {
+    return `Refund ${formatCents(task.amountCents, format)} to ${task.memberName}'s card?`;
   }
 
   if (isFinancialReview(task)) {
@@ -568,6 +612,12 @@ function resolutionDescription({
     if (isWithheldShare(task)) {
       return "This closes the item as dealt with. It moves no money and raises no invoice — closing it never has. Say what the booking's Xero invoices actually showed and what you billed by hand, if anything, because that note is the only record of how this amount was settled.";
     }
+    if (isLateCaptureApproval(task)) {
+      return "Nothing is refunded from here. Use this to keep the payment - for example, when the cancellation was a mistake and the booking is being put back - or when it was already refunded in the Stripe dashboard. Say which, so the record makes sense later.";
+    }
+    if (isPartPaymentReview(task)) {
+      return "This closes the item as dealt with. It moves no money here, and the Xero repair tool stops listing the booking for review. Say how the payment was settled in Xero - refunded, or applied - and how the rest of the invoice was cleared, because that note is the record of it.";
+    }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
@@ -575,6 +625,10 @@ function resolutionDescription({
 
   if (isFinancialReview(task)) {
     return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. If the club owes the member it is paid back or held as account credit; if the member owes the club they are asked to pay it on this booking. If nothing is owed either way, close the review with no adjustment instead.";
+  }
+
+  if (isLateCaptureApproval(task)) {
+    return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, close it without refunding instead, saying so.";
   }
 
   return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
@@ -594,8 +648,12 @@ function confirmButtonLabel(
   direction: SettlementDirection | null,
 ): string {
   if (resolution === "dismissed") {
+    if (isLateCaptureApproval(task)) return "Close without refunding";
+    if (isPartPaymentReview(task)) return "Close as settled in Xero";
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
+
+  if (isLateCaptureApproval(task)) return "Refund to card";
 
   if (isFinancialReview(task)) {
     if (direction === "CHARGE_TO_MEMBER") return "Ask the member to pay";
@@ -1385,8 +1443,14 @@ export function ManualRefundTaskQueue() {
     the same sentence wrong about reviews before #3033, and this is the same
     mistake waiting one kind along.
   */
+  const hasLateCaptureRows = openTasks.some(isLateCaptureApproval);
+  const hasPartPaymentReviewRows = openTasks.some(isPartPaymentReview);
   const hasHandBackRows = openTasks.some(
-    (task) => !isFinancialReview(task) && !isWithheldShare(task),
+    (task) =>
+      !isFinancialReview(task) &&
+      !isWithheldShare(task) &&
+      !isLateCaptureApproval(task) &&
+      !isPartPaymentReview(task),
   );
   if (
     !showQueue &&
@@ -1420,7 +1484,7 @@ export function ManualRefundTaskQueue() {
         <Card data-testid="manual-refund-task-queue">
           <CardHeader>
             <CardTitle className="text-base">
-              Money to settle by hand
+              Money to settle
               {tasks ? ` (${tasks.length})` : ""}
             </CardTitle>
           </CardHeader>
@@ -1470,6 +1534,33 @@ export function ManualRefundTaskQueue() {
                 raised now could bill the member twice. Check the booking&apos;s
                 invoices in Xero first — if they already come to the settled
                 total, nothing is owed and you can close the item saying so.
+              </p>
+            ) : null}
+            {hasLateCaptureRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-late-capture-intro"
+              >
+                Some of these are card payments that went through after their
+                booking had been cancelled and were held for a treasurer to
+                approve, so the money is still with the club. Refund one to send
+                it back to the card through Stripe, or close it without refunding
+                — to keep it, for example when the cancellation was a mistake, or
+                because it was already refunded in the Stripe dashboard.
+              </p>
+            ) : null}
+            {hasPartPaymentReviewRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-part-payment-review-intro"
+              >
+                Some of these are internet banking bookings an officer cancelled
+                as unpaid while Xero showed a payment against the invoice that
+                the club could not hold as account credit — the booking belongs
+                to an organisation, or Xero could not give the exact amount.
+                Nothing was refunded, credited or cleared. Settle the payment in
+                Xero, clear what the invoice still owes, then close the item
+                saying what you did.
               </p>
             ) : null}
             {tasks === null ? (
@@ -1539,6 +1630,11 @@ export function ManualRefundTaskQueue() {
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {isPartPaymentReview(task) && task.partPaymentReviewXeroPaid ? (
+                        <PartPaymentReviewXeroPaidLine
+                          xeroPaid={task.partPaymentReviewXeroPaid}
+                        />
+                      ) : null}
                       {/*
                         #3213: what to DO, on the row, in the order an officer
                         does it. The standing paragraph says why nothing was
@@ -1614,7 +1710,10 @@ export function ManualRefundTaskQueue() {
                         The server refusal is the guarantee; this is the screen
                         agreeing with it.
                       */}
-                      {manualRefundTaskKindAllowsSettlement(task.kind) ? (
+                      {manualRefundTaskKindAllowsSettlement(
+                        task.kind,
+                        isPartPaymentReview(task),
+                      ) ? (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"
@@ -1649,7 +1748,9 @@ export function ManualRefundTaskQueue() {
                         */}
                         {isFinancialReview(task)
                           ? "Record the adjustment"
-                          : "Mark paid back"}
+                          : isLateCaptureApproval(task)
+                            ? "Refund to card"
+                            : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
                       <ViewOnlyActionButton
@@ -1667,9 +1768,11 @@ export function ManualRefundTaskQueue() {
                       >
                         {isFinancialReview(task)
                           ? "No adjustment"
-                          : isWithheldShare(task)
+                          : isWithheldShare(task) || isPartPaymentReview(task)
                             ? "Close this item"
-                            : "Dismiss"}
+                            : isLateCaptureApproval(task)
+                              ? "Close without refunding"
+                              : "Dismiss"}
                       </ViewOnlyActionButton>
                     </div>
                   </li>

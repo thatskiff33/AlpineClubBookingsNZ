@@ -55,6 +55,8 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class extends Error {},
   applyLocalRefundAllocation: vi.fn(),
+  // #3640: the Payment row lock the paid-path claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   markPaymentIntentTransactionFailed: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
   refundPaymentTransactions: vi.fn(),
@@ -67,7 +69,10 @@ vi.mock("@/lib/payment-recovery", () => ({
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
 }));
 vi.mock("@/lib/promo", () => ({ deletePromoRedemptionAndAdjustCount: vi.fn() }));
-vi.mock("@/lib/booking-status", () => ({
+// Partial: with #3643 merged, the cancel path's import graph reaches `group-late-joiner.ts`
+// (#3672), which reads the real status sets at import time.
+vi.mock("@/lib/booking-status", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-status")),
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE: {},
   RELEASE_WHOLE_LODGE_HOLD_UPDATE: {},
 }));

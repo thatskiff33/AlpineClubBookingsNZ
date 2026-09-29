@@ -23,6 +23,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import type { GroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 
 /**
  * One stay night, or the join deadline, rendered as the CALENDAR DAY it is
@@ -65,17 +66,8 @@ function formatStayDay(value: string, format: ClubDateFormat): string {
   }
 }
 
-interface GroupSummary {
-  code: string;
-  status: string;
-  paymentMode: "EACH_PAYS_OWN" | "ORGANISER_PAYS";
-  organiserFirstName: string;
-  lodgeName: string;
-  checkIn: string;
-  checkOut: string;
-  joinDeadline: string | null;
-  isJoinable: boolean;
-}
+/** What the summary route sends: the shared, derived type (#3672 review). */
+type GroupSummary = GroupBookingSummaryResponse;
 
 interface RequestGuest {
   firstName: string;
