@@ -47,7 +47,9 @@ same **lodge edit** permission as the properties above.
    lodge can sleep), and save. The capacity is required: a lodge without one
    cannot take a booking. A new lodge lands straight in a guided **setup
    wizard** (`/admin/lodges/[id]/setup`) with identity pre-filled; every
-   remaining step can be skipped and completed later.
+   remaining step can be skipped and completed later. An admin whose role can
+   only view lodges can still step through the wizard with **Skip for now**;
+   every field and save is disabled for them.
 2. With Bed Allocation off, the wizard's **Capacity** step lets you confirm or
    change the figure. Its last step says the lodge is ready only when it can
    take a booking, and states how many guests it can take; otherwise it says

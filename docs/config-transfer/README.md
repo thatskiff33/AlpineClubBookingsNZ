@@ -174,8 +174,9 @@ deeper reference for what each category contains and the import safety model.
       install's connected Xero organisation (tenant); Xero settings never travel.
     - `LodgeSettings` — per-lodge physical/operational settings (bed capacity,
       school-group soft cap) keyed to a specific lodge via `lodgeId`; lodge
-      identity and capacity travel through the **lodge-config** category's Lodge
-      rows, not this singleton.
+      identity travels through the **lodge-config** category's Lodge rows, and
+      each lodge's capacity rides in its `lodge.json` (#3407), not through this
+      singleton. The soft cap and the hut-leader lookahead stay instance-local.
     - `SetupProgress` — deployment-local setup-wizard progress (which steps THIS
       install completed/skipped); operational install state, not club policy.
     - `AiAssistantSettings` — the deployment-specific AI monthly spend cap; an
@@ -334,7 +335,7 @@ deeper reference for what each category contains and the import safety model.
   lodge's bed-allocation settings. Each
   lodge is a **self-contained folder**, `lodge-config/lodges/<slug>/` with a
   `lodge.json` descriptor (slug, name, active, travel note, `isDefault`, door
-  code if opted in) plus `rooms.csv` / `beds.csv` / `seasons.csv` /
+  code if opted in, and `capacity` when the lodge has one) plus `rooms.csv` / `beds.csv` / `seasons.csv` /
   `season-rates.csv` / `instructions.csv` / `chore-templates.csv` /
   `bed-allocation-settings.json`. The lodge a row belongs to is
   **implied by its folder**, not a CSV column, so a whole lodge is easy to add,
@@ -356,6 +357,18 @@ deeper reference for what each category contains and the import safety model.
   singleton file may still restore the compatible fallback described above.
   This optional additive file remains part of config-transfer format version 4;
   it does not require a format-version bump.
+  `lodge.json`'s **`capacity`** (#3407) is the lodge's resolved
+  `LodgeSettings.capacity`: its own settings row, or the legacy `"default"` row
+  that still serves it. It is emitted only when a figure is set. Import checks it
+  against the same bounds as **Add lodge** (a whole number from 1 to 100,000);
+  anything else blocks preview and Apply. Inside the import transaction it is
+  written to the row the resolver reads: a lodge the import creates is born with
+  its own row, an existing lodge's own row is edited, and a lodge still served by
+  the legacy row is edited there, so no lodge ever ends up with two rows saying
+  different things. Absent or `null` leaves the target's capacity untouched in
+  both modes, so a pre-#3407 bundle imports exactly as before, and a lodge it
+  creates shows "not set up for bookings yet" until an officer sets the figure.
+  This is additive and stays within format version 4.
   `seasons.csv` carries the season windows plus the per-season **flat
   whole-lodge night rate** (#2338):
   `name, type, startDate, endDate, active, flatWholeLodgeNightCents` — the last
@@ -512,8 +525,9 @@ Intentionally excluded / deferred:
   to come up with no connected providers and re-enter them — the correct, safe
   outcome (see [Credentials at rest](../SECURITY-ATTACK-SURFACE.md#credentials-at-rest-2079)
   in the attack-surface doc).
-- Per-lodge capacity / `LodgeSettings` — the `id="default"`-vs-`lodgeId` storage
-  duality is unsafe to round-trip; set it on the lodge page (ADR-001).
+- The rest of `LodgeSettings` (the school-group soft cap and the club-wide
+  hut-leader lookahead) — set them on the lodge page. Capacity itself now
+  travels; see below.
 - Cancellation and booking-period policies remain deferred. Minimum-stay
   policies now travel through the dedicated `booking-policies` category above;
   cancellation policy still touches refund maths and booking periods have not
