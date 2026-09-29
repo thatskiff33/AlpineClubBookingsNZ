@@ -162,9 +162,9 @@ export {
 
 export {
   createXeroPaymentForInvoice,
-  // test seam
-  createXeroRefundPaymentForInvoice,
 } from "./xero-invoice-payments";
+// #3548: the one read-back-then-settle for a refund credit note (test seam).
+export { finishRefundCreditNoteSettlement } from "./xero-refund-note-settlement";
 
 export {
   // test seam
