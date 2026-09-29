@@ -872,7 +872,7 @@ describe("buildXeroReconciliationReport", () => {
     expect(section?.items?.[0]?.detail).toContain("$1.00");
   });
 
-  it("lists a refund note whose row completed with neither its payment nor a skip (#3548)", async () => {
+  it("lists a refund note whose row completed with neither its payment nor a skip, and never an account-credit note (#3548)", async () => {
     mocks.memberFindMany.mockResolvedValue([]);
     mocks.operationFindFirst.mockResolvedValue(null);
     mocks.paymentFindMany.mockResolvedValue([]);
@@ -888,12 +888,23 @@ describe("buildXeroReconciliationReport", () => {
       localId: "pay_1",
       xeroObjectId: "cn_9",
       xeroObjectNumber: "CN-9",
+      requestPayload: { allocation: { invoiceId: "inv_1", amount: 50 }, refundMethod: "card" },
       responsePayload: { existingCreditNoteId: "cn_9" },
       manuallyResolvedAt: null,
       createdAt: new Date("2026-04-01T00:00:00Z"),
     };
+    // A cancellation taken as account credit: the same entity, operation and
+    // model, no settling payment ever due, so never listed (round 3 R2-1).
+    const accountCreditRow = {
+      ...bareRow,
+      id: "op_account_credit",
+      xeroObjectId: "cn_acct",
+      xeroObjectNumber: "CN-ACCT",
+      requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] },
+      responsePayload: { creditNotes: [{ creditNoteID: "cn_acct" }] },
+    };
     mocks.operationFindMany.mockImplementation(async (args?: { where?: { xeroObjectId?: unknown } }) =>
-      args?.where?.xeroObjectId ? [bareRow] : []
+      args?.where?.xeroObjectId ? [bareRow, accountCreditRow] : []
     );
 
     const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
@@ -904,6 +915,7 @@ describe("buildXeroReconciliationReport", () => {
     const section = report.issueSections.find((issueSection) => issueSection.id === "unsettled-refund-credit-notes");
     expect(section?.severity).toBe("warning");
     expect(section?.items?.[0]?.detail).toContain("CN-9");
+    expect(section?.items).toHaveLength(1);
     expect(section?.howToFix).toContain("MAINTENANCE.md");
   });
 

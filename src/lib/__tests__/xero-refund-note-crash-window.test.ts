@@ -31,6 +31,10 @@ const state = vi.hoisted(() => ({
   operations: [] as Row[],
   eligibleCents: 5000,
   resolved: { coveredCents: 0, correlationKeys: [] as string[], operationIds: [] as string[], unreadableOperationIds: [] as string[] },
+  /** Read the officer's resolved rows off the ledger through the real reader. */
+  realResolved: false,
+  /** Runs when a payment call fails, before it throws: a concurrent winner. */
+  onFailedPayment: null as null | (() => void),
   bankTransferAccount: "090" as string | null,
   crash: null as null | "at-settlement" | "at-completion",
   xero: {
@@ -129,12 +133,17 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
       return row;
     }),
     completeXeroSyncOperation: vi.fn(
-      async (id: string, completion: { status?: string; responsePayload?: unknown; xeroObjectId?: string | null; xeroObjectNumber?: string | null; extraLinks?: Row[] }) => {
+      async (
+        id: string,
+        completion: { status?: string; responsePayload?: unknown; xeroObjectId?: string | null; xeroObjectNumber?: string | null; extraLinks?: Row[] },
+        options?: { keepSucceeded?: boolean },
+      ) => {
         if (state.crash === "at-completion") {
           state.crash = null;
           throw CRASH;
         }
         const row = state.operations.find((operation) => operation.id === id)!;
+        if (options?.keepSucceeded && row.status === "SUCCEEDED") return null;
         Object.assign(row, {
           status: completion.status ?? "SUCCEEDED",
           responsePayload: JSON.parse(JSON.stringify(completion.responsePayload ?? null)),
@@ -160,12 +169,17 @@ function coveredCents() {
     .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0);
 }
 
-vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
-  readResolvedRefundCreditNoteCoverage: vi.fn(async () => state.resolved),
-  sumRefundCreditNoteCoverageCents: vi.fn(
-    async (_paymentId: string, resolved: { coveredCents: number }) => coveredCents() + resolved.coveredCents,
-  ),
-}));
+vi.mock("@/lib/xero-resolved-in-xero-fences", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-resolved-in-xero-fences");
+  return {
+    readResolvedRefundCreditNoteCoverage: vi.fn(async (paymentId: string) =>
+      state.realResolved ? actual.readResolvedRefundCreditNoteCoverage(paymentId) : state.resolved,
+    ),
+    sumRefundCreditNoteCoverageCents: vi.fn(
+      async (_paymentId: string, resolved: { coveredCents: number }) => coveredCents() + resolved.coveredCents,
+    ),
+  };
+});
 
 vi.mock("@/lib/refund-note-eligible-cash", () => ({
   resolveRefundNoteEligibleCash: vi.fn(async () => ({
@@ -244,6 +258,7 @@ function xeroApi() {
       const mode = state.xero.failNextPayment;
       if (mode === "before-commit") {
         state.xero.failNextPayment = null;
+        state.onFailedPayment?.();
         throw new Error("Xero 503");
       }
       const replayed = state.xero.replayPaymentKeys ? state.xero.paymentKeys.get(key) : undefined;
@@ -318,6 +333,7 @@ import {
   REFUND_NOTE_RESOLVED_IN_XERO_REASON,
   REFUND_NOTE_SETTLED_IN_XERO_REASON,
   refundCreditNotePaymentIdempotencyKey,
+  refundPaymentLinkWhere,
 } from "@/lib/xero-refund-note-settlement";
 import {
   applyRefundNoteSettlementRepair,
@@ -429,6 +445,8 @@ beforeEach(() => {
   state.operations = [];
   state.eligibleCents = 5000;
   state.resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: [] };
+  state.realResolved = false;
+  state.onFailedPayment = null;
   state.bankTransferAccount = "090";
   state.crash = null;
   state.xero.notes = new Map();
@@ -695,6 +713,45 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expectNoSucceededRowWithNeither();
   });
 
+  it("the loser of two retries whose payment call fails never writes PARTIAL over the winner's SUCCEEDED (round 3 R2-6)", async () => {
+    await firstAttemptDies("at-settlement");
+    state.xero.failNextPayment = "before-commit";
+    // While the loser's call is failing, the winner completes the row; its own
+    // payment is still in flight, so the loser's re-read sees the note unpaid.
+    state.onFailedPayment = () => {
+      Object.assign(row(), { status: "SUCCEEDED", responsePayload: { refundPayment: { paymentID: "pay_winner" }, refundPaymentSkipped: false } });
+    };
+
+    await expect(retry()).rejects.toThrow("Xero 503");
+
+    expect(row()).toMatchObject({ status: "SUCCEEDED", responsePayload: { refundPayment: { paymentID: "pay_winner" } } });
+  });
+
+  it.each([
+    ["crashed after the note was recorded", "crash"],
+    ["completed PARTIAL", "partial"],
+  ])("a note %s and resolved by hand counts once, so a later refund still gets its own note (round 3 R2-2)", async (_label, how) => {
+    if (how === "crash") {
+      await firstAttemptDies("at-settlement");
+    } else {
+      queueRefundNote("op_crashed", 5000, 5000);
+      state.xero.failNextPayment = "before-commit";
+      await dispatch("op_crashed");
+      expect(row()).toMatchObject({ status: "PARTIAL", xeroObjectId: "cn_1" });
+    }
+    row().manuallyResolvedAt = new Date("2026-07-01T00:00:00.000Z");
+    state.realResolved = true;
+    // A genuine $30 refund on the same payment, later.
+    state.eligibleCents = 8000;
+    queueRefundNote("op_later", 3000, 8000);
+
+    await dispatch("op_later");
+
+    expect(state.xero.notes.size).toBe(2);
+    expect(state.xero.notes.get("cn_2")!.total).toBe(30);
+    expect(row("op_later")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
+  });
+
   it("the builder never mints over its own row's recorded note (defence; no live path re-dispatches such a row)", async () => {
     await firstAttemptDies("at-settlement");
     // Coverage alone would read the delta as covered and close the row bare;
@@ -787,5 +844,113 @@ describe("rows the pre-#3548 early return closed with neither (report and repair
     });
 
     expect(await findUnsettledRefundNoteRows()).toEqual([]);
+  });
+
+  function seedAccountCreditRow() {
+    // A cancellation taken as account credit: an unapplied note on the payment,
+    // the same entity, operation and model as a refund note, never paid.
+    state.xero.notes.set("cn_acct", {
+      creditNoteID: "cn_acct",
+      creditNoteNumber: "CN-ACCT",
+      status: "AUTHORISED",
+      date: "2026-05-02",
+      total: 50,
+      remainingCredit: 50,
+      payments: [],
+    });
+    state.operations.push({
+      id: "op_account_credit",
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: PAYMENT_ID,
+      status: "SUCCEEDED",
+      manuallyResolvedAt: null,
+      xeroObjectId: "cn_acct",
+      xeroObjectNumber: "CN-ACCT",
+      queueType: "ACCOUNT_CREDIT_NOTE",
+      correlationKey: "payment:cmpayment0001xyz:unapplied-credit-note:5000:v1",
+      idempotencyKey: "payment:cmpayment0001xyz:unapplied-credit-note:5000:v1",
+      createdAt: new Date("2026-05-02T00:00:00.000Z"),
+      requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] },
+      responsePayload: { creditNotes: [{ creditNoteID: "cn_acct" }] },
+    });
+  }
+
+  it("never lists, flags or settles an account-credit note (round 3 R2-1)", async () => {
+    seedAccountCreditRow();
+    const findings: MutableFinding[] = [];
+    const actions = new Map<string, BookingXeroRepairAction>();
+
+    addUnsettledRefundCreditNoteFindings(findings, actions, "cmbooking0001xyz", state.links as never, state.operations as never);
+
+    expect(await findUnsettledRefundNoteRows()).toEqual([]);
+    expect(findings).toEqual([]);
+    await expect(
+      applyRefundNoteSettlementRepair({ operationId: "op_account_credit", paymentId: PAYMENT_ID, creditNoteId: "cn_acct" }),
+    ).resolves.toMatchObject({ status: "failed", message: expect.stringContaining("not a refund credit note") });
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+  });
+
+  it("the report and the repair tool agree on a note whose payment link a later delta deactivated (round 3 R2-3)", async () => {
+    seedHistoricBareRow();
+    // The old repair leg completed with only the link recording the payment;
+    // a later delta's payment link then deactivated it (single-active per payment).
+    state.links.push({ localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "PAYMENT", xeroObjectId: "pay_9", role: "REFUND_PAYMENT", active: false, metadata: { creditNoteId: "cn_9", amountCents: 5000 } });
+    const findings: MutableFinding[] = [];
+
+    addUnsettledRefundCreditNoteFindings(findings, new Map(), "cmbooking0001xyz", state.links as never, state.operations as never);
+
+    expect(await findUnsettledRefundNoteRows()).toEqual([]);
+    expect(findings).toEqual([]);
+    expect(refundPaymentLinkWhere([PAYMENT_ID])).not.toHaveProperty("active");
+  });
+
+  function partSettleByHand() {
+    const note = state.xero.notes.get("cn_1")!;
+    note.payments.push({ paymentID: "pay_hand", amount: 20, status: "AUTHORISED" });
+    note.remainingCredit = 30;
+  }
+
+  it("a part-settled note clears once the officer settles the remainder in Xero and the action reads it back (round 3 R2-4)", async () => {
+    await firstAttemptDies("at-settlement");
+    partSettleByHand();
+    await retry();
+    expect(await findUnsettledRefundNoteRows()).toEqual([expect.objectContaining({ kind: "part-settled" })]);
+    const findings: MutableFinding[] = [];
+    const actions = new Map<string, BookingXeroRepairAction>();
+    addUnsettledRefundCreditNoteFindings(findings, actions, "cmbooking0001xyz", state.links as never, state.operations as never);
+    expect([...actions.values()]).toEqual([
+      expect.objectContaining({ type: "SETTLE_REFUND_CREDIT_NOTE", safeToAutoApply: false, payload: { operationId: "op_crashed", paymentId: PAYMENT_ID, creditNoteId: "cn_1" } }),
+    ]);
+    // The officer settles the $30 remainder in Xero by hand.
+    const note = state.xero.notes.get("cn_1")!;
+    note.payments.push({ paymentID: "pay_hand_2", amount: 30, status: "AUTHORISED" });
+    note.remainingCredit = 0;
+    note.status = "PAID";
+
+    await expect(
+      applyRefundNoteSettlementRepair({ operationId: "op_crashed", paymentId: PAYMENT_ID, creditNoteId: "cn_1" }),
+    ).resolves.toMatchObject({ status: "applied" });
+
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(row().responsePayload).not.toHaveProperty("refundPaymentRemainingCents");
+    expect(state.links).toEqual(expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_hand_2" })]));
+    expect(await findUnsettledRefundNoteRows()).toEqual([]);
+  });
+
+  it("reading a part-settled note back never pays, even when Xero no longer shows any settlement on it", async () => {
+    await firstAttemptDies("at-settlement");
+    partSettleByHand();
+    await retry();
+    const note = state.xero.notes.get("cn_1")!;
+    note.payments = [];
+    note.remainingCredit = 50;
+
+    await expect(
+      applyRefundNoteSettlementRepair({ operationId: "op_crashed", paymentId: PAYMENT_ID, creditNoteId: "cn_1" }),
+    ).rejects.toThrow(/shows no settlement in Xero now/);
+    expect(state.xero.createPaymentsCalls).toEqual([]);
   });
 });
