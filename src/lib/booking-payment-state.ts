@@ -3,10 +3,19 @@
  * refunded since. `REFUNDED` belongs here: the question is whether a capture
  * ever happened, not whether the club still holds the cash.
  *
- * THE ONE HOME for this list (`INV-SSOT-001`, #3340). There were two copies —
- * this module's and `additional-ledger-gap.ts`'s — and the change that
- * generalised the ledger mirror added a third, which is the finding that put the
- * list here. This file is a pure leaf — no
+ * The home for this list (`INV-SSOT-001`, #3340). There were two copies — this
+ * module's and `additional-ledger-gap.ts`'s — and the change that generalised
+ * the ledger mirror added a third, which is the finding that put the list here.
+ *
+ * KNOWN REMAINING COPIES of the same three values, each being retired onto this
+ * list by its own issue; until then a change here must be made there too:
+ *   - `ib-hold-clearing-audit.ts` `REALIZED_PAYMENT_STATUSES` and
+ *     `xero-booking-edit-conditions.ts` `UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES`
+ *     — #3632.
+ *   - `finance-booking-metrics.ts` `FINANCE_CAPTURED_PAYMENT_STATUSES` and
+ *     `xero-booking-invoices.ts` `STRIPE_CAPTURED_PAYMENT_STATUSES` — #3637.
+ *
+ * This file is a pure leaf — no
  * client, no logger, no `server-only` — so a census, a route and a page can all
  * import it without dragging anything behind it.
  *
