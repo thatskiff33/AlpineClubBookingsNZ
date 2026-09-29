@@ -1,15 +1,15 @@
 /**
- * #3548: the crash window between saving `Payment.xeroRefundCreditNoteId` and
- * completing the refund credit note's operation.
+ * #3548 (`INV-PAY-111`): the crash window between raising a refund credit note
+ * in Xero and completing its operation.
  *
- * Drives the REAL `createXeroCreditNote` — with the outbox's dispatch
- * arguments and the retry leg's — over a stateful ledger and a stateful Xero
- * that honours idempotency keys, so a run can be stopped between the two
- * persists and re-run against exactly what it left behind. The acceptance: a
- * retry ends with the note AND its settling payment, or the skip flag, never
- * a SUCCEEDED row carrying neither; a payment that fails on the retry ends
- * PARTIAL and is repaired by the repair leg; and nothing ever records a second
- * payment against a note Xero already shows settled.
+ * Drives the REAL builder with the outbox's own dispatch arguments (a queued
+ * row, its watermark) and the REAL retry leg (`retryXeroSyncOperation` on the
+ * FAILED row the stale-RUNNING reset leaves), over a stateful ledger and a
+ * stateful Xero whose idempotency memory can be FORGOTTEN, as it is days later.
+ * The acceptance: exactly one note per refund and exactly one payment per note,
+ * the note settled (or its skip recorded), never a SUCCEEDED row with neither,
+ * and nothing ever paid twice — not after a lost response, not by two retries
+ * at once, not over an officer's own settlement in Xero.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSource } from "@prisma/client";
@@ -19,6 +19,7 @@ type XeroNote = {
   creditNoteID: string;
   creditNoteNumber: string;
   status: string;
+  date: string;
   total: number;
   remainingCredit: number;
   payments: Array<{ paymentID: string; amount: number; status: string }>;
@@ -28,23 +29,26 @@ const state = vi.hoisted(() => ({
   payment: null as Row | null,
   links: [] as Row[],
   operations: [] as Row[],
+  eligibleCents: 5000,
   resolved: { coveredCents: 0, correlationKeys: [] as string[], operationIds: [] as string[], unreadableOperationIds: [] as string[] },
   bankTransferAccount: "090" as string | null,
+  crash: null as null | "at-settlement" | "at-completion",
   xero: {
     notes: new Map<string, XeroNote>(),
     noteKeys: new Map<string, string>(),
     paymentKeys: new Map<string, { paymentID: string; amount: number }>(),
-    createPaymentsCalls: [] as Array<{ key: string; account?: string; amount: number; creditNoteId: string }>,
-    failNextPayment: false,
+    replayPaymentKeys: true,
+    createPaymentsCalls: [] as Array<{ key: string; account?: string; amount: number; creditNoteId: string; date: string }>,
+    failNextPayment: null as null | "before-commit" | "after-commit",
+    readBarrier: null as null | { waiting: Array<() => void>; size: number },
   },
-  crash: null as string | null,
-  canonical: null as null | { xeroObjectId: string; xeroObjectNumber: string | null; source: string },
 }));
 
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, expected]) => {
-    const actual = row[key];
+    if (expected === undefined) return true;
+    const actual = row[key] ?? null;
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       if ("in" in expected) return (expected as { in: unknown[] }).in.includes(actual);
       if ("not" in expected) return actual !== (expected as { not: unknown }).not;
@@ -54,10 +58,23 @@ function matches(row: Row, where: Row | undefined): boolean {
   });
 }
 
+function linkKey(link: Row) {
+  return `${link.localId}|${link.role}|${link.xeroObjectId}`;
+}
+
+function upsertLink(link: Row) {
+  const existing = state.links.find((candidate) => linkKey(candidate) === linkKey(link));
+  if (existing) {
+    existing.metadata = { ...((existing.metadata as Row) ?? {}), ...((link.metadata as Row) ?? {}) };
+  } else {
+    state.links.push({ active: true, ...link });
+  }
+}
+
 const CRASH = new Error("process died");
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
     payment: {
       findUnique: vi.fn(async () => (state.payment ? { ...state.payment } : null)),
       update: vi.fn(async ({ data }: { data: Row }) => {
@@ -75,6 +92,7 @@ vi.mock("@/lib/prisma", () => ({
         const row = state.operations.find((operation) => operation.id === where.id);
         return row ? { ...row } : null;
       }),
+      findFirst: vi.fn(async ({ where }: { where?: Row }) => state.operations.find((operation) => matches(operation, where)) ?? null),
       findMany: vi.fn(async ({ where }: { where?: Row }) => state.operations.filter((operation) => matches(operation, where))),
       update: vi.fn(async ({ where, data }: { where: { id: string }; data: Row }) => {
         const row = state.operations.find((operation) => operation.id === where.id)!;
@@ -82,8 +100,10 @@ vi.mock("@/lib/prisma", () => ({
         return row;
       }),
     },
-  },
-}));
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => run(prisma)),
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -97,19 +117,20 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
     startXeroSyncOperation: vi.fn(async (input: Row) => {
       const row = {
         ...input,
-        id: `op_${++nextId}`,
+        id: `op_started_${++nextId}`,
         status: input.status ?? "RUNNING",
         replayable: true,
         manuallyResolvedAt: null,
         xeroObjectId: null,
         responsePayload: null,
+        createdAt: new Date(),
       };
       state.operations.push(row);
       return row;
     }),
     completeXeroSyncOperation: vi.fn(
       async (id: string, completion: { status?: string; responsePayload?: unknown; xeroObjectId?: string | null; xeroObjectNumber?: string | null; extraLinks?: Row[] }) => {
-        if (state.crash === "before-complete") {
+        if (state.crash === "at-completion") {
           state.crash = null;
           throw CRASH;
         }
@@ -120,53 +141,37 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
           xeroObjectId: completion.xeroObjectId ?? null,
           xeroObjectNumber: completion.xeroObjectNumber ?? null,
         });
-        for (const link of completion.extraLinks ?? []) {
-          const existing = state.links.find(
-            (candidate) =>
-              candidate.xeroObjectId === link.xeroObjectId && candidate.role === link.role && candidate.localId === link.localId,
-          );
-          if (existing) {
-            existing.metadata = { ...((existing.metadata as Row) ?? {}), ...((link.metadata as Row) ?? {}) };
-          } else {
-            state.links.push({ active: true, ...link });
-          }
-        }
+        for (const link of completion.extraLinks ?? []) upsertLink(link);
       },
     ),
     failXeroSyncOperation: vi.fn(async (id: string) => {
       const row = state.operations.find((operation) => operation.id === id);
-      if (row) row.status = "FAILED";
+      if (row) Object.assign(row, { status: "FAILED", responsePayload: { error: "failed" } });
     }),
-    upsertXeroObjectLink: vi.fn(async (link: Row) => {
-      if (!state.links.some((candidate) => candidate.xeroObjectId === link.xeroObjectId && candidate.role === link.role)) {
-        state.links.push({ active: true, ...link });
-      }
-    }),
-    findCanonicalPaymentRefundCreditNote: vi.fn(async () => state.canonical),
-    sumCoveredRefundCreditNoteCents: vi.fn(async () =>
-      state.links
-        .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active)
-        .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0),
-    ),
+    upsertXeroObjectLink: vi.fn(async (link: Row) => upsertLink(link)),
+    findCanonicalPaymentRefundCreditNote: vi.fn(async () => null),
+    sumCoveredRefundCreditNoteCents: vi.fn(async () => coveredCents()),
   };
 });
+
+function coveredCents() {
+  return state.links
+    .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active)
+    .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0);
+}
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
   readResolvedRefundCreditNoteCoverage: vi.fn(async () => state.resolved),
   sumRefundCreditNoteCoverageCents: vi.fn(
-    async (_paymentId: string, resolved: { coveredCents: number }) =>
-      state.links
-        .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active)
-        .reduce((sum, link) => sum + Number((link.metadata as Row | undefined)?.amountCents ?? 0), 0) +
-      resolved.coveredCents,
+    async (_paymentId: string, resolved: { coveredCents: number }) => coveredCents() + resolved.coveredCents,
   ),
 }));
 
 vi.mock("@/lib/refund-note-eligible-cash", () => ({
   resolveRefundNoteEligibleCash: vi.fn(async () => ({
-    evidence: { cashRefundCents: 5000, source: "provider-ledger" },
+    evidence: { cashRefundCents: state.eligibleCents, source: "provider-ledger" },
     lateCaptureExcludedCents: 0,
-    eligibleCashCents: 5000,
+    eligibleCashCents: state.eligibleCents,
   })),
 }));
 
@@ -176,17 +181,37 @@ vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
   findKeptLateCaptureInvoiceIdForPayment: vi.fn(async () => null),
 }));
 
+async function passReadBarrier() {
+  const barrier = state.xero.readBarrier;
+  if (!barrier) return;
+  await new Promise<void>((resolve) => {
+    barrier.waiting.push(resolve);
+    if (barrier.waiting.length >= barrier.size) {
+      state.xero.readBarrier = null;
+      for (const release of barrier.waiting) release();
+    }
+  });
+}
+
 function xeroApi() {
   return {
-    createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount: number }> }> }, _a: unknown, _b: unknown, key: string) => {
+    createCreditNotes: async (
+      _tenant: string,
+      body: { creditNotes: Array<{ date: string; lineItems: Array<{ unitAmount: number }> }> },
+      _a: unknown,
+      _b: unknown,
+      key: string,
+    ) => {
       let id = state.xero.noteKeys.get(key);
       if (!id) {
         id = `cn_${state.xero.notes.size + 1}`;
-        const total = body.creditNotes[0]!.lineItems[0]!.unitAmount;
+        const request = body.creditNotes[0]!;
+        const total = request.lineItems[0]!.unitAmount;
         state.xero.notes.set(id, {
           creditNoteID: id,
           creditNoteNumber: `CN-${state.xero.notes.size + 1}`,
           status: "AUTHORISED",
+          date: request.date,
           total,
           remainingCredit: total,
           payments: [],
@@ -197,12 +222,14 @@ function xeroApi() {
       return { body: { creditNotes: [{ creditNoteID: note.creditNoteID, creditNoteNumber: note.creditNoteNumber }] } };
     },
     getCreditNote: async (_tenant: string, id: string) => {
-      const note = state.xero.notes.get(id);
-      return { body: { creditNotes: note ? [JSON.parse(JSON.stringify(note))] : [] } };
+      const snapshot = state.xero.notes.get(id);
+      const copy = snapshot ? JSON.parse(JSON.stringify(snapshot)) : null;
+      await passReadBarrier();
+      return { body: { creditNotes: copy ? [copy] : [] } };
     },
     createPayments: async (
       _tenant: string,
-      body: { payments: Array<{ creditNote: { creditNoteID: string }; account: { code: string }; amount: number }> },
+      body: { payments: Array<{ creditNote: { creditNoteID: string }; account: { code: string }; amount: number; date: string }> },
       _a: unknown,
       key: string,
     ) => {
@@ -212,26 +239,28 @@ function xeroApi() {
         account: request.account.code,
         amount: request.amount,
         creditNoteId: request.creditNote.creditNoteID,
+        date: request.date,
       });
-      if (state.crash === "before-payment") {
-        state.crash = null;
-        throw CRASH;
-      }
-      if (state.xero.failNextPayment) {
-        state.xero.failNextPayment = false;
+      const mode = state.xero.failNextPayment;
+      if (mode === "before-commit") {
+        state.xero.failNextPayment = null;
         throw new Error("Xero 503");
       }
-      const replayed = state.xero.paymentKeys.get(key);
+      const replayed = state.xero.replayPaymentKeys ? state.xero.paymentKeys.get(key) : undefined;
       if (replayed) return { body: { payments: [replayed] } };
       const note = state.xero.notes.get(request.creditNote.creditNoteID)!;
-      if (request.amount > note.remainingCredit) {
+      if (Math.round(request.amount * 100) > Math.round(note.remainingCredit * 100)) {
         throw new Error("Payment amount exceeds the amount outstanding on this document");
       }
-      const payment = { paymentID: `pay_${state.xero.paymentKeys.size + 1}`, amount: request.amount };
+      const payment = { paymentID: `pay_${state.xero.createPaymentsCalls.length}`, amount: request.amount };
       note.payments.push({ ...payment, status: "AUTHORISED" });
-      note.remainingCredit -= request.amount;
+      note.remainingCredit = Math.round((note.remainingCredit - request.amount) * 100) / 100;
       if (note.remainingCredit <= 0) note.status = "PAID";
       state.xero.paymentKeys.set(key, payment);
+      if (mode === "after-commit") {
+        state.xero.failNextPayment = null;
+        throw new Error("Xero response lost after commit");
+      }
       return { body: { payments: [payment] } };
     },
   };
@@ -243,20 +272,26 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => ({
   callXeroApi: vi.fn((run: () => unknown) => run()),
 }));
 
+function crashAtSettlement() {
+  // The first attempt dies here: after the note is recorded, before any
+  // payment call, since the settlement decision is the first thing it runs.
+  if (state.crash === "at-settlement") {
+    state.crash = null;
+    throw CRASH;
+  }
+}
+
 vi.mock("@/lib/xero-mappings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/xero-mappings")),
-  getResolvedAccountMapping: vi.fn(async (key: string) =>
-    key === "bankTransferRefundAccount"
-      ? { code: state.bankTransferAccount, itemCode: null, codeExplicitlyConfigured: state.bankTransferAccount !== null }
-      : { code: "200", itemCode: undefined, codeExplicitlyConfigured: false },
-  ),
-  getAccountMapping: vi.fn(async () => {
-    // The first attempt dies here, after the note id is saved and before any
-    // payment call: the settlement leg is the first thing it runs.
-    if (state.crash === "before-payment-decision") {
-      state.crash = null;
-      throw CRASH;
+  getResolvedAccountMapping: vi.fn(async (key: string) => {
+    if (key === "bankTransferRefundAccount") {
+      crashAtSettlement();
+      return { code: state.bankTransferAccount, itemCode: null, codeExplicitlyConfigured: state.bankTransferAccount !== null };
     }
+    return { code: "200", itemCode: undefined, codeExplicitlyConfigured: false };
+  }),
+  getAccountMapping: vi.fn(async () => {
+    crashAtSettlement();
     return "606";
   }),
 }));
@@ -279,14 +314,21 @@ vi.mock("@/lib/club-time-zone-runtime", () => ({
 
 import { createXeroCreditNote } from "@/lib/xero-credit-notes";
 import {
+  REFUND_NOTE_PART_SETTLED_IN_XERO_REASON,
   REFUND_NOTE_RESOLVED_IN_XERO_REASON,
   REFUND_NOTE_SETTLED_IN_XERO_REASON,
+  refundCreditNotePaymentIdempotencyKey,
 } from "@/lib/xero-refund-note-settlement";
+import {
+  applyRefundNoteSettlementRepair,
+  findUnsettledRefundNoteRows,
+} from "@/lib/xero-refund-note-unsettled";
 import { REFUND_UNSETTLED_NO_ACCOUNT_REASON } from "@/lib/xero-invoice-payments";
-import { getXeroOperationRetryMeta, retryXeroSyncOperation } from "@/lib/xero-operation-retry";
+import { retryXeroSyncOperation } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const PAYMENT_ID = "cmpayment0001xyz";
+const NOTE_KEY_5000 = "payment:cmpayment0001xyz:refund-credit-note:5000:v2";
 
 function seedPayment(source: PaymentSource = PaymentSource.STRIPE) {
   state.payment = {
@@ -309,10 +351,10 @@ function seedPayment(source: PaymentSource = PaymentSource.STRIPE) {
   };
 }
 
-/** The operation the outbox claimed for this refund. */
-function queueOperation(): string {
+/** A row exactly as `enqueueXeroRefundCreditNoteOperation` writes it, claimed. */
+function queueRefundNote(id: string, refundAmountCents: number, watermarkCents: number, refundMethod = "card") {
   state.operations.push({
-    id: "op_queued",
+    id,
     direction: "OUTBOUND",
     entityType: "CREDIT_NOTE",
     operationType: "CREATE",
@@ -324,37 +366,58 @@ function queueOperation(): string {
     xeroObjectId: null,
     responsePayload: null,
     queueType: "REFUND_CREDIT_NOTE",
-    requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 5000 },
+    idempotencyKey: `payment:${PAYMENT_ID}:refund-credit-note:${watermarkCents}:v2`,
+    correlationKey: `payment:${PAYMENT_ID}:refund-credit-note:${watermarkCents}:v2`,
+    createdAt: new Date(),
+    requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents, watermarkCents, refundMethod },
   });
-  return "op_queued";
 }
 
-/** Run the first attempt and let it die between the two persists. */
-async function firstAttemptDies(
-  crash: "before-payment-decision" | "before-payment" | "before-complete",
-  options: { refundMethod?: "card" | "internet-banking"; watermarkCents?: number } = { refundMethod: "card" },
-) {
-  const syncOperationId = queueOperation();
+/** The outbox's own call for a queued row (`xero-operation-outbox.ts`, REFUND_CREDIT_NOTE). */
+function dispatch(id: string) {
+  const row = state.operations.find((operation) => operation.id === id)!;
+  const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number; refundMethod: "card" | "internet-banking" };
+  return createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
+    syncOperationId: id,
+    watermarkCents: payload.watermarkCents,
+    refundMethod: payload.refundMethod,
+  });
+}
+
+/** Queue and dispatch a refund, and let the process die between the two persists. */
+async function firstAttemptDies(crash: "at-settlement" | "at-completion", refundMethod = "card") {
+  queueRefundNote("op_crashed", 5000, 5000, refundMethod);
   state.crash = crash;
-  await expect(createXeroCreditNote(PAYMENT_ID, 5000, { syncOperationId, ...options })).rejects.toBe(CRASH);
-  // What the crash left: the note is in Xero and its id is saved; the row is
-  // FAILED (as the stale-RUNNING reset leaves it) with no outcome recorded.
-  expect(state.payment!.xeroRefundCreditNoteId).toBe("cn_1");
-  expect(state.operations.find((operation) => operation.id === syncOperationId)!.status).toBe("FAILED");
+  await expect(dispatch("op_crashed")).rejects.toBe(CRASH);
+  // The builder's catch writes FAILED, the same end state as a real process
+  // death followed by the stale-RUNNING reset (which writes FAILED, not PENDING).
+  const row = state.operations.find((operation) => operation.id === "op_crashed")!;
+  expect(row.status).toBe("FAILED");
+  expect(row.xeroObjectId).toBe("cn_1");
+  return row;
 }
 
-function completedRows() {
-  return state.operations.filter((operation) => operation.status === "SUCCEEDED" || operation.status === "PARTIAL");
+/** Days later: Xero remembers neither the note's key nor the payment's. */
+function xeroForgetsKeys() {
+  state.xero.noteKeys.clear();
+  state.xero.paymentKeys.clear();
 }
 
-/** The retry must never leave the shape #3548 found: SUCCEEDED with neither. */
+function retry(id = "op_crashed") {
+  return retryXeroSyncOperation(id, CLUB_FORMAT_TEST);
+}
+
+function row(id = "op_crashed") {
+  return state.operations.find((operation) => operation.id === id)!;
+}
+
 function expectNoSucceededRowWithNeither() {
-  for (const row of completedRows()) {
-    if (row.status !== "SUCCEEDED") continue;
-    const response = row.responsePayload as Row;
+  for (const operation of state.operations) {
+    if (operation.status !== "SUCCEEDED") continue;
+    const response = operation.responsePayload as Row;
     expect(
-      Boolean(response?.refundPayment) || response?.refundPaymentSkipped === true,
-      `row ${row.id} is SUCCEEDED with neither a payment nor the skip flag`,
+      Boolean(response?.refundPayment) || response?.refundPaymentSkipped === true || response?.coveredByExistingNote === true,
+      `row ${operation.id} is SUCCEEDED with neither a payment, the skip flag, nor a covering note`,
     ).toBe(true);
   }
 }
@@ -362,32 +425,33 @@ function expectNoSucceededRowWithNeither() {
 beforeEach(() => {
   state.links = [];
   state.operations = [];
+  state.eligibleCents = 5000;
   state.resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: [] };
   state.bankTransferAccount = "090";
+  state.crash = null;
   state.xero.notes = new Map();
   state.xero.noteKeys = new Map();
   state.xero.paymentKeys = new Map();
+  state.xero.replayPaymentKeys = true;
   state.xero.createPaymentsCalls = [];
-  state.xero.failNextPayment = false;
-  state.crash = null;
-  state.canonical = null;
+  state.xero.failNextPayment = null;
+  state.xero.readBarrier = null;
   seedPayment();
 });
 
-describe("a retry after a crash between saving the note id and completing (#3548)", () => {
-  it("the retry leg's call records the settling payment and completes with the first attempt's payload", async () => {
-    await firstAttemptDies("before-payment-decision");
+describe("a refund note interrupted between the two persists (#3548)", () => {
+  it("the retry leg settles that note days later: one note, one payment, the row completed on it", async () => {
+    await firstAttemptDies("at-settlement");
+    xeroForgetsKeys();
 
-    // The retry leg calls the builder without the row's id (xero-operation-retry).
-    await expect(createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true })).resolves.toBe("cn_1");
+    await retry();
 
     expect(state.xero.notes.size).toBe(1);
     expect(state.xero.createPaymentsCalls).toEqual([
-      { key: "payment:cmpayment0001xyz:refund-payment:cn_1:v2", account: "606", amount: 50, creditNoteId: "cn_1" },
+      expect.objectContaining({ key: refundCreditNotePaymentIdempotencyKey(PAYMENT_ID, "cn_1"), account: "606", amount: 50, creditNoteId: "cn_1" }),
     ]);
-    const [completed] = completedRows();
-    expect(completed).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
-    expect(completed!.responsePayload).toMatchObject({
+    expect(row()).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+    expect(row().responsePayload).toMatchObject({
       allocationSkipped: true,
       refundPayment: { paymentID: "pay_1" },
       refundPaymentError: null,
@@ -395,174 +459,239 @@ describe("a retry after a crash between saving the note id and completing (#3548
       refundMethod: "card",
       interruptedAttemptCompleted: true,
     });
-    // The row the repair leg reads carries the note's amount and invoice.
-    expect(completed!.requestPayload).toMatchObject({ allocation: { invoiceId: "invoice_1", amount: 50 } });
     expect(state.links).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "REFUND_CREDIT_NOTE", xeroObjectId: "cn_1", metadata: expect.objectContaining({ amountCents: 5000 }) }),
-        expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_1", metadata: expect.objectContaining({ creditNoteId: "cn_1" }) }),
+        expect.objectContaining({ role: "REFUND_CREDIT_NOTE", xeroObjectId: "cn_1", metadata: expect.objectContaining({ amountCents: 5000, watermarkCents: 5000 }) }),
+        expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_1", metadata: expect.objectContaining({ creditNoteId: "cn_1", amountCents: 5000 }) }),
       ]),
     );
     expectNoSucceededRowWithNeither();
   });
 
-  it("the outbox re-dispatching the same row completes that row, not a new one", async () => {
-    await firstAttemptDies("before-payment-decision");
-    const row = state.operations.find((operation) => operation.id === "op_queued")!;
-    row.status = "RUNNING";
+  it("a second refund landing between the crash and the retry gets its own note, and the retry settles the first", async () => {
+    await firstAttemptDies("at-settlement");
+    // $30 more is refunded; its row runs before anyone retries the $50.
+    state.eligibleCents = 8000;
+    queueRefundNote("op_second", 3000, 8000);
+    await dispatch("op_second");
+    xeroForgetsKeys();
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { syncOperationId: "op_queued", refundMethod: "card" });
+    await retry();
 
-    expect(state.operations).toHaveLength(1);
-    expect(row).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
-    expect(row.responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" } });
+    expect([...state.xero.notes.values()].map((note) => note.total).sort()).toEqual([30, 50]);
+    for (const note of state.xero.notes.values()) expect(note.payments).toHaveLength(1);
+    expect(state.xero.createPaymentsCalls).toHaveLength(2);
+    expect(row()).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+    expect(row().responsePayload).toMatchObject({ interruptedAttemptCompleted: true });
+    expect(row("op_second")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
     expectNoSucceededRowWithNeither();
   });
 
-  it("sets the skip flag, and records no payment, when the settlement says none is due", async () => {
+  it("dates the healed payment on the note's own day, read back from Xero", async () => {
+    await firstAttemptDies("at-settlement");
+    state.xero.notes.get("cn_1")!.date = "2026-06-20";
+
+    await retry();
+
+    expect(state.xero.createPaymentsCalls[0]!.date).toBe("2026-06-20");
+  });
+
+  it("records the skip, and no payment, when the settlement says none is due", async () => {
     seedPayment(PaymentSource.INTERNET_BANKING);
     state.bankTransferAccount = null;
-    // A bank transfer's settlement reads no card mapping, so it dies at the
-    // payment step's decision the same way: before any payment call.
-    await firstAttemptDies("before-complete", { refundMethod: "internet-banking" });
+    await firstAttemptDies("at-settlement", "internet-banking");
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "internet-banking", repairExistingLink: true });
+    await retry();
 
     expect(state.xero.createPaymentsCalls).toEqual([]);
-    const [completed] = completedRows();
-    expect(completed).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
-    expect(completed!.responsePayload).toMatchObject({
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({
       refundPayment: null,
       refundPaymentSkipped: true,
       refundPaymentSkipReason: REFUND_UNSETTLED_NO_ACCOUNT_REASON,
     });
-    expectNoSucceededRowWithNeither();
   });
 
-  it("never records a second payment when the first attempt's payment reached Xero but its link was never written", async () => {
-    await firstAttemptDies("before-complete");
+  it("never pays twice when the first attempt's payment reached Xero and only its completion was lost", async () => {
+    await firstAttemptDies("at-completion");
     expect(state.xero.notes.get("cn_1")!.status).toBe("PAID");
-    // Days later: Xero no longer remembers the idempotency key.
-    state.xero.paymentKeys.clear();
+    xeroForgetsKeys();
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+    await retry();
 
-    expect(state.xero.createPaymentsCalls).toHaveLength(1); // the first attempt's only
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
     expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
-    const [completed] = completedRows();
-    expect(completed).toMatchObject({ status: "SUCCEEDED" });
-    expect(completed!.responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, refundPaymentSkipped: false });
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, refundPaymentSkipped: false });
     expect(state.links).toEqual(
-      expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_1" })]),
+      expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_1", metadata: expect.objectContaining({ amountCents: 5000 }) })]),
     );
   });
 
-  it("never pays a note an officer allocated by hand in Xero", async () => {
-    await firstAttemptDies("before-payment-decision");
-    const note = state.xero.notes.get("cn_1")!;
-    note.remainingCredit = 0; // allocated against an invoice, no payment
+  it("a payment committed in Xero whose response was lost ends PARTIAL, and the repair leg records it rather than paying again", async () => {
+    queueRefundNote("op_crashed", 5000, 5000);
+    state.xero.failNextPayment = "after-commit";
+    await dispatch("op_crashed");
+    expect(row()).toMatchObject({ status: "PARTIAL", xeroObjectId: "cn_1" });
+    xeroForgetsKeys();
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+    await retry();
+
+    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, refundPaymentError: null });
+  });
+
+  it("a payment that fails on the retry ends PARTIAL under the one note key, and the next repair records it", async () => {
+    await firstAttemptDies("at-settlement");
+    state.xero.failNextPayment = "before-commit";
+
+    await expect(retry()).rejects.toThrow("Xero 503");
+    expect(row()).toMatchObject({ status: "PARTIAL", xeroObjectId: "cn_1" });
+    expect(row().responsePayload).toMatchObject({ refundPayment: null, refundPaymentSkipped: false });
+
+    await retry();
+
+    const key = refundCreditNotePaymentIdempotencyKey(PAYMENT_ID, "cn_1");
+    expect(key).toBe("payment:cmpayment0001xyz:refund-payment:cn_1:v2");
+    expect(state.xero.createPaymentsCalls.map((call) => call.key)).toEqual([key, key]);
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
+  });
+
+  it("two simultaneous retries of the row leave one payment and a completed row", async () => {
+    await firstAttemptDies("at-settlement");
+    xeroForgetsKeys();
+    state.xero.replayPaymentKeys = false; // Xero dedups neither: only the read-back can
+    state.xero.readBarrier = { waiting: [], size: 2 }; // both read the note unpaid
+
+    const results = await Promise.allSettled([retry(), retry()]);
+
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" } });
+  });
+
+  it("never pays a note an officer allocated by hand in Xero", async () => {
+    await firstAttemptDies("at-settlement");
+    state.xero.notes.get("cn_1")!.remainingCredit = 0;
+
+    await retry();
 
     expect(state.xero.createPaymentsCalls).toEqual([]);
-    expect(completedRows()[0]!.responsePayload).toMatchObject({
+    expect(row().responsePayload).toMatchObject({
       refundPayment: null,
       refundPaymentSkipped: true,
       refundPaymentSkipReason: REFUND_NOTE_SETTLED_IN_XERO_REASON,
     });
   });
 
-  it("never pays when an officer resolved a refund note on this payment by hand in Xero (INV-INT-025)", async () => {
-    await firstAttemptDies("before-payment-decision");
-    state.resolved = { coveredCents: 5000, correlationKeys: [], operationIds: ["op_resolved"], unreadableOperationIds: [] };
+  it("records every payment of a note part-paid by hand, at the amount paid, and the remainder, never PARTIAL", async () => {
+    await firstAttemptDies("at-settlement");
+    const note = state.xero.notes.get("cn_1")!;
+    note.payments.push({ paymentID: "pay_hand", amount: 20, status: "AUTHORISED" });
+    note.remainingCredit = 30;
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+    await retry();
 
     expect(state.xero.createPaymentsCalls).toEqual([]);
-    expect(completedRows()[0]!.responsePayload).toMatchObject({
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({
+      refundPaymentSkipped: true,
+      refundPaymentSkipReason: REFUND_NOTE_PART_SETTLED_IN_XERO_REASON,
+      refundPaymentRemainingCents: 3000,
+    });
+    expect(state.links).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "REFUND_PAYMENT", xeroObjectId: "pay_hand", metadata: expect.objectContaining({ amountCents: 2000 }) })]),
+    );
+    expect(await findUnsettledRefundNoteRows()).toEqual([
+      expect.objectContaining({ creditNoteId: "cn_1", kind: "part-settled", remainingCents: 3000 }),
+    ]);
+  });
+
+  it("still pays when an officer resolved a DIFFERENT refund note on this payment by hand (INV-INT-025 is amount-based)", async () => {
+    await firstAttemptDies("at-settlement");
+    state.resolved = { coveredCents: 2000, correlationKeys: ["payment:cmpayment0001xyz:refund-credit-note:2000:v2"], operationIds: ["op_other"], unreadableOperationIds: [] };
+
+    await retry();
+
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
+    expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" } });
+  });
+
+  it("leaves unpaid a note whose own operation an officer resolved by hand in Xero", async () => {
+    await firstAttemptDies("at-settlement");
+    state.resolved = { coveredCents: 5000, correlationKeys: [NOTE_KEY_5000], operationIds: ["op_sibling"], unreadableOperationIds: [] };
+
+    await retry();
+
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(row().responsePayload).toMatchObject({
       refundPaymentSkipped: true,
       refundPaymentSkipReason: REFUND_NOTE_RESOLVED_IN_XERO_REASON,
     });
   });
 
-  it("fails visibly, and pays nothing, when the saved note was voided in Xero", async () => {
-    await firstAttemptDies("before-payment-decision");
+  it("refuses loudly, and pays nothing, when a resolved note on the payment has no readable amount", async () => {
+    await firstAttemptDies("at-settlement");
+    state.resolved = { coveredCents: 0, correlationKeys: [], operationIds: [], unreadableOperationIds: ["op_unreadable"] };
+
+    await expect(retry()).rejects.toThrow(/no readable amount/);
+    expect(state.xero.createPaymentsCalls).toEqual([]);
+    expect(row().status).toBe("FAILED");
+  });
+
+  it("fails visibly, and pays nothing, when the note was voided in Xero", async () => {
+    await firstAttemptDies("at-settlement");
     state.xero.notes.get("cn_1")!.status = "VOIDED";
 
-    await expect(
-      createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true }),
-    ).rejects.toThrow(/VOIDED in Xero/);
-
+    await expect(retry()).rejects.toThrow(/VOIDED in Xero/);
     expect(state.xero.createPaymentsCalls).toEqual([]);
-    expect(completedRows()).toEqual([]);
+    expect(row().status).toBe("FAILED");
   });
 
-  it("a payment that fails on the retry ends PARTIAL, and the repair leg then records it", async () => {
-    await firstAttemptDies("before-payment-decision");
-    state.xero.failNextPayment = true;
+  it("a replay the recorded note covers closes as covered by it, and pays nothing", async () => {
+    queueRefundNote("op_first", 5000, 5000);
+    await dispatch("op_first");
+    queueRefundNote("op_replay", 5000, 5000);
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+    await dispatch("op_replay");
 
-    const partial = completedRows()[0]!;
-    expect(partial).toMatchObject({ status: "PARTIAL", xeroObjectId: "cn_1" });
-    expect(partial.responsePayload).toMatchObject({ refundPayment: null, refundPaymentSkipped: false });
-    expect(getXeroOperationRetryMeta(partial as never)).toEqual({ supported: true, reason: null });
-
-    await retryXeroSyncOperation(String(partial.id), CLUB_FORMAT_TEST);
-
-    expect(partial.status).toBe("SUCCEEDED");
-    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
-    expect(state.xero.notes.get("cn_1")!.status).toBe("PAID");
+    expect(state.xero.notes.size).toBe(1);
+    expect(state.xero.createPaymentsCalls).toHaveLength(1);
+    expect(row("op_replay")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+    expect(row("op_replay").responsePayload).toEqual({ existingCreditNoteId: "cn_1", coveredByExistingNote: true });
+    expectNoSucceededRowWithNeither();
   });
 
-  it("an ordinary replay of a note whose outcome is on record stays a plain early return", async () => {
-    // A bank-transfer note left unsettled BY DESIGN (`INV-PAY-101`) ...
-    seedPayment(PaymentSource.INTERNET_BANKING);
-    state.bankTransferAccount = null;
-    queueOperation();
-    await createXeroCreditNote(PAYMENT_ID, 5000, { syncOperationId: "op_queued", refundMethod: "internet-banking" });
-    expect(state.operations[0]!.responsePayload).toMatchObject({ refundPaymentSkipped: true });
-    // ... is never re-settled, even once an account is configured.
-    state.bankTransferAccount = "090";
+  it("the builder never mints over its own row's recorded note (defence; no live path re-dispatches such a row)", async () => {
+    await firstAttemptDies("at-settlement");
+    // Coverage alone would read the delta as covered and close the row bare;
+    // the row's own note is what says it still owes its payment.
+    row().status = "RUNNING";
+    xeroForgetsKeys();
 
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "internet-banking", repairExistingLink: true });
+    await dispatch("op_crashed");
 
-    expect(state.xero.createPaymentsCalls).toEqual([]);
-    expect(state.operations).toHaveLength(1);
+    expect(state.xero.notes.size).toBe(1);
+    expect(row()).toMatchObject({ status: "SUCCEEDED" });
+    expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, interruptedAttemptCompleted: true });
   });
+});
 
-  it("a note a REFUND_PAYMENT link already names is never paid again, whatever Xero now shows", async () => {
-    await firstAttemptDies("before-payment-decision");
-    // Inbound reconcile linked a payment, which an officer later deleted in Xero.
-    state.links.push({
-      localModel: "Payment",
-      localId: PAYMENT_ID,
-      xeroObjectType: "PAYMENT",
-      xeroObjectId: "pay_by_hand",
-      role: "REFUND_PAYMENT",
-      active: true,
-      metadata: { creditNoteId: "cn_1" },
+describe("rows the pre-#3548 early return closed with neither (report and repair tool)", () => {
+  function seedHistoricBareRow() {
+    state.xero.notes.set("cn_9", {
+      creditNoteID: "cn_9",
+      creditNoteNumber: "CN-9",
+      status: "AUTHORISED",
+      date: "2026-05-02",
+      total: 50,
+      remainingCredit: 50,
+      payments: [],
     });
-
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
-
-    expect(state.xero.createPaymentsCalls).toEqual([]);
-    expect(completedRows()).toEqual([]);
-  });
-
-  it("heals a row the old early return closed with neither, and keeps the note link's own amounts", async () => {
-    await firstAttemptDies("before-payment-decision", { refundMethod: "card", watermarkCents: 5000 });
-    // What #3548 found: the pre-fix early return linked the note and closed a
-    // row SUCCEEDED carrying only the note id.
-    state.links.push({
-      localModel: "Payment",
-      localId: PAYMENT_ID,
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: "cn_1",
-      role: "REFUND_CREDIT_NOTE",
-      active: true,
-      metadata: { amountCents: 5000, watermarkCents: 5000 },
-    });
+    state.links.push({ localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_9", role: "REFUND_CREDIT_NOTE", active: true, metadata: { amountCents: 5000 } });
     state.operations.push({
       id: "op_bare",
       direction: "OUTBOUND",
@@ -572,37 +701,42 @@ describe("a retry after a crash between saving the note id and completing (#3548
       localId: PAYMENT_ID,
       status: "SUCCEEDED",
       manuallyResolvedAt: null,
-      xeroObjectId: "cn_1",
-      responsePayload: { existingCreditNoteId: "cn_1" },
+      xeroObjectId: "cn_9",
+      xeroObjectNumber: "CN-9",
+      correlationKey: "payment:cmpayment0001xyz:refund-credit-note:5000:v1",
+      idempotencyKey: "payment:cmpayment0001xyz:refund-credit-note:5000:v1",
+      createdAt: new Date("2026-05-02T00:00:00.000Z"),
+      requestPayload: { allocation: { invoiceId: "invoice_1", amount: 50 }, refundMethod: "card" },
+      responsePayload: { existingCreditNoteId: "cn_9" },
+    });
+  }
+
+  it("lists the row, and the operator-applied settle pays it once on the note's day and clears it", async () => {
+    seedHistoricBareRow();
+
+    expect(await findUnsettledRefundNoteRows()).toEqual([
+      expect.objectContaining({ operationId: "op_bare", creditNoteId: "cn_9", kind: "unsettled" }),
+    ]);
+
+    await expect(
+      applyRefundNoteSettlementRepair({ operationId: "op_bare", paymentId: PAYMENT_ID, creditNoteId: "cn_9" }),
+    ).resolves.toMatchObject({ status: "applied" });
+    await expect(
+      applyRefundNoteSettlementRepair({ operationId: "op_bare", paymentId: PAYMENT_ID, creditNoteId: "cn_9" }),
+    ).resolves.toMatchObject({ status: "skipped" });
+
+    expect(state.xero.createPaymentsCalls).toEqual([expect.objectContaining({ creditNoteId: "cn_9", date: "2026-05-02" })]);
+    expect(await findUnsettledRefundNoteRows()).toEqual([]);
+  });
+
+  it("does not list a note whose outcome another row recorded, or a skip by design", async () => {
+    seedHistoricBareRow();
+    state.operations.push({
+      ...row("op_bare"),
+      id: "op_raised",
+      responsePayload: { refundPaymentSkipped: true, refundPaymentSkipReason: "unsettled by design" },
     });
 
-    // A later replay finds the delta covered and reaches the early return.
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", watermarkCents: 9000, repairExistingLink: true });
-
-    expect(state.xero.notes.size).toBe(1);
-    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
-    const noteLink = state.links.find((link) => link.role === "REFUND_CREDIT_NOTE")!;
-    expect(noteLink.metadata).toEqual({ amountCents: 5000, watermarkCents: 5000 });
-  });
-
-  it("repairs only the note the payment saved, never a canonical link it did not", async () => {
-    await firstAttemptDies("before-payment-decision");
-    state.payment!.xeroRefundCreditNoteId = null;
-    state.canonical = { xeroObjectId: "cn_1", xeroObjectNumber: "CN-1", source: "link" };
-
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
-
-    expect(state.xero.createPaymentsCalls).toEqual([]);
-  });
-
-  it("in per-delta mode the retry replays the same note by its key and settles it", async () => {
-    await firstAttemptDies("before-payment-decision", { refundMethod: "card", watermarkCents: 5000 });
-
-    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", watermarkCents: 0, repairExistingLink: true });
-
-    expect(state.xero.notes.size).toBe(1);
-    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
-    expect(completedRows()[0]!.responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" } });
-    expectNoSucceededRowWithNeither();
+    expect(await findUnsettledRefundNoteRows()).toEqual([]);
   });
 });

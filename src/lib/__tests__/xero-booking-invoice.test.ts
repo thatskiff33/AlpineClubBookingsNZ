@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    // #3548: a new refund note is recorded (payment, link, row) in one
+    // transaction; the same fns as the global client's, so assertions hold.
+    payment: { update: vi.fn() },
+    xeroSyncOperation: { update: vi.fn() },
   };
 
   const prisma = {
@@ -48,7 +52,7 @@ const mocks = vi.hoisted(() => {
     },
     payment: {
       findUnique: vi.fn(),
-      update: vi.fn(),
+      update: tx.payment.update,
     },
     // #3635 round-3 R1: no refund row names a late capture unless a test says so.
     paymentRefund: {
@@ -80,7 +84,7 @@ const mocks = vi.hoisted(() => {
       ]),
     },
     xeroSyncOperation: {
-      update: vi.fn(),
+      update: tx.xeroSyncOperation.update,
       // #2929: the creation-time invoice-email instruction is read back off the
       // operation row a dispatcher claimed. Defaults to "no instruction was
       // recorded", which is every row this application has ever written before
@@ -257,7 +261,6 @@ import {
   createXeroCreditNoteForModification,
   createXeroCreditNote,
   createXeroInvoiceForBooking,
-  createXeroRefundPaymentForInvoice,
   encryptToken,
   resetXeroRateLimitStateForTests,
   updateXeroBookingInvoiceForBooking,
@@ -2549,87 +2552,6 @@ describe("createXeroCreditNoteForModification", () => {
       })
     );
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
-  });
-});
-
-describe("createXeroRefundPaymentForInvoice", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetXeroRateLimitStateForTests();
-    vi.stubEnv(
-      "XERO_ENCRYPTION_KEY",
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    );
-    vi.stubEnv("XERO_CLIENT_ID", "client-id");
-    vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
-    // #3036: on a copy the funnel reads the linked contact back and contains it
-    // before returning its id. On the club's live site none of this runs.
-    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
-    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
-    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
-      body: {
-        contacts: [
-          { contactID: "contact_1", emailAddress: "member@example.com" },
-        ],
-      },
-    });
-    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
-      body: {},
-    });
-
-    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
-      id: "token_1",
-      accessToken: encryptedAccess,
-      refreshToken: encryptedRefresh,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      tenantId: "tenant_1",
-    });
-    mocks.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
-    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_payment_1" });
-    mocks.xeroClientInstance.accountingApi.createPayments.mockResolvedValue({
-      body: {
-        payments: [
-          {
-            paymentID: "xpay_1",
-            creditNoteNumber: "CN-1",
-          },
-        ],
-      },
-    });
-  });
-
-  it("creates the Xero refund payment against the credit note", async () => {
-    await expect(
-      createXeroRefundPaymentForInvoice({
-        paymentId: "pay_1",
-        invoiceId: "inv_1",
-        creditNoteId: "cn_1",
-        refundAmountCents: 2500,
-      })
-    ).resolves.toBe("xpay_1");
-
-    expect(mocks.xeroClientInstance.accountingApi.createPayments).toHaveBeenCalledWith(
-      "tenant_1",
-      {
-        payments: [
-          expect.objectContaining({
-            creditNote: { creditNoteID: "cn_1" },
-            account: { code: "606" },
-            amount: 25,
-          }),
-        ],
-      },
-      undefined,
-      "payment:pay_1:refund-payment:2500:cn_1:v2"
-    );
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_payment_1",
-      expect.objectContaining({
-        xeroObjectType: "PAYMENT",
-        xeroObjectId: "xpay_1",
-        xeroObjectNumber: "CN-1",
-      })
-    );
   });
 });
 

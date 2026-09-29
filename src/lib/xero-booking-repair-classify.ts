@@ -49,6 +49,7 @@ import {
 import {
   addAction,
   addFinding,
+  addUnsettledRefundCreditNoteFindings,
   addXeroAmountMismatchFinding,
   buildBookingSummary,
   buildLinkRepairAction,
@@ -1325,6 +1326,10 @@ export function classifyBookingContext(
       },
       actionKeys: [action.key],
     });
+  }
+
+  if (payment) {
+    addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, paymentLinks, paymentOperations);
   }
 
   if (payment && refundCreditNote) {
