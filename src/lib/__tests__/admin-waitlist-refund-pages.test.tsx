@@ -704,10 +704,12 @@ describe("Admin refund and credit review page", () => {
 
     const grossPaid = (await screen.findByText("Gross paid:")).parentElement;
     expect(grossPaid).toHaveTextContent("Gross paid: $130.00");
-    const remaining = screen.getByText("Remaining:").parentElement;
-    expect(remaining).toHaveTextContent("Remaining: $65.00");
-    // The bare word is gone, not merely supplemented.
+    // The net beside it says what it is: what can still be refunded.
+    const remaining = screen.getByText("Remaining refundable:").parentElement;
+    expect(remaining).toHaveTextContent("Remaining refundable: $65.00");
+    // The bare words are gone, not merely supplemented.
     expect(screen.queryByText("Paid:")).toBeNull();
+    expect(screen.queryByText("Remaining:")).toBeNull();
     expect(screen.getByText("To card:").parentElement).toHaveTextContent("To card: $65.00");
 
     // Display only (#3372 acceptance): rendering the page sends nothing but

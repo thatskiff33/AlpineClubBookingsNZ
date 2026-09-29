@@ -22,7 +22,8 @@
   The booking change requests panel shows a partly refunded payment at its net
   amount, with the amount paid and the amount refunded or credited underneath.
   The refund requests page now labels its "Paid" figure "Gross paid", meaning
-  the amount before any refund.
+  the amount before any refund, and the "Remaining" figure beside it
+  "Remaining refundable", the amount that can still be refunded.
 
   Nothing stored has changed; only how these figures are worked out and
   labelled.
