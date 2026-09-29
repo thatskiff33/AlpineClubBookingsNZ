@@ -84,7 +84,7 @@ export const MAX_CONFIGURED_LODGE_CAPACITY = 100_000;
  * is lint-restricted here (`INV-DATE-015`). The bound itself still comes from
  * the constant above, so there is one figure, not two.
  */
-const CONFIGURED_LODGE_CAPACITY_RANGE = `a whole number from ${MIN_CONFIGURED_LODGE_CAPACITY} to ${String(
+export const CONFIGURED_LODGE_CAPACITY_RANGE = `a whole number from ${MIN_CONFIGURED_LODGE_CAPACITY} to ${String(
   MAX_CONFIGURED_LODGE_CAPACITY,
 ).replace(/\B(?=(\d{3})+$)/g, ",")}`;
 const CONFIGURED_LODGE_CAPACITY_RANGE_MESSAGE = `Enter ${CONFIGURED_LODGE_CAPACITY_RANGE}, or clear it to fall back.`;

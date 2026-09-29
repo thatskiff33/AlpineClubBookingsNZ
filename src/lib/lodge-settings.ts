@@ -205,6 +205,72 @@ export async function createNewLodgeSettings(
   });
 }
 
+/**
+ * A config import's capacity write (#3407): the capacity a bundle carries for
+ * one lodge, written inside the import transaction to the row the resolver
+ * reads for that lodge, which is also the row the export read it from.
+ *
+ * - A lodge the import has just created is born through
+ *   `createNewLodgeSettings`, exactly as Add lodge does.
+ * - An existing lodge with its own row is edited there.
+ * - An existing lodge still served by the legacy "default" row (linked to it,
+ *   or unlinked) is edited on that row, and an unlinked row is claimed, as a
+ *   hub edit through `updateLodgeSettings` would. Writing an own row instead
+ *   would leave the legacy row's school-group soft cap behind, and every
+ *   club-wide reader of the legacy row reading a different figure.
+ * - Otherwise the lodge gets its own row.
+ *
+ * Nothing else in a config import writes a `LodgeSettings` row: the model is a
+ * model-level exclusion (`MODEL_LEVEL_EXCLUSIONS`), so this is the only path.
+ */
+export async function writeImportedLodgeCapacity(
+  tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
+  input: {
+    lodgeId: string;
+    capacity: number;
+    updatedByMemberId: string;
+    lodgeCreatedByThisImport: boolean;
+  },
+): Promise<void> {
+  const create = () =>
+    createNewLodgeSettings(tx, {
+      lodgeId: input.lodgeId,
+      capacity: input.capacity,
+      updatedByMemberId: input.updatedByMemberId,
+    });
+  if (input.lodgeCreatedByThisImport) return create();
+
+  const ownRow = await tx.lodgeSettings.findUnique({
+    where: { id: input.lodgeId },
+    select: { id: true },
+  });
+  if (ownRow) {
+    await tx.lodgeSettings.update({
+      where: { id: input.lodgeId },
+      data: { capacity: input.capacity, updatedByMemberId: input.updatedByMemberId },
+      select: { id: true },
+    });
+    return;
+  }
+  const legacy = await tx.lodgeSettings.findUnique({
+    where: { id: LODGE_SETTINGS_ID },
+    select: { lodgeId: true },
+  });
+  if (legacy && (legacy.lodgeId === null || legacy.lodgeId === input.lodgeId)) {
+    await tx.lodgeSettings.update({
+      where: { id: LODGE_SETTINGS_ID },
+      data: {
+        capacity: input.capacity,
+        updatedByMemberId: input.updatedByMemberId,
+        ...(legacy.lodgeId === null ? { lodgeId: input.lodgeId } : {}),
+      },
+      select: { id: true },
+    });
+    return;
+  }
+  return create();
+}
+
 export async function updateLodgeSettings(input: {
   capacity: number | null;
   hutLeaderLookaheadDays: number;

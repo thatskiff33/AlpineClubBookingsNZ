@@ -26,11 +26,24 @@ import {
 } from "../import-types";
 import { RowValidator, asStr, coerceBool, nz, readCsvRows } from "../values";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  CONFIGURED_LODGE_CAPACITY_RANGE,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
+import {
+  loadLodgeCapacityOverride,
+  writeImportedLodgeCapacity,
+} from "@/lib/lodge-settings";
 
 // lodge-config category (part 1): lodges + their rooms + beds + seasons + rates
 // — the structural "multi-lodge" core. Each lodge is a self-contained folder,
 //   lodge-config/lodges/<slug>/
-//     lodge.json          { slug, name, active, travelNote, isDefault, doorCode? }
+//     lodge.json          { slug, name, active, travelNote, isDefault, doorCode?,
+//                           capacity? }
+//                         capacity (#3407) is the lodge's resolved
+//                         LodgeSettings.capacity, emitted only when one is set.
+//                         Optional: a bundle without it (every pre-#3407
+//                         bundle) leaves the target's capacity alone.
 //     rooms.csv           name, sortOrder, active, notes
 //     beds.csv            roomName, name, sortOrder, active
 //     seasons.csv         name, type, startDate, endDate, active,
@@ -50,8 +63,10 @@ import { formatDateOnly } from "@/lib/date-only";
 //
 // Row validation is strict and BLOCKS apply (plan errors): malformed dates,
 // enums, and money never reach a write; blank cells are only legal where merge
-// mode would keep the existing value. Per-lodge capacity stays out of scope;
-// allocation settings are handled by the ordered companion module. ADR-001/002.
+// mode would keep the existing value. Per-lodge capacity rides in lodge.json
+// (#3407) and is written to the lodge's settings row, never to Lodge; the other
+// LodgeSettings columns stay instance-local. Allocation settings are handled by
+// the ordered companion module. ADR-001/002.
 
 /** Every per-lodge folder lives under this prefix. */
 export const LODGES_PREFIX = "lodge-config/lodges/";
@@ -73,6 +88,10 @@ const LODGE_FIELDS = [
   // display (#137 / #37). Travels with the lodge descriptor like the other
   // per-lodge display settings.
   "showGuestPhonesOnScreens",
+  // The lodge's resolved LodgeSettings.capacity (#3407). Not a Lodge column:
+  // buildLodgeData never writes it, and apply routes it to the settings row
+  // through `writeImportedLodgeCapacity`.
+  "capacity",
 ] as const;
 
 const DISPLAY_GRANULARITIES = [
@@ -154,6 +173,18 @@ export function folderLodgeSlug(
 /** date-only (@db.Date): serialise as YYYY-MM-DD. */
 function toDateStr(value: Date | null | undefined): string {
   return value ? formatDateOnly(new Date(value)) : "";
+}
+
+/**
+ * The capacity a lodge.json carries (#3407), or undefined when it carries none.
+ * Absent and null both mean "leave the target's capacity alone", in either
+ * mode, so an older bundle imports exactly as it did before the field existed.
+ * A present value is validated by `parseLodgeFolder` against the same bounds as
+ * Add lodge; an invalid one is deleted there, after its error is recorded.
+ */
+function bundleCapacity(descriptor: Record<string, unknown>): number | undefined {
+  const value = descriptor.capacity;
+  return typeof value === "number" ? value : undefined;
 }
 
 function asNullableStr(value: unknown): string | null {
@@ -259,6 +290,8 @@ interface LodgeCurrent {
   displayNameGranularity: string | null;
   displayNotice: string | null;
   showGuestPhonesOnScreens: boolean;
+  /** The resolved LodgeSettings.capacity (#3407), or null when none is set. */
+  capacity: number | null;
 }
 interface SeasonCurrent {
   id: string;
@@ -301,7 +334,14 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
       showGuestPhonesOnScreens: true,
     },
   });
-  const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
+  // One resolver read per lodge (#3407): the same resolution the booking doors
+  // use, so the preview compares against the capacity the lodge really has.
+  const capacities = await Promise.all(
+    lodgeRows.map((l) => loadLodgeCapacityOverride(db, l.id)),
+  );
+  const lodges = new Map(
+    lodgeRows.map((l, i) => [l.slug, { ...l, capacity: capacities[i] ?? null }]),
+  );
   const lodgeIds = lodgeRows.map((l) => l.id);
 
   const [roomRows, bedRows, seasonRows, rateRows, membershipTypeRows, currentDefault] = await Promise.all([
@@ -401,12 +441,17 @@ export const lodgeConfigExporter: CategoryExporter = {
     const lodges = await ctx.db.lodge.findMany({
       orderBy: { slug: "asc" },
       select: {
-        slug: true, name: true, active: true, travelNote: true,
+        id: true, slug: true, name: true, active: true, travelNote: true,
         doorCode: true, isDefault: true,
         displayConfig: true, displayNameGranularity: true, displayNotice: true,
       showGuestPhonesOnScreens: true,
       },
     });
+    // #3407: each lodge's resolved capacity — its own settings row, or the
+    // legacy "default" row that still serves it.
+    const capacities = await Promise.all(
+      lodges.map((l) => loadLodgeCapacityOverride(ctx.db, l.id)),
+    );
     const rooms = await ctx.db.lodgeRoom.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { name: true, sortOrder: true, active: true, notes: true, lodge: { select: { slug: true } } },
@@ -445,7 +490,7 @@ export const lodgeConfigExporter: CategoryExporter = {
     for (const r of rates) push(ratesBy, r.season.lodge.slug, { seasonName: r.season.name, membershipTypeKey: r.membershipType.key, ageTier: r.ageTier ?? "", pricePerNightCents: r.pricePerNightCents });
 
     const entries: BundleEntry[] = [];
-    for (const lodge of lodges) {
+    for (const [index, lodge] of lodges.entries()) {
       const paths = lodgeFolderFiles(folderSegment(lodge.slug));
       const descriptor: Record<string, unknown> = {
         slug: lodge.slug,
@@ -459,6 +504,8 @@ export const lodgeConfigExporter: CategoryExporter = {
         showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
       };
       if (ctx.includeDoorCodes) descriptor.doorCode = lodge.doorCode;
+      const capacity = capacities[index];
+      if (typeof capacity === "number") descriptor.capacity = capacity;
       entries.push({
         path: paths.lodge,
         category: "lodge-config",
@@ -565,6 +612,20 @@ function parseLodgeFolder(
   ) {
     errors.push(`${paths.lodge}: showGuestPhonesOnScreens must be true or false`);
     delete descriptor.showGuestPhonesOnScreens;
+  }
+  // #3407: the same bounds as Add lodge. Absent or null is legal (leave alone).
+  if ("capacity" in descriptor && descriptor.capacity !== null) {
+    const value = descriptor.capacity;
+    const parsed =
+      typeof value === "number"
+        ? parseConfiguredLodgeCapacity(String(value))
+        : ({ kind: "invalid" } as const);
+    if (parsed.kind !== "valid") {
+      errors.push(
+        `${paths.lodge}: capacity must be ${CONFIGURED_LODGE_CAPACITY_RANGE}, or left out`,
+      );
+      delete descriptor.capacity;
+    }
   }
 
   const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
@@ -733,7 +794,11 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       const guarded = stripCleanedLiterals("lodge", slug, descriptor, data);
       for (const hit of guarded.hits) warnings.push(cleanedLiteralWarning(hit));
       const write = updateDataForMode(ctx.mode, descriptor, guarded.write);
-      const changed = changedFields(write, currentLodge);
+      const capacity = bundleCapacity(descriptor);
+      const changed = changedFields(
+        capacity === undefined ? write : { ...write, capacity },
+        currentLodge,
+      );
       items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
       // Door-code disclosure: creating with a code, or changing one.
       const writesCode =
@@ -864,17 +929,27 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       descriptor,
       buildLodgeData(descriptor, slug),
     );
+    const capacity = bundleCapacity(descriptor);
     let lodgeId: string;
     if (currentLodge) {
       const write = updateDataForMode(ctx.mode, descriptor, lodgeData);
       const changed = changedFields(write, currentLodge);
+      const capacityChanged =
+        capacity !== undefined && capacity !== currentLodge.capacity;
       if (changed.length > 0) {
         await ctx.tx.lodge.update({ where: { id: currentLodge.id }, data: write });
-        result.updated += 1;
         if (changed.includes("doorCode")) ctx.notes.doorCodesWritten.push(slug);
-      } else {
-        result.unchanged += 1;
       }
+      if (capacityChanged) {
+        await writeImportedLodgeCapacity(ctx.tx, {
+          lodgeId: currentLodge.id,
+          capacity,
+          updatedByMemberId: ctx.actorMemberId,
+          lodgeCreatedByThisImport: false,
+        });
+      }
+      if (changed.length > 0 || capacityChanged) result.updated += 1;
+      else result.unchanged += 1;
       lodgeId = currentLodge.id;
     } else {
       const created = await ctx.tx.lodge.create({
@@ -884,6 +959,17 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       result.created += 1;
       if (nz(descriptor.doorCode) !== null) ctx.notes.doorCodesWritten.push(slug);
       lodgeId = created.id;
+      // #3407: born with its settings row, in this transaction, as Add lodge
+      // does. A bundle with no capacity leaves the lodge not set up for
+      // bookings, which the calendar and setup readiness then say.
+      if (capacity !== undefined) {
+        await writeImportedLodgeCapacity(ctx.tx, {
+          lodgeId,
+          capacity,
+          updatedByMemberId: ctx.actorMemberId,
+          lodgeCreatedByThisImport: true,
+        });
+      }
     }
 
     // 2) Rooms (by lodgeId + name); keep an id map for beds.
