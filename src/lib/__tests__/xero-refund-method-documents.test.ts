@@ -326,6 +326,11 @@ describe("the cash refund note (createXeroCreditNote)", () => {
       expect(recorded).toMatchObject({ paymentIntentId: "pi_late", documentDate: "2026-06-12" });
       expect(builtCreditNote()).toMatchObject({ date: "2026-06-12" });
       expect(settlingPayment()).toMatchObject({ date: "2026-06-12" });
+      // R4: the note's link names its capture, which is what the per-capture
+      // sizing counts, so a later credit-back cannot note the same refund twice.
+      const noteLink = (completion().extraLinks as Array<{ role: string; metadata?: Record<string, unknown> }>)
+        .find((link) => link.role === "REFUND_CREDIT_NOTE");
+      expect(noteLink?.metadata).toMatchObject({ amountCents: 2500, paymentIntentId: "pi_late" });
     });
 
     for (const kind of ["none", "resolved-by-hand"] as const) {
