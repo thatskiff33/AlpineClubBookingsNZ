@@ -109,9 +109,11 @@ describe("cents-in-prose guard: catches the shape", () => {
 describe("cents-in-prose guard: it is its own group", () => {
   /*
     Review of #3533 found the first cut appended this selector to
-    `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions —
-    files excused for seeding an editable input or writing a raw export cell,
-    none of which is a reason to put the storage form in a sentence. The arm is
+    `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions
+    at the time — files excused for seeding an editable input, writing a raw
+    export cell or prefixing a Xero invoice's currency, none of which is a
+    reason to put the storage form in a sentence. #3399 retired all ten; only
+    the canonical definition in `src/lib/utils.ts` is still listed. The arm is
     its own array; #3589's one direct-return exception is confined to one
     diagnostic file. These two cases stop it being folded back in.
   */

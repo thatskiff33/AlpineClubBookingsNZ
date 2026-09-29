@@ -381,9 +381,11 @@ const CENTS_DISPLAY_RESTRICTIONS = [
  * ITS OWN GROUP, and that is the whole point of the separation.
  *
  * The first cut appended this selector to `CENTS_DISPLAY_RESTRICTIONS`, which
- * made it inherit that group's exemptions - ten files excused for seeding an
- * editable input's plain value or writing a raw export cell, none of which is
- * a reason to write the storage form into a sentence. That is exactly the
+ * made it inherit that group's exemptions at the time - ten files excused for
+ * seeding an editable input's plain value, writing a raw export cell or
+ * prefixing a Xero invoice's currency, none of which is a reason to write the
+ * storage form into a sentence. (#3399 retired all ten; only the canonical
+ * definition in `src/lib/utils.ts` is still listed.) That is exactly the
  * hazard this file warns about two groups above for the raw-SQL set and again
  * for the money set: an exemption written for one rule silently lifting
  * another it was never weighed against. Review of #3533 caught it before it
@@ -437,11 +439,11 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // was found in three files at the merge base (the fee sections, the joining
 // fee preview, the public content tokens) that #3302's toFixed arm above
 // structurally cannot see (there is no division to match), and two of them
-// sat on that arm's editable-input exemption. This is therefore its OWN
-// group, on the mandatory set, so
+// sat on that arm's editable-input exemption (retired in #3399). This is
+// therefore its OWN group, on the mandatory set, so
 // `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
-// it: an exemption written for seeding an input's plain value never excused a
-// hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
+// it: an exemption from the toFixed arithmetic never excuses a hard-coded
+// locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
 // pass identifiers off the club's resolved format — `APP_LOCALE` and
 // `APP_CURRENCY` until #3565, `format.locale` and `format.currencyCode`
 // through `@/lib/club-format-intl` since — so they pass without an exemption
