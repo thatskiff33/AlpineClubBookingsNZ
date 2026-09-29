@@ -107,7 +107,7 @@ Template through `{{config:<key>}}`):
 | `contact-email` | the info-footer email item |
 | `footer-note` | the info-footer accent note (token-resolved) |
 
-The whole surface is **additive** to the schema; run `npm run db:check-drift`
+The whole surface is **additive** to the schema; run `pnpm run db:check-drift`
 against a shadow DB after any change to these models.
 
 **The three built-in designs are ordinary seeded rows, not a code registry.**

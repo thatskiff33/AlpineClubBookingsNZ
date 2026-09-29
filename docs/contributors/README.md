@@ -104,6 +104,9 @@ in. Cite rules by id, never by line number.
   non-production browser and Lighthouse checks.
 - [`../LOAD_TESTING.md`](../LOAD_TESTING.md) — the k6 HTTP load harness in
   [`../../load/`](../../load/README.md), its thresholds, and its safety rails.
+- [`../reviews/2026-09-26-money-path-sweep-may-june-2026.md`](../reviews/2026-09-26-money-path-sweep-may-june-2026.md)
+  — the #3341 sweep of the unreviewed May–June 2026 money-path pull requests:
+  the defect class, a verdict per PR, and the defects it filed.
 
 ## Security
 
@@ -142,7 +145,7 @@ in. Cite rules by id, never by line number.
 - [`../agents/CODEX_WORKFLOW.md`](../agents/CODEX_WORKFLOW.md) — the operating
   guide for Codex agents, including the Windows worktree runtime and
   dependency preflight, and lane-owned Docker teardown with the report-only
-  `npm run stale-containers` debris check.
+  `pnpm run stale-containers` debris check.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
   contracts: the human-first issue-body order, the four-question test for
   whether work is an atomic epic at all (and how an epic differs from a

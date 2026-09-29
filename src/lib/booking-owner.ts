@@ -129,8 +129,8 @@
  * `src/lib/__tests__/booking-owner-census.test.ts` fails when a new direct read
  * of a booking's member appears anywhere under `src/` or `scripts/`. It reads
  * the tree from disk and therefore has no import edge to what it scans, so
- * `npm run test:related` cannot select it: like the other censuses in that
- * directory it is CI-caught by design, and `npm run test:named` is how to run
+ * `pnpm run test:related` cannot select it: like the other censuses in that
+ * directory it is CI-caught by design, and `pnpm run test:named` is how to run
  * it locally. The accessor's own behaviour is unit-tested in
  * `src/lib/__tests__/booking-owner.test.ts`.
  */

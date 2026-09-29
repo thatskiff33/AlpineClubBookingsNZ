@@ -10,6 +10,7 @@ import {
   reopenGroupBooking,
   resolveGroupBookingByCode,
 } from "@/lib/group-booking";
+import { toGroupBookingSummaryResponse } from "@/lib/group-booking-summary-response";
 import logger from "@/lib/logger";
 
 /**
@@ -30,17 +31,8 @@ export async function GET(
     return NextResponse.json({ error: "Group booking not found" }, { status: 404 });
   }
 
-  return NextResponse.json({
-    code: summary.code,
-    status: summary.status,
-    paymentMode: summary.paymentMode,
-    organiserFirstName: summary.organiserFirstName,
-    lodgeName: summary.lodgeName,
-    checkIn: summary.checkIn.toISOString(),
-    checkOut: summary.checkOut.toISOString(),
-    joinDeadline: summary.joinDeadline?.toISOString() ?? null,
-    isJoinable: summary.isJoinable,
-  });
+  // One serialiser, typed from the summary, so no field can be dropped here.
+  return NextResponse.json(toGroupBookingSummaryResponse(summary));
 }
 
 const patchSchema = z

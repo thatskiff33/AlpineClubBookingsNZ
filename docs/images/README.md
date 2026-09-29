@@ -5,8 +5,8 @@ All documentation screenshots live here, grouped by area:
 - `admin/` — admin/operator UI captures (`admin-<page>.png`).
 - `public/` — public-facing captures (`public-<page>.png`).
 - `readme/` — the root README's front-page assets: `hero-banner.png` and
-  `og-image.png` (generated art, `npm run docs:readme-art`) and
-  `demo-booking.gif` (booking-flow walkthrough, `npm run docs:demo-gif`).
+  `og-image.png` (generated art, `pnpm run docs:readme-art`) and
+  `demo-booking.gif` (booking-flow walkthrough, `pnpm run docs:demo-gif`).
   `og-image.png` is also the image to upload as the GitHub social preview
   (repo Settings; there is no API for it).
 
@@ -14,9 +14,9 @@ These are produced by the automated capture harness, never hand-cropped ad hoc,
 so they stay consistent and re-creatable:
 
 ```bash
-npm run test:e2e:prepare        # boot + seed the staging stack (docs/E2E_PLAYWRIGHT.md)
-npm run docs:screenshots        # capture the named set into this tree
-npm run docs:screenshots -- --list   # dry run: print the manifest, no browser
+pnpm run test:e2e:prepare        # boot + seed the staging stack (docs/E2E_PLAYWRIGHT.md)
+pnpm run docs:screenshots        # capture the named set into this tree
+pnpm run docs:screenshots --list   # dry run: print the manifest, no browser
 ```
 
 Filenames are stable and defined in the harness manifest

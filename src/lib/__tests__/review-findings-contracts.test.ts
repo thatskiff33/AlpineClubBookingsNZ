@@ -1076,10 +1076,10 @@ describe("review finding source/schema contracts", () => {
     expect(migrationBlock).toContain(
       "DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
     );
-    expect(migrationBlock).toContain("run: npx prisma migrate deploy");
+    expect(migrationBlock).toContain("run: pnpm exec prisma migrate deploy");
     expect(migrationBlock).not.toContain("drift_main");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts"
     );
   });
 
@@ -1122,7 +1122,7 @@ describe("review finding source/schema contracts", () => {
       "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
     );
     expect(stepBlock).toContain(
-      "npx vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts"
     );
 
     // The three cases #2672 added, by name. A rename that loses one of them is
@@ -1161,7 +1161,7 @@ describe("review finding source/schema contracts", () => {
     expect(migrateStep).toBeGreaterThan(-1);
     expect(proofStep).toBeGreaterThan(migrateStep);
     expect(workflow.slice(proofStep)).toContain(
-      "npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts"
     );
 
     const suite = readRepoFile(
@@ -1189,7 +1189,7 @@ describe("review finding source/schema contracts", () => {
       "EMAIL_OVERRIDE_ANNOTATION_STRIP_TEST_DATABASE_URL:"
     );
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/email-message-annotation-strip.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/email-message-annotation-strip.test.ts"
     );
     const suite = readRepoFile(
       "src/lib/__tests__/email-message-annotation-strip.test.ts"
@@ -1230,7 +1230,7 @@ describe("review finding source/schema contracts", () => {
     // Both on the SAME step: the env var it needs, and the command that runs it.
     expect(step).toContain("MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:");
     expect(step).toContain(
-      "npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
+      "pnpm exec vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
     );
     // A commented-out env line satisfies `toContain` on the raw text.
     expect(
@@ -1344,7 +1344,9 @@ describe("review finding source/schema contracts", () => {
     expect(schema).toContain("stripePaymentIntentId");
     expect(schema).toContain("currency");
     expect(schema).toContain("status");
-    expect(paymentTransactions).toContain("paymentRefund.upsert");
+    // #3640: inserted with ON CONFLICT DO NOTHING, so the insert itself says
+    // whether this writer recorded the refund (the mirror adds only then).
+    expect(paymentTransactions).toContain("paymentRefund.createMany");
     expect(paymentTransactions).toContain("recordStripeRefundLedgerEntry");
     expect(stripeWebhook).toContain("listRefundsForCharge");
     expect(stripeWebhook).toContain("syncRefundsFromStripeCharge");

@@ -96,7 +96,7 @@ describe("xero member grouping migration (#1934)", () => {
 // Real-PostgreSQL behavior (env-gated, disposable-schema-per-test pattern).
 // Requires PostgreSQL 15+
 // (NULLS NOT DISTINCT). Point the env var at a disposable database:
-//   XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL=postgres://... npx vitest run xero-member-grouping-migration
+//   XERO_MEMBER_GROUPING_MIGRATION_TEST_DATABASE_URL=postgres://... pnpm exec vitest run xero-member-grouping-migration
 // ---------------------------------------------------------------------------
 
 const databaseUrl =

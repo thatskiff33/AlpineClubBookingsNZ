@@ -11,8 +11,8 @@
 // be made unrepresentable; the exclusion list lives in the module that owns the
 // fact, not here, and a stale entry fails below so the list can only shrink.
 //
-// It reads the tree from disk, so `npm run test:related` cannot reach it — run
-// it by name (`npm run test:named`) when an admin file gains a scroll or focus.
+// It reads the tree from disk, so `pnpm run test:related` cannot reach it — run
+// it by name (`pnpm run test:named`) when an admin file gains a scroll or focus.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

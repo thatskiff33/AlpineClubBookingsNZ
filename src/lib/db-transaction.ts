@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -52,4 +52,48 @@ export async function withOptionalTransaction<T>(
   return prisma.$transaction((innerTx) =>
     fn(innerTx as unknown as PrismaTransactionClient),
   );
+}
+
+/**
+ * Is `store` the ROOT Prisma client rather than an interactive transaction
+ * client? The one home for that question (`INV-SSOT`).
+ *
+ * The TYPES cannot answer it. `Prisma.TransactionClient` is `PrismaClient` minus
+ * a deny list, and in Prisma 7 that list (`denylist` in
+ * `node_modules/@prisma/client/runtime/client.d.ts`) is
+ * `["$connect","$disconnect","$on","$use","$extends"]`. `$transaction` is NOT in
+ * it - Prisma 7 supports nested transactions - so the full client is
+ * structurally assignable to a transaction-client parameter. Measured with a
+ * compile probe, not assumed: `Prisma.TransactionClient & { $transaction?: never }`
+ * collapses to `never` and rejects both clients.
+ *
+ * So the answer is a RUNTIME probe, and the discriminator is `$connect`: measured
+ * against a real PostgreSQL on Prisma 7.9.1, an interactive transaction client
+ * reports `typeof tx.$transaction === "function"` while `$connect`,
+ * `$disconnect` and `$extends` are all `undefined` on it - the deny list is
+ * exactly what tells the two apart.
+ */
+export function isRootPrismaClient(
+  store: Prisma.TransactionClient | PrismaClient,
+): store is PrismaClient {
+  return typeof (store as { $connect?: unknown }).$connect === "function";
+}
+
+/**
+ * Run `fn` inside the transaction `store` already is, or - when `store` is the
+ * root client - inside a new transaction of its own.
+ *
+ * The sibling of `withOptionalTransaction` for helpers that take ONE `store`
+ * parameter defaulting to the root client (the payment-ledger writers) rather
+ * than an optional `tx`. The same caveat applies: joined to a caller's
+ * transaction, the caller owns the commit.
+ */
+export async function withStoreTransaction<T>(
+  store: Prisma.TransactionClient | PrismaClient,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  if (isRootPrismaClient(store)) {
+    return store.$transaction((tx) => fn(tx));
+  }
+  return fn(store);
 }

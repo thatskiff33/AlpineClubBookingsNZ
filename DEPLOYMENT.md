@@ -482,7 +482,7 @@ Minimum production categories:
   Boot (DR / clone)".
 - AI Diagnostics (optional module, default off): `AI_DIAGNOSTICS_DATABASE_URL` —
   a **dedicated non-superuser, SELECT-only** database role for the diagnostics
-  tool substrate, provisioned with `npm run diagnostics:provision-role`. It is
+  tool substrate, provisioned with `pnpm run diagnostics:provision-role`. It is
   never the app's `DATABASE_URL` (the Compose app role is a superuser), and the
   app verifies the role's privileges with the server before every read. Required
   before the module can be used. See
@@ -538,7 +538,7 @@ docker build -t tacbookings:local .
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
 database**, not in a file. After the migrate/seed steps, sign in as the seeded
 admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
-seasons/rates, email, Stripe, Xero). Optionally run `npm run setup:wizard`
+seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
 is written). `config/club.json` remains an optional seed/fallback only: copy
@@ -868,7 +868,7 @@ sequence below is run once, not once per migration.
 
   **The backfill REFUSES unless the classification is complete**, and that is a
   precondition of the window rather than a step inside it. Run
-  `npm run db:school-classification-census` against the club's database before
+  `pnpm run db:school-classification-census` against the club's database before
   the window opens; every row it lists as CANNOT TELL must be decided by a person
   and recorded, or the migration raises
   `school_member_classification_incomplete` and writes nothing at all. The
@@ -1140,7 +1140,7 @@ For a deliberate two-phase deploy, or to heal a cold database out-of-band
 without a restart, run the same routine manually:
 
 ```bash
-npm run config:self-heal
+pnpm run config:self-heal
 ```
 
 It prints, per registered setting, whether the row was `healed`,
@@ -1577,7 +1577,7 @@ truth. The public POST endpoints are:
 | Endpoint | Task(s) | Typical cadence | Recorded `CronJobRun.jobName` |
 | -------- | ------- | --------------- | ----------------------------- |
 | `POST /api/cron` | General cron cycle: pending booking confirmation, group-settlement reaper, abandoned policy-exception capacity-hold reaper, pre-arrival reminders, booking-request retention purge, quote-expiry reminders, school attendee confirmations, and placeholder guest-name reminders. | Every 3 hours in the cron leader. | `confirm-pending`, `group-settlement-reaper`, `placeholder-guest-name-reminders`, `policy-exception-hold-reaper`, `pre-arrival-reminders`, `purge-booking-requests`, `quote-expiry-reminders`, `school-attendee-confirmations` |
-| `POST /api/cron/payments?task=recovery` | Durable Stripe payment recovery, expired Internet Banking hold release, and stale `WAITING_PAYMENT` Xero outbox reaping. | Every 15 minutes in the cron leader. | `payment-recovery` |
+| `POST /api/cron/payments?task=recovery` | The payments cycle: durable Stripe payment recovery, expired Internet Banking hold release, stale `WAITING_PAYMENT` Xero outbox reaping, and a retry of the held late-capture alert for any approval still open. The cron leader runs the same cycle itself (`src/lib/payments-cron-runner.ts`), so no external scheduler is needed; each task is error-isolated and records its own run. | Every 15 minutes in the cron leader. | `payment-recovery`, `internet-banking-hold-release`, `xero-waiting-invoice-reaper`, `late-capture-held-alert` |
 | `POST /api/cron/xero?task=memberships` | Optional Xero-backed membership status refresh. | Daily when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` and the Xero module is effectively enabled. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | Process queued outbound Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | Replay failed retryable Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-operation-replay` |
@@ -1588,8 +1588,30 @@ truth. The public POST endpoints are:
 | `POST /api/cron/issue-reports` | Redact expired issue-report sensitive data. | Daily. | Not recorded |
 | `POST /api/cron/alpine-server-sync` | Bidirectional Other Clubs sync with the Alpine Central Server: upload local rows changed since the last upload, download centrally-distributed rows changed since the last cursor. No-op when Other Clubs sync is disabled or the server is not configured. | Daily at 03:00 in the cron leader. | `alpine-server-other-lodges-sync` |
 
-Without `/api/cron/payments?task=recovery` running on a regular schedule,
-abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
+**Upgrading to the release that switches the payments cycle on (#3663).** Before
+it, the cron leader never released expired Internet Banking holds, so a club can
+carry a backlog. On the first 15-minute run after the upgrade, every expired
+hold whose stay has not started is released: the booking is cancelled, the
+member is emailed a cancellation, any account credit they used is restored, and
+the unpaid invoice is cleared with a credit note. A hold whose check-in is on or before the club's today is never
+cancelled; it is left for the treasurer, who is emailed once. And a hold with
+any payment recorded against its Xero invoice is not released either (#3643):
+it is kept with its beds and the treasurer is emailed; a hold whose invoice
+Xero cannot read is kept too, until check-in or seven days past its deadline,
+whichever comes first. Before
+upgrading:
+
+1. Reconcile outstanding Internet Banking payments, so a member who paid by
+   transfer is recorded as paid rather than cancelled.
+2. Count what the first run will release: `PENDING` Internet Banking payments
+   holding beds (`internetBankingHoldSlots`), unreleased, past
+   `internetBankingHoldUntil`, on a `CONFIRMED` booking whose check-in is after
+   today. Expect the cancellations and emails that count implies, less any
+   hold with a payment recorded against its Xero invoice, which is kept.
+
+Without the payments cycle running on a regular schedule (the cron leader, or
+`/api/cron/payments?task=recovery` on a custom deployment), expired Internet
+Banking holds keep their beds and open invoices, and abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
 indefinitely. The admin `/api/admin/health` detailed report surfaces a stale
 recovery queue when any `PaymentRecoveryOperation` row has been `PENDING` for
 more than 15 minutes (the public `/api/health` report does not include this

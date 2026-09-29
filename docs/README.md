@@ -49,7 +49,7 @@ Every live page under `docs/` has **one canonical home** on one of those three
 paths, and the other paths link to it rather than keeping a second copy of the
 same guidance. A page that genuinely serves two audiences still belongs to one
 of them; the CI index check
-(`npm run docs:indexcheck`) fails if any page becomes unreachable.
+(`pnpm run docs:indexcheck`) fails if any page becomes unreachable.
 
 New to writing here? [`STYLE_GUIDE.md`](STYLE_GUIDE.md) defines the audience
 labels, the pinned locations for operator and member guides, and the page

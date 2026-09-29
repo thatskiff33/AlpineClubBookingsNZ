@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Documentation screenshot harness (issue #2049).
  *
@@ -10,15 +10,15 @@
  *
  * ## Prerequisites (same seeded stack as the E2E suite)
  *
- *   npm run test:e2e:prepare      # boots docker staging stack, seeds demo data,
+ *   pnpm run test:e2e:prepare      # boots docker staging stack, seeds demo data,
  *                                 # enables the E2E modules, starts the app on
  *                                 # STAGING_HTTP_PORT (default 3001)
  *
  * Then, from the repo root:
  *
- *   npm run docs:screenshots      # capture every manifest entry
- *   npm run docs:screenshots -- --list      # dry run: print the manifest, no browser
- *   npm run docs:screenshots -- admin-dashboard public-home   # capture a subset
+ *   pnpm run docs:screenshots      # capture every manifest entry
+ *   pnpm run docs:screenshots --list      # dry run: print the manifest, no browser
+ *   pnpm run docs:screenshots admin-dashboard public-home   # capture a subset
  *
  * Environment:
  *   E2E_BASE_URL   target app (default http://localhost:3001, matching E2E)

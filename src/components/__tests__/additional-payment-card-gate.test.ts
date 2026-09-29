@@ -79,6 +79,16 @@ const SECRET_ROUTE = join(
   "route.ts",
 );
 
+const CHASE_MODULE = join(process.cwd(), "src", "lib", "additional-payment-chase.ts");
+const REAPER_MODULE = join(process.cwd(), "src", "lib", "xero-waiting-invoice-reaper.ts");
+const WEBHOOK_MODULE = join(process.cwd(), "src", "lib", "stripe-webhook-service.ts");
+const LATE_CAPTURE_MODULE = join(
+  process.cwd(),
+  "src",
+  "lib",
+  "xero-supplementary-invoice-late-capture.ts",
+);
+
 function parse(path: string) {
   return ts.createSourceFile(
     path,
@@ -156,17 +166,53 @@ describe("the member's additional-payment card", () => {
       if (!container) return true;
       const guard = (container as ts.JsxExpression).expression;
       if (!guard) return true;
-      return !callsFunction(guard, "isAdditionalPayableBookingStatus");
+      return !callsFunction(guard, "isAdditionalPaymentDoorOpenForBooking");
     });
     expect(
       ungated.map((site) => site.file),
       "every AdditionalPaymentCard render site must sit inside a JSX expression " +
-        "guard that calls isAdditionalPayableBookingStatus",
+        "guard that calls isAdditionalPaymentDoorOpenForBooking (#3641: the " +
+        "booking half of the member's pay door)",
     ).toEqual([]);
   });
 
   it("is gated by the same predicate as the route that hands out the secret", () => {
+    // #3641: ONE pay door. The route asks the whole door, the Xero outbox
+    // reaper asks it too, and every link of the chain down to the lifecycle list
+    // is checked, so no hop can drop a clause and leave the card, the secret and
+    // the invoice disagreeing.
     const route = parse(SECRET_ROUTE);
-    expect(callsFunction(route, "isAdditionalPayableBookingStatus")).toBe(true);
+    expect(callsFunction(route, "resolveAdditionalPaymentDoor")).toBe(true);
+    const reaper = parse(REAPER_MODULE);
+    expect(callsFunction(reaper, "resolveAdditionalPaymentDoor")).toBe(true);
+
+    const chase = parse(CHASE_MODULE);
+    const chain: Array<[string, string]> = [
+      ["resolveAdditionalPaymentDoor", "payableAdditionalPaymentIntentId"],
+      ["payableAdditionalPaymentIntentId", "isAdditionalPaymentDoorOpenForBooking"],
+      ["isAdditionalPaymentDoorOpenForBooking", "isAdditionalPayableBookingStatus"],
+    ];
+    for (const [caller, callee] of chain) {
+      const declaration = findFirst(
+        chase,
+        (candidate) =>
+          ts.isFunctionDeclaration(candidate) && candidate.name?.text === caller,
+      );
+      expect(declaration, `${caller} not found`).not.toBeNull();
+      expect(callsFunction(declaration!, callee), `${caller} -> ${callee}`).toBe(true);
+    }
+  });
+
+  it("keeps a capture's refund routing and its Xero invoice on ONE predicate", () => {
+    // #3641: the webhook refunds a capture on exactly the bookings the
+    // late-capture release leaves a retired invoice unsent for. Two spellings
+    // of "which captures are refunded" is how a BUMPED booking's capture was
+    // kept with no invoice and no alert.
+    for (const file of [WEBHOOK_MODULE, LATE_CAPTURE_MODULE]) {
+      expect(
+        callsFunction(parse(file), "isLateCaptureRefundedBookingStatus"),
+        file,
+      ).toBe(true);
+    }
   });
 });

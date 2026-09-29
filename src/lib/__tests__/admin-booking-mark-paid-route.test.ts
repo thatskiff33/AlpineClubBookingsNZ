@@ -36,6 +36,8 @@ vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: vi.fn(),
 }));
 
+import { revalidatePath } from "next/cache";
+import { expectRevalidatesPageFile } from "@/lib/__tests__/support/revalidated-page";
 import { POST } from "@/app/api/admin/bookings/[id]/mark-paid/route";
 
 const params = Promise.resolve({ id: "booking-1" });
@@ -169,6 +171,12 @@ describe("POST /api/admin/bookings/[id]/mark-paid", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).message).toMatch(
       /could not be sent — check the booking's email settings/,
+    );
+    // #3635: the booking detail page is refreshed - the pattern must name its
+    // file, route group included, or it refreshes nothing.
+    expectRevalidatesPageFile(
+      vi.mocked(revalidatePath),
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
   });
 
