@@ -7,7 +7,7 @@ removing a duplicate (`INV-SSOT`), not new logic. Splitting either module is a
 far larger change than this refactor, and there is no seam here to split along.
 
 file: src/lib/booking-cancel.ts
-lines: 2526
+lines: 2548
 reason: the one added line is the import that replaces three hand-typed captured-status arrays with the shared list.
 
 file: src/lib/payment-reconciliation.ts
