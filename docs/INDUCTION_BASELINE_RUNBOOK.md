@@ -45,7 +45,7 @@ so the production build can never ship it to a member's browser
 (`INV-OPS-013`, #2850). That marker throws the instant it is loaded under plain
 Node, before the command prints anything, with a message about React Server
 Components that names nothing you did. The flag resolves it to an empty module
-and the command runs normally. Outside a container, `npm run induction:baseline`
+and the command runs normally. Outside a container, `pnpm run induction:baseline`
 passes the flag for you; inside the Compose `migrate` service the runbook calls
 the `tsx` binary directly, so the flag is written out.
 
@@ -525,7 +525,7 @@ rehearsal record. A rehearsal is incomplete unless dry run, nonzero apply,
 On a supported Compose deployment, use the verified variables above and repeat
 the exact project, environment file, Compose file, and digest on the live
 command. This uses the Compose-internal `postgres` hostname and does not publish
-a new database port or require Node/npm on the host:
+a new database port or require Node/pnpm on the host:
 
 ```bash
 "${PRODUCTION_COMPOSE[@]}" run --rm migrate \

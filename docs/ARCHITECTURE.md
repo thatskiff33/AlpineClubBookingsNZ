@@ -2654,7 +2654,7 @@ a side effect of tightening their nonce.
 `src/app/(public)/layout.tsx` declares `export const dynamic = "force-dynamic"` for
 its whole group, and that line is measured rather than tidy: the `auth()` call it no
 longer makes was what kept those routes out of build-time prerendering, and without
-a replacement `npm run build` fails on an `Error occurred prerendering page` for one
+a replacement `pnpm run build` fails on an `Error occurred prerendering page` for one
 of the group's routes — a build has no database, and the layout's `headers()` read
 happens only after its own database reads have resolved, too late to bail out first.
 (The build error used to name `/booking-requests`; that page and `/school-bookings`
@@ -3270,7 +3270,7 @@ memory. It does this through a deterministic, versioned **knowledge bundle**
 overlay) source of the deployed commit, with per-file content hashes, sensitivity
 tags, symbols, and a bounded, individually-hashed excerpt index.
 
-The bundle is generated inside the Docker builder by `npm run diagnostics:bundle`
+The bundle is generated inside the Docker builder by `pnpm run diagnostics:bundle`
 (`docs/` and `.git` are dropped from the runtime image, so the commit SHA is
 injected at build time via `GIT_COMMIT_SHA`), traced into `.next/standalone`, and
 copied into the runner. It is:
@@ -3342,7 +3342,7 @@ refused unless the server itself confirms it holds no superuser, `CREATEDB`,
 `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, database `TEMPORARY`/`CREATE`, schema
 `CREATE`, file-reading function privilege, or escalating predefined-role
 membership. Provisioning is an operator step
-(`npm run diagnostics:provision-role`), not a migration: a database role is cluster
+(`pnpm run diagnostics:provision-role`), not a migration: a database role is cluster
 state, needs a secret the schema must never contain, and its `SELECT` allowlist is
 declared in public code so "which tables can Diagnostics read" is answerable by
 reading one file. The delivered support, booking/membership and finance packs

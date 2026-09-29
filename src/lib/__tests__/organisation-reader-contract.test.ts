@@ -52,7 +52,7 @@ import {
  *     word, the last section asserts what each declared file actually reads the
  *     link FOR.
  *
- * `npm run test:related` cannot select this file: it reads the tree from disk
+ * `pnpm run test:related` cannot select this file: it reads the tree from disk
  * and has no import edge to what it scans, so like the other censuses in this
  * directory it is CI-caught by design.
  */
@@ -400,7 +400,7 @@ describe("#3366: no existing query changes its result", () => {
  * and still has to be argued for — which is the whole value the stage-1 census
  * had.
  *
- * `npm run test:related` cannot select this file: it reads the tree from disk
+ * `pnpm run test:related` cannot select this file: it reads the tree from disk
  * and has no import edge to what it scans, so like the other censuses in this
  * directory it is CI-caught by design.
  */

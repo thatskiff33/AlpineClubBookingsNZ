@@ -11,7 +11,7 @@
  * a red pull request opened by a 06:20 UTC scheduled job — the least-watched
  * thing in the repository. With the text in a template file and the
  * substitution in a function, `render-epic-sync-pr-body.test.mjs` feeds the
- * real rendered body to the real gate and a typo fails `npm test` instead.
+ * real rendered body to the real gate and a typo fails `pnpm test` instead.
  *
  * Runs from the sync workflow before any install, so Node built-ins only.
  */

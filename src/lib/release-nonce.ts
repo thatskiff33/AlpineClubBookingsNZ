@@ -72,7 +72,7 @@
  * It was NOT harmless on the old fallback, which minted `createCspNonce()`
  * independently in each bundle. The proxy then published one nonce in the policy
  * while the layout stamped a different one onto the analytics `<Script nonce>`, so
- * on any build with no release identifier — `npm run dev`, a bare `docker build` —
+ * on any build with no release identifier — `pnpm run dev`, a bare `docker build` —
  * Google Analytics was refused on every public page with the analytics module on.
  * The previous docblock's "keeps a single-process deployment self-consistent" was
  * wrong for exactly this reason, and DEPLOYMENT.md repeated it.

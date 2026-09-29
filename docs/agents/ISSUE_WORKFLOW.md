@@ -271,7 +271,7 @@ So the child covers exactly those, and nothing else:
    the evidence and a differential proof wherever a resolution changed
    behaviour-bearing code rather than only its shape.
 3. **Every census or contract suite that reads the tree from disk, run by
-   name with `npm run test:named`.** Select them per
+   name with `pnpm run test:named`.** Select them per
    [`TESTING.md`](../TESTING.md) → "Selecting the censuses a change can reach",
    over the epic's whole diff against `main`, never from memory: that is the
    class the module graph cannot reach — so `vitest related` never selects
@@ -344,7 +344,7 @@ runs the next epic.
   against its sibling. See
   [`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md).
 - **Rehearse the deploy on the epic pull request, and paste the transcript into
-  it.** `npm run db:rehearse-epic -- --database-url <throwaway>` applies the base
+  it.** `pnpm run db:rehearse-epic --database-url <throwaway>` applies the base
   ref's migrations, then the epic's, then reads every model with a client
   generated from the **base ref's** schema. That is how the two `windowed` drops
   were verified rather than asserted, and with a whole epic's migrations arriving
@@ -367,12 +367,12 @@ runs the next epic.
 - **Branch protection does not reach an integration branch** unless somebody with
   admin adds it. An agent session cannot: the machine account holds `push`, not
   `admin`, and that endpoint's 404 means "not permitted", never "not protected".
-- **`npm run pr:check` needs `--base`, and silently misjudges a child without
+- **`pnpm run pr:check` needs `--base`, and silently misjudges a child without
   it.** It defaults to `origin/main`, so on a child of an epic it sees every
   earlier child's diff as well: CT-2 (#3004) was judged against 101 changed files
   rather than its own 35, and refused for want of a concurrency declaration
   covering a schema and a migration it never touched. Run
-  `npm run pr:check -- <body-file> --base origin/epic/<issue>-<slug>`. Both gates
+  `pnpm run pr:check <body-file> --base origin/epic/<issue>-<slug>`. Both gates
   decide what they ask for from the diff, so the wrong base asks the wrong
   question — and it fails in the safe direction only by luck.
 - **Nothing in the epic ships until all of it ships.** Inherent, not an
@@ -497,7 +497,7 @@ which on a public repo never fully undoes it.
 Read an issue with:
 
 ```bash
-npm run issue -- 2777        # the number, a #number, or the issue URL
+pnpm run issue 2777        # the number, a #number, or the issue URL
 ```
 
 It prints the title, state, labels and assignees, the **full body**, **every
@@ -622,7 +622,7 @@ reader's question is usually "was this considered?" and an option quietly
 removed reads as one nobody thought of.
 
 Get the comment's permalink from the thread the reading command above printed —
-every comment is listed with its URL. Then re-run `npm run issue -- <n>` on the
+every comment is listed with its URL. Then re-run `pnpm run issue <n>` on the
 issue you just edited: if the warning has cleared, the body is true.
 
 **Clear the `needs-decision` label in the same action.** Removing a label is a
@@ -654,7 +654,7 @@ CLAIM: starting on this now. Branch `docs/issue-2691-invariant-ids`.
 Scope: the routing-table row plus the two new sections in this file.
 ```
 
-Before you post it, re-read the **whole issue thread** (`npm run issue -- <n>`,
+Before you post it, re-read the **whole issue thread** (`pnpm run issue <n>`,
 see "Reading an issue" above), not just the body:
 
 - An in-chat decision is not a claim. A conversation with the owner leaves no

@@ -896,7 +896,7 @@ export async function getDiagnosticsDatabase(): Promise<DiagnosticsDatabaseHandl
     // Drop the cache on an UNSAFE verdict, exactly as the probe-threw branch
     // above does. A safe verdict is reused until the TTL expires so a session's
     // tool calls pay for one probe — but caching a REFUSAL even that long would
-    // mean an operator who re-runs `npm run diagnostics:provision-role` to repair
+    // mean an operator who re-runs `pnpm run diagnostics:provision-role` to repair
     // a drifted role stays refused for another minute, with readiness still
     // reporting the old answer. Re-probing on every call is the right cost for a
     // deployment that is already being refused.

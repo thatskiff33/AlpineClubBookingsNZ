@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /**
  * Coverage for `scripts/run-named-tests.mjs` (#3120): the fail-closed wrapper
- * that stands in for `npx vitest run <paths...>` wherever `AGENTS.md` asks a
+ * that stands in for `pnpm exec vitest run <paths...>` wherever `AGENTS.md` asks a
  * lane to run a disk-scanning census/contract suite by name. Plain vitest
  * silently drops a named path that matches nothing as long as at least one
  * other path matches, so it can report a short count as a clean green run.

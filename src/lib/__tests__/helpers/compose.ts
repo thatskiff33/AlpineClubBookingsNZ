@@ -13,7 +13,7 @@ import path from "node:path";
  * silently returns zero services and passes.
  *
  * None of this is application code: it reads repository files from disk, so no
- * test that imports it can be selected by `npm run test:related`
+ * test that imports it can be selected by `pnpm run test:related`
  * (`docs/TESTING.md`). Run those files explicitly.
  */
 

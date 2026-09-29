@@ -14,12 +14,12 @@
  * Dry run by default. SAFE USAGE — run against a NON-PRODUCTION copy first:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:backfill-orphaned-credits
+ *     pnpm run payments:backfill-orphaned-credits
  *
  * Only after reviewing the dry-run report, apply (each booking in its own
  * transaction):
  *
- *   ... npm run payments:backfill-orphaned-credits -- --apply
+ *   ... pnpm run payments:backfill-orphaned-credits --apply
  */
 import "dotenv/config";
 import process from "node:process";
@@ -32,9 +32,9 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:backfill-orphaned-credits               # dry run (default)
-  npm run payments:backfill-orphaned-credits -- --dry-run  # explicit dry run
-  npm run payments:backfill-orphaned-credits -- --apply    # restore orphaned credit
+  pnpm run payments:backfill-orphaned-credits               # dry run (default)
+  pnpm run payments:backfill-orphaned-credits --dry-run  # explicit dry run
+  pnpm run payments:backfill-orphaned-credits --apply    # restore orphaned credit
 
 Options:
   --apply         Restore the orphaned applied credit, each booking in its own

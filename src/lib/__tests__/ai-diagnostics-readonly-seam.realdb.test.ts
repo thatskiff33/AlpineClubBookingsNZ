@@ -38,7 +38,7 @@
  *      connection while every unit test stayed green.
  *
  * SAFETY ENVELOPE, identical to the sibling harnesses. OFF by default and a no-op
- * in ordinary `npm test`:
+ * in ordinary `pnpm test`:
  *   - runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`; otherwise `describe.skip`, so
  *     it never imports Prisma and never connects to anything;
  *   - reads ONLY `CONCURRENCY_RACE_DATABASE_URL`, and `assertSafeDiagnosticsRaceDbUrl`
@@ -67,7 +67,7 @@
  *
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
- *     npx vitest run src/lib/__tests__/ai-diagnostics-readonly-seam.realdb.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/ai-diagnostics-readonly-seam.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
 

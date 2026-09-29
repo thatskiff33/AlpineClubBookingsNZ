@@ -39,7 +39,7 @@
  * says so, so nothing would have failed had this module been left out of it —
  * which is precisely why it is named here.
  *
- * It is reached by the `npm run config:self-heal` tsx entrypoint, which since
+ * It is reached by the `pnpm run config:self-heal` tsx entrypoint, which since
  * #2850 runs with `--conditions=react-server`, under which `server-only`
  * resolves to an empty module; `cli-server-only-reach-census.test.ts` fails any
  * published invocation that reaches a marked module without the condition.

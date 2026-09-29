@@ -1421,7 +1421,7 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
     expect(text).toContain("Australia/Sydney");
     expect(text).toMatch(/has not been stored yet/i);
     expect(text).toMatch(/next time it starts|next boot/i);
-    expect(text).toContain("npm run config:self-heal");
+    expect(text).toContain("pnpm run config:self-heal");
   });
 
   it("blocks when the snapshot simply omits the field (an older caller)", () => {
