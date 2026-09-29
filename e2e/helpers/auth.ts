@@ -182,7 +182,7 @@ export async function loginPersona(
     if (!stored) {
       throw new Error(
         `${email} is enrolled in two-factor auth but no TOTP secret is stored ` +
-          "under e2e/.auth. Reseed the E2E database (npm run test:e2e:prepare).",
+          "under e2e/.auth. Reseed the E2E database (pnpm run test:e2e:prepare).",
       );
     }
     await verifyTotp(page, stored.secret);
@@ -204,7 +204,7 @@ export async function signIn(page: Page, persona: Persona): Promise<void> {
       throw new Error(
         `${persona.email} is already enrolled in two-factor auth but no TOTP secret ` +
           "is stored under e2e/.auth. Reset and reseed the E2E database " +
-          "(npm run test:e2e:prepare) or restore the stored secret.",
+          "(pnpm run test:e2e:prepare) or restore the stored secret.",
       );
     }
     await verifyTotp(page, stored.secret);

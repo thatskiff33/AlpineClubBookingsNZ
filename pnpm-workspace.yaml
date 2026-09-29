@@ -1,0 +1,83 @@
+# pnpm settings for this repository (#3673). A single-package repository still
+# keeps them here: since pnpm 11 the `pnpm` field of package.json is not read,
+# and `.npmrc` carries only registry and auth settings.
+
+# Strict layout (owner decision D2 on #3673): each package sees only the
+# dependencies it declares, so an undeclared ("phantom") import fails loudly
+# instead of working by accident. This is pnpm's default; it is written down so
+# nobody flips it to `hoisted` thinking it is unset.
+nodeLinker: isolated
+
+# The single home of the version range for these two direct dependencies
+# (pnpm's "catalog"). package.json names both as `catalog:`, and the nodemailer
+# overrides below point here too, so each range is written exactly once; bump
+# it here.
+catalog:
+  nodemailer: ^10.0.10
+  sharp: ^0.35.4
+
+# The former npm `overrides` block, translated one entry for one entry, less
+# `sharp`, retired in #3673 (see the last point below). The
+# reasons behind each pin are recorded in docs/MAINTENANCE.md, except
+# `deepmerge-ts`, whose reason and removal condition live with its contract
+# test, src/lib/__tests__/deepmerge-override-contract.test.ts.
+#
+# - `catalog:` pins a transitive copy to this repository's own direct
+#   dependency range, which is what npm's `$nodemailer` did. (pnpm
+#   still reads `$name` but has deprecated it in favour of catalogs.)
+# - `next-auth>nodemailer` replaces npm's nested `"next-auth": { "nodemailer" }`.
+#   It is written against both packages that declare the optional nodemailer
+#   peer, `next-auth` itself and its `@auth/core`, because npm's nested form
+#   applied to the whole subtree under `next-auth` and pnpm's `>` form names a
+#   direct parent only.
+# - No override names a package this repository also depends on directly. A
+#   bare `sharp` override (retired in #3673: next itself now requires
+#   ^0.35.4) rewrote this repository's own `sharp: "catalog:"` in the
+#   lockfile, and pnpm's pre-run check (`verifyDepsBeforeRun`, below) compares
+#   package.json with the lockfile WITHOUT applying overrides. The two then
+#   disagreed, and every `pnpm run` failed with "The lockfile ... does not
+#   satisfy project of id ." once package.json was newer than the last
+#   install: a branch switch, or a Docker builder stage whose dependency layer
+#   came from the cache. Scope an override to its parent (`parent>name`).
+overrides:
+  eslint-plugin-react-hooks: 7.1.1
+  postcss: ^8.5.26
+  next-auth>nodemailer: "catalog:"
+  "@auth/core>nodemailer": "catalog:"
+  deepmerge-ts: ^8.0.1
+  browserslist: ^4.28.7
+  mysql2: ^3.22.0
+
+# Dependencies allowed to run install scripts, pinned to the exact version that
+# was reviewed. pnpm runs none by default and fails the install on any build it
+# was not told about (`strictDepBuilds`, pnpm's default), so a new dependency
+# that wants to run code at install time — or a new version of one below — is a
+# reviewed edit to this list, not a silent side effect. The failure reads
+# `ERR_PNPM_IGNORED_BUILDS` and names the package: look at what its install
+# script does in the new version, then move the version here. pnpm accepts
+# exact versions (or `a || b` unions) here, not ranges. This is the npm
+# `allowScripts` field's intent, which was also version-keyed.
+#
+# `core-js: false` is a deliberate denial rather than an omission: its
+# postinstall only prints a funding banner, and nothing here needs it run.
+allowBuilds:
+  "@prisma/engines@7.10.0": true
+  "@sentry/cli@2.58.6": true
+  core-js: false
+  esbuild@0.28.1: true
+  prisma@7.10.0: true
+  unrs-resolver@1.12.2: true
+
+# Before `pnpm run` / `pnpm exec`, pnpm checks node_modules against the lockfile.
+# pnpm 11's default answer to a mismatch is to run a NON-frozen install, which
+# can rewrite pnpm-lock.yaml without anybody asking — and AGENTS.md lets an
+# implementor install only when explicitly authorised. `error` stops and says
+# so instead; run `pnpm install` yourself (#3673).
+verifyDepsBeforeRun: error
+
+# The virtual store stays inside each worktree's own node_modules/.pnpm. With a
+# global virtual store the per-worktree links would point into one shared tree,
+# and `prisma generate` would write one lane's client where every lane reads it
+# (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
+# is pnpm 11's default for a project; it is written down so nobody turns it on.
+enableGlobalVirtualStore: false

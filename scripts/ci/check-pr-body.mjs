@@ -2,8 +2,8 @@
 /**
  * Run the two PR-body gates against a LOCAL file, before the PR exists.
  *
- *   npm run pr:check -- path/to/body.md
- *   npm run pr:check -- path/to/body.md --base origin/main
+ *   pnpm run pr:check path/to/body.md
+ *   pnpm run pr:check path/to/body.md --base origin/main
  *
  * `verify` enforces two gates that read the PR body rather than the code: the
  * concurrency declaration and the changelog fragment. Both fetch the live body
@@ -90,7 +90,7 @@ const { file, base } = parseArgs(process.argv.slice(2));
 
 if (!file) {
   console.error(
-    "Usage: npm run pr:check -- <body-file> [--base origin/main]\n\n" +
+    "Usage: pnpm run pr:check <body-file> [--base origin/main]\n\n" +
       "Checks a PR body against the same validators the `verify` job runs, before\n" +
       "you open or edit the PR. Write the body to a file, check it, then pass that\n" +
       "same file to `gh pr create --body-file`.",

@@ -618,7 +618,7 @@ extend the test.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Every finance tool fails; readiness says `under_provisioned` | This release added twelve relation grants and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
+| Every finance tool fails; readiness says `under_provisioned` | This release added twelve relation grants and provisioning has not been re-run | `pnpm run diagnostics:provision-role`, then re-check readiness |
 | A Finance Officer is told no diagnostics tool is available | Their access role has `finance` but the module or the diagnostics credential is not set up | `diagnostics.readiness` (needs `support:view`) reports the blocker |
 | `booking_finance_state` is refused but the other finance tools work | The caller lacks `bookings:view` | The denial names the missing area; the per-payment tools still answer |
 | `xero_contact_linkage` is refused | The caller lacks `membership:view` | Same — it is the only member-keyed entry |

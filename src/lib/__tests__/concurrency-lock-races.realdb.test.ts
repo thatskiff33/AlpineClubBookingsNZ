@@ -6,7 +6,7 @@
  * a no-op in ordinary CI/local runs:
  *
  *   - They run ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`. With the flag unset the
- *     whole suite is `describe.skip`, so `npm test` never needs a live DB.
+ *     whole suite is `describe.skip`, so `pnpm test` never needs a live DB.
  *   - They read ONLY `CONCURRENCY_RACE_DATABASE_URL` and require a loopback host,
  *     explicit port 55442+, and a database name containing the dedicated
  *     `concurrency_race_1881` marker. Any mismatch aborts before Prisma imports.
@@ -14,7 +14,7 @@
  * Run locally against a scratch database, e.g.:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
- *   npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
+ *   pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
  *
  * After validation, the dedicated URL is copied to DATABASE_URL solely for the
  * app's Prisma singleton/driver adapter used by this isolated test process.
@@ -29,13 +29,13 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 // #2363 reuses this suite's already-guarded, disposable hosted PostgreSQL but
 // creates/drops its own unique schema. Importing registers the trigger proofs in
 // the explicit CI race command without changing the workflow or making ordinary
-// `npm test` depend on a database.
+// `pnpm test` depend on a database.
 import "./minimum-stay-policy-trigger.realdb.test";
 // #2532 reuses the same guarded harness to prove the AI Diagnostics monthly
 // budget (AID-2, #2371) can never be overspent by concurrent reservers. Its
 // race describe is `describe.skip` unless RUN_CONCURRENCY_RACE_TESTS=1, so this
 // import adds the over-budget race proof to the explicit CI race command without
-// making ordinary `npm test` depend on a database.
+// making ordinary `pnpm test` depend on a database.
 import "./ai-diagnostics-budget-race.realdb.test";
 // #2786 reuses the same guarded harness to prove the AI Diagnostics read-only
 // SEAM against a real server rather than a double: that the transaction really is

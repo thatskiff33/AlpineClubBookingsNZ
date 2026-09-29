@@ -323,7 +323,7 @@ third case above; nothing displays from that reader yet, so nobody sees it.)
   in New Zealand this is the one to act on**; set the real zone at
   `/admin/club-time`. If `Pacific/Auckland` is right, acknowledge the step.
 - Saying the zone has **not been recorded** — the app has not restarted since the
-  migration. Restart it, or run `npm run config:self-heal`, which does the same
+  migration. Restart it, or run `pnpm run config:self-heal`, which does the same
   backfill without a restart.
 
 **Do not remove `TZ` yet, and this is the one thing that can bite you.** It is
@@ -1468,7 +1468,7 @@ one of two paths:
   so the old colour keeps its columns while it drains:
 
   ```bash
-  npx prisma migrate resolve --applied 20260722160000_contract_drop_club_theme_orphan_columns
+  pnpm exec prisma migrate resolve --applied 20260722160000_contract_drop_club_theme_orphan_columns
   ```
 
   Then, in a later window once `v0.13.2` is the soaked, drained colour, run the
@@ -1477,7 +1477,7 @@ one of two paths:
   record so the deploy re-picks it up (with the override below):
 
   ```bash
-  npx prisma migrate resolve --rolled-back 20260722160000_contract_drop_club_theme_orphan_columns
+  pnpm exec prisma migrate resolve --rolled-back 20260722160000_contract_drop_club_theme_orphan_columns
   ```
 
   or, equivalently, run the migration's `ALTER TABLE "ClubTheme" DROP COLUMN …`
@@ -2307,7 +2307,7 @@ None required.
 older than PR #1489), booking cancellations may have flattened captured
 `(PARTIALLY_)REFUNDED` payments' stored `status` to `FAILED`. The read path
 already compensates, so this is cosmetic-only for the stored rows. You can
-restore them with `npm run payments:backfill-cancel-flattened` (dry-run by
+restore them with `pnpm run payments:backfill-cancel-flattened` (dry-run by
 default; review the report before re-running with `--apply`). See "Backfill
 cancel-flattened payment statuses" in `docs/MAINTENANCE.md`.
 
@@ -2347,7 +2347,7 @@ post-upgrade actions that matter are below.
    recreates the `Role` enum. It assumes **no live deployment used the
    intermediate Access-Roles window**. If your fork deployed a `main` build
    between **2026-06-28 and 2026-06-30**, run
-   `npm run db:audit-access-role-cleanup` after upgrading and resolve anything it
+   `pnpm run db:audit-access-role-cleanup` after upgrading and resolve anything it
    reports. Forks that upgraded tag-to-tag (from `v0.9.0`) never entered that
    window and can skip this.
 

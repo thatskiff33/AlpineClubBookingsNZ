@@ -21,7 +21,7 @@ import type { ESLint, Linter } from "eslint";
  *      `.some()` false, so it too was skipped.
  *   3. A severity downgrade, `["warn", ...]` instead of `["error", ...]`. The
  *      suites read `option.slice(1)` and never looked at `option[0]`, and
- *      `npm run lint` runs bare `eslint` with no `--max-warnings`, so a
+ *      `pnpm run lint` runs bare `eslint` with no `--max-warnings`, so a
  *      warn-level guard blocks nothing at all.
  *
  * The fix is to stop asking "does this glob look like production?" and ask
@@ -229,7 +229,7 @@ export async function auditResolvedGuardCoverage(options: {
     }
 
     if (resolved.severity !== 2) {
-      // A `warn` blocks nothing: `npm run lint` runs bare `eslint`, with no
+      // A `warn` blocks nothing: `pnpm run lint` runs bare `eslint`, with no
       // `--max-warnings`, and the tree already exits 0 carrying warnings.
       problems.push({
         file: entry.file,

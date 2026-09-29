@@ -46,7 +46,7 @@
  *   negative).
  * - `TEST_CLOCK_ISO` — an absolute ISO-8601 instant replacing the base entirely.
  *   Reproduces a specific rollover on demand, e.g.
- *   `TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z npx vitest run <suite>` reproduces
+ *   `TEST_CLOCK_ISO=2026-12-02T00:00:00.000Z pnpm exec vitest run <suite>` reproduces
  *   the #2443 breakage exactly as that issue predicted it.
  *
  * Both are read fresh on every `frozenTestNow()` call and validated loudly — a

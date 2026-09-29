@@ -227,7 +227,7 @@ describe("#3565 kernel: nil behaviour change on the configured defaults", () => 
  * The compiler is the census now. Each line below is a call that MUST fail to
  * type-check; `@ts-expect-error` makes the failure the passing state and turns
  * a re-added optional overload into a compile error (TS2578, unused directive)
- * under `tsc -p tsconfig.test.json`, which `npm run typecheck` runs.
+ * under `tsc -p tsconfig.test.json`, which `pnpm run typecheck` runs.
  *
  * MUTATION-PROVEN when written: widening `formatCents(cents: number, format:
  * ClubFormat)` to `format?: ClubFormat` (or adding a one-argument overload)

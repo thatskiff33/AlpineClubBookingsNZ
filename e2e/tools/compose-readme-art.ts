@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * README artwork composer (issue #2076).
  *
@@ -14,7 +14,7 @@
  * Nothing is hand-cropped; edit this script and re-run to change the art
  * (`docs/STYLE_GUIDE.md` → "Screenshot conventions").
  *
- *   npm run docs:readme-art
+ *   pnpm run docs:readme-art
  *
  * Text uses a generic sans-serif stack, so exact glyph rendering may differ
  * slightly across machines; the composition itself is fixed.

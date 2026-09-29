@@ -110,11 +110,11 @@ describe("public Book Now default-off migration SQL (#2430)", () => {
 // a disposable database and each test provisions its own SCHEMA, creates only
 // the columns this migration touches in their PRE-migration shape, runs the
 // migration's own SQL, and drops the schema again. `describe.skip` without the
-// variable, so `npm test` never needs a live database — the CI migration-drift
+// variable, so `pnpm test` never needs a live database — the CI migration-drift
 // job wires the variable, so this MUST stay wired there.
 //
 //   PUBLIC_BOOK_NOW_DEFAULT_OFF_TEST_DATABASE_URL=postgres://... \
-//     npx vitest run src/lib/__tests__/public-book-now-default-off-migration.test.ts
+//     pnpm exec vitest run src/lib/__tests__/public-book-now-default-off-migration.test.ts
 // ---------------------------------------------------------------------------
 
 const migrationDatabaseUrl =

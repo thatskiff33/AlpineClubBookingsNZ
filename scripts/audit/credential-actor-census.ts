@@ -59,7 +59,7 @@
  * assertions in `integration-credential-actor.ts` are the primary defences and
  * this census is the backstop.
  *
- * Run it: `npm run credential:census` prints a deterministic TSV.
+ * Run it: `pnpm run credential:census` prints a deterministic TSV.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";

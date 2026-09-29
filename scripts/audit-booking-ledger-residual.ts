@@ -29,7 +29,7 @@
  * SAFE USAGE - run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:audit-booking-ledger
+ *     pnpm run payments:audit-booking-ledger
  */
 import "dotenv/config";
 import process from "node:process";
@@ -48,9 +48,9 @@ import { formatCents } from "../src/lib/utils";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:audit-booking-ledger            # read-only census (default)
-  npm run payments:audit-booking-ledger -- --sql   # print the equivalent SQL and exit
-  npm run payments:audit-booking-ledger -- --json  # also emit machine-readable JSON
+  pnpm run payments:audit-booking-ledger            # read-only census (default)
+  pnpm run payments:audit-booking-ledger --sql   # print the equivalent SQL and exit
+  pnpm run payments:audit-booking-ledger --json  # also emit machine-readable JSON
 
 This census is read-only. It never writes and never calls Xero/Stripe/SES.
 

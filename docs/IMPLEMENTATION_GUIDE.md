@@ -11,12 +11,15 @@ git clone https://github.com/<owner>/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ
 cp .env.example .env
 cp config/club.example.json config/club.json
-npm ci
-npx prisma generate
-npm run setup:check
+pnpm install --frozen-lockfile
+pnpm exec prisma generate
+pnpm run setup:check
 ```
 
-Use Node.js 24 LTS and npm 11 or newer.
+Use Node.js 24 LTS and pnpm 11 (the version pinned in `package.json`
+`packageManager`; see
+[`CONTRIBUTING.md` → "Package manager: pnpm"](../CONTRIBUTING.md#package-manager-pnpm)
+for installing it).
 
 ## 2. Configure Club Identity
 
@@ -39,7 +42,7 @@ seeded content; edit the rendered pages under Admin > Site Contents after setup.
 For a guided config pass, run:
 
 ```bash
-npm run setup:wizard
+pnpm run setup:wizard
 ```
 
 The wizard writes `config/club.json` only. Keep provider keys, OAuth secrets,
@@ -132,7 +135,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
 docker compose --env-file .env.staging -p tacbookings-staging \
-  -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx --conditions=react-server prisma/seed.ts
+  -f docker-compose.yml -f docker-compose.staging.yml exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
 ```
 
 The Docker-only app listens on `http://localhost:3001` by default.
@@ -140,12 +143,12 @@ The Docker-only app listens on `http://localhost:3001` by default.
 For a host-run development app, point `DATABASE_URL` at PostgreSQL and run:
 
 ```bash
-npm run db:migrate
-npm run db:seed
-npm run dev
+pnpm run db:migrate
+pnpm run db:seed
+pnpm run dev
 ```
 
-For a disposable local showcase database, run `ALLOW_DEMO_SEED=1 npm run
+For a disposable local showcase database, run `ALLOW_DEMO_SEED=1 pnpm run
 db:seed:demo` only against a development database whose `Member` table is empty
 or contains only `demo.alpineclub.test` emails. The demo seed refuses
 `NODE_ENV=production`, non-local `DATABASE_URL` hosts, and non-demo member
@@ -234,11 +237,11 @@ Webhook routes are:
 Run the core gates before opening a PR or exposing an environment:
 
 ```bash
-npm run audit:deps            # the same gate CI runs, with the same threshold
-npm run lint
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
-npm test
-npm run build
+pnpm run audit:deps            # the same gate CI runs, with the same threshold
+pnpm run lint
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings pnpm exec prisma validate
+pnpm test
+pnpm run build
 git diff --check
 ```
 

@@ -26,8 +26,8 @@
  *
  * Scanned from disk, so `vitest related` cannot reach it from a route change:
  * this is a CI-caught contract by design, like the other census tests here. Run
- * it by name — `npm run test:named -- credential-actor-census` — or print the
- * measurement with `npm run credential:census`.
+ * it by name — `pnpm run test:named credential-actor-census` — or print the
+ * measurement with `pnpm run credential:census`.
  */
 import { describe, expect, it } from "vitest";
 
@@ -102,7 +102,7 @@ const HISTORICAL_FIGURE_IS_NOT_RE_MEASURABLE_HERE = true;
 
 function publishersNote(what: string): string {
   return (
-    `${what}\n\nRe-MEASURE rather than increment — run \`npm run credential:census\`. ` +
+    `${what}\n\nRe-MEASURE rather than increment — run \`pnpm run credential:census\`. ` +
     "Then update EVERY place the current population is published:\n" +
     FIGURE_PUBLISHERS.map((where) => `  - ${where}`).join("\n")
   );

@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * README booking-flow demo GIF (issue #2076).
  *
@@ -14,8 +14,8 @@
  *
  * ## Prerequisites (same seeded stack as the E2E suite)
  *
- *   npm run test:e2e:prepare      # boots + seeds the staging stack
- *   npm run docs:demo-gif         # capture and assemble the GIF
+ *   pnpm run test:e2e:prepare      # boots + seeds the staging stack
+ *   pnpm run docs:demo-gif         # capture and assemble the GIF
  *
  * Environment:
  *   E2E_BASE_URL   target app (default http://localhost:3001, matching E2E)

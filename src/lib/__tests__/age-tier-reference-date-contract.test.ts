@@ -8,7 +8,7 @@
  * call — and that means a mutation which makes it optional again cannot be killed
  * by any behavioural test: no caller omits the argument, so the reintroduced
  * fallback is unreachable at runtime. Measured: re-adding the optional parameter
- * SURVIVED every suite. A guarantee whose only enforcement is `npm run typecheck`
+ * SURVIVED every suite. A guarantee whose only enforcement is `pnpm run typecheck`
  * is a guarantee that disappears the moment somebody widens the signature "just for
  * this one caller", which is precisely how the original default arrived.
  *

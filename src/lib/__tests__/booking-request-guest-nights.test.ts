@@ -323,7 +323,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
     /*
       This is the assertion that makes INV-CAP-032's "a fifth pipeline cannot be
       added without answering the question" true rather than aspirational, and it
-      is checked by `npm run typecheck`, not at runtime.
+      is checked by `pnpm run typecheck`, not at runtime.
 
       `@ts-expect-error` fails the build when the line does NOT error. So if
       `nights` ever goes back to optional — or the `?? []` fallback comes back —

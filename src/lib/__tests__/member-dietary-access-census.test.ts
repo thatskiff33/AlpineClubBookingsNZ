@@ -53,7 +53,7 @@
  * it, not where it goes next. Those are review's job, and INV-PRIV-022 says so.
  *
  * Scanned from disk, so `vitest related` cannot reach it: run it by name,
- * `npm run test:named -- src/lib/__tests__/member-dietary-access-census.test.ts`.
+ * `pnpm run test:named src/lib/__tests__/member-dietary-access-census.test.ts`.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";

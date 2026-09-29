@@ -17,7 +17,7 @@ import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
-  `npm run setup:wizard` / `npm run setup:check` as well as by the admin API. An
+  `pnpm run setup:wizard` / `pnpm run setup:check` as well as by the admin API. An
   `import type` is erased before anything runs, so the resolution arrives here as
   DATA on the injected snapshot (`SetupDatabaseSnapshot.environmentRole`,
   resolved in `setup-readiness-db.ts`) and `buildSetupReadiness` stays
@@ -593,7 +593,7 @@ function buildClubConfigCheck(
         ...base,
         status: "blocked",
         message:
-          "Club identity is not configured yet. Run npm run setup:wizard or open /admin/setup to enter the club name, capacity, and age tiers.",
+          "Club identity is not configured yet. Run pnpm run setup:wizard or open /admin/setup to enter the club name, capacity, and age tiers.",
         details: [
           "Source: database (ClubIdentitySettings / EmailMessageSetting)",
           "No persisted club identity found, and no primary config/club.json is committed.",
@@ -607,7 +607,7 @@ function buildClubConfigCheck(
       ...base,
       status: "warning",
       message:
-        "Club identity is not configured on disk and the database was not checked. Configuration lives in the database — run npm run setup:wizard or verify /admin/setup after migrations.",
+        "Club identity is not configured on disk and the database was not checked. Configuration lives in the database — run pnpm run setup:wizard or verify /admin/setup after migrations.",
       details: [
         "Source: none (config/club.json is an optional seed; club.example.json does not count)",
         "Database state was not checked.",
@@ -795,7 +795,7 @@ function buildClubTimeZoneCheck(
         message: "The club's timezone could not be read from the database.",
         details: [
           "Every other setting answered, so this is not simply a database outage: the ClubTimeSettings table is most likely missing because the migration has not been applied on this database yet.",
-          "Run prisma migrate deploy (or npm run db:migrate in development), then check again. Nothing is stored automatically until this read succeeds.",
+          "Run prisma migrate deploy (or pnpm run db:migrate in development), then check again. Nothing is stored automatically until this read succeeds.",
           CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
         ],
       },
@@ -826,7 +826,7 @@ function buildClubTimeZoneCheck(
           details: [
             "Source: none — nothing is stored in the database yet.",
             `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so they carry no daylight-saving rules and no club's civil time can be read from one.`,
-            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run npm run setup:wizard) before or after the next start; a stored zone is never overwritten.`,
+            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run pnpm run setup:wizard) before or after the next start; a stored zone is never overwritten.`,
             CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
           ],
         },
@@ -847,7 +847,7 @@ function buildClubTimeZoneCheck(
         details: [
           "Source: none — nothing is stored in the database yet.",
           `To be stored: ${toRecord}. ${describeClubTimeZoneToRecord(raw, toRecord)}`,
-          "The app stores this zone automatically the next time it starts, keeping exactly the timezone this deployment already used. To store it now without a restart, run npm run config:self-heal.",
+          "The app stores this zone automatically the next time it starts, keeping exactly the timezone this deployment already used. To store it now without a restart, run pnpm run config:self-heal.",
           CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
         ],
       },
@@ -958,7 +958,7 @@ function describeEnvironmentRoleOverride(
     case "none":
       return "Safer override: off — nothing in the database is forcing this installation to be treated as non-production.";
     case "unreadable":
-      return "Safer override: could not be read. The EnvironmentSafetySettings table is most likely missing because the migration has not been applied on this database yet — run prisma migrate deploy (or npm run db:migrate in development), then check again.";
+      return "Safer override: could not be read. The EnvironmentSafetySettings table is most likely missing because the migration has not been applied on this database yet — run prisma migrate deploy (or pnpm run db:migrate in development), then check again.";
   }
 }
 
@@ -1316,7 +1316,7 @@ function buildSeedAdminCheck(
       details:
         adminCount > 0
           ? ["Admin login is available."]
-          : ["Command: npm run db:seed"],
+          : ["Command: pnpm run db:seed"],
       href: "/admin/members",
     },
     progress,
