@@ -29,10 +29,8 @@ import {
 } from "@/lib/booking-ledger-modification-posting";
 import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
-import {
-  pricingSideFromWrittenGuests,
-  type ModificationPricingSides,
-} from "@/lib/booking-modification-lines";
+import { pricingSideFromWrittenGuests } from "@/lib/booking-modification-lines";
+import type { ModificationPricingSides } from "@/lib/booking-modification-pricing";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import logger from "@/lib/logger";
 

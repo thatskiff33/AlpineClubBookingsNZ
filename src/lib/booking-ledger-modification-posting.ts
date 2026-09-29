@@ -109,6 +109,7 @@ export type ModificationPostingNoneReason =
   | "INEXACT_STORED_NIGHT_PRICE"
   | "NO_LIVE_LINE"
   | "AMBIGUOUS_LIVE_LINE"
+  | "NIGHT_ALREADY_LIVE"
   | "LIVE_LINE_DISAGREES"
   | "LIVE_PROMOTION_DISAGREES"
   | "INVALID_CHANGE_FEE"
@@ -166,7 +167,9 @@ export function planModificationChargeLines(
     anchorId: input.bookingModificationId,
   };
   const postings: BookingLedgerPosting[] = [];
+  const reversedHere = new Set<string>();
   const reverse = (line: PostedChargeLine): void => {
+    reversedHere.add(line.id);
     postings.push({
       ...base,
       kind: line.kind,
@@ -204,6 +207,14 @@ export function planModificationChargeLines(
     const shape = change.after;
     if (!shape) continue;
     for (const night of change.added) {
+      // A night the ledger already charges, and this edit is not reversing, is
+      // one the edit's before side did not know about. Posting it again would
+      // charge the night twice, and the sum below cannot see that: it is the
+      // edit's own figure, not the ledger's.
+      const standing = (liveByNight.get(nightIndexKey(change.guestKey, night.stayDate)) ?? []).filter(
+        (line) => !reversedHere.has(line.id),
+      );
+      if (standing.length > 0) return { kind: "none", reason: "NIGHT_ALREADY_LIVE" };
       postings.push({
         ...base,
         kind: "GUEST_NIGHT",

@@ -154,8 +154,8 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPricing,
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,

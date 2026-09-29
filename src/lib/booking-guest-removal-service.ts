@@ -103,9 +103,9 @@ import {
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import logger from "@/lib/logger";
 import {
-  computeModificationPricing,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
   type ModificationLine,
