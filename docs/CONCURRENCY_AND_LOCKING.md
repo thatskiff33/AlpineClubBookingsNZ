@@ -3747,8 +3747,10 @@ the pending count is positive, re-reads and version-claims the request, then
 creates the `AWAITING_REVIEW` hold and its per-night anonymous reservation in
 one transaction. The canonical occupancy reader adds those counts to named
 guest nights. Generic hold cancellation and requester quote cancellation delete
-the reservation in the same global-then-lodge-locked transaction as the status
-flip. `resolveAcceptedSchoolPendingAdults` takes those tiers in the same order,
+the reservation in the same transaction as the status flip. The quote-expiry
+worker's two direct hold-release paths also delete it under their existing
+global lifecycle lock. `resolveAcceptedSchoolPendingAdults` takes global then
+lodge in the same order,
 checks the accepted snapshot, hold and reservation after locking, and claims the
 request version before replacing one anonymous slot with named guest nights.
 School and general approval both refuse a nonzero pending count or residual
