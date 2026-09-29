@@ -2643,20 +2643,26 @@ _Split from `INV-PAY-057` (#3220)._
 **Related: `INV-PAY-101`** (the settlement decision) **and `INV-INT-025`**
 (resolved in Xero).
 
-- **A refund credit note's operation never completes SUCCEEDED without its
-  settling payment or `refundPaymentSkipped`** (orchestrator decision on
-  [#3548](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3548)).
-  The builder saves the note id before it records the payment, so a process
-  that dies between them leaves a saved note with neither.
-- **The retry finishes it in place.** When the saved note has no
-  `REFUND_PAYMENT` link and no create operation recorded its outcome (a
-  payment, a skip, a PARTIAL, a resolve), the retry reads the note back from
-  Xero, settles it through the first attempt's own leg under the same
-  note-keyed idempotency key, and completes with the same payload. A payment
-  that fails completes PARTIAL, which the repair leg offers.
-- **Never a second payment.** A note Xero shows paid, part-paid or allocated
-  is recorded as it stands; on a payment with a refund note an officer
-  resolved by hand in Xero it is left skipped; a voided or missing note fails
-  the row.
+- **The operation that raised a refund credit note never completes SUCCEEDED
+  without its settling payment or `refundPaymentSkipped`** (orchestrator
+  decision on [#3548](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3548)).
+  The moment Xero returns the note, one transaction records its id on the
+  payment, its covering link (amount, watermark, capture) and its id on the
+  row. A process that dies after that leaves a FAILED row naming its note:
+  coverage counts the note, so nothing re-mints it, and the retry finishes it.
+- **One read-back-then-settle** (`finishRefundCreditNoteSettlement`) serves the
+  builder's own row, the retry and repair leg, and the repair tool. It reads the
+  note back and records what Xero shows (paid, allocated, or part-paid with
+  `refundPaymentRemainingCents`) without a second payment. It skips a note
+  whose own operation was resolved by hand; an unreadable resolved row refuses.
+  Otherwise it pays under the one note-keyed key, dated the note's day. A failed
+  payment re-reads the note, else completes PARTIAL.
+- **What this does not cover, and why.** A replay that a recorded note already
+  covers raised nothing, so it closes SUCCEEDED marked `coveredByExistingNote`,
+  naming the note whose own row carries the outcome. A crash between Xero's
+  reply and that transaction leaves nothing naming the note, so only Xero's key
+  replay (24 hours, `INV-INT-014`) stops a second one. Rows written before #3548
+  are listed by the reconciliation report and the repair tool
+  (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
 - Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
-  `xero-refund-note-crash-window.test.ts`.
+  `xero-refund-note-crash-window.test.ts` and `xero-operation-outbox.test.ts`.
