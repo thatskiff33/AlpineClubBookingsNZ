@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingRequestStatus, BookingStatus } from "@prisma/client";
 
 const h = vi.hoisted(() => ({
@@ -95,6 +95,7 @@ beforeEach(() => {
   h.guestCreate.mockResolvedValue({ id: "new-guest" });
   h.reservationDeleteMany.mockResolvedValue({ count: 1 });
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe("accepted school pending-adult identity resolution", () => {
   const command = () => resolveAcceptedSchoolPendingAdults({
@@ -126,6 +127,10 @@ describe("accepted school pending-adult identity resolution", () => {
   });
 
   it("keeps the second anonymous bed and the accepted total after naming only one of two adults", async () => {
+    // Rollback cleanup can shrink a reservation with new admissions disabled,
+    // provided every old runtime is still stopped.
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "0");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
     h.bookingRequestFindUnique.mockReset()
       .mockResolvedValueOnce({ heldBookingId: "hold-1" })
       .mockResolvedValueOnce({ ...acceptedRequest, pendingAdultCount: 2, acceptedPriceCents: 500 });
@@ -153,6 +158,30 @@ describe("accepted school pending-adult identity resolution", () => {
     expect(h.requestUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ pendingAdultCount: 1 }),
     }));
+  });
+
+  it("refuses partial reservation rewrites while old web or workers may run", async () => {
+    h.bookingRequestFindUnique.mockReset()
+      .mockResolvedValueOnce({ heldBookingId: "hold-1" })
+      .mockResolvedValueOnce({ ...acceptedRequest, pendingAdultCount: 2, acceptedPriceCents: 500 });
+    h.bookingFindUnique.mockReset()
+      .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+      .mockResolvedValueOnce({ ...hold, totalPriceCents: 500 });
+    h.parseQuoteOptions.mockReturnValue([{
+      totalCents: 500,
+      guestBreakdown: [
+        { kind: "NAMED", totalCents: 100 },
+        { kind: "NAMED", totalCents: 100 },
+        { kind: "PENDING_ADULT", totalCents: 100 },
+        { kind: "PENDING_ADULT", totalCents: 200 },
+      ],
+    }]);
+    h.reservationFindMany.mockResolvedValue([{ bookingId: "hold-1", night: inDay, adultCount: 2, lodgeId: "lodge-1" }]);
+
+    await expect(command()).rejects.toThrow(/old web or workers are running/);
+    expect(h.requestUpdateMany).not.toHaveBeenCalled();
+    expect(h.guestCreate).not.toHaveBeenCalled();
+    expect(h.reservationDeleteMany).not.toHaveBeenCalled();
   });
 
   it("stops when the real name may belong to a club member", async () => {

@@ -8,6 +8,7 @@ import { normaliseCorrectedTeachers, type CorrectedTeacher } from "@/lib/booking
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
+import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-gate";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
@@ -122,6 +123,9 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       throw new BookingRequestError("The accepted quote's pending adult breakdown is incomplete.", 409);
     }
     const remaining = request.pendingAdultCount - proposed.length;
+    if (remaining > 0 && !areOldSchoolAdultsRuntimesStopped()) {
+      throw new BookingRequestError("Partial naming cannot leave unnamed reservations while old web or workers are running. Stop them before continuing or name every remaining adult together.", 409);
+    }
     if (!await pendingAdultReservationNightsMatch({
       db: tx,
       bookingRequestId: request.id,

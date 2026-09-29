@@ -13,6 +13,13 @@ export function isPendingSchoolAdultsWriteEnabled(
 ): boolean {
   return (
     env.PENDING_SCHOOL_ADULTS_ENABLED === "1" &&
-    env.BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED === "1"
+    areOldSchoolAdultsRuntimesStopped(env)
   );
+}
+
+/** Cleanup may shrink an existing reservation while new admissions are off. */
+export function areOldSchoolAdultsRuntimesStopped(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED === "1";
 }
