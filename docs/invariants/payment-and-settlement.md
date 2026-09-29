@@ -830,6 +830,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   task's status, by the repair tool too. An approval withdraws an unsent row;
   one already past its check still sends, and its worker notes the refund.
 - **The repair tool** queues a missing one (`KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE`).
+  Its late-capture refund writes the webhook's record first, then notes per
+  capture the same way (#3635).
 - **Resolved in Xero** (`INV-INT-025`): the app neither re-sends it nor notes
   its refunds; `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND` asks an officer to.
 - Pinned by `xero-kept-late-capture-ledger.test.ts` (the books, case by case,
