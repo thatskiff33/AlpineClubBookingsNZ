@@ -598,10 +598,10 @@ describe("#2269 migration audit trail", () => {
 // at a disposable database, and each test provisions its own PostgreSQL SCHEMA,
 // creates only the columns this migration touches, runs the migration's own
 // SQL, and drops the schema again. It is `describe.skip` without the variable,
-// so `npm test` never needs a live database.
+// so `pnpm test` never needs a live database.
 //
 //   EMAIL_OVERRIDE_ANNOTATION_STRIP_TEST_DATABASE_URL=postgres://... \
-//     npx vitest run src/lib/__tests__/email-message-annotation-strip.test.ts
+//     pnpm exec vitest run src/lib/__tests__/email-message-annotation-strip.test.ts
 // ---------------------------------------------------------------------------
 
 const stripDatabaseUrl =

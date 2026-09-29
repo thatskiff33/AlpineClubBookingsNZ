@@ -8,7 +8,7 @@
  * 55442+ whose name contains `booking_policy_2363`:
  *
  *   BOOKING_POLICY_TRIGGER_TEST_DATABASE_URL=postgresql://...@127.0.0.1:55442/booking_policy_2363 \
- *     npm test -- src/lib/__tests__/minimum-stay-policy-trigger.realdb.test.ts
+ *     pnpm test src/lib/__tests__/minimum-stay-policy-trigger.realdb.test.ts
  */
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";

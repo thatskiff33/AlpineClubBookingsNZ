@@ -14,10 +14,10 @@
  * `updateMany`, through the delegate or through a transaction client — and
  * fails when the set of FILES holding them is not exactly the declared one.
  *
- * `npm run test:related` CANNOT SELECT THIS FILE. It has no import edge to the
+ * `pnpm run test:related` CANNOT SELECT THIS FILE. It has no import edge to the
  * tree it scans, so the module graph cannot reach it from a changed file; that
  * is the blind spot `AGENTS.md` names for every disk-scanning census here. It
- * is CI-caught by design. Run it by name with `npm run test:named`.
+ * is CI-caught by design. Run it by name with `pnpm run test:named`.
  *
  * ## What it can and cannot see
  *

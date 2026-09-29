@@ -6,7 +6,9 @@
  * The family boundary is `src/lib/email/admin-alerts-finance.ts`. The two
  * SCHEDULED reconciliation reports from the same sender live in
  * `./admin-xero-reports` — split off for size, and because a report renders a
- * whole tabular document rather than a single alert.
+ * whole tabular document rather than a single alert. The expired internet
+ * banking hold alert (#3643) lives in `./admin-internet-banking`, split off for
+ * size.
  */
 import { escapeHtml } from "./escape";
 import {
@@ -25,6 +27,7 @@ import {
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCapturePaymentLabel,
+  secondInstrumentConflictOutcomeParagraph,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
 import {
@@ -456,6 +459,75 @@ export function adminManualSettlementConflictTemplate(data: {
   `);
 }
 
+// ---- #3638: Admin Alert — card payment and Xero payment on one booking ----
+//
+// The second-instrument conflict (`INV-PAY-102`). A card payment settled the
+// booking and Xero then reported its Internet Banking invoice paid too, so the
+// club may hold the price twice. Its OWN template, not the generic payment-
+// failure mail it first shipped as: nothing failed, and "Payment Failed" is the
+// subject an operator skims past (#2761's finding). The booking and the Xero
+// invoice are both one click away, because reconciling it needs both.
+export function adminSecondInstrumentSettlementConflictTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  bookingId: string;
+  bookingStatus: string;
+  conflictKind: "settled" | "cancelledAfterCard" | "cancelledAfterRefund";
+  /** The Internet Banking payment's amount — what the invoice asked for. */
+  invoiceAmountCents: number;
+  /** The card money still held after refunds. */
+  cardHeldCents: number;
+  cardPaymentIntentId: string | null;
+  xeroInvoiceNumber: string | null;
+  xeroInvoiceUrl: string | null;
+  bookingUrl: string;
+  reviewUrl: string;
+},
+  format: ClubFormat,
+): string {
+  return layout(`
+    ${heading("Booking May Have Been Paid Twice — Card and Xero")}
+    ${alertBox(
+      "A card payment and an Internet Banking payment have both been recorded against this booking. Nothing was refunded or credited automatically — please reconcile.",
+      "warning"
+    )}
+    ${
+      // The SAME sentence the {{secondInstrumentConflictNote}} token renders
+      // (#2268 convention).
+      paragraph(secondInstrumentConflictOutcomeParagraph(data.conflictKind))
+    }
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Booking status", value: escapeHtml(data.bookingStatus) },
+      { label: "Invoice amount", value: formatCents(data.invoiceAmountCents, format) },
+      { label: "Card payment still held", value: formatCents(data.cardHeldCents, format) },
+      {
+        label: "Stripe PI",
+        value: data.cardPaymentIntentId
+          ? escapeHtml(data.cardPaymentIntentId)
+          : "unknown",
+      },
+      {
+        label: "Xero invoice",
+        value: data.xeroInvoiceNumber
+          ? escapeHtml(data.xeroInvoiceNumber)
+          : "unknown",
+      },
+    ])}
+    ${
+      data.xeroInvoiceUrl
+        ? button("Open the invoice in Xero", data.xeroInvoiceUrl)
+        : ""
+    }
+    ${button("Open Booking", data.bookingUrl, { sameOrigin: true })}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
 // ---- B5 (#2262): Admin Alert — manual refund task raised ----
 //
 // A cash-settled booking was cancelled. There is no card to refund and no Xero
@@ -491,6 +563,25 @@ export function adminManualRefundTaskTemplate(data: {
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Amount to refund", value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+// ---- #3639: Admin Alert — late capture held for a treasurer (once per payment; the task is the record) ----
+export function adminLateCaptureHeldTemplate(data: {
+  memberName: string; checkIn: Date; checkOut: Date; amountCents: number; bookingId: string; reviewUrl: string;
+}, format: ClubFormat): string {
+  return layout(`
+    ${heading("Late Payment Held for Approval")}
+    ${alertBox("A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.", "warning")}
+    ${paragraph("Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Amount held", value: formatCents(data.amountCents, format) },
     ])}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
   `);

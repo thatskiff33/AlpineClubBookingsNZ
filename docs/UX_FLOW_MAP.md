@@ -520,7 +520,7 @@ surfaces is INV-MOD-026.
 ## Automatically refunded late captures (#2750, #2760, both handlers since #2773)
 
 A finance-view admin opens `/admin/payments`. Above the filters, up to two refund
-cards can appear, and they make opposite claims. **"Money to settle by hand"**
+cards can appear, and they make opposite claims. **"Money to settle"**
 (#2262, renamed by #3033 when it stopped holding only refunds) is work, each row
 with a **Mark paid back** / **Record the adjustment** control and a **Dismiss** /
 **No adjustment** one. **"Refunded automatically — nothing to pay back"**

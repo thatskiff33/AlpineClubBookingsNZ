@@ -1,6 +1,12 @@
 import type { FeatureFlags } from "@/config/schema";
 import { formatDateOnly } from "@/lib/date-only";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
+import {
+  groupSettlementInvoiceBlocked,
+  groupSettlementInvoiceDisplay,
+  isGroupSettlementBoundToInvoice,
+} from "@/lib/group-settlement-invoice-binding";
+import { buildGroupSettlementPaymentReference } from "@/lib/booking-payment-methods";
 import type { NonMemberGuestChild } from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import type { OrganiserGroupState } from "@/components/group-booking/organiser-group-booking-card";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -111,6 +117,24 @@ export function resolveBookingDetailLinkedParty({
               status: organiserGroup.settlement.status,
               amountCents: organiserGroup.settlement.amountCents,
               paidAt: organiserGroup.settlement.paidAt?.toISOString() ?? null,
+              // #3642: a settlement waiting on its emailed Internet Banking
+              // invoice renders as that, from the server, on every load.
+              internetBankingReference: isGroupSettlementBoundToInvoice(
+                organiserGroup.settlement
+              )
+                ? buildGroupSettlementPaymentReference(organiserGroup.id)
+                : null,
+              invoiceDisplay: isGroupSettlementBoundToInvoice(
+                organiserGroup.settlement
+              )
+                ? groupSettlementInvoiceDisplay(
+                    organiserGroup.settlement,
+                    booking.groupSettlementInvoiceCreate ?? null
+                  )
+                : null,
+              invoiceBlocked:
+                !isGroupSettlementBoundToInvoice(organiserGroup.settlement) &&
+                groupSettlementInvoiceBlocked(booking.groupSettlementInvoiceCreate ?? null),
             }
           : null,
         // A `flatMap` rather than `filter().map()` so the joiner's booking
@@ -143,6 +167,9 @@ export function resolveBookingDetailLinkedParty({
                 { canSeeAdminTools },
               ),
               isMember: join.isMember,
+              // #3672: in an organiser-pays group, a joiner who arrived after
+              // the settlement was paid pays for their own place.
+              paysOwn: !joinerBooking.organiserSettled,
             },
           ];
         }),

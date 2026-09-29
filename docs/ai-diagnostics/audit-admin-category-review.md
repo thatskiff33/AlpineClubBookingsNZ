@@ -579,14 +579,14 @@ land.
 
 ## How to check this page is still true
 
-`npm run audit:census` prints the live distribution, and
+`pnpm run audit:census` prints the live distribution, and
 `src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  489
+row-producing sites:  493
 uncategorised:        0
-category values: admin 109, booking 105, xero 37, family 35, payment 48,
+category values: admin 109, booking 105, xero 37, family 35, payment 52,
                  lodge 66, account 19, security 24, privacy 20,
                  communication 21, system 4
 ```
@@ -742,6 +742,20 @@ own and would otherwise go on pricing the new currency at the old one's rate.
 `admin` for the reason `AI_SPEND_CURRENCY_RATE_UPDATED` is: installation
 configuration, readable with `support:view` alone, carrying two currency codes,
 a ratio and an administrator id and no member data.
+
+#3639 then added one more (`payment` 48 -> 49, 489 -> 490, RE-MEASURED with
+`npm run audit:census`): `booking.payment.late_notice_acknowledged`, the record
+that a Stripe success notice on a cancelled booking was answered WITHOUT a
+refund because the cancellation had already settled the money, or it was
+already refunded. `payment` beside the late-capture records it sits with.
+The club setting for genuine late captures (owner decision 26 Sep 2026) then
+added two (`payment` 49 -> 51, 490 -> 492, RE-MEASURED):
+`booking.payment.late_capture_refund_held`, a late capture held for a
+treasurer, and the `booking.payment.refunded_after_cancellation` a treasurer's
+approval writes when its refund goes out. The review round added one more
+(`payment` 51 -> 52, 492 -> 493, RE-MEASURED):
+`booking-defaults.late_capture_refund_approval.changed`, who switched the
+club between automatic refunds and treasurer approval.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

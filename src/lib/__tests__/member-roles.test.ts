@@ -113,7 +113,7 @@ describe("account-holder classification (#2383)", () => {
     // then fall straight through to the cancellable default with no test
     // failing. The type-level line below closes that direction: `Exclude` is
     // empty today and becomes the missing literal the moment the enum grows,
-    // which fails `npm run typecheck` (#2693 moved it here from an unreferenced
+    // which fails `pnpm run typecheck` (#2693 moved it here from an unreferenced
     // alias in member-roles.ts). The runtime line asserts the same property
     // against the generated enum object, so a stale build cannot hide it either.
     expectTypeOf<Exclude<Role, (typeof ROLE_VALUES)[number]>>().toBeNever();

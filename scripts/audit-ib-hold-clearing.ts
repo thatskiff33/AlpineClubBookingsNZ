@@ -14,25 +14,27 @@
  * SAFE USAGE — run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:audit-ib-hold-clearing
+ *     pnpm run payments:audit-ib-hold-clearing
  */
 import "dotenv/config";
 import process from "node:process";
 import {
   auditCardAppliedCreditDoublePays,
   auditIbAppliedCreditStrands,
-  auditIbHoldClearingUnderclears,
   formatCardAppliedCreditDoublePayReport,
   formatIbAppliedCreditStrandReport,
-  formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
+import {
+  auditIbHoldClearingUnderclears,
+  formatIbHoldClearingAuditReport,
+} from "../src/lib/ib-hold-clearing-underclear-audit";
 import { prisma } from "../src/lib/prisma";
 import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:audit-ib-hold-clearing            # read-only audit (default)
-  npm run payments:audit-ib-hold-clearing -- --json  # also emit machine-readable JSON
+  pnpm run payments:audit-ib-hold-clearing            # read-only audit (default)
+  pnpm run payments:audit-ib-hold-clearing --json  # also emit machine-readable JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES. The
 operator repairs any finding by hand (see docs/MAINTENANCE.md).

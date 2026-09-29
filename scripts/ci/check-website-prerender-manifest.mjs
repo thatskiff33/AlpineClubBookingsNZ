@@ -203,7 +203,7 @@ export function checkBuildOutput(repoRoot) {
   if (!fs.existsSync(manifestPath)) {
     throw new Error(
       `No ${DIST_DIR}/${MANIFEST_FILE}. This check reads real build output and must ` +
-        "run after `npm run build`.",
+        "run after `pnpm run build`.",
     );
   }
 

@@ -4,7 +4,7 @@
  *
  * WHY IT IS SPLIT OUT, and it is the same reason `analytics-settings-shared`
  * exists beside `analytics-settings`: `mirotalk-config.ts` is `server-only`,
- * and importing a VALUE from it in a client component fails `npm run build`
+ * and importing a VALUE from it in a client component fails `pnpm run build`
  * with "'server-only' cannot be imported from a Client Component module". The
  * setup screen needs the key names, the status shapes and the validation rules;
  * it must never need the resolver, the Prisma client or the credential store.

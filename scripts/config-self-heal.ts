@@ -19,7 +19,7 @@
  * script for a deliberate two-phase deploy, to verify a cold DB, or to heal
  * out-of-band without a restart. Requires DATABASE_URL.
  *
- *   npm run config:self-heal
+ *   pnpm run config:self-heal
  */
 import "dotenv/config";
 import process from "node:process";
@@ -51,7 +51,7 @@ async function main() {
         `config/club.json. No value from that file was written to the database. ` +
         `Any step listed above ran because its value comes from the environment, ` +
         `not from config/club.json. Fix config/club.json, then rerun ` +
-        `\`npm run config:self-heal\` (the app also self-heals automatically on ` +
+        `\`pnpm run config:self-heal\` (the app also self-heals automatically on ` +
         `the next boot once a valid primary config is present).`,
     );
     process.exitCode = 1;

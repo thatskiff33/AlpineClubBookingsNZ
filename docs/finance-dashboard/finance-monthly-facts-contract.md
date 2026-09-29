@@ -119,8 +119,8 @@ Operator entry points:
 - `POST /api/finance/sync/backfill-monthly-facts` (finance manager access;
   409 when any finance sync run is in progress; body accepts optional
   `fromMonth` "YYYY-MM" and `maxChunks`).
-- `npm run finance:backfill-monthly-facts [-- --from-month 2020-04]
-  [-- --max-chunks 5]`.
+- `pnpm run finance:backfill-monthly-facts [--from-month 2020-04]
+  [--max-chunks 5]`.
 
 Run the backfill against the Xero demo tenant before production, per the
 repository safety rules.

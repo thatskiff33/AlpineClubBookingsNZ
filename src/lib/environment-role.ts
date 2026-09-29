@@ -61,7 +61,7 @@
  *
  * MARKED `server-only` SINCE #3204, having gone without it for a year.
  * `setup-readiness-db.ts` imports this and is itself imported by the `tsx`
- * entrypoint `npm run setup:check`, which the marker once would have aborted at
+ * entrypoint `pnpm run setup:check`, which the marker once would have aborted at
  * import; since #2850 that command carries `--conditions=react-server`, under
  * which `server-only` resolves to an empty module, and
  * `cli-server-only-reach-census.test.ts` fails any published invocation that

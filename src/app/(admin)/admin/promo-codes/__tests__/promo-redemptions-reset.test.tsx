@@ -125,4 +125,28 @@ describe("PromoRedemptionsPanel Reset", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(screen.queryByText("Per-member split (2 members)")).toBeNull();
   });
+
+  it("links a redemption's booking to the real booking page (#3635)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => RESPONSE })),
+    );
+
+    render(
+      <PromoRedemptionsPanel
+        promo={{
+          id: "promo-1",
+          code: "WINTER20",
+          description: "Winter discount",
+          type: "PERCENTAGE",
+          archived: false,
+        }}
+        onBack={() => undefined}
+      />,
+    );
+
+    // `/admin/bookings/<id>` does not exist; the booking page is /bookings/<id>.
+    const link = await screen.findByRole("link", { name: "ABC123" });
+    expect(link).toHaveAttribute("href", "/bookings/booking-1");
+  });
 });

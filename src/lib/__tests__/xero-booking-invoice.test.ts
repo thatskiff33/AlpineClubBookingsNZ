@@ -50,6 +50,10 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    // #3635 round-3 R1: no refund row names a late capture unless a test says so.
+    paymentRefund: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     paymentTransaction: {
       updateMany: vi.fn(),
     },
@@ -82,6 +86,8 @@ const mocks = vi.hoisted(() => {
       // recorded", which is every row this application has ever written before
       // that issue and every row an enqueuer with no on-behalf choice writes.
       findUnique: vi.fn().mockResolvedValue({ invoiceEmailDelivery: null }),
+      // #3635: no refund note was resolved by hand in Xero unless a test says so.
+      findMany: vi.fn().mockResolvedValue([]),
     },
   };
 
@@ -2836,6 +2842,7 @@ describe("createXeroCreditNote", () => {
         },
       });
       mocks.prisma.xeroObjectLink.findMany.mockResolvedValue(linkRows);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([]);
       mocks.tx.member.findUnique.mockResolvedValue({
         id: "mem_1",
         email: "member@example.com",
@@ -2940,6 +2947,47 @@ describe("createXeroCreditNote", () => {
         undefined,
         "payment:pay_1:refund-credit-note:7000:v2"
       );
+    });
+
+    // #3635 (`INV-INT-025`): the execution-time cap reads the same coverage as
+    // the enqueue - links PLUS notes an officer raised by hand in Xero - so a
+    // note resolved after this one was queued (a kept late capture's
+    // credit-back, say) is not credited twice.
+    it("counts a note resolved by hand in Xero as covered at execution time (#3635)", async () => {
+      // 7000 refunded: a 5000 linked note and a 2000 note made by hand.
+      armCreatePath(7000, [
+        {
+          xeroObjectId: "cn_first",
+          xeroObjectNumber: "CN-1",
+          metadata: { amountCents: 5000, watermarkCents: 5000 },
+        },
+      ]);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([
+        {
+          id: "op_resolved_note",
+          correlationKey: "payment:pay_1:refund-credit-note:7000:v2",
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2000, watermarkCents: 7000 },
+        },
+      ]);
+
+      await createXeroCreditNote("pay_1", 2000, {
+        watermarkCents: 7000,
+        syncOperationId: "op_delta_x",
+      });
+
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
+    });
+
+    it("refuses at execution time when a hand-resolved note's amount cannot be read (#3635)", async () => {
+      armCreatePath(7000, []);
+      mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([
+        { id: "op_unreadable", correlationKey: null, requestPayload: null },
+      ]);
+
+      await expect(
+        createXeroCreditNote("pay_1", 2000, { watermarkCents: 7000, syncOperationId: "op_delta_x" })
+      ).rejects.toThrow(/no readable amount/);
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
     });
 
     it("two stepped refunds sum to the exact refunded total whatever order their operations execute (#1354 validation)", async () => {

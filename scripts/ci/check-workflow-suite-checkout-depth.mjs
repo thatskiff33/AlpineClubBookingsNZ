@@ -32,12 +32,12 @@ import { pathToFileURL } from "node:url";
  *
  * 1. **Every job that runs the WHOLE unit suite must have an `actions/checkout`
  *    step with `fetch-depth: 0`.** "Runs the whole suite" is decided from the
- *    parsed shell command, not from a literal string: `npm test`, `npm run test`,
- *    `npx vitest run` and bare `vitest` all count, wrapped or prefixed or not.
- *    The canary's real line is
- *    `faketime -f '${{ matrix.offset }}' npm test -- --testTimeout=30000 …`, and
+ *    parsed shell command, not from a literal string: `pnpm test`, `pnpm run
+ *    test`, `pnpm exec vitest run` and bare `vitest` all count (and so do the npm,
+ *    `npx` and yarn spellings), wrapped or prefixed or not. The canary's real line
+ *    is `faketime -f '${{ matrix.offset }}' pnpm test --testTimeout=30000 …`, and
  *    a check that misses that one line is worse than no check at all.
- * 2. **A job that only runs TARGETED files** (`npx vitest run <path>`) needs full
+ * 2. **A job that only runs TARGETED files** (`pnpm exec vitest run <path>`) needs full
  *    history only when one of those files reads the repository's own history.
  *    `ci.yml`'s `migration-drift` and `data-migration-verification` jobs are
  *    exactly this shape and are correct as they stand — they run one realdb file
@@ -54,7 +54,7 @@ import { pathToFileURL } from "node:url";
  *
  * Source-only by design — it reads `.github/workflows/*.yml` plus any test file a
  * targeted invocation names, and needs no install, no database and no network.
- * That is why `ci.yml` runs it before `npm ci`, where it fails in under a second.
+ * That is why `ci.yml` runs it before the install, where it fails in under a second.
  */
 
 /** Where the workflows live, relative to the repository root. */
@@ -105,7 +105,7 @@ export const SUITE_HISTORY_EXPLANATION = [
 /**
  * This repository declares no YAML parser (`yaml` is present only as a
  * transitive dependency of something else), and this gate runs before
- * `npm ci` precisely so it costs a second rather than an install. So it reads
+ * the install precisely so it costs a second rather than an install. So it reads
  * the subset of YAML that GitHub workflow files actually use: block mappings,
  * block sequences, block scalars, and single-line plain/quoted scalars.
  *
@@ -328,7 +328,7 @@ function unquote(value) {
  *
  * Quoting is tracked, and a token that came out of quotes is marked as such. The
  * canary's "Explain a red canary" step echoes the literal string
- * `npm test -- --testTimeout=30000 …` into the job summary, and a check that
+ * `pnpm test --testTimeout=30000 …` into the job summary, and a check that
  * counted that as an invocation would be reporting on its own documentation.
  */
 export function tokenizeShellCommands(script) {
@@ -491,8 +491,8 @@ const RUNNER_HEADS = new Set(["npm", "pnpm", "yarn", "npx"]);
  *
  * The runner token is looked for ANYWHERE in the command rather than only at its
  * head, which is what makes wrappers and env prefixes work without modelling
- * each one: `faketime -f '…' npm test`, `env CI=1 npm test`, `time npm test` and
- * `xvfb-run -a npx vitest run` all classify from the same rule.
+ * each one: `faketime -f '…' pnpm test`, `env CI=1 pnpm test`, `time pnpm test` and
+ * `xvfb-run -a pnpm exec vitest run` all classify from the same rule.
  */
 export function classifyRunScript(script) {
   const invocations = [];

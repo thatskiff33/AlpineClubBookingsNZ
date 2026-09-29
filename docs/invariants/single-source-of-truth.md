@@ -4,7 +4,7 @@ Audience: Developer, Agent.
 
 Prefix defined in this file: **`INV-SSOT`** — a fact is defined once and read
 from that one place. What the repository already requires of documentation, and
-enforces there with `npm run docs:indexcheck`, these rules require of code.
+enforces there with `pnpm run docs:indexcheck`, these rules require of code.
 
 Read this file when you are about to add a constant, helper, formatter, type,
 validation rule or configuration value; when you are writing a guard, a census
@@ -345,7 +345,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 103 test files, five test
+  `stripComments`, and since #3164 a lint rule enforces it.** 107 test files, five test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
