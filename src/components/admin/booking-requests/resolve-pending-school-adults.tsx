@@ -27,12 +27,21 @@ export function ResolvePendingSchoolAdults({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [attentionKey, setAttentionKey] = useState(0);
+  const [refreshNeeded, setRefreshNeeded] = useState(false);
+
+  function clearDraft() {
+    setEditing(false);
+    setFirstName("");
+    setLastName("");
+    setEmail("");
+  }
 
   if (pendingAdultCount <= 0) return null;
   async function save() {
-    if (!canEdit || saving) return;
+    if (!canEdit || saving || refreshNeeded) return;
     setSaving(true);
     setError("");
+    let saved = false;
     try {
       const response = await fetch(`/api/admin/booking-requests/${encodeURIComponent(requestId)}/resolve-pending-adults`, {
         method: "POST",
@@ -44,13 +53,14 @@ export function ResolvePendingSchoolAdults({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result?.error || "The adult could not be named. Reload this request and try again.");
+      saved = true;
+      clearDraft();
       await onResolved();
-      setEditing(false);
-      setFirstName("");
-      setLastName("");
-      setEmail("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The adult could not be named.");
+      if (saved) setRefreshNeeded(true);
+      setError(saved
+        ? "The name was saved, but this page could not refresh. Reload it before naming anyone else."
+        : cause instanceof Error ? cause.message : "The adult could not be named.");
       setAttentionKey((key) => key + 1);
     } finally {
       setSaving(false);
@@ -67,7 +77,7 @@ export function ResolvePendingSchoolAdults({
       </p>
       <FocusedActionError id={`pending-adult-error-${requestId}`} error={error} attentionKey={attentionKey} />
       {!editing ? (
-        <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => setEditing(true)}>
+        <Button size="sm" variant="outline" disabled={!canEdit || refreshNeeded} onClick={() => setEditing(true)}>
           Name one pending adult
         </Button>
       ) : (
@@ -81,7 +91,7 @@ export function ResolvePendingSchoolAdults({
             <Button size="sm" disabled={!canEdit || saving || !firstName.trim() || !lastName.trim()} onClick={save}>
               {saving ? "Saving…" : "Save real name"}
             </Button>
-            <Button size="sm" variant="outline" disabled={saving} onClick={() => { setEditing(false); setError(""); }}>
+            <Button size="sm" variant="outline" disabled={saving} onClick={() => { clearDraft(); setError(""); }}>
               Cancel
             </Button>
           </div>
