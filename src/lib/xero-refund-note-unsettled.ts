@@ -10,6 +10,12 @@
  * "Refund credit notes with no settlement on record (#3548)".
  */
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
+import type {
+  XeroReconciliationIssueItem,
+  XeroReconciliationIssueSection,
+} from "@/lib/xero-hardening-types";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import { readCashRefundMethod } from "@/lib/xero-payment-credit-note-payload";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -112,6 +118,39 @@ export async function findUnsettledRefundNoteRows(): Promise<UnsettledRefundNote
     select: { localId: true, role: true, xeroObjectType: true, metadata: true },
   });
   return unsettledRefundNoteRows(operations, links ?? []);
+}
+
+/** The reconciliation report's section for these rows; empty when there are none. */
+export async function buildUnsettledRefundNoteSection(
+  format: ClubFormat,
+  topLimit: number,
+  paymentItem: (paymentId: string, detail: string) => XeroReconciliationIssueItem,
+): Promise<{ count: number; sections: XeroReconciliationIssueSection[] }> {
+  const items = (await findUnsettledRefundNoteRows()).map((row) =>
+    paymentItem(
+      row.paymentId,
+      row.kind === "part-settled"
+        ? `Refund credit note ${row.creditNoteNumber ?? row.creditNoteId} is part-settled in Xero: ${formatCents(row.remainingCents ?? 0, format)} is still outstanding (operation ${row.operationId}).`
+        : `Refund credit note ${row.creditNoteNumber ?? row.creditNoteId} completed with neither its settling payment nor a reason none is due (operation ${row.operationId}).`
+    )
+  );
+  if (items.length === 0) return { count: 0, sections: [] };
+  return {
+    count: items.length,
+    sections: [
+      {
+        id: "unsettled-refund-credit-notes",
+        title: "Refund credit notes with no settlement on record",
+        severity: "warning",
+        count: items.length,
+        whatWentWrong:
+          "A refund credit note's operation completed with neither its settling payment nor a reason none is due, or Xero shows the note part-settled, so the refund may still read as owed in Xero.",
+        howToFix:
+          'Check the note in Xero. Run the booking repair tool: its REFUND_CREDIT_NOTE_UNSETTLED finding offers a settle action, applied only by key, which reads the note back and never pays one already settled. Settle the remainder of a part-settled note in Xero by hand. Runbook: docs/MAINTENANCE.md, "Refund credit notes with no settlement on record (#3548)".',
+        items: items.slice(0, topLimit),
+      },
+    ],
+  };
 }
 
 /**
