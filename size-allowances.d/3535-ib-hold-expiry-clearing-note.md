@@ -31,7 +31,7 @@ reason: the never-captured cancel path's existing clearing-note enqueue gains
   must commit with; the task writer lives in the same helper module.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2237
+lines: 2245
 reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   a finding for a blocking clearing operation it cannot retry (it was silent),
   and a retry of a PARTIAL clearing note in place of a full-size allocation;
@@ -82,6 +82,9 @@ reason: the cancelled-open-invoice arm gains the clearing flag on its payload,
   refunded capture whose receipt was recorded by hand asks for its refund to
   be recorded by hand (R5), one block beside the kept arm it follows; the
   "has a primary invoice" rule moved to `late-capture-kept-xero-rules.ts`.
+  The composed review: the missing-refund-note arm asks for no more than the
+  gap `readRefundCreditNoteGap` reads (loaded in `xero-booking-repair-load.ts`),
+  the one bound computed beside the ask it caps.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1780

@@ -651,8 +651,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   today (`bookingStayHasStarted`) is skipped before any Xero read, counted
   `skippedStarted` and alerted to finance once, for reconciliation by hand,
   under the same claim rule as `INV-PAY-109` (`sendAdminAlertOnceEver`). An
-  organiser-pays group whose invoice Xero cannot show follows it too
-  ([INV-PAY-105]). Pinned by `internet-banking-payment-cron.test.ts` and
+  Internet Banking organiser-pays group past its deadline follows it too,
+  whatever Xero shows of its invoice ([INV-PAY-105]). Pinned by `internet-banking-payment-cron.test.ts` and
   `cron-group-settlement-reaper.test.ts`.
 
 ## INV-PAY-017
@@ -1291,8 +1291,8 @@ one, check the other.
   started being paid or credited is not voided, not released (the group keeps
   its beds, the owner's #3643 rule) and not replaced; each alerts once per
   kind. One Xero cannot show is held, with an alert, up to seven days past the
-  deadline, and kept once its stay starts ([INV-PAY-016]); one Xero does not
-  have is never voided. Joiner
+  deadline; one Xero does not have is never voided. A started stay is never
+  released, whatever Xero shows ([INV-PAY-016]). Joiner
   prices that cannot make the invoice release the binding and alert. A paid
   invoice settles the group only for the settlement's total read under
   `lock(1)` while it is still the settlement's invoice; a card capture only

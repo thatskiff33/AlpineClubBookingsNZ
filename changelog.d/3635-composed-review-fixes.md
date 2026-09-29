@@ -11,11 +11,12 @@
   figures as the rest of the app. It no longer re-links a note for a refund of
   that kind, and it counts notes an officer resolved in Xero, so it stops
   reporting gaps that are not there.
-- **An Internet Banking group is kept on check-in day when Xero cannot show its
-  invoice (#3635).** If the group settlement runs out of time while the
+- **An Internet Banking group is kept on check-in day, the same as a single
+  booking's hold (#3635).** If the group settlement runs out of time while the
   group's combined invoice cannot be read, the group now keeps its beds for up
-  to seven days past the deadline, the same as a single booking's hold. If
-  check-in comes first, the group is kept rather than released, and the
+  to seven days past the deadline, the same as a single booking's hold. Once
+  check-in arrives, the group is kept rather than released, whether Xero
+  shows the invoice unpaid, no longer has it, or cannot be read, and the
   treasurer gets one email. The organiser may already have paid by bank
   transfer. Before this change the group was released at check-in and its
   joiners were cancelled.
