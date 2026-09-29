@@ -467,6 +467,39 @@ describe("the link repair reads the enqueue's figures (#3635 C3)", () => {
     expect(report.plans).toEqual([]);
   });
 
+  it("applies a reactivation beside a resolved note, re-summing coverage with it after the claims", async () => {
+    state.links = [
+      makeLink({ id: "link_10", active: true, metadata: { amountCents: 10, status: "AUTHORISED" } }),
+      makeLink({ id: "link_60", active: false, metadata: { amountCents: 60, status: "AUTHORISED" } }),
+    ];
+    state.operations = [
+      {
+        id: "op_resolved_30",
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectId: null,
+        status: "FAILED",
+        replayable: false,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 30 },
+        createdAt: new Date("2026-05-03T00:00:00Z"),
+        manuallyResolvedAt: new Date("2026-05-04T00:00:00Z"),
+        queueType: "REFUND_CREDIT_NOTE",
+      },
+    ];
+
+    const result = await applyStripeRefundNoteLinkRepairs(CLUB_FORMAT_TEST, { paymentIds: ["pay_1"] });
+
+    expect(result.report.plans[0]).toMatchObject({
+      activeCoveredCents: 40,
+      plannedCoveredCents: 100,
+      reactivateLinkIds: ["link_60"],
+    });
+    expect(result).toMatchObject({ appliedPayments: 1, reactivatedLinks: 1, skippedPayments: [] });
+  });
+
   it("refuses a payment whose resolved note's amount cannot be read", async () => {
     state.operations = [
       {
