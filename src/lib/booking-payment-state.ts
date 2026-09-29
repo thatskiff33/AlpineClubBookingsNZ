@@ -286,6 +286,29 @@ export function summarizeCollectedCash(
 }
 
 /**
+ * #3372: the "may understate" warning that goes with a Net Collected Cash figure
+ * when `summarizeAdditionalLedgerGap` finds payments that record an additional
+ * payment as collected with no captured ADDITIONAL ledger row behind it. One
+ * sentence for every surface that runs the check - Reports and the payments
+ * board - so the warning cannot read differently on each. `subject` names what
+ * the count counts on that surface. `null` when there is no gap.
+ *
+ * The dashboard card does not carry it: it reads a per-status `groupBy`, which
+ * has no per-payment rows or ledger to check, and the check is not worth a
+ * second query on the landing page.
+ */
+export function formatNetCollectedLedgerGapWarning(
+  gap: { additionalLedgerGapCents: number; additionalLedgerGapBookings: number },
+  subject: { one: string; many: string },
+  formatCents: (cents: number) => string,
+): string | null {
+  const count = gap.additionalLedgerGapBookings;
+  if (count === 0) return null;
+  const singular = count === 1;
+  return `Net Collected Cash may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${count} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
+}
+
+/**
  * The payment shape the two accessors below need, spelled out so a caller cannot
  * hand them a payment row loaded without its id.
  */

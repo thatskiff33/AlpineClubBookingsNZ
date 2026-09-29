@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
+  formatNetCollectedLedgerGapWarning,
   formatPaidRefundedBreakdown,
   getPaymentNetOfRefundsCents,
 } from "@/lib/booking-payment-state";
@@ -314,17 +315,24 @@ function settlementKindLabel(kind: string) {
   }
 }
 
-/** The three summary figures `/api/admin/payments` returns beside the list. */
+/**
+ * The summary figures `/api/admin/payments` returns beside the list, with the
+ * Net Collected Cash ledger-gap check Reports also runs.
+ */
 type PaymentsSummary = {
   netCollectedCents: number;
   refundedCents: number;
   count: number;
+  additionalLedgerGapCents: number;
+  additionalLedgerGapBookings: number;
 };
 
 const EMPTY_PAYMENTS_SUMMARY: PaymentsSummary = {
   netCollectedCents: 0,
   refundedCents: 0,
   count: 0,
+  additionalLedgerGapCents: 0,
+  additionalLedgerGapBookings: 0,
 };
 
 /**
@@ -341,6 +349,8 @@ function readPaymentsSummary(raw: unknown): PaymentsSummary {
     netCollectedCents: cents(fields.netCollectedCents),
     refundedCents: cents(fields.refundedCents),
     count: cents(fields.count),
+    additionalLedgerGapCents: cents(fields.additionalLedgerGapCents),
+    additionalLedgerGapBookings: cents(fields.additionalLedgerGapBookings),
   };
 }
 
@@ -684,6 +694,12 @@ export default function PaymentsPage() {
   }
 
   const totalPages = Math.ceil(total / pageSize);
+  // #3372: the "may understate" check Reports carries beside the same figure.
+  const netCollectedLedgerGapWarning = formatNetCollectedLedgerGapWarning(
+    summary,
+    { one: "payment counted in it", many: "payments counted in it" },
+    (cents) => formatCents(cents, format),
+  );
   const successRate = summary.count > 0
     ? Math.round((data.filter((p) => p.status === "SUCCEEDED").length / Math.max(data.length, 1)) * 100)
     : 0;
@@ -1091,6 +1107,10 @@ export default function PaymentsPage() {
           {successRate}%
         </SummaryCard>
       </div>
+
+      {netCollectedLedgerGapWarning && (
+        <Alert variant="warning">{netCollectedLedgerGapWarning}</Alert>
+      )}
 
       <AdminDataTable
         aria-label="Payments"

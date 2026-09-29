@@ -1,4 +1,8 @@
-import type { Prisma } from "@prisma/client";
+import type {
+  PaymentStatus,
+  PaymentTransactionKind,
+  Prisma,
+} from "@prisma/client";
 import { z } from "zod";
 import {
   buildXeroActivityByRecord,
@@ -15,6 +19,7 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
+import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
   summarizeCollectedCash,
@@ -148,8 +153,15 @@ type PaymentCandidate = {
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   refundedAmountCents: number;
+  additionalAmountCents: number;
+  additionalPaymentStatus: string | null;
   updatedAt: Date;
-  transactions: Array<{ updatedAt: Date }>;
+  transactions: Array<{
+    updatedAt: Date;
+    kind: PaymentTransactionKind;
+    status: PaymentStatus;
+    amountCents: number;
+  }>;
   refunds: Array<{ updatedAt: Date }>;
   booking: {
     id: string;
@@ -463,8 +475,15 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         xeroInvoiceId: true,
         xeroInvoiceNumber: true,
         refundedAmountCents: true,
+        // #3372: the inputs of `summarizeAdditionalLedgerGap`, so the Net
+        // Collected Cash tile carries Reports' "may understate" check. The
+        // transactions are already loaded for their `updatedAt`.
+        additionalAmountCents: true,
+        additionalPaymentStatus: true,
         updatedAt: true,
-        transactions: { select: { updatedAt: true } },
+        transactions: {
+          select: { updatedAt: true, kind: true, status: true, amountCents: true },
+        },
         refunds: { select: { updatedAt: true } },
         booking: {
           select: {
@@ -652,16 +671,22 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     // "Refunded / Credited" tile beside it says it is. The two tiles are not a
     // subtraction of one another, and their hints say so. Both are read from
     // `summarizeCollectedCash`, so neither tile folds refunds by hand.
-    const retained = summarizeCollectedCash(
-      filteredCandidates.filter(
-        (payment) => payment.booking.status !== "CANCELLED"
-      )
+    const retainedRows = filteredCandidates.filter(
+      (payment) => payment.booking.status !== "CANCELLED"
     );
+    const retained = summarizeCollectedCash(retainedRows);
     const matched = summarizeCollectedCash(filteredCandidates);
+    // The same possible-understatement check Reports runs beside its Net
+    // Collected Cash (#2408), over the same payments the tile counts.
+    const ledgerGap = summarizeAdditionalLedgerGap(
+      retainedRows.map((payment) => ({ id: payment.bookingId, payment }))
+    );
     const summary = {
       netCollectedCents: retained.netCollectedCents,
       refundedCents: matched.refundedCents,
       count: filteredCandidates.length,
+      additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,
+      additionalLedgerGapBookings: ledgerGap.additionalLedgerGapBookings,
     };
 
     return jsonResult({

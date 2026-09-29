@@ -617,7 +617,11 @@ the card what it covers:
   out the same way as the Net Collected Cash card on [Reports](reports.md),
   but over different payments: this card uses the payments matching your
   filters, and Reports uses the bookings staying in its chosen dates, so the
-  two figures need not match.
+  two figures need not match. Like Reports, it runs the missing-ledger check:
+  when a payment it counts says an addition was collected but no captured
+  additional-payment record backs it, a warning beneath the cards says how
+  much the figure may understate. Ask a developer to reconcile that payment's
+  ledger before trusting the figure.
 - **Refunded / Credited** covers every payment matching the filters,
   cancelled bookings included: every card refund and every cancellation
   credit on them.

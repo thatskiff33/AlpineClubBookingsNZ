@@ -567,6 +567,67 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
     expect(netCard).toHaveTextContent("$0.00");
     expect(netCard).not.toHaveTextContent("NaN");
   });
+
+  it("warns that Net Collected Cash may understate, as Reports does, when the ledger check finds a gap", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 0,
+        count: 1,
+        additionalLedgerGapCents: 2_100,
+        additionalLedgerGapBookings: 1,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        "Net Collected Cash may understate by $21.00: 1 payment counted in it records an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile that payment's ledger before trusting this figure.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no ledger-gap warning when the check finds none", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 6_500,
+        count: 1,
+        additionalLedgerGapCents: 0,
+        additionalLedgerGapBookings: 0,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    const refundCard = (await screen.findByText("Refunded / Credited"))
+      .parentElement?.parentElement;
+    await waitFor(() => expect(refundCard).toHaveTextContent("$65.00"));
+    expect(screen.queryByText(/may understate/)).toBeNull();
+  });
 });
 
 describe("/admin/waitlist publishes the window it applied (#2816)", () => {

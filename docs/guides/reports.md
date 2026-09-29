@@ -112,7 +112,11 @@ change: **Net Collected Cash** remains `Payment.amountCents` less refunds. The
 page, CSV, PDF, and server log instead flag the aggregate possible shortfall so
 an operator does not silently reconcile against a figure the ledger cannot
 prove. The API returns only the aggregate cents and booking count; affected
-booking IDs remain confined to the bounded server log.
+booking IDs remain confined to the bounded server log. The Payments page's
+**Net Collected Cash** card runs the same check over the payments it counts and
+shows the same warning; the dashboard's **Net Collected This Month** card does
+not, because it reads one total per payment status and has no per-payment
+ledger to check.
 
 Occupancy deliberately keeps its narrower PAID/COMPLETED meaning and excludes
 custodian bed holds, so a Confirmed booking can appear in bookings/revenue while

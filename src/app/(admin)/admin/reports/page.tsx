@@ -35,6 +35,7 @@ import {
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
 import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
@@ -149,10 +150,11 @@ function getAdditionalLedgerGapWarning(
   },
   clubFormat: ClubFormat,
 ): string | null {
-  if (summary.additionalLedgerGapBookings === 0) return null;
-
-  const singular = summary.additionalLedgerGapBookings === 1;
-  return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents, clubFormat)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
+  return formatNetCollectedLedgerGapWarning(
+    summary,
+    { one: "overlapping booking", many: "overlapping bookings" },
+    (cents) => formatCents(cents, clubFormat),
+  );
 }
 
 /**

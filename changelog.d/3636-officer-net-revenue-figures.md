@@ -18,6 +18,9 @@
   covers. On a partly refunded payment, the line under each row's amount now
   reads "refunded or credited" rather than "refunded", because the amount
   taken off may have gone back as account credit instead of to the card.
+  When a payment the card counts records an addition as collected with no
+  matching ledger record, a warning beneath the cards now says how much Net
+  Collected Cash may understate, the same warning Reports shows.
 
   The booking change requests panel shows a partly refunded payment at its net
   amount, with the amount paid and the amount refunded or credited underneath.

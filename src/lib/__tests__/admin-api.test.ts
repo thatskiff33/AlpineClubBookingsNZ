@@ -443,6 +443,9 @@ describe("Admin Payments API", () => {
       // 6_500 + 5_000: the cancelled booking's refund still counts here.
       refundedCents: 11_500,
       count: 4,
+      // No payment here records an uncollected-ledger additional payment.
+      additionalLedgerGapCents: 0,
+      additionalLedgerGapBookings: 0,
     });
     expect(body.summary).not.toHaveProperty("totalRevenueCents");
     expect(body.summary).not.toHaveProperty("netRevenueCents");
@@ -453,6 +456,62 @@ describe("Admin Payments API", () => {
     expect(prisma.payment.create).not.toHaveBeenCalled();
     expect(prisma.payment.upsert).not.toHaveBeenCalled();
     expect(prisma.payment.delete).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3372 review: Reports warns that Net Collected Cash "may understate" when a
+    payment records a collected additional payment with no captured ADDITIONAL
+    ledger row behind it (#2408). The tile carries the same figure, so the
+    summary carries the same check, over the payments the tile counts.
+  */
+  it("returns Reports' ledger-gap check over the payments Net Collected Cash counts", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        // A $21.00 addition recorded as collected, with no ledger row: a gap.
+        makePaymentCandidate({
+          id: "gap",
+          bookingId: "b-gap",
+          additionalAmountCents: 2_100,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [],
+        }),
+        // The same addition WITH its captured ADDITIONAL ledger row: no gap.
+        makePaymentCandidate({
+          id: "evidenced",
+          bookingId: "b-evidenced",
+          additionalAmountCents: 3_000,
+          additionalPaymentStatus: "SUCCEEDED",
+          transactions: [
+            {
+              updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+              kind: "ADDITIONAL",
+              status: "SUCCEEDED",
+              amountCents: 3_000,
+            },
+          ],
+        }),
+      ] as any)
+      .mockResolvedValueOnce([] as any);
+
+    const res = await getPayments(
+      new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10")
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.summary.additionalLedgerGapCents).toBe(2_100);
+    expect(body.summary.additionalLedgerGapBookings).toBe(1);
+
+    // The inputs ride the one candidate query; no second query is made for it.
+    const [candidateArgs] = vi.mocked(prisma.payment.findMany).mock.calls[0] as any[];
+    expect(candidateArgs.select).toMatchObject({
+      additionalAmountCents: true,
+      additionalPaymentStatus: true,
+      transactions: {
+        select: { updatedAt: true, kind: true, status: true, amountCents: true },
+      },
+    });
   });
 
   it("filters by status", async () => {
