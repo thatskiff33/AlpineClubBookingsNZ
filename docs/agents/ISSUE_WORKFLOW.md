@@ -336,6 +336,17 @@ runs the next epic.
   question a merge really raises: `main` taking lock A then B while the epic
   takes B then A. That belongs to the `epic/…` → `main` pull request, where a
   person writes a real declaration over the epic's real diff.
+
+  **A sync you open by hand gets the same description from a command.** Because
+  `epic/**` takes no direct push, a hand sync is a merge branch: make it from
+  `origin/epic/…`, run `git merge origin/main`, resolve and commit, then run
+  `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
+  with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
+  pull request with `--body-file body.md`. The command reads the merge commit
+  rather than your account of it. It names both parents, lists every file that
+  differs from git's automatic merge, and refuses when one of those is
+  concurrency-sensitive. In that case you write the declaration yourself.
+  Hand-typing the description is how #3718 failed the gate in 23 seconds (#3721).
 - **Every migration in the epic lands in ONE deploy.** So **no child may pair an
   expand with its own contract.** A contract half waits for a release *after* the
   epic merges, because `previous_expand_release` has to name something that has
