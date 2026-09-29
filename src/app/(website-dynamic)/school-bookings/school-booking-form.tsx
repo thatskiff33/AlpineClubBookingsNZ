@@ -23,6 +23,7 @@ import {
   DEFAULT_SCHOOL_GROUP_SOFT_CAP,
   SCHOOL_CHILD_TIERS,
 } from "@/lib/school-booking-constants";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 
 interface TeacherInput {
@@ -187,7 +188,8 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
       return;
     }
     if (totalGuests > effectiveCapacity) {
-      setError(`Total guests (${totalGuests}) exceeds the lodge capacity of ${effectiveCapacity}.`);
+      // #3407: a lodge with no capacity says so rather than quoting a limit of 0.
+      setError(lodgeGuestLimitMessage(effectiveCapacity, (limit) => `Total guests (${totalGuests}) exceeds the lodge capacity of ${limit}.`));
       return;
     }
 

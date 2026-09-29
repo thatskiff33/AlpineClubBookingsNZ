@@ -3,6 +3,8 @@
  * rather than quoting a limit of zero (owner decision, 14 Sep 2026).
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE,
@@ -81,5 +83,66 @@ describe("lodgeGuestLimitMessage — the refusal every party-size door shows", (
     expect(lodgeGuestLimitMessage(resolved.capacity, bookingDoor)).toBe(
       `A booking cannot exceed ${limit} guests`,
     );
+  });
+});
+
+/*
+  Census (reads `src/` from disk, so `test:related` cannot select it). Every
+  party-size refusal that quotes a lodge's limit must reach the person through
+  `lodgeGuestLimitMessage`, or a lodge with no capacity quotes "0 guests" again.
+  The shape it polices: a template literal saying a party exceeds / is larger
+  than a limit that interpolates a CAPACITY value directly. Inside the helper's
+  callback the interpolation is `${limit}`, which this does not match.
+*/
+describe("no party-size refusal interpolates a capacity directly (#3407)", () => {
+  function sourceFiles(dir: string): string[] {
+    const found: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__" && entry.name !== "node_modules") {
+          found.push(...sourceFiles(full));
+        }
+      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        found.push(full);
+      }
+    }
+    return found;
+  }
+
+  const REFUSAL = /(?:exceeds?|larger than)/i;
+  const CAPACITY_INTERPOLATION = /\$\{[^}]*[Cc]apacity[^}]*\}/;
+
+  function violations(source: string): string[] {
+    return (source.match(/`[^`]*`/g) ?? []).filter(
+      (literal) => REFUSAL.test(literal) && CAPACITY_INTERPOLATION.test(literal),
+    );
+  }
+
+  it("finds none in src/, and the helper is actually used at the doors", () => {
+    const files = sourceFiles(join(process.cwd(), "src"));
+    const offenders: string[] = [];
+    let helperCalls = 0;
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const literal of violations(source)) {
+        offenders.push(`${relative(process.cwd(), file).split("\\").join("/")}: ${literal}`);
+      }
+      helperCalls += (source.match(/lodgeGuestLimitMessage\(/g) ?? []).length;
+    }
+    expect(offenders).toEqual([]);
+    // Vacuity guard: the sixteen doors this issue converted (fourteen member
+    // and officer refusals, the public school form's client-side one, and the
+    // group-discount policy's minimum-size check).
+    expect(helperCalls).toBeGreaterThanOrEqual(16);
+  });
+
+  it("would flag the pre-#3407 spelling", () => {
+    expect(
+      violations("x = `A booking cannot exceed ${lodgeCapacity} guests`;"),
+    ).toHaveLength(1);
+    expect(
+      violations("x = lodgeGuestLimitMessage(c, (limit) => `A booking cannot exceed ${limit} guests`);"),
+    ).toHaveLength(0);
   });
 });

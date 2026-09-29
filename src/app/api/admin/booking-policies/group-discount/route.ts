@@ -6,6 +6,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { DEFAULT_GROUP_DISCOUNT_SETTING } from "@/config/club-settings-defaults";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const groupDiscountSchema = z.object({
   minGroupSize: z.number().int().min(2).max(200),
@@ -78,7 +79,12 @@ export async function PUT(req: NextRequest) {
   const lodgeCapacity = await getDefaultLodgeCapacity();
   if (parsed.data.minGroupSize > lodgeCapacity) {
     return NextResponse.json(
-      { error: `Minimum group size cannot exceed lodge capacity (${lodgeCapacity}).` },
+      {
+        error: lodgeGuestLimitMessage(
+          lodgeCapacity,
+          (limit) => `Minimum group size cannot exceed lodge capacity (${limit}).`,
+        ),
+      },
       { status: 400 },
     );
   }
