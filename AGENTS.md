@@ -430,7 +430,7 @@ At the successful end of a meaningful piece of work:
    has no evidence for, and a ticked `N/A` is refused there too. Run
    `git fetch origin main`, or pass `--base <ref>`, and run it again.
 2. Monitor CI to green. Fix any failure (lint, typecheck, the `npm run knip`
-   dead-code gate, `npm test`, build, migration-drift, and the
+   dead-code gate, any full-suite test shard, build, migration-drift, and the
    dependency/secret/static scans) and push fixes until every required check
    passes. When knip flags a genuinely-used file or export it cannot statically
    trace, add a justified `entry` or file-scoped `ignoreIssues` carve-out to
@@ -443,7 +443,7 @@ At the successful end of a meaningful piece of work:
 
    | Required check | Status | Job | What it gates |
    | --- | --- | --- | --- |
-   | `verify` | applied | `ci.yml` → `verify` | lint, typecheck, knip, `npm test`, build, PR-body gates. It no longer runs the dependency audit (#2946) |
+   | `verify` | applied | `ci.yml` → `verify` | lint, typecheck, knip, build, PR-body gates, and a fail-closed same-attempt poll of four independent full-suite test shards (#3431). It no longer runs the dependency audit (#2946) |
    | `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses |
    | `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state |
    | `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
@@ -809,7 +809,7 @@ CI-green → evidence**.
   contracts, and mutation checks for every new guard. Run
   `npm run docs:linkcheck` and `npm run docs:indexcheck` when docs or invariant
   citations change, and `npm run knip` when files or exports change. Then push a
-  draft PR: PR CI owns the full `npm test`, build, migration-drift, E2E,
+  draft PR: PR CI owns the full unit suite in four test shards, build, migration-drift, E2E,
   static/secret/dependency, and container gates. Do not delay a draft PR merely
   to repeat those full gates on the same commit locally. Run a full suite
   locally only to diagnose a CI failure or when CI is unavailable, and record
