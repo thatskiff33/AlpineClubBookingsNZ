@@ -1644,8 +1644,8 @@ settlements, with the shortfall. It is READ-ONLY and repairs nothing: whether an
 how to repair is the owner's decision, taken on this report.
 
 ```bash
-DATABASE_URL=<non-prod copy> npm run payments:audit-refunded-total
-DATABASE_URL=<non-prod copy> npm run payments:audit-refunded-total -- --json
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-refunded-total
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-refunded-total --json
 ```
 
 The expected figure is a floor, not an identity: a stored total above it is

@@ -23,5 +23,5 @@
   Payments that already went through this sequence before the fix keep the
   understated total they have; this change stops new ones. Operators can list
   them, with the amount each is short, with the read-only
-  `npm run payments:audit-refunded-total` (see the maintenance guide). It
-  repairs nothing.
+  `pnpm run payments:audit-refunded-total` (add `--json` for machine-readable
+  output; see the maintenance guide). It repairs nothing.

@@ -418,7 +418,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   directly.
 - Pinned by `payment-transactions-refunds.test.ts` and
   `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
-  are listed by `npm run payments:audit-refunded-total`, never repaired by code.
+  are listed by `pnpm run payments:audit-refunded-total`, never repaired by code.
 
 ## INV-PAY-002
 

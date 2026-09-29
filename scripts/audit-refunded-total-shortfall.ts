@@ -12,7 +12,7 @@
  * SAFE USAGE - run against a NON-PRODUCTION copy:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:audit-refunded-total
+ *     pnpm run payments:audit-refunded-total
  */
 import "dotenv/config";
 import process from "node:process";
@@ -26,8 +26,8 @@ import { getClubFormat } from "../src/lib/club-format-settings";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:audit-refunded-total            # read-only audit (default)
-  npm run payments:audit-refunded-total -- --json  # also emit machine-readable JSON
+  pnpm run payments:audit-refunded-total         # read-only audit (default)
+  pnpm run payments:audit-refunded-total --json  # also emit machine-readable JSON
 
 This audit is read-only. It never writes and never calls Xero/Stripe/SES.
 
@@ -38,7 +38,9 @@ Options:
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
+  // A POSIX shell forwards a literal `--` if somebody writes one; skip it, as
+  // `scripts/agent-context.ts` and `scripts/stale-containers.mjs` do.
+  const argv = process.argv.slice(2).filter((arg) => arg !== "--");
   if (argv.includes("--help") || argv.includes("-h")) {
     printUsage();
     return;
