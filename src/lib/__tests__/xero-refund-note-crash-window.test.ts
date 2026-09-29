@@ -38,6 +38,7 @@ const state = vi.hoisted(() => ({
     failNextPayment: false,
   },
   crash: null as string | null,
+  canonical: null as null | { xeroObjectId: string; xeroObjectNumber: string | null; source: string },
 }));
 
 function matches(row: Row, where: Row | undefined): boolean {
@@ -141,7 +142,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
         state.links.push({ active: true, ...link });
       }
     }),
-    findCanonicalPaymentRefundCreditNote: vi.fn(async () => null),
+    findCanonicalPaymentRefundCreditNote: vi.fn(async () => state.canonical),
     sumCoveredRefundCreditNoteCents: vi.fn(async () =>
       state.links
         .filter((link) => link.role === "REFUND_CREDIT_NOTE" && link.active)
@@ -369,6 +370,7 @@ beforeEach(() => {
   state.xero.createPaymentsCalls = [];
   state.xero.failNextPayment = false;
   state.crash = null;
+  state.canonical = null;
   seedPayment();
 });
 
@@ -546,6 +548,51 @@ describe("a retry after a crash between saving the note id and completing (#3548
 
     expect(state.xero.createPaymentsCalls).toEqual([]);
     expect(completedRows()).toEqual([]);
+  });
+
+  it("heals a row the old early return closed with neither, and keeps the note link's own amounts", async () => {
+    await firstAttemptDies("before-payment-decision", { refundMethod: "card", watermarkCents: 5000 });
+    // What #3548 found: the pre-fix early return linked the note and closed a
+    // row SUCCEEDED carrying only the note id.
+    state.links.push({
+      localModel: "Payment",
+      localId: PAYMENT_ID,
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_1",
+      role: "REFUND_CREDIT_NOTE",
+      active: true,
+      metadata: { amountCents: 5000, watermarkCents: 5000 },
+    });
+    state.operations.push({
+      id: "op_bare",
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: PAYMENT_ID,
+      status: "SUCCEEDED",
+      manuallyResolvedAt: null,
+      xeroObjectId: "cn_1",
+      responsePayload: { existingCreditNoteId: "cn_1" },
+    });
+
+    // A later replay finds the delta covered and reaches the early return.
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", watermarkCents: 9000, repairExistingLink: true });
+
+    expect(state.xero.notes.size).toBe(1);
+    expect(state.xero.notes.get("cn_1")!.payments).toHaveLength(1);
+    const noteLink = state.links.find((link) => link.role === "REFUND_CREDIT_NOTE")!;
+    expect(noteLink.metadata).toEqual({ amountCents: 5000, watermarkCents: 5000 });
+  });
+
+  it("repairs only the note the payment saved, never a canonical link it did not", async () => {
+    await firstAttemptDies("before-payment-decision");
+    state.payment!.xeroRefundCreditNoteId = null;
+    state.canonical = { xeroObjectId: "cn_1", xeroObjectNumber: "CN-1", source: "link" };
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card", repairExistingLink: true });
+
+    expect(state.xero.createPaymentsCalls).toEqual([]);
   });
 
   it("in per-delta mode the retry replays the same note by its key and settles it", async () => {
