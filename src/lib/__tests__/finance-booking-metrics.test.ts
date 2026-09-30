@@ -1286,7 +1286,9 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     payment: payment(PaymentStatus.PARTIALLY_REFUNDED, 12_000, 2_000),
   };
   // A soft-deleted booking still carrying a listed status: no Finance figure
-  // counts it (#3745).
+  // counts it (#3745). Production cannot make this row - a deleted booking is
+  // always CANCELLED (INV-ADDPAY-030) - so the test is deliberate
+  // defence-in-depth against a direct database edit.
   const deletedPaid = {
     ...stay("b-deleted-paid", "2026-04-03", "2026-04-05"),
     status: BookingStatus.PAID,

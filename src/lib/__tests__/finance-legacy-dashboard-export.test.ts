@@ -171,6 +171,8 @@ describe("finance legacy dashboard export", () => {
   });
 
   it("leaves a soft-deleted PAID booking out of both sections (#3745)", async () => {
+    // Deliberate defence-in-depth: a deleted booking is always CANCELLED
+    // (INV-ADDPAY-030), so only a direct database edit makes this row.
     mockRows([
       {
         id: "booking-deleted",

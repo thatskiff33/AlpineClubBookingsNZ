@@ -60,6 +60,7 @@ export const financeHelpEntries: HelpEntry[] = [
           details: [
             "Cards summarise the selected window and comparison window.",
             "Net Collected Cash is captured payments less refunds and credits for every booking staying in the window, whatever its status: cancelled bookings count at the fee kept, and deleted bookings never count. The admin dashboard, Payments and Reports use the same rule.",
+            "No Finance figure counts a deleted booking, the same as Reports' default view.",
             "Trend and mix charts use the same filters as the report table and exports.",
           ],
         },

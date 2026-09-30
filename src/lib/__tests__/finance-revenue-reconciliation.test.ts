@@ -202,7 +202,9 @@ describe("finance revenue reconciliation", () => {
       pnlSnapshot(incomePayload([["Hut Fees", "10,000.00"]], "10,000.00")),
     ]);
     // The database adds a deleted booking's $600 of nights unless the booking
-    // filter leaves deleted bookings out.
+    // filter leaves deleted bookings out. Deliberate defence-in-depth: a
+    // deleted booking is always CANCELLED (INV-ADDPAY-030), so only a direct
+    // database edit gives one a listed status.
     mockBookingGuestNightAggregate.mockImplementation(async (args: any) => {
       const booking = args.where.bookingGuest.booking;
       const deletedNights = booking.deletedAt === null ? 0 : 60_000;

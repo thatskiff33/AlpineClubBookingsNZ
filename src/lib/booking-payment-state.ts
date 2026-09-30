@@ -1,3 +1,5 @@
+import { isBookingShownIn } from "@/lib/booking-delete-visibility";
+
 /**
  * The `Payment.status` values that mean MONEY WAS TAKEN — captured, and possibly
  * refunded since. `REFUNDED` belongs here: the question is whether a capture
@@ -262,7 +264,9 @@ export interface NetCollectedBookingScopeFields {
 export function isInNetCollectedBookingScope(
   booking: NetCollectedBookingScopeFields,
 ): boolean {
-  return booking.deletedAt === null;
+  // #3745: "not deleted" is Reports' hide view, defined once beside the query
+  // filter the Finance booking reads ask.
+  return isBookingShownIn("hide", booking);
 }
 
 /** A payment as `summarizeCollectedCash` reads it. */
