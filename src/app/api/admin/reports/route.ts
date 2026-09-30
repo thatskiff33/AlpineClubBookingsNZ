@@ -3,13 +3,12 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { z } from "zod";
-import {
-  BookingStatus,
-  PaymentTransactionKind,
-  SubscriptionStatus,
-} from "@prisma/client";
+import { BookingStatus, SubscriptionStatus } from "@prisma/client";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
-import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedPaymentSelect,
+  summarizeNetCollectedWithLedgerGap,
+} from "@/lib/additional-ledger-gap";
 import { getOccupiedBedsForNight } from "@/lib/capacity";
 import { resolveMetricsCapacityAndScope } from "@/lib/finance-booking-metrics";
 import logger from "@/lib/logger";
@@ -17,7 +16,6 @@ import {
   buildBookingTrendSeries,
   buildRevenueSeries,
   REPORT_BOOKING_STATUSES,
-  summarizeNetCollectedCash,
   summarizeOverlappingGuests,
 } from "@/lib/admin-reports";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -30,7 +28,6 @@ import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClu
 import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
-import { netCollectedScopedPayments } from "@/lib/booking-payment-state";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -162,25 +159,7 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        select: {
-          bookingId: true,
-          status: true,
-          amountCents: true,
-          refundedAmountCents: true,
-          additionalAmountCents: true,
-          additionalPaymentStatus: true,
-          // #2408: ADDITIONAL ledger evidence only, for the understatement
-          // guard; cash still comes from amountCents.
-          transactions: {
-            where: { kind: PaymentTransactionKind.ADDITIONAL },
-            select: {
-              kind: true,
-              status: true,
-              amountCents: true,
-            },
-          },
-          booking: { select: { deletedAt: true } },
-        },
+        select: netCollectedPaymentSelect,
         orderBy: { bookingId: "asc" },
       }),
       prisma.member.count({
@@ -280,14 +259,11 @@ export async function GET(request: NextRequest) {
     // Collected cash is booking-level payment data, deliberately separate from
     // stay-night revenue. Payment.amountCents already includes captured
     // additions (#2408), so transaction-ledger reconstruction is forbidden.
-    const netCollectedCents = summarizeNetCollectedCash(netCollectedPayments);
-    // The possible understatement of THAT figure, so over the same payments.
-    const additionalLedgerGap = summarizeAdditionalLedgerGap(
-      netCollectedScopedPayments(netCollectedPayments).map((payment) => ({
-        id: payment.bookingId,
-        payment,
-      })),
-    );
+    // The possible understatement of THAT figure, over the same payments.
+    const {
+      collected: { netCollectedCents },
+      ledgerGap: additionalLedgerGap,
+    } = summarizeNetCollectedWithLedgerGap(netCollectedPayments);
     if (additionalLedgerGap.bookingIds.length > 0) {
       logger.error(
         {

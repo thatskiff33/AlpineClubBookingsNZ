@@ -101,8 +101,8 @@ It does not use the status list above. It counts every overlapping booking in
 the chosen lodge whatever its status, so a cancelled booking counts at the
 cancellation fee the club kept, and it leaves deleted bookings out whichever
 **Deleted** view is chosen. All four Net Collected figures (this card, the
-dashboard's, the Payments page's and the Finance dashboard's Net collected
-cash) use that same rule for which bookings count.
+dashboard's, the Payments page's and the Finance dashboard's Net Collected
+Cash) use that same rule for which bookings count.
 A captured later addition is already inside that payment amount and is never
 added again. **Outstanding Additions** remains the booking-level amount still
 owing after an upward change. Do not subtract it from selected stay-night
@@ -119,10 +119,10 @@ page, CSV, PDF, and server log instead flag the aggregate possible shortfall so
 an operator does not silently reconcile against a figure the ledger cannot
 prove. The API returns only the aggregate cents and booking count; affected
 booking IDs remain confined to the bounded server log. The Payments page's
-**Net Collected Cash** card runs the same check over the payments it counts and
-shows the same warning; the dashboard's **Net Collected This Month** card does
-not, because it reads only each payment's status and amounts, with no ledger
-rows to check.
+**Net Collected Cash** card and the Finance dashboard's **Net Collected Cash**
+card each run the same check over the payments they count and show the same
+warning; the dashboard's **Net Collected This Month** card does not, because it
+reads only each payment's status and amounts, with no ledger rows to check.
 
 Occupancy deliberately keeps its narrower PAID/COMPLETED meaning and excludes
 custodian bed holds, so a Confirmed booking can appear in bookings/revenue while

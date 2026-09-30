@@ -1,11 +1,11 @@
 import {
   BookingStatus,
   PaymentStatus,
-  PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
 import {
-  summarizeAdditionalLedgerGap,
+  netCollectedPaymentSelect as sharedNetCollectedPaymentSelect,
+  summarizeNetCollectedWithLedgerGap,
   type AdditionalLedgerGapSummary,
 } from "@/lib/additional-ledger-gap";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
@@ -34,11 +34,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
-import {
-  netCollectedScopedPayments,
-  summarizeCollectedCash,
-  type CollectedCashSummary,
-} from "@/lib/booking-payment-state";
+import { type CollectedCashSummary } from "@/lib/booking-payment-state";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };
@@ -127,24 +123,20 @@ type BookingMetricsRecord = Prisma.BookingGetPayload<{
 
 /**
  * #3637 (#3372 decision A): Net collected cash reads its own payments - every
- * booking staying in the window, ANY status. `summarizeCollectedCash` drops
- * soft-deleted bookings from the `deletedAt` loaded here, and the #2408
- * ledger-gap guard beside the figure runs over the same payments.
- *
- * The guard needs the ledger, not just the summary columns: only a captured
- * ADDITIONAL row proves a collected increase is inside `amountCents`. ADDITIONAL
- * rows only - the cash total is never rebuilt from the ledger (a capture can
- * have no PRIMARY row). `kind` is re-checked in code; the filter is an
- * optimisation, not the correctness boundary.
+ * booking staying in the window, ANY status - through the shared Net Collected
+ * select, widened by the stay dates the window test reads.
+ * `summarizeNetCollectedWithLedgerGap` drops soft-deleted bookings and runs the
+ * #2408 ledger-gap guard over the same payments.
  */
 const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
-  bookingId: true, status: true, amountCents: true, refundedAmountCents: true,
-  additionalAmountCents: true, additionalPaymentStatus: true,
-  transactions: {
-    where: { kind: PaymentTransactionKind.ADDITIONAL },
-    select: { kind: true, status: true, amountCents: true },
+  ...sharedNetCollectedPaymentSelect,
+  booking: {
+    select: {
+      ...sharedNetCollectedPaymentSelect.booking.select,
+      checkIn: true,
+      checkOut: true,
+    },
   },
-  booking: { select: { checkIn: true, checkOut: true, deletedAt: true } },
 });
 
 /**
@@ -468,14 +460,6 @@ function minDate(left: Date, right: Date): Date {
 
 function maxDate(left: Date, right: Date): Date {
   return left.getTime() >= right.getTime() ? left : right;
-}
-
-function minDateFromList(values: Date[]): Date {
-  return values.reduce((currentMin, value) => minDate(currentMin, value));
-}
-
-function maxDateFromList(values: Date[]): Date {
-  return values.reduce((currentMax, value) => maxDate(currentMax, value));
 }
 
 function normalizeRealizedWindow(
@@ -1252,11 +1236,16 @@ export async function getFinanceBookingMetrics(
 
   const { capacity: lodgeCapacity, bookingLodgeWhere } =
     await resolveMetricsCapacityAndScope(query.lodgeId);
+  // #3637: each window's own overlap, ORed - not one span from the earlier
+  // start to the later end, which reads every stay between two distant
+  // windows. Both reads still drop a stay with no night in a window below.
   const stayOverlapWhere: Prisma.BookingWhereInput | null =
     activeWindows.length > 0 ? {
       ...bookingLodgeWhere,
-      checkIn: { lte: maxDateFromList(activeWindows.map((w) => w.toDate)) },
-      checkOut: { gt: minDateFromList(activeWindows.map((w) => w.fromDate)) },
+      OR: activeWindows.map((w) => ({
+        checkIn: { lte: w.toDate },
+        checkOut: { gt: w.fromDate },
+      })),
     } : null;
   const [bookings, netCollectedCandidates] = stayOverlapWhere
       ? await Promise.all([
@@ -1289,21 +1278,18 @@ export async function getFinanceBookingMetrics(
       )
     : undefined;
   // #3637: the stay figures' window test without their status list; the read
-  // above is only the envelope of both windows.
+  // above is only each window's overlap.
   const staysInAWindow = ({ booking }: { booking: BookingStayDates }) =>
     [realizedWindow, forwardWindow].some(
       (window) => window !== null && getContributingDates({ booking, ...window }).dates.length > 0,
     );
-  const netCollectedPayments = netCollectedCandidates.filter(staysInAWindow);
+  const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(
+    netCollectedCandidates.filter(staysInAWindow),
+  );
   const paymentSummary = summarizePayments(
     bookings.filter((booking) => contributingBookingIds.has(booking.id)),
-    summarizeCollectedCash(netCollectedPayments),
-    summarizeAdditionalLedgerGap(
-      netCollectedScopedPayments(netCollectedPayments).map((payment) => ({
-        id: payment.bookingId,
-        payment,
-      })),
-    ),
+    collected,
+    ledgerGap,
   );
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),

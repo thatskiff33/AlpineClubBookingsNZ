@@ -26,6 +26,7 @@ import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-da
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
+import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
 // rows already scoped to one range, and widening it to the shared medium form
@@ -95,12 +96,14 @@ export async function buildBookingsDashboard(
   // below would understate the cash. Say so where the treasurer reads the
   // number, and say by how much, rather than publishing a figure that is
   // quietly short. #3637: the one wording Reports and Payments use, over the
-  // same payments the figure counts.
+  // same payments the figure counts. Its amount is in exact cents, as there,
+  // not the page's whole dollars: a gap under a dollar must not read "$0".
   const ledgerGapBookings = metrics.paymentSummary.additionalLedgerGapBookings;
   const ledgerGapWarning = formatNetCollectedLedgerGapWarning(
     metrics.paymentSummary,
     { one: "booking in this range", many: "bookings in this range" },
-    (cents) => formatDollarsDisplay(cents, format),
+    (cents) => formatCents(cents, format),
+    (count) => formatNumber(count, format),
   );
   if (ledgerGapWarning) warnings.push(ledgerGapWarning);
   const moneyReconciliationPanel =
@@ -142,7 +145,7 @@ export async function buildBookingsDashboard(
         : undefined,
     },
     {
-      title: "Net collected cash",
+      title: "Net Collected Cash",
       value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this
@@ -154,7 +157,7 @@ export async function buildBookingsDashboard(
         "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count at the fee kept; deleted bookings are left out.",
       footnote:
         ledgerGapBookings > 0
-          ? `May understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
+          ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
           : "Cash is local payment-derived and separate from Xero revenue.",
     },
     {

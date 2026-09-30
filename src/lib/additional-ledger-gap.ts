@@ -1,6 +1,12 @@
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
-import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
+import {
+  CAPTURED_PAYMENT_STATUS_LIST,
+  netCollectedScopedPayments,
+  summarizeCollectedCash,
+  type CollectedCashSummary,
+  type NetCollectedPaymentRow,
+} from "@/lib/booking-payment-state";
 
 // #3340 (`INV-SSOT-001`): imported, not restated. The list lives once in
 // `booking-payment-state.ts`.
@@ -73,4 +79,59 @@ export function summarizeAdditionalLedgerGap(
   }
 
   return summary;
+}
+
+/**
+ * #3372 / #3637: the one Prisma read of a payment for a "Net Collected Cash"
+ * figure and the ledger-gap warning beside it - the columns
+ * `summarizeCollectedCash` reads, `summarizeAdditionalLedgerGap`'s inputs, and
+ * the booking's `deletedAt` for the Net Collected booking scope. A surface may
+ * widen `booking.select` with what its own filters need.
+ *
+ * ADDITIONAL ledger rows only (#2408): only a captured ADDITIONAL row proves a
+ * collected increase is inside `amountCents`, and the cash total is never
+ * rebuilt from the ledger (a capture can have no PRIMARY row). `kind` is
+ * re-checked by `summarizeAdditionalLedgerGap`; the filter is an optimisation,
+ * not the correctness boundary.
+ */
+export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  bookingId: true,
+  status: true,
+  amountCents: true,
+  refundedAmountCents: true,
+  additionalAmountCents: true,
+  additionalPaymentStatus: true,
+  transactions: {
+    where: { kind: PaymentTransactionKind.ADDITIONAL },
+    select: { kind: true, status: true, amountCents: true },
+  },
+  booking: { select: { deletedAt: true } },
+});
+
+/**
+ * #3372 / #3637: a Net Collected Cash figure and its "may understate" ledger
+ * gap, over ONE set of payments. The gap runs over exactly the payments the
+ * figure counts (the Net Collected booking scope), so no surface can warn about
+ * a payment its figure left out, or stay silent about one it counted. Reports,
+ * the payments board and the finance dashboard all call it.
+ *
+ * It lives here, not beside `summarizeCollectedCash`, because
+ * `booking-payment-state.ts` is an import-free leaf that this module already
+ * imports: the reverse import would be a cycle.
+ */
+export function summarizeNetCollectedWithLedgerGap<
+  T extends NetCollectedPaymentRow &
+    AdditionalLedgerGapPaymentLike & { bookingId: string },
+>(
+  payments: ReadonlyArray<T>,
+): { collected: CollectedCashSummary; ledgerGap: AdditionalLedgerGapSummary } {
+  return {
+    collected: summarizeCollectedCash(payments),
+    ledgerGap: summarizeAdditionalLedgerGap(
+      netCollectedScopedPayments(payments).map((payment) => ({
+        id: payment.bookingId,
+        payment,
+      })),
+    ),
+  };
 }

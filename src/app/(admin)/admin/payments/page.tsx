@@ -105,6 +105,7 @@ import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubFormat } from "@/components/club-format-provider";
+import { formatFinanceNumber } from "@/lib/finance-format";
 
 // #2264 — the id of the single hint shared by the three amount filter boxes.
 const PAYMENT_AMOUNT_HINT_ID = "payment-amount-filter-hint";
@@ -699,6 +700,7 @@ export default function PaymentsPage() {
     summary,
     { one: "payment counted in it", many: "payments counted in it" },
     (cents) => formatCents(cents, format),
+    (count) => formatFinanceNumber(count, format),
   );
   const successRate = summary.count > 0
     ? Math.round((data.filter((p) => p.status === "SUCCEEDED").length / Math.max(data.length, 1)) * 100)

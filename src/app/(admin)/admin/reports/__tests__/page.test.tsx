@@ -285,6 +285,32 @@ describe("ReportsPage quick ranges", () => {
     expect(screen.getByText(/Price allocated to selected stay nights/)).toBeVisible();
   });
 
+  it("prints the ledger-gap warning's booking count in the club number format (#3637)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ...EMPTY_REPORT,
+            summary: {
+              ...EMPTY_REPORT.summary,
+              netCollectedCents: 7_500,
+              additionalLedgerGapCents: 2_100,
+              additionalLedgerGapBookings: 1_234,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    render(<ReportsPage />);
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent(
+      "Net Collected Cash may understate by $21.00: 1,234 overlapping bookings record an additional payment",
+    );
+  });
+
   it("exports stay-night booked revenue and collected cash with unambiguous CSV labels", async () => {
     vi.stubGlobal(
       "fetch",

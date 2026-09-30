@@ -23,7 +23,6 @@ import {
   getGuestStayStart,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
-import { summarizeCollectedCash } from "@/lib/booking-payment-state";
 import { formatDateOnly } from "@/lib/date-only";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
@@ -262,17 +261,6 @@ export function summarizeOverlappingGuests(
   };
 }
 
-/**
- * The Reports route's net-collected-cash figure: the net half of
- * `summarizeCollectedCash` in `booking-payment-state.ts`, which owns the
- * derivation and its booking scope (#3372). Kept as a named wrapper so the
- * route reads one number.
- */
-export function summarizeNetCollectedCash(
-  payments: Parameters<typeof summarizeCollectedCash>[0],
-): number {
-  return summarizeCollectedCash(payments).netCollectedCents;
-}
 
 function initializeBuckets(
   rangeStart: Date,
