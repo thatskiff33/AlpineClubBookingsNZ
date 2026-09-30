@@ -206,6 +206,34 @@ describe("postModificationLedgerLines (#3582)", () => {
     expect(confirmed.written.map((row) => row.amountCents)).toEqual([5_000, 5_000]);
   });
 
+  it("an admin date SHIFT (#3741) re-dates every night at its own figure: four reversals, four re-posts, netting to zero", async () => {
+    const D3 = new Date("2026-08-08T00:00:00.000Z");
+    const D4 = new Date("2026-08-09T00:00:00.000Z");
+    const side = (dates: Date[]) => ({
+      guests: ["g1", "g2"].map((id) => ({
+        guestKey: id,
+        ageTier: "ADULT" as const,
+        isMember: true,
+        rateMembershipTypeId: "rate-m",
+        name: `Guest ${id}`,
+        nights: dates.map((stayDate) => ({ stayDate, priceCents: 5_000 })),
+      })),
+      promoAdjustmentCents: 0,
+    });
+    const ledger = confirmedLedger();
+    const s = store(ledger);
+    await postModificationLedgerLines({
+      ...base,
+      bookingModification: { ...row, priceDiffCents: 0 },
+      site: "admin-date-shift",
+      store: s.store,
+      sides: { before: side([D1, D2]), after: side([D3, D4]) },
+    });
+    expect(s.written.filter((line) => line.reversesLineId).map((line) => line.nightStart)).toEqual([D1, D2, D1, D2]);
+    expect(s.written.filter((line) => !line.reversesLineId).map((line) => line.nightStart)).toEqual([D3, D4, D3, D4]);
+    expect(owed([...ledger, ...s.written])).toBe(owed(ledger));
+  });
+
   it("posts nothing, and reads nothing, for a parked edit (no sides)", async () => {
     const s = store(confirmedLedger());
     await postModificationLedgerLines({ ...base, store: s.store, sides: null });

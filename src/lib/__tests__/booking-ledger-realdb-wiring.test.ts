@@ -86,6 +86,7 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "a same-price category change, then a second edit: the second reverses the FIRST EDIT'S re-post, never the stale confirmation line",
       "a direct write of a reversal of an already-reversed line inserts nothing, and the transaction stays usable",
       "a replayed change-fee-only edit posts its fee once: the replay's plan is identical, and ON CONFLICT skips it",
+      "an admin date shift through the REAL door re-dates every night, netting to zero, and a later edit reverses the shifted line (#3741)",
     ]) {
       expect(suite).toContain(caseName);
     }

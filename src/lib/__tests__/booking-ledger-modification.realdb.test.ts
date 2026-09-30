@@ -6,7 +6,7 @@
  * suites pin that each door calls the sync with its own history row and
  * sides. What a mock cannot show is the posting path against the table's real
  * constraints — the CHECKs, the unique `reversesLineId`, `ON CONFLICT DO
- * NOTHING` on the key — across two edits in two transactions. Six claims:
+ * NOTHING` on the key — across two edits in two transactions. Seven claims:
  *
  *  1. Two edits in turn: the second reverses the FIRST EDIT'S re-post, never the
  *     confirmation line the first already reversed, and the booking's live
@@ -23,6 +23,9 @@
  *     edit reverses the re-post; a second reversal of one line inserts nothing
  *     and leaves the transaction usable; a replayed change-fee-only edit posts
  *     its fee once, through `ON CONFLICT` alone.
+ *  7. An admin date shift, through the real `adminShiftBookingDates`, reverses
+ *     every old-date line and re-posts it at the new date, netting to zero
+ *     (#3741).
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -132,6 +135,8 @@ async function clean(): Promise<void> {
     await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: id } });
     await prisma.bookingModification.deleteMany({ where: { bookingId: id } });
     await prisma.bookingGuest.deleteMany({ where: { bookingId: id } });
+    // The #3741 shift case moves the booking itself; put it back.
+    await prisma.booking.updateMany({ where: { id }, data: { checkIn: D1, checkOut: CHECK_OUT } });
   }
 }
 
@@ -378,6 +383,41 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
         ["GUEST_NIGHT", -5_000, "MODIFICATION", rebaseRow],
         ["GUEST_NIGHT", -5_000, "MODIFICATION", rebaseRow],
       ]);
+      expect(await liveChargeCents()).toBe(10_000);
+    });
+
+    it("an admin date shift through the REAL door re-dates every night, netting to zero, and a later edit reverses the shifted line (#3741)", async () => {
+      const { adminShiftBookingDates } = await import("@/lib/booking-date-modification-service");
+      await adminShiftBookingDates({
+        bookingId: BOOKING_ID,
+        actor: { id: MEMBER_ID, role: "ADMIN" },
+        input: { checkIn: "2026-08-08", checkOut: "2026-08-10", confirmOverCapacity: true, notifyMember: false },
+        ipAddress: "127.0.0.1",
+      });
+      const shift = await prisma.bookingModification.findFirstOrThrow({
+        where: { bookingId: BOOKING_ID, modificationType: "ADMIN_DATE_SHIFT" },
+        select: { id: true },
+      });
+      const shiftLines = await prisma.bookingLedgerLine.findMany({
+        where: { bookingId: BOOKING_ID, anchorId: shift.id },
+        select: { amountCents: true, nightStart: true, reversesLineId: true },
+      });
+      const day = (line: { nightStart: Date | null }) => line.nightStart!.toISOString().slice(0, 10);
+      expect(shiftLines.filter((line) => line.reversesLineId !== null).map(day).sort()).toEqual([
+        "2026-08-01", "2026-08-01", "2026-08-02", "2026-08-02",
+      ]);
+      expect(shiftLines.filter((line) => line.reversesLineId === null).map(day).sort()).toEqual([
+        "2026-08-08", "2026-08-08", "2026-08-09", "2026-08-09",
+      ]);
+      expect(shiftLines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(0);
+      expect(await liveChargeCents()).toBe(20_000);
+
+      // A later edit on the shifted nights finds the shift's lines live.
+      const shifted = (id: string) => guestSide(id, [[new Date("2026-08-08T00:00:00.000Z"), 5_000], [new Date("2026-08-09T00:00:00.000Z"), 5_000]]);
+      const removal = await historyRow("GUEST_REMOVE", -10_000);
+      await prisma.bookingGuest.delete({ where: { id: G1 } });
+      await postEdit(removal, { guests: [shifted(G1), shifted(G2)], promoAdjustmentCents: 0 }, { guests: [shifted(G2)], promoAdjustmentCents: 0 }, -10_000);
+      expect((await lines()).filter((line) => line.anchorId === removal)).toHaveLength(2);
       expect(await liveChargeCents()).toBe(10_000);
     });
 

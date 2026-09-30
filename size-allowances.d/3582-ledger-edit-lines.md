@@ -18,8 +18,8 @@ lines: 2635
 reason: one ledger posting call after the batch edit's history row, plus its import.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2319
-reason: one ledger posting call after the date change's history row, plus its import.
+lines: 2340
+reason: one ledger posting call after the date change's history row, and one after the admin date shift's (#3741), plus their imports.
 
 file: src/lib/booking-guest-removal-service.ts
 lines: 1525

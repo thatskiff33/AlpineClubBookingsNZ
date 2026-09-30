@@ -156,6 +156,7 @@ import {
   loadModificationLinesAuditFields,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
+  pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -2152,6 +2153,28 @@ export async function adminShiftBookingDates({
         priceDiffCents: 0,
         changeFeeCents: 0,
       },
+    });
+
+    // #3741: a shift moves every night, so it posts like any other edit door —
+    // each old-date night's live line reversed, each new-date night posted,
+    // netting to the row's zero — under the `lock(1)` taken first above. Both
+    // sides are read as written rows: a shift sells nothing, it re-dates each
+    // line at its own figure, and the planner still refuses a live line whose
+    // figure is not the stored price (`LIVE_LINE_DISAGREES`).
+    const promo = { promoAdjustmentCents: booking.promoAdjustmentCents };
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: {
+        before: pricingSideFromWrittenGuests(booking.guests, promo),
+        after: pricingSideFromWrittenGuests(
+          translatedGuests.map((entry) => ({ ...entry.guest, nights: entry.nights })),
+          promo,
+        ),
+      },
+      site: "admin-date-shift",
     });
 
     await assertBookingEnvelopeInvariants(tx);

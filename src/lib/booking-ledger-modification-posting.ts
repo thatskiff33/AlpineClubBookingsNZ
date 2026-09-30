@@ -239,8 +239,9 @@ export function planModificationChargeLines(
  * of what it started from, so when its review closes by re-pricing
  * (`INV-MOD-055`) the only statement of "before" is what the ledger still
  * holds. That IS the parked edit's own before: an open review fences every edit
- * door (`INV-PAY-066`), so nothing else moved the booking between the park and
- * the close. The closure's sum check proves it rather than assuming it — the
+ * door (`INV-PAY-066`), and the one it does not, the admin date shift, posts
+ * its own lines in step (#3741). The closure's sum check proves it rather than
+ * assuming it — the
  * lines must add up to exactly the re-base's own movement, which holds only if
  * the live lines equal the frozen headline the re-base started from.
  *
