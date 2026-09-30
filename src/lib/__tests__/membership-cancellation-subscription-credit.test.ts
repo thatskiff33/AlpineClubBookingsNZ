@@ -529,6 +529,7 @@ describe("the review queue's shared-invoice notice", () => {
     invoiceStatus: "AUTHORISED",
     direction: "receivable",
     amountDueCents: 60000,
+    amountDueTenThousandths: 6000000,
     currency: "NZD",
     dueDate: null,
     xeroUrl: null,

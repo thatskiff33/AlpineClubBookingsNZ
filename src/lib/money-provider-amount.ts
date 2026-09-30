@@ -53,6 +53,35 @@ export function providerAmountToCents(value: unknown): number | null {
 }
 
 /**
+ * A finite provider amount in decimal major units → integer TEN-THOUSANDTHS of
+ * the major unit, or `null` (#3724).
+ *
+ * Hundredths are the wrong grain for a Xero figure in a currency that does not
+ * count in them. A Kuwaiti dinar invoice for KWD 1.234 is 123 hundredths, which
+ * drops the fils; KWD 0.004 is zero hundredths, which reads as "nothing owing".
+ * Ten-thousandths is the finest minor unit ISO 4217 defines (CLF and UYW count
+ * to four places), so every currency's own precision survives it exactly.
+ *
+ * NOT a replacement for `providerAmountToCents`, whose rounding is frozen and
+ * which every reconciliation and ledger reads. This is for a caller that must
+ * ask "is anything owing at all" of a provider balance, or show that balance in
+ * its own currency's precision — never for a figure that is stored, posted or
+ * sent back to a provider.
+ *
+ * Same input, sign and fail-closed contract as `providerAmountToCents`. The
+ * rounding at the fourth place also absorbs a double's representation residue,
+ * so a balance derived as `0.4 - 0.1 - 0.3` (5.5e-17) reads as zero rather than
+ * as a sliver still owing.
+ */
+export function providerAmountToTenThousandths(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.round(value * 10_000);
+}
+
+/**
  * As `providerAmountToCents`, but `null` when the provider amount carries
  * precision finer than a cent.
  *
