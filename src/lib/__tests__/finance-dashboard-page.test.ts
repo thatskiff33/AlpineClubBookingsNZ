@@ -812,6 +812,28 @@ describe("finance dashboard page model", () => {
     ).toContain("May understate by $21");
   });
 
+  it("prints a gap under a dollar in exact cents, not as $0 (#3637)", async () => {
+    const metrics = bookingMetrics();
+    metrics.paymentSummary.additionalLedgerGapCents = 50;
+    metrics.paymentSummary.additionalLedgerGapBookings = 1;
+    mockGetFinanceBookingMetrics.mockResolvedValue(metrics);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("Net Collected Cash may understate by $0.50: 1 booking"),
+      ),
+    ).toBe(true);
+    expect(
+      model.cards.find((entry) => entry.title === "Net Collected Cash")
+        ?.footnote,
+    ).toContain("May understate by $0.50");
+  });
+
   it("prints the warning's booking count in the club number format (#3637)", async () => {
     const metrics = bookingMetrics();
     metrics.paymentSummary.additionalLedgerGapCents = 2_100;
