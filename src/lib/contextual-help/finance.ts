@@ -59,6 +59,7 @@ export const financeHelpEntries: HelpEntry[] = [
           title: "Charts and KPI cards",
           details: [
             "Cards summarise the selected window and comparison window.",
+            "Net collected cash is captured payments less refunds and credits for every booking staying in the window, whatever its status: cancelled bookings count at the fee kept, and deleted bookings never count. The admin dashboard, Payments and Reports use the same rule.",
             "Trend and mix charts use the same filters as the report table and exports.",
           ],
         },

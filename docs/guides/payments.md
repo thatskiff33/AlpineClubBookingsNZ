@@ -614,9 +614,9 @@ the card what it covers:
   account credits on them. A payment that is still pending or failed does not
   count. A **cancelled** booking counts at the fee the club kept (what it took
   less what it refunded or credited), and a **deleted** booking does not count
-  at all, even though its row stays in the list. Every Net Collected figure
-  (this card, the dashboard's and Reports') uses that same rule for which
-  bookings count. It is worked out the same way as the Net Collected Cash card
+  at all, even though its row stays in the list. All four Net Collected
+  figures (this card, the dashboard's, Reports' and the Finance dashboard's
+  Net collected cash) use that same rule for which bookings count. It is worked out the same way as the Net Collected Cash card
   on [Reports](reports.md), but over different payments: this card uses the payments matching your
   filters, and Reports uses the bookings staying in its chosen dates, so the
   two figures need not match. Like Reports, it runs the missing-ledger check:
