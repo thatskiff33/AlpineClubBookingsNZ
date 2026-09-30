@@ -6,3 +6,6 @@
   the same bookings, the same as Reports' default view. A figure changes only
   where a deleted booking still holds a stay status; bookings deleted through
   the admin delete action are cancelled first, and were already left out.
+- **The legacy dashboard booking export leaves deleted bookings out too
+  (#3745).** Its past-stay and forward-pipeline lists no longer include a
+  booking an admin has deleted, so they match the Finance dashboard.
