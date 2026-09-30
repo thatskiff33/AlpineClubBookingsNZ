@@ -254,10 +254,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // #3635 (`INV-INT-025`): the one deliberate escape hatch. Force-sync of a
+    // single booking raises the invoice even when an officer resolved the last
+    // create in Xero, and its audit row says it overrode that mark.
     const queueResult = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
       invoiceEmailDelivery: null,
+      overrideResolvedInXero: true,
     });
+    const overrodeResolvedInXeroOperationId =
+      "overrodeResolvedInXeroOperationId" in queueResult
+        ? queueResult.overrodeResolvedInXeroOperationId
+        : null;
 
     if (queueResult.queueOperationId) {
       scheduleAfterResponse(async () => {
@@ -281,9 +289,14 @@ export async function POST(request: NextRequest) {
       entityId: booking.id,
       category: "xero",
       outcome: "success",
-      summary: "Xero booking invoice force-sync queued",
-      details: queueResult.message,
+      summary: overrodeResolvedInXeroOperationId
+        ? "Xero booking invoice force-sync queued, overriding an officer's resolved-in-Xero mark"
+        : "Xero booking invoice force-sync queued",
+      details: overrodeResolvedInXeroOperationId
+        ? `${queueResult.message} This overrides operation ${overrodeResolvedInXeroOperationId}, which an officer marked resolved in Xero; check Xero for the invoice they raised by hand.`
+        : queueResult.message,
       metadata: {
+        overrodeResolvedInXeroOperationId,
         bookingStatus: booking.status,
         paymentId: booking.payment.id,
         xeroInvoiceId: booking.payment.xeroInvoiceId ?? null,

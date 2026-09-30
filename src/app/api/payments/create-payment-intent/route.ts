@@ -14,17 +14,17 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { BookingEventType, BookingStatus, PaymentSource } from "@prisma/client";
-import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
-import {
-  findPaymentTransactionByIntentId,
-  upsertPaymentIntentTransaction,
-} from "@/lib/payment-transactions";
+import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
+import { attachMintedCardIntent } from "@/lib/card-intent-attach";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
-import { bookingHasCapacityOverride } from "@/lib/booking-status";
+import {
+  bookingHasCapacityOverride,
+  IMMEDIATE_PAYMENT_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
@@ -45,7 +45,9 @@ import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
-  PAYMENT_PROCESSING_BODY, PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
+  PAYMENT_PROCESSING_BODY,
+  PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
+  SWITCHED_TO_INTERNET_BANKING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
@@ -83,6 +85,16 @@ class PaymentIntentReviewPendingError extends Error {
     super("This booking needs admin review before it can be paid.");
     this.name = "PaymentIntentReviewPendingError";
   }
+}
+
+/**
+ * #3638: the one refusal for a card payment on a booking being paid by
+ * Internet Banking — whether it was already switched when this request began,
+ * or switched while its intent was being minted. One body, so the pay page
+ * needs one arm for it.
+ */
+function switchedToInternetBankingResponse() {
+  return NextResponse.json(SWITCHED_TO_INTERNET_BANKING_BODY, { status: 409 });
 }
 
 export async function POST(request: NextRequest) {
@@ -186,13 +198,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-      return NextResponse.json(
-        {
-          error:
-            "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
-        },
-        { status: 400 }
-      );
+      return switchedToInternetBankingResponse();
     }
 
     // This is the point at which a draft becomes a real, capacity-holding,
@@ -551,23 +557,12 @@ export async function POST(request: NextRequest) {
         // until that lookup succeeds we cannot truthfully call it paid OR
         // refunded.
         succeededPaymentIntentObserved = true;
-        // #1765 — a refunded PaymentIntent keeps status "succeeded" forever
-        // (refunds hang off the charge and never move the intent), so at the
-        // intent level a deliberately refunded payment is indistinguishable
-        // from crashed-webhook recovery. Discriminate on the local ledger:
-        // refund history lives on the intent's PaymentTransaction row
-        // (REFUNDED/PARTIALLY_REFUNDED), which genuine recovery — success
-        // never recorded locally — can never carry. The lookup backfills
-        // pre-ledger payments; the aggregate-status fallback covers a payment
-        // with no derivable transaction row.
-        const pointedTransaction = await findPaymentTransactionByIntentId({
+        // #1765 — refund history or a crashed-webhook capture? Stripe cannot
+        // tell (a refunded intent stays "succeeded"); the local ledger can.
+        const refundedHistory = await isRefundedPaymentIntentHistory({
           paymentIntentId: existingIntent.id,
+          paymentStatus: booking.payment.status,
         });
-        const refundedHistory = pointedTransaction
-          ? pointedTransaction.status === PaymentStatus.REFUNDED ||
-            pointedTransaction.status === PaymentStatus.PARTIALLY_REFUNDED
-          : booking.payment.status === PaymentStatus.REFUNDED ||
-            booking.payment.status === PaymentStatus.PARTIALLY_REFUNDED;
 
         if (!refundedHistory) {
           receivedPaymentIntentId = existingIntent.id;
@@ -719,37 +714,52 @@ export async function POST(request: NextRequest) {
         : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
-    // Mirror the effective split onto the Payment so the invariant
+    // #3638 (`INV-PAY-102`) — attach under lock(1), after re-reading the
+    // payment's source and the booking's status: a switch to Internet Banking
+    // (or a cancel) that committed while the intent was being minted is seen
+    // there, and the new intent is refused and cancelled rather than handed
+    // to the browser. The shared helper explains the race both card doors
+    // close with it.
+    //
+    // The Payment mirrors the effective split so the invariant
     // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
-    // update branch also corrects a not-yet-paid legacy full-price payment forward
-    // to the effective amount when a fresh intent is minted here.
-    const payment = await prisma.payment.upsert({
-      where: { bookingId: booking.id },
-      create: {
-        bookingId: booking.id,
+    // update branch also corrects a not-yet-paid legacy full-price payment
+    // forward to the effective amount when a fresh intent is minted here.
+    const attached = await attachMintedCardIntent({
+      bookingId: booking.id,
+      paymentIntentId: paymentIntent.id,
+      payableStatuses: IMMEDIATE_PAYMENT_BOOKING_STATUSES,
+      paymentCreate: {
         amountCents: effectivePriceCents,
         creditAppliedCents: appliedCreditCents,
         stripeCustomerId: customer.id,
-        status: PaymentStatus.PENDING,
       },
-      update: {
+      paymentUpdate: {
         amountCents: effectivePriceCents,
         creditAppliedCents: appliedCreditCents,
+        stripeCustomerId: customer.id,
+      },
+      transaction: {
+        amountCents: effectivePriceCents,
+        reason: repaySupersededIntentId
+          ? "repay_after_refund"
+          : "primary_booking_payment",
         stripeCustomerId: customer.id,
       },
     });
 
-    await upsertPaymentIntentTransaction({
-      paymentId: payment.id,
-      kind: PaymentTransactionKind.PRIMARY,
-      paymentIntentId: paymentIntent.id,
-      amountCents: effectivePriceCents,
-      status: PaymentStatus.PROCESSING,
-      reason: repaySupersededIntentId
-        ? "repay_after_refund"
-        : "primary_booking_payment",
-      stripeCustomerId: customer.id,
-    });
+    if (attached === "switchedToInternetBanking") {
+      return switchedToInternetBankingResponse();
+    }
+    if (attached === "notPayable") {
+      return NextResponse.json(
+        {
+          error:
+            "This booking is no longer payable. Reload the booking and try again.",
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       clientSecret: paymentIntent.client_secret,

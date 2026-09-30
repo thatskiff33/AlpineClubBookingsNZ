@@ -36,6 +36,22 @@ export const PAYMENT_OWED_BOOKING_STATUSES = [
   BookingStatus.CONFIRMED,
 ] as const;
 
+/**
+ * "Already paid for": a paid booking, and a completed stay — the post-stay
+ * cron flips PAID -> COMPLETED, so every reader asking whether a booking's
+ * price has been settled must accept both. One home (#3638, `INV-SSOT`): the
+ * payment-link doors, the Xero invoice-paid loop's already-paid arm and its
+ * second-instrument test all read it, so the three cannot drift apart.
+ */
+export const PAID_LIKE_BOOKING_STATUSES = [
+  BookingStatus.PAID,
+  BookingStatus.COMPLETED,
+] as const satisfies readonly BookingStatus[];
+
+export function isPaidLikeBookingStatus(status: BookingStatus | string): boolean {
+  return (PAID_LIKE_BOOKING_STATUSES as readonly string[]).includes(status);
+}
+
 export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
   BookingStatus.PAYMENT_PENDING,
   BookingStatus.CONFIRMED,

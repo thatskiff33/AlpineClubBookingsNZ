@@ -271,7 +271,12 @@ describe("raiseDeletedBookingModificationRefundTask (#2700)", () => {
         // the cancelled-population row for this capture and the booking may have
         // been deleted afterwards, so matching only this path's own sentence
         // would raise a duplicate OPEN task for money already returned.
-        reason: { in: automaticCancelledBookingRefundTaskReasons(INTENT_ID) },
+        // #3639: and the webhook's treasurer-approval task for the same capture,
+        // which is already the human decision this raise would ask for.
+        OR: [
+          { reason: { in: automaticCancelledBookingRefundTaskReasons(INTENT_ID) } },
+          { lateCaptureApprovalIntentId: INTENT_ID },
+        ],
       },
       select: { id: true },
     });
@@ -349,6 +354,29 @@ describe("raiseDeletedBookingModificationRefundTask (#2700)", () => {
 
     expect(result.alreadyRefunded).toBe(false);
     expect(mocks.manualRefundTaskCreate).toHaveBeenCalledTimes(1);
+    // #3639 (delta D4): for what is still held, so its completion is not
+    // refused forever as already refunded.
+    expect(mocks.manualRefundTaskCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: 1, raisedAmountCents: 1 }),
+      }),
+    );
+  });
+
+  it("raises for what is still held when a part-refunded row was rewritten to SUCCEEDED (#3639 delta D4)", async () => {
+    mocks.paymentTransactionFindUnique.mockResolvedValue({
+      status: "SUCCEEDED",
+      refundedAmountCents: 1000,
+      amountCents: AMOUNT_CENTS,
+    });
+
+    await raise();
+
+    expect(mocks.manualRefundTaskCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amountCents: AMOUNT_CENTS - 1000 }),
+      }),
+    );
   });
 
   it("reads the refund state under the same lock as the raise", async () => {

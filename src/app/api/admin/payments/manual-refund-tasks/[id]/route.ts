@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -192,14 +193,14 @@ export async function POST(
       format,
     );
     revalidatePath("/admin/payments");
-    revalidatePath("/admin/bookings/[id]", "page");
+    revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
     return NextResponse.json({
       success: true,
       task: result,
       message: `${
         parsed.data.resolution === "completed"
           ? completionMessage(result)
-          : dismissalMessage(result.kind)
+          : dismissalMessage(result.kind, result.partPaymentReview)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });
   } catch (error) {

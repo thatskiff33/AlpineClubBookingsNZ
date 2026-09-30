@@ -63,6 +63,26 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     );
   });
 
+  it("summarizes a queued invoice for a kept late payment (#3635)", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      requestPayload: {
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        bookingId: "booking-abcdefghijklmno",
+        manualRefundTaskId: "task-abcdefghijklmno",
+        paymentIntentId: "pi_kept",
+        capturedCents: 24000,
+        capturedOn: "2026-06-10",
+      },
+      responsePayload: null,
+    }, CLUB_FORMAT_TEST);
+    expect(summary?.title).toBe("Queued: invoice a kept late payment");
+    expect(factValue(summary!, "Captured")).toBe("$240.00");
+    expect(factValue(summary!, "Captured on")).toBe("2026-06-10");
+    expect(factValue(summary!, "Payment intent")).toBe("pi_kept");
+  });
+
   it("summarizes a queued group-settlement invoice void", () => {
     const summary = summarizeXeroOperation({
       entityType: "INVOICE",
@@ -75,6 +95,21 @@ describe("summarizeXeroOperation — queued outbox payloads", () => {
     }, CLUB_FORMAT_TEST);
     expect(summary?.title).toBe("Queued: void cancelled group-settlement invoice");
     expect(factValue(summary!, "Settlement")).toBe("settlement-a...");
+  });
+
+  it("summarizes a queued VOID of an abandoned group-settlement invoice (#3642)", () => {
+    const summary = summarizeXeroOperation({
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      requestPayload: {
+        queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+        settlementId: "settlement-abcdefghijklmno",
+        xeroInvoiceId: "invoice-abcdefghijklmno",
+      },
+      responsePayload: null,
+    }, CLUB_FORMAT_TEST);
+    expect(summary?.title).toBe("Queued: void abandoned group-settlement invoice");
+    expect(factValue(summary!, "Xero invoice")).toBe("invoice-abcd...");
   });
 
   it("summarizes a queued refund credit note with a watermark", () => {

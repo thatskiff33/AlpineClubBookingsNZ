@@ -1888,6 +1888,26 @@ DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
                      place they survive. Everything the OPEN status governs
                      re-arms with it: the pending-review fence, and the
                      member-facing banner. See `INV-PAY-099`.)
+OPEN -> DISMISSED   (#3643, owner decision 28 Sep 2026: the ONLY close of a
+                     part-payment review - a `CANCELLED_BOOKING_HAND_BACK`
+                     marked by `partPaymentReviewPaymentId`, raised with no
+                     amount and no `paymentId` inside an officer's DECISION 2
+                     unpaid-cancel claim, one per payment in any status.
+                     COMPLETED is refused at the door and unrepresentable in the
+                     database (`ManualRefundTask_part_payment_review_shape` with
+                     `ManualRefundTask_completed_amount_present`): the payment is
+                     settled in Xero, not here. The dismissal quiets the Xero
+                     repair tool's manual-review finding for the booking, and a
+                     reopen re-arms it. See `INV-PAY-107`.)
+DISMISSED -> OPEN   (#3643, orchestrator decision 3: the inbound Xero sync,
+                     when a PAID event arrives for a payment with a
+                     part-payment review. It moves no money: it writes onto the
+                     review when it learned the invoice was paid and the
+                     invoice's cash, once, and reopens it, status-fenced under
+                     `pg_advisory_xact_lock(1)` and audited as a reopen with no
+                     actor. An OPEN review gets the same note and stays OPEN. An
+                     email is attempted, best-effort; the note is the record.
+                     See `INV-PAY-108`.)
 ```
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
@@ -3087,10 +3107,20 @@ local business event -> Xero outbox operation queued
 worker claims operation -> provider call -> success or retryable failure
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
+FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
+  never retried, requeued or re-minted beside (INV-INT-025)
+  refused while the operation is RUNNING, a live copy of it is queued, or a
+  queued retry of it overlaps the mark (the mark is then withdrawn)
+  refused for applied-credit allocations and deallocations (retry-only)
+queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
+  in Xero (before the claim, or the claim lost to the resolve); nothing ran
+outbox copy RUNNING -> CANCELLED when a sibling for the same document was
+  resolved after the copy was queued; no Xero call
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link
-cleanup, and exact retry exhaustion alerts.
+cleanup, and exact retry exhaustion alerts. The resolved-in-Xero arm is pinned
+by `xero-operation-retry.test.ts` and `xero-booking-repair.test.ts` (#3635).
 
 ## Cron And Recovery Lifecycle
 

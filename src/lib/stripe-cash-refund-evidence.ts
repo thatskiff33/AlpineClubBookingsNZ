@@ -64,7 +64,8 @@
  *   actually refunded, and the next reconciliation run corrects it once the
  *   row lands on `failed`.
  */
-import { CreditType, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 
@@ -90,6 +91,36 @@ export interface StripeCashRefundEvidence {
   accountCreditCents: number;
   /** Which rule produced `cashRefundCents`. */
   source: "provider-ledger" | "legacy-mirror";
+}
+
+/**
+ * The `MemberCredit` rows a booking ISSUED as account credit, excluding restores
+ * - selected by TYPE (`BOOKING_ISSUED_CREDIT_TYPES`), not by whether
+ * `applyLocalRefundAllocation` ever folded them into `refundedAmountCents`.
+ * Most were (a cancellation's or a reduction's credit against a captured
+ * payment); some were not (a credit minted with no payment, internet-banking
+ * cash landing on an already-cancelled booking). Read by the legacy cash
+ * fallback below and by the refunded-total shortfall audit (#3640), which each
+ * say what that difference costs them.
+ */
+export const ACCOUNT_CREDIT_DISPOSITION_WHERE = {
+  type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] },
+  amountCents: { gt: 0 },
+  // Restores of previously applied credit never ran
+  // applyLocalRefundAllocation, so they are not part of the mirror.
+  restoredFromBookingId: null,
+} satisfies Prisma.MemberCreditWhereInput;
+
+/** The booking's account-credit dispositions, in cents (never negative). */
+export async function accountCreditDispositionCents(
+  db: Prisma.TransactionClient,
+  bookingId: string
+): Promise<number> {
+  const credit = await db.memberCredit.aggregate({
+    where: { sourceBookingId: bookingId, ...ACCOUNT_CREDIT_DISPOSITION_WHERE },
+    _sum: { amountCents: true },
+  });
+  return Math.max(0, credit._sum.amountCents ?? 0);
 }
 
 /**
@@ -135,23 +166,7 @@ export async function resolveStripeCashRefundEvidence(
     };
   }
 
-  const credit = await db.memberCredit.aggregate({
-    where: {
-      sourceBookingId: payment.bookingId,
-      type: {
-        in: [
-          CreditType.CANCELLATION_REFUND,
-          CreditType.BOOKING_MODIFICATION_REFUND,
-        ],
-      },
-      amountCents: { gt: 0 },
-      // Restores of previously applied credit never ran
-      // applyLocalRefundAllocation, so they are not part of the mirror.
-      restoredFromBookingId: null,
-    },
-    _sum: { amountCents: true },
-  });
-  const accountCreditCents = Math.max(0, credit._sum.amountCents ?? 0);
+  const accountCreditCents = await accountCreditDispositionCents(db, payment.bookingId);
 
   return {
     cashRefundCents: Math.max(0, mirrorCents - accountCreditCents),

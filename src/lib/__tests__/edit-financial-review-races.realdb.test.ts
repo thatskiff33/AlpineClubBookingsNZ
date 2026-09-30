@@ -49,7 +49,7 @@
  *   pnpm exec vitest run src/lib/__tests__/edit-financial-review-races.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import type { CalendarDate } from "@/lib/club-time";
@@ -72,6 +72,19 @@ const MODIFICATION_ID = "race-3032-modification";
  */
 const PAYMENT_ID = "race-3032-payment";
 const XERO_INVOICE_ID = "race-3032-xero-invoice";
+/** #3641: the captured card payment a retired supplementary invoice waited on. */
+const LATE_CAPTURE_INTENT_ID = "race-3641-pi-late";
+
+/**
+ * #3641: the one alert a refused re-queue sends, replaced so the enqueue-first
+ * interleaving below never reaches a mail transport. Everything else in the
+ * email module stays real for the proofs above.
+ */
+const lateCaptureAlert = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/email")),
+  sendAdminXeroSyncErrorAlert: lateCaptureAlert,
+}));
 
 /**
  * Fixed stay dates. The frozen test clock pins "today" at 2026-07-01, so these
@@ -245,6 +258,12 @@ let observerClient: PrismaClient;
       // exists to force - a race proof that passes vacuously.
       await prisma.xeroSyncOperation.deleteMany({
         where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] } },
+      });
+      // #3641: the late-capture case's captured transaction. Removed every run,
+      // because a SUCCEEDED row on this payment would change what the
+      // completion cases above compute.
+      await prisma.paymentTransaction.deleteMany({
+        where: { stripePaymentIntentId: LATE_CAPTURE_INTENT_ID },
       });
     }
 
@@ -742,6 +761,169 @@ let observerClient: PrismaClient;
         "covers-total",
       ]);
     });
+
+    /**
+     * #3641 (`INV-PAY-104`): A REVIVED INVOICE AND A FRESH ENQUEUE NEVER BOTH GO
+     * OUT. A late capture re-queues the supplementary invoice the reaper retired
+     * from that same row, while a settlement (or the repair tool) may be queueing
+     * a fresh one for the same change. Both decide under the per-anchor key,
+     * taken through the one helper (`lockSupplementaryInvoiceAnchor`), so
+     * whichever runs second sees the first: a fresh enqueue after the revival
+     * finds the revived row outstanding and queues nothing; a revival after the
+     * enqueue finds that invoice outstanding and alerts instead of reviving.
+     *
+     * FORCED like the cases above, and in BOTH orders (delta review N5). The
+     * production key is held; the first contender is started and proven queued
+     * behind it, THEN the second is started and proven queued. PostgreSQL grants
+     * a contended advisory lock to its waiters in queue order, so the first
+     * started is the first to decide, and each order's expectations run on
+     * every run rather than whichever order the scheduler happened to pick.
+     */
+    it.each([["revive-first"], ["enqueue-first"]] as const)(
+      "FORCES the revive-versus-enqueue interleaving (%s): a late capture and a fresh enqueue of ONE edit leave exactly one invoice outstanding",
+      async (order) => {
+      await clearReviewRunState();
+      lateCaptureAlert.mockClear();
+
+      const { enqueueXeroSupplementaryInvoiceOperation } = await import(
+        "@/lib/xero-operation-outbox"
+      );
+      const { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } =
+        await import("@/lib/xero-supplementary-invoice-late-capture");
+
+      // The member's card payment was captured after the reaper retired its
+      // waiting invoice.
+      await prisma.paymentTransaction.create({
+        data: {
+          paymentId: PAYMENT_ID,
+          kind: "ADDITIONAL",
+          source: "STRIPE",
+          stripePaymentIntentId: LATE_CAPTURE_INTENT_ID,
+          amountCents: 20000,
+          status: "SUCCEEDED",
+        },
+      });
+      const retired = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          status: "CANCELLED",
+          lastErrorCode: "STALE_WAITING_PAYMENT",
+          queueType: "SUPPLEMENTARY_INVOICE",
+          correlationKey: `race-3641:${MODIFICATION_ID}:retired`,
+          idempotencyKey: `race-3641:${MODIFICATION_ID}:retired`,
+          requestPayload: {
+            queueType: "SUPPLEMENTARY_INVOICE",
+            bookingId: BOOKING_ID,
+            bookingModificationId: MODIFICATION_ID,
+            priceDiffCents: 20000,
+            changeFeeCents: 0,
+            recordPayment: true,
+            paymentIntentId: LATE_CAPTURE_INTENT_ID,
+            waitForConfirmedAdditionalPayment: true,
+          },
+        },
+      });
+
+      const lockHeld = deferred();
+      const releaseLock = deferred();
+      let holderPid = 0;
+      let holderError: unknown;
+      // The production key spelled literally, for the reason the #3170 case
+      // gives: this is the assertion that both contenders contend on it.
+      const holder = lockHolderClient
+        .$transaction(
+          async (tx) => {
+            const rows = await tx.$queryRaw<
+              Array<{ pid: number }>
+            >`SELECT pg_backend_pid()::int AS pid`;
+            holderPid = rows[0]?.pid ?? 0;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(${MODIFICATION_ID}))`;
+            lockHeld.resolve();
+            await releaseLock.promise;
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        )
+        .catch((error: unknown) => {
+          holderError = error;
+          lockHeld.resolve();
+        });
+      await lockHeld.promise;
+      if (holderError) {
+        throw new Error(
+          `The lock-holder connection could not hold the supplementary-invoice key: ${String(holderError)}`,
+        );
+      }
+
+      const startRevive = () =>
+        releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
+          LATE_CAPTURE_INTENT_ID,
+        );
+      const startEnqueue = () =>
+        enqueueXeroSupplementaryInvoiceOperation({
+          bookingId: BOOKING_ID,
+          bookingModificationId: MODIFICATION_ID,
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+        });
+      const notQueued =
+        "The late-capture re-queue and the enqueue did not both queue on the per-anchor supplementary-invoice " +
+        "key, so a revived invoice and a fresh one could BOTH be sent for one booking edit " +
+        "(docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-104).";
+
+      let revive: ReturnType<typeof startRevive>;
+      let enqueue: ReturnType<typeof startEnqueue>;
+      if (order === "revive-first") {
+        revive = startRevive();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        enqueue = startEnqueue();
+      } else {
+        enqueue = startEnqueue();
+        await waitForBlockedBy(holderPid, 1, notQueued);
+        revive = startRevive();
+      }
+      await waitForBlockedBy(holderPid, 2, notQueued);
+
+      releaseLock.resolve();
+      await holder;
+      const [revived, enqueued] = await Promise.all([revive, enqueue]);
+
+      const outstanding = await prisma.xeroSyncOperation.findMany({
+        where: {
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          queueType: "SUPPLEMENTARY_INVOICE",
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+        select: { id: true },
+      });
+      expect(outstanding).toHaveLength(1);
+
+      const retiredAfter = await prisma.xeroSyncOperation.findUniqueOrThrow({
+        where: { id: retired.id },
+        select: { status: true, lastErrorCode: true },
+      });
+      if (order === "revive-first") {
+        // The enqueue found the revived row and queued nothing.
+        expect(revived.outcome).toBe("requeued");
+        expect(outstanding[0]?.id).toBe(retired.id);
+        expect(enqueued.queueOperationId).toBe(retired.id);
+        expect(lateCaptureAlert).not.toHaveBeenCalled();
+      } else {
+        // The revival saw that invoice and told an officer instead.
+        expect(revived.outcome).toBe("alerted");
+        expect(outstanding[0]?.id).not.toBe(retired.id);
+        expect(retiredAfter).toEqual({
+          status: "CANCELLED",
+          lastErrorCode: "STALE_WAITING_PAYMENT_CAPTURED",
+        });
+        expect(lateCaptureAlert).toHaveBeenCalledTimes(1);
+      }
+      },
+    );
 
     /**
      * #3166 — THE TWO MONEY RULES THAT READ AS ONE RULE, PINNED SEPARATELY.
