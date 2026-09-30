@@ -388,9 +388,9 @@ export async function resolveManualRefundTask(
         //
         // What it DOES write here is the refund DEBT - booking-cancel's #1349
         // persist-the-plan-first pattern, on the same infrastructure. This
-        // completion holds no advisory lock (the locking guide forbids holding
-        // `lock(1)` across a provider round trip), so its single-flight guarantee
-        // is the claim above, which has committed by the time Stripe is called.
+        // completion's `lock(1)` (#3582) is released at commit - the locking
+        // guide forbids holding it across a provider round trip - so across the
+        // Stripe call its single-flight guarantee is the claim above.
         // Without a durable row a crash in that window would leave a COMPLETED
         // task, an untouched `refundedAmountCents` and NO trace that money was
         // owed - a worse state than the booking-edit path's, precisely because
@@ -434,8 +434,10 @@ export async function resolveManualRefundTask(
         ) {
           throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
         }
-        // #3032: this completion holds no advisory lock, so a concurrent writer
-        // on the same payment can move the ledger under it. The compare-and-set
+        // #3032: a lock-free writer on the same payment (the charge.refunded
+        // sync; a legacy kind's completion takes no key at all) can still move
+        // the ledger under this completion - an edit review's `lock(1)` (#3582)
+        // excludes only edits and settles. The compare-and-set
         // inside `applyLocalRefundAllocation` retries against the fresh total
         // (#3640) and refuses loudly only when that writer used the headroom
         // this completion needed; the transaction rolls back, so the task is
