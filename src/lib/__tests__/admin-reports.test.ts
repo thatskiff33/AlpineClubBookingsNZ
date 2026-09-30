@@ -8,7 +8,6 @@ import {
   buildRevenueSeries,
   getBookingRevenueByNight,
   getRevenueGranularity,
-  summarizeNetCollectedCash,
   summarizeOverlappingGuests,
   type RevenueBookingLike,
 } from "@/lib/admin-reports";
@@ -252,7 +251,7 @@ describe("admin reports helpers", () => {
 
   it("derives net collected cash from payment aggregates without double-counting additions", () => {
     expect(
-      summarizeNetCollectedCash([
+      summarizeCollectedCash([
         {
           status: PaymentStatus.PARTIALLY_REFUNDED,
           amountCents: 12_100,
@@ -265,14 +264,14 @@ describe("admin reports helpers", () => {
           refundedAmountCents: 0,
           booking: LIVE,
         },
-      ]),
+      ]).netCollectedCents,
     ).toBe(11_100);
   });
 
   /*
     #3372: the derivation of net collected cash (now in the
-    `booking-payment-state.ts` leaf, with Reports' `summarizeNetCollectedCash`
-    a wrapper over it) hands back its working — gross captured, refunded and
+    `booking-payment-state.ts` leaf, which the Reports route reads through
+    `summarizeNetCollectedWithLedgerGap`) hands back its working — gross captured, refunded and
     credited, net — so the dashboard card can print the breakdown beneath the
     headline instead of re-deriving it. Which statuses are "captured" is `isCapturedPaymentStatus`'s
     call, so a PENDING or FAILED amount never enters the gross, while its
@@ -346,11 +345,6 @@ describe("admin reports helpers", () => {
       refundedCents: 1_500,
       netCollectedCents: 0,
     });
-    expect(
-      summarizeNetCollectedCash([
-        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500, booking: LIVE },
-      ]),
-    ).toBe(0);
   });
 });
 

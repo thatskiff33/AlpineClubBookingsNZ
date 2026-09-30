@@ -19,12 +19,10 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
-import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
+import { summarizeNetCollectedWithLedgerGap } from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
-  netCollectedScopedPayments,
   sumRefundedAndCreditedCents,
-  summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -669,13 +667,8 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     // row, as the "Refunded / Credited" hint says; the tiles are not a
     // subtraction of one another. The ledger-gap check is Reports' (#2408),
     // over exactly the payments the tile counts.
-    const collected = summarizeCollectedCash(filteredCandidates);
-    const ledgerGap = summarizeAdditionalLedgerGap(
-      netCollectedScopedPayments(filteredCandidates).map((payment) => ({
-        id: payment.bookingId,
-        payment,
-      }))
-    );
+    const { collected, ledgerGap } =
+      summarizeNetCollectedWithLedgerGap(filteredCandidates);
     const summary = {
       netCollectedCents: collected.netCollectedCents,
       refundedCents: sumRefundedAndCreditedCents(filteredCandidates),

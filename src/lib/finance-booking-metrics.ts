@@ -1,11 +1,11 @@
 import {
   BookingStatus,
   PaymentStatus,
-  PaymentTransactionKind,
   Prisma,
 } from "@prisma/client";
 import {
-  summarizeAdditionalLedgerGap,
+  netCollectedPaymentSelect as sharedNetCollectedPaymentSelect,
+  summarizeNetCollectedWithLedgerGap,
   type AdditionalLedgerGapSummary,
 } from "@/lib/additional-ledger-gap";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
@@ -33,11 +33,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
-import {
-  netCollectedScopedPayments,
-  summarizeCollectedCash,
-  type CollectedCashSummary,
-} from "@/lib/booking-payment-state";
+import { type CollectedCashSummary } from "@/lib/booking-payment-state";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };
@@ -126,24 +122,20 @@ type BookingMetricsRecord = Prisma.BookingGetPayload<{
 
 /**
  * #3637 (#3372 decision A): Net collected cash reads its own payments - every
- * booking staying in the window, ANY status. `summarizeCollectedCash` drops
- * soft-deleted bookings from the `deletedAt` loaded here, and the #2408
- * ledger-gap guard beside the figure runs over the same payments.
- *
- * The guard needs the ledger, not just the summary columns: only a captured
- * ADDITIONAL row proves a collected increase is inside `amountCents`. ADDITIONAL
- * rows only - the cash total is never rebuilt from the ledger (a capture can
- * have no PRIMARY row). `kind` is re-checked in code; the filter is an
- * optimisation, not the correctness boundary.
+ * booking staying in the window, ANY status - through the shared Net Collected
+ * select, widened by the stay dates the window test reads.
+ * `summarizeNetCollectedWithLedgerGap` drops soft-deleted bookings and runs the
+ * #2408 ledger-gap guard over the same payments.
  */
 const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
-  bookingId: true, status: true, amountCents: true, refundedAmountCents: true,
-  additionalAmountCents: true, additionalPaymentStatus: true,
-  transactions: {
-    where: { kind: PaymentTransactionKind.ADDITIONAL },
-    select: { kind: true, status: true, amountCents: true },
+  ...sharedNetCollectedPaymentSelect,
+  booking: {
+    select: {
+      ...sharedNetCollectedPaymentSelect.booking.select,
+      checkIn: true,
+      checkOut: true,
+    },
   },
-  booking: { select: { checkIn: true, checkOut: true, deletedAt: true } },
 });
 
 /**
@@ -1294,16 +1286,13 @@ export async function getFinanceBookingMetrics(
     [realizedWindow, forwardWindow].some(
       (window) => window !== null && getContributingDates({ booking, ...window }).dates.length > 0,
     );
-  const netCollectedPayments = netCollectedCandidates.filter(staysInAWindow);
+  const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(
+    netCollectedCandidates.filter(staysInAWindow),
+  );
   const paymentSummary = summarizePayments(
     bookings.filter((booking) => contributingBookingIds.has(booking.id)),
-    summarizeCollectedCash(netCollectedPayments),
-    summarizeAdditionalLedgerGap(
-      netCollectedScopedPayments(netCollectedPayments).map((payment) => ({
-        id: payment.bookingId,
-        payment,
-      })),
-    ),
+    collected,
+    ledgerGap,
   );
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),
