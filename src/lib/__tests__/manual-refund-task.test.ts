@@ -1741,6 +1741,15 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.enqueueEditFinancialReviewRefundRecovery).not.toHaveBeenCalled();
+    // #3740: since the full read moved under lock(1), a real second completion
+    // is refused at the read, before it reaches here. This case keeps the claim
+    // honest on its own: it is fenced on OPEN, after the lock.
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "task-1", status: "OPEN" } }),
+    );
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
+    );
   });
 });
 
@@ -1828,8 +1837,14 @@ describe("recording per-night amounts while settling (#3191)", () => {
     // #3582: lock(1) is this transaction's FIRST lock — taken before the claim,
     // so the ledger fence is asked under the settle's key and no row lock is
     // held while waiting for it — and the closure posts its ledger lines with
-    // the share's direction.
+    // the share's direction. #3740: only the task's `kind` is read before it;
+    // the read that picks the money route comes after.
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true } });
+    expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual(["kind"]);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,
+    );
     expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
       "pg_advisory_xact_lock(1)",
     );

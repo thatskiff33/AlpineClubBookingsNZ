@@ -14,8 +14,10 @@
  *     single-flight guarantee is a status-guarded `updateMany` on `OPEN`. Since
  *     #3582 an edit review's completion takes `pg_advisory_xact_lock(1)` as its
  *     first lock inside the transaction (it posts booking-ledger lines), so two
- *     completions now also queue behind each other on that key; each still read
- *     the task OPEN before it, so the claim is still what refuses the second.
+ *     completions now also queue behind each other on that key. Since #3740 the
+ *     task is read AFTER that key, so the second reads it closed and is refused
+ *     at the read (409); `manual-refund-task.test.ts` keeps the claim's own
+ *     OPEN fence pinned with the lock mocked.
  *     Whether that really excludes a concurrent completion is a question about
  *     row locks and READ COMMITTED re-evaluation, which only a real server
  *     answers.
@@ -562,10 +564,10 @@ let observerClient: PrismaClient;
 
       // The contended resource here is the task ROW. A third connection takes
       // that row's lock and parks. Since #3582 the first completion takes
-      // `lock(1)` and then blocks on the row, and the second queues behind the
-      // first on `lock(1)` — `blockedByHolder` counts the chain, so both are
-      // still seen waiting on the holder — and both read the task OPEN before
-      // their lock, so the second is refused by the status-guarded claim.
+      // `lock(1)` and then blocks on the row at its claim, and the second queues
+      // behind the first on `lock(1)` — `blockedByHolder` counts the chain, so
+      // both are still seen waiting on the holder. Since #3740 the second reads
+      // the task only after its lock, finds it closed, and is refused (409).
       const holder = lockHolderClient
         .$transaction(
           async (tx) => {
