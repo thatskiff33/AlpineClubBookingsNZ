@@ -462,14 +462,6 @@ function maxDate(left: Date, right: Date): Date {
   return left.getTime() >= right.getTime() ? left : right;
 }
 
-function minDateFromList(values: Date[]): Date {
-  return values.reduce((currentMin, value) => minDate(currentMin, value));
-}
-
-function maxDateFromList(values: Date[]): Date {
-  return values.reduce((currentMax, value) => maxDate(currentMax, value));
-}
-
 function normalizeRealizedWindow(
   input: FinanceRealizedStayMetricsQuery
 ): NormalizedRealizedWindow {
@@ -1244,11 +1236,16 @@ export async function getFinanceBookingMetrics(
 
   const { capacity: lodgeCapacity, bookingLodgeWhere } =
     await resolveMetricsCapacityAndScope(query.lodgeId);
+  // #3637: each window's own overlap, ORed - not one span from the earlier
+  // start to the later end, which reads every stay between two distant
+  // windows. Both reads still drop a stay with no night in a window below.
   const stayOverlapWhere: Prisma.BookingWhereInput | null =
     activeWindows.length > 0 ? {
       ...bookingLodgeWhere,
-      checkIn: { lte: maxDateFromList(activeWindows.map((w) => w.toDate)) },
-      checkOut: { gt: minDateFromList(activeWindows.map((w) => w.fromDate)) },
+      OR: activeWindows.map((w) => ({
+        checkIn: { lte: w.toDate },
+        checkOut: { gt: w.fromDate },
+      })),
     } : null;
   const [bookings, netCollectedCandidates] = stayOverlapWhere
       ? await Promise.all([
@@ -1281,7 +1278,7 @@ export async function getFinanceBookingMetrics(
       )
     : undefined;
   // #3637: the stay figures' window test without their status list; the read
-  // above is only the envelope of both windows.
+  // above is only each window's overlap.
   const staysInAWindow = ({ booking }: { booking: BookingStayDates }) =>
     [realizedWindow, forwardWindow].some(
       (window) => window !== null && getContributingDates({ booking, ...window }).dates.length > 0,

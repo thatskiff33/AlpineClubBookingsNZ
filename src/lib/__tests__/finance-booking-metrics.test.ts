@@ -335,8 +335,16 @@ describe("finance-booking-metrics", () => {
 
     expect(mockPrisma.booking.findMany).toHaveBeenCalledWith({
       where: {
-        checkIn: { lte: new Date("2026-04-24T00:00:00.000Z") },
-        checkOut: { gt: new Date("2026-04-18T00:00:00.000Z") },
+        OR: [
+          {
+            checkIn: { lte: new Date("2026-04-21T00:00:00.000Z") },
+            checkOut: { gt: new Date("2026-04-18T00:00:00.000Z") },
+          },
+          {
+            checkIn: { lte: new Date("2026-04-24T00:00:00.000Z") },
+            checkOut: { gt: new Date("2026-04-22T00:00:00.000Z") },
+          },
+        ],
         status: {
           in: [
             BookingStatus.PAID,
@@ -1317,14 +1325,22 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
 
     const metrics = await getFinanceBookingMetrics(QUERY);
 
-    // The payment read is the window envelope and lodge scope only: no status
-    // list. The window test and the deleted test are applied after it.
+    // The payment read is each window's overlap and the lodge scope only: no
+    // status list. The window test and the deleted test are applied after it.
     expect(mockPrisma.payment.findMany).toHaveBeenCalledWith({
       where: {
         booking: {
           is: {
-            checkIn: { lte: new Date("2026-06-10T00:00:00.000Z") },
-            checkOut: { gt: new Date("2026-04-01T00:00:00.000Z") },
+            OR: [
+              {
+                checkIn: { lte: new Date("2026-04-10T00:00:00.000Z") },
+                checkOut: { gt: new Date("2026-04-01T00:00:00.000Z") },
+              },
+              {
+                checkIn: { lte: new Date("2026-06-10T00:00:00.000Z") },
+                checkOut: { gt: new Date("2026-06-01T00:00:00.000Z") },
+              },
+            ],
           },
         },
       },
@@ -1367,6 +1383,50 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     expect(mockPrisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
       lodgeId: "lodge-b",
     });
+  });
+
+  it("reads each of two distant windows on its own, not the years between them", async () => {
+    const stay2019 = {
+      ...stay("b-2019", "2019-03-02", "2019-03-04"),
+      payment: payment(PaymentStatus.SUCCEEDED, 10_000),
+    };
+    const stay2023 = {
+      ...stay("b-2023", "2023-03-02", "2023-03-04"),
+      payment: payment(PaymentStatus.SUCCEEDED, 99_000),
+    };
+    const stay2027 = {
+      ...stay("b-2027", "2027-03-02", "2027-03-04"),
+      payment: payment(PaymentStatus.SUCCEEDED, 5_000),
+    };
+    mockBookingRows([]);
+    // A database would not return the 2023 stay; the mock does, to show the
+    // window test still drops a stay between the windows.
+    mockPrisma.payment.findMany.mockResolvedValue(
+      netCollectedPaymentRows([stay2019, stay2023, stay2027]),
+    );
+
+    const metrics = await getFinanceBookingMetrics({
+      realized: { from: "2019-01-01", to: "2019-12-31", cutoffDate: "2019-12-31" },
+      forward: { from: "2027-01-01", to: "2027-12-31", asOfDate: "2026-12-31" },
+    });
+
+    const windows = [
+      {
+        checkIn: { lte: new Date("2019-12-31T00:00:00.000Z") },
+        checkOut: { gt: new Date("2019-01-01T00:00:00.000Z") },
+      },
+      {
+        checkIn: { lte: new Date("2027-12-31T00:00:00.000Z") },
+        checkOut: { gt: new Date("2027-01-01T00:00:00.000Z") },
+      },
+    ];
+    expect(mockPrisma.payment.findMany.mock.calls[0][0].where.booking.is).toEqual({
+      OR: windows,
+    });
+    expect(mockPrisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      OR: windows,
+    });
+    expect(metrics.paymentSummary.netCollectedCents).toBe(15_000);
   });
 
   it("runs the ledger-gap warning over the same payments the figure counts", async () => {
