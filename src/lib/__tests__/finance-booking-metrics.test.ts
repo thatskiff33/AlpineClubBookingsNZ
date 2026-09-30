@@ -137,6 +137,9 @@ type NetCollectedFixturePayment = {
   status: PaymentStatus | string;
   amountCents: number;
   refundedAmountCents: number;
+  additionalAmountCents?: number;
+  additionalPaymentStatus?: string | null;
+  transactions?: Array<{ kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
 };
 
 /**
@@ -145,6 +148,7 @@ type NetCollectedFixturePayment = {
  */
 function netCollectedPaymentRows(
   rows: ReadonlyArray<{
+    id: string;
     checkIn: Date;
     checkOut: Date;
     deletedAt?: Date | null;
@@ -155,9 +159,13 @@ function netCollectedPaymentRows(
     row.payment
       ? [
           {
+            bookingId: row.id,
             status: row.payment.status,
             amountCents: row.payment.amountCents,
             refundedAmountCents: row.payment.refundedAmountCents,
+            additionalAmountCents: row.payment.additionalAmountCents ?? 0,
+            additionalPaymentStatus: row.payment.additionalPaymentStatus ?? null,
+            transactions: row.payment.transactions ?? [],
             booking: {
               checkIn: row.checkIn,
               checkOut: row.checkOut,
@@ -174,7 +182,10 @@ function netCollectedPaymentRows(
  * same bookings' payments as the Net Collected read.
  */
 function mockBookingRows<
-  T extends FinanceFixtureBooking & { payment?: NetCollectedFixturePayment | null },
+  T extends FinanceFixtureBooking & {
+    id: string;
+    payment?: NetCollectedFixturePayment | null;
+  },
 >(rows: T[]): void {
   mockPrisma.booking.findMany.mockResolvedValue(withReconciledMoneyEvidence(rows));
   mockPrisma.payment.findMany.mockResolvedValue(netCollectedPaymentRows(rows));
@@ -1340,6 +1351,47 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
       PENDING: 0,
       FAILED: 0,
     });
+  });
+
+  it("runs the ledger-gap warning over the same payments the figure counts", async () => {
+    // Both payments claim a collected $21 increase with no ADDITIONAL ledger
+    // row behind it. The cancelled one is in the figure, so its gap is warned
+    // about; the soft-deleted PAID one is not in the figure, so it is not -
+    // although the status-listed stay figures still see that booking.
+    const gapPayment = (amountCents: number) => ({
+      ...payment(PaymentStatus.PARTIALLY_REFUNDED, amountCents, 1_000),
+      additionalAmountCents: 2_100,
+      additionalPaymentStatus: "SUCCEEDED",
+      transactions: [primaryLedgerRow(amountCents - 2_100)],
+    });
+    const cancelledWithGap = {
+      ...stay("b-cancelled-gap", "2026-04-02", "2026-04-04"),
+      payment: gapPayment(12_100),
+    };
+    const deletedWithGap = {
+      ...stay("b-deleted-gap", "2026-04-03", "2026-04-05"),
+      status: BookingStatus.PAID,
+      finalPriceCents: 10_000,
+      deletedAt: new Date("2026-04-20T00:00:00.000Z"),
+      payment: gapPayment(10_000),
+    };
+    mockBookingRows([deletedWithGap]);
+    mockPrisma.payment.findMany.mockResolvedValue(
+      netCollectedPaymentRows([cancelledWithGap, deletedWithGap]),
+    );
+
+    const metrics = await getFinanceBookingMetrics({ realized: QUERY.realized });
+
+    expect(metrics.paymentSummary).toMatchObject({
+      netCollectedCents: 11_100,
+      additionalLedgerGapCents: 2_100,
+      additionalLedgerGapBookings: 1,
+    });
+    expect(metrics.paymentSummary.bookingCount).toBe(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingIds: ["b-cancelled-gap"] }),
+      expect.any(String),
+    );
   });
 
   it("reads the same figure as the dashboard, Payments and Reports on the shared fixture", async () => {

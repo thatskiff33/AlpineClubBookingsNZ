@@ -25,6 +25,7 @@ import {
 import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import type { ClubFormat } from "@/lib/club-format";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
 // rows already scoped to one range, and widening it to the shared medium form
@@ -93,13 +94,15 @@ export async function buildBookingsDashboard(
   // ledger row to prove it is the one shape where that is not true, so the card
   // below would understate the cash. Say so where the treasurer reads the
   // number, and say by how much, rather than publishing a figure that is
-  // quietly short.
+  // quietly short. #3637: the one wording Reports and Payments use, over the
+  // same payments the figure counts.
   const ledgerGapBookings = metrics.paymentSummary.additionalLedgerGapBookings;
-  if (ledgerGapBookings > 0) {
-    warnings.push(
-      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)}: ${formatNumber(ledgerGapBookings, format)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`,
-    );
-  }
+  const ledgerGapWarning = formatNetCollectedLedgerGapWarning(
+    metrics.paymentSummary,
+    { one: "booking in this range", many: "bookings in this range" },
+    (cents) => formatDollarsDisplay(cents, format),
+  );
+  if (ledgerGapWarning) warnings.push(ledgerGapWarning);
   const moneyReconciliationPanel =
     appendBookingMoneyReconciliationDashboardState({
       warnings,

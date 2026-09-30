@@ -7,7 +7,9 @@
   the Payments page and Reports already use (#3372). So the figure **goes up**
   by any cancellation fee the club kept on a cancelled booking, and **goes
   down** by any payment on a deleted booking. The figure is worked out by the
-  same calculation as those three pages. Guest nights, occupancy, booked
+  same calculation as those three pages. Its "may understate" warning now
+  checks the same bookings the figure counts, in the same words Reports and the
+  Payments page use. Guest nights, occupancy, booked
   revenue, outstanding additional payments and the payment status counts are
   unchanged.
 - **Xero booking invoices read the shared list of payment statuses that mean

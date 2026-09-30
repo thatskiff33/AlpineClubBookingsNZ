@@ -801,8 +801,9 @@ describe("finance dashboard page model", () => {
     expect(
       model.warnings.some(
         (warning) =>
-          warning.includes("Net collected cash may understate by $21") &&
-          warning.includes("1 booking"),
+          // #3637: the one wording Reports and Payments show.
+          warning.includes("Net Collected Cash may understate by $21") &&
+          warning.includes("1 booking in this range records an additional payment"),
       ),
     ).toBe(true);
     expect(
@@ -819,7 +820,7 @@ describe("finance dashboard page model", () => {
 
     expect(
       model.warnings.some((warning) =>
-        warning.includes("Net collected cash may understate"),
+        warning.includes("Net Collected Cash may understate"),
       ),
     ).toBe(false);
     expect(
