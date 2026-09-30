@@ -43,6 +43,13 @@ vi.mock("@/lib/booking-request", () => ({
   linkedGuestMemberMap: () => new Map(),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => {
+  const actual = await importOriginal() as typeof import("@/lib/member-dietary-booking-writes");
+  return {
+    ...actual,
+    resolveBookingGuestDietarySeeding: vi.fn(async () => actual.bookingGuestDietarySeeding(true)),
+  };
+});
 
 import { resolveAcceptedSchoolPendingAdults } from "@/lib/school-pending-adult-resolution";
 

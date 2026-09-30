@@ -824,9 +824,9 @@ describe("declineBookingRequest", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("declines a PRICED request, emails the requester, and audits the reviewer", async () => {
+  it("declines a PRICED request, clears pending adults, emails the requester, and audits the reviewer", async () => {
     mockedFindUnique
-      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
+      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED, pendingAdultCount: 2 }) as never)
       .mockResolvedValueOnce(
         baseRequest({ status: BookingRequestStatus.DECLINED, declineReason: "Fully booked" }) as never
       );
@@ -839,6 +839,9 @@ describe("declineBookingRequest", () => {
     });
 
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+    expect(mockedUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: BookingRequestStatus.DECLINED, pendingAdultCount: 0 }),
+    }));
     expect(mockedSendDeclined).toHaveBeenCalledWith(
       expect.objectContaining({ email: "tara@example.com", reason: "Fully booked" })
     );

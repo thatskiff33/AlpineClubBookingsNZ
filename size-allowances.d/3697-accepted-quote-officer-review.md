@@ -18,14 +18,14 @@ reason: the accepted-hold guard and #3413 anonymous-reservation release belong
   with the existing cancellation lock and hold-release branch they fence.
 
 file: src/lib/booking-request-quotes.ts
-lines: 2277
+lines: 2278
 reason: the accepted-quote claim, hold retention and response state share the
   existing quote transaction; extracting only this claim would split one
   global-to-lodge lock protocol across modules; #3413's anonymous quote lines
   and held reservations use that same transaction.
 
 file: src/lib/booking-request.ts
-lines: 3072
+lines: 3073
 reason: #3415's accepted status and #3416's portable booking-policy setting
   join the established request queue and settings updater; moving those small
   branches would split their atomic persistence and audit rules; #3413 adds a

@@ -566,7 +566,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 489 -> 488 (#3415): acceptance retains the already-held beds for officer
   // review, so the former accept-time capacity-block/revert audit writer is gone.
   // The accepted-quote audit writer remains classified as `booking`.
-  writeSites: 488,
+  // #3413 names accepted pending adults in one booking-category logAudit site.
+  // Re-measured on the composed branch with pnpm run audit:census.
+  writeSites: 489,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -648,7 +650,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
     // 267 -> 266 (#3415): no accept-time capacity-block/revert writer.
-    logAudit: { total: 266, uncategorised: 0 },
+    logAudit: { total: 267, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -849,7 +851,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
     // 105 -> 104 (#3415): the removed capacity-block/revert record was `booking`.
-    booking: 104,
+    booking: 105,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

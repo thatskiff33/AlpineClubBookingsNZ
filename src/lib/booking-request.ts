@@ -1317,6 +1317,7 @@ export async function declineBookingRequest(input: {
       },
       data: {
         status: BookingRequestStatus.DECLINED,
+        pendingAdultCount: 0,
         reviewedByMemberId: input.adminMemberId,
         reviewedAt,
         declineReason,

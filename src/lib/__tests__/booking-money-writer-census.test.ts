@@ -78,6 +78,7 @@ const REVIEWED_WRITERS = [
   "src/lib/school-booking-request.ts|booking|create,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "src/lib/school-booking-request.ts|bookingGuest|create||2",
   "src/lib/school-booking-request.ts|bookingGuestNight|opaquePayload||2",
+  "src/lib/school-pending-adult-resolution.ts|bookingGuest|create|priceCents|1",
   "src/lib/stored-night-price-repair-store.ts|bookingGuest|updateMany|priceCents|1",
   "src/lib/stored-night-price-repair-store.ts|bookingGuestNight|create,updateMany|priceCents,priceSource|3",
   "src/lib/waitlist.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",

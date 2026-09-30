@@ -1399,7 +1399,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
     // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
     // #3415 removes the unpinned accept-time capacity-block/revert writer.
-    ).toEqual({ pinned: 128, unpinned: 360 });
+    ).toEqual({ pinned: 128, unpinned: 361 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

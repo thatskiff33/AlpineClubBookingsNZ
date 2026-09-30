@@ -1365,6 +1365,7 @@ export async function respondToBookingRequestQuote(input: {
         },
         data: {
           status: BookingRequestStatus.CANCELLED,
+          pendingAdultCount: 0,
           responseMessage: message,
           responseMessageAt: respondedAt,
           version: { increment: 1 },

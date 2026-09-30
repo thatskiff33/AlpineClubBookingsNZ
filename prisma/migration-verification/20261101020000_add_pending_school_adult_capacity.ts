@@ -11,19 +11,21 @@ const verification: DataMigrationVerification = {
       seed: `
         INSERT INTO "BookingRequest" (
           "id", "type", "contactFirstName", "contactLastName", "contactEmail",
-          "checkIn", "checkOut", "guests"
+          "checkIn", "checkOut", "guests", "updatedAt"
         ) VALUES (
           'dmv-pending-adult-existing', 'SCHOOL', 'Ada', 'School',
-          'ada@example.invalid', DATE '2026-08-01', DATE '2026-08-03', '[]'::jsonb
+          'ada@example.invalid', DATE '2026-08-01', DATE '2026-08-03', '[]'::jsonb,
+          TIMESTAMP '2026-07-01 00:00:00'
         );
       `,
       afterMigration: `
         INSERT INTO "BookingRequest" (
           "id", "type", "contactFirstName", "contactLastName", "contactEmail",
-          "checkIn", "checkOut", "guests"
+          "checkIn", "checkOut", "guests", "updatedAt"
         ) VALUES (
           'dmv-pending-adult-old-insert', 'SCHOOL', 'Bea', 'School',
-          'bea@example.invalid', DATE '2026-08-01', DATE '2026-08-03', '[]'::jsonb
+          'bea@example.invalid', DATE '2026-08-01', DATE '2026-08-03', '[]'::jsonb,
+          TIMESTAMP '2026-07-01 00:00:00'
         );
       `,
       expectations: [

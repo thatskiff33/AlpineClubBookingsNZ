@@ -1,6 +1,6 @@
 -- #3413 — capacity-only reservations for unnamed adults in school quotes.
 --
--- PHASE: windowed. The schema is additive, but the old capacity reader cannot
+-- PHASE: expand; old_code_compatible: windowed. The old capacity reader cannot
 -- see this new table. It is forbidden to write a nonzero pendingAdultCount or
 -- any reservation while an old web/worker colour can admit beds. The approved
 -- maintenance window drains every old process before new code enables writes.

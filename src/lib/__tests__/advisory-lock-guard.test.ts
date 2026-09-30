@@ -514,6 +514,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "holdBookingRequestSlots#1",
     tier: "GLOBAL",
     reason:
+      "#3413: reusing an unnamed-adult hold re-reads its request, booking and exact reservation nights under global then lodge locks, excluding cancellation, correction and accepted naming while validating the quoted beds.",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "holdBookingRequestSlots#2",
+    tier: "GLOBAL",
+    reason:
       "#3413: a SCHOOL quote with unnamed adults creates capacity reservations linked to its AWAITING_REVIEW hold. It takes global before lodge so generic booking cancel, quote cancel, correction and accepted identity resolution cannot release or rewrite that hold across creation. Other holds retain the lodge-only path.",
     invariant: "INV-LOCK-002",
   },

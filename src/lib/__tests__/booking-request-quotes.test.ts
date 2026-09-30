@@ -1694,7 +1694,7 @@ describe("public quote response", () => {
           guestBreakdown: [],
         },
       ],
-      bookingRequest: baseRequest({ heldBookingId: "held-1" }),
+      bookingRequest: baseRequest({ heldBookingId: "held-1", pendingAdultCount: 2 }),
     } as never);
     // #1423: the request status update is now a status-guarded updateMany that
     // runs FIRST (lock BookingRequest before the quote); a live request claims it.
@@ -1712,6 +1712,9 @@ describe("public quote response", () => {
     const result = await respondToBookingRequestQuote({ token, action: "CANCEL" });
 
     expect(result).toEqual({ outcome: "cancelled" });
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: BookingRequestStatus.CANCELLED, pendingAdultCount: 0 }),
+    }));
     // The reserved hold is released so it stops consuming capacity...
     expect(prisma.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({

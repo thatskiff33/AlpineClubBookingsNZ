@@ -3,11 +3,12 @@ import { AgeTier, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/cl
 import { logAudit } from "@/lib/audit";
 import { BookingRequestError, linkedGuestMemberMap, parseBookingRequestGuests } from "@/lib/booking-request";
 import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
-import { buildApprovalGuestNights } from "@/lib/booking-request-shared";
+import { buildApprovalGuestNights, toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { normaliseCorrectedTeachers, type CorrectedTeacher } from "@/lib/booking-request-correction-shape";
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
+import { resolveBookingGuestDietary, resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-gate";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 
@@ -43,6 +44,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     throw new BookingRequestError("The held booking could not be found. Reload the request.", 409);
   }
 
+  const dietarySeeding = await resolveBookingGuestDietarySeeding();
   const outcome = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await acquireLodgeCapacityLock(tx, heldLocator.lodgeId);
@@ -167,19 +169,24 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     if (claimed.count !== 1) {
       throw new BookingRequestError("This request changed while adults were being named. Reload and try again.", 409);
     }
+    const dietaryWrites = await resolveBookingGuestDietary(
+      tx, dietarySeeding, proposed.map(() => ({ memberId: null })),
+    );
     for (const [index, teacher] of proposed.entries()) {
       const priceCents = selectedPrices[index]!.totalCents;
       await tx.bookingGuest.create({
         data: {
           bookingId: hold.id,
-          firstName: teacher.firstName,
-          lastName: teacher.lastName,
-          ageTier: AgeTier.ADULT,
-          isMember: false,
-          stayStart: hold.checkIn,
-          stayEnd: hold.checkOut,
           priceCents,
-          nights: { create: buildApprovalGuestNights({ checkIn: hold.checkIn, checkOut: hold.checkOut, priceCents }) },
+          ...toPipelineGuestCreateData({
+            firstName: teacher.firstName,
+            lastName: teacher.lastName,
+            ageTier: AgeTier.ADULT,
+            isMember: false,
+            stayStart: hold.checkIn,
+            stayEnd: hold.checkOut,
+            nights: buildApprovalGuestNights({ checkIn: hold.checkIn, checkOut: hold.checkOut, priceCents }),
+          }, dietaryWrites[index]),
         },
       });
     }

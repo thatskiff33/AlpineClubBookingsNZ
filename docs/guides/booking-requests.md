@@ -244,6 +244,10 @@ accepted terms, the save stops: review the rate, consent and terms with the
 school before issuing a new quote. Ordinary **Correct this request** cannot
 change an accepted quote.
 
+Declining or cancelling the request clears its pending adult count and releases
+the held capacity. The original quote snapshot remains as the record of what
+was offered or accepted.
+
 You also cannot correct a request that has already become a booking (edit the
 booking instead), one that is closed, one that a member submitted through the
 whole-lodge door (approve it with the headcount you mean, or decline it), or one
