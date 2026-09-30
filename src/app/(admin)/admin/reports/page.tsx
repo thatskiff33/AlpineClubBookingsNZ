@@ -34,7 +34,7 @@ import {
   parseCalendarDate,
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
@@ -364,13 +364,13 @@ export default function ReportsPage() {
     )) {
       if (count > 0) rows.push([`Booking Money Reason: ${reason}`, String(count)]);
     }
-    rows.push(["Booked Revenue", (data.summary.totalRevenueCents / 100).toFixed(2)]);
-    rows.push(["Net Collected Cash", (data.summary.netCollectedCents / 100).toFixed(2)]);
+    rows.push(["Booked Revenue", formatCentsPlain(data.summary.totalRevenueCents)]);
+    rows.push(["Net Collected Cash", formatCentsPlain(data.summary.netCollectedCents)]);
     if (additionalLedgerGapWarning) {
       rows.push(["Net Collected Cash Warning", additionalLedgerGapWarning]);
       rows.push([
         "Possible Additional Ledger Gap",
-        (data.summary.additionalLedgerGapCents / 100).toFixed(2),
+        formatCentsPlain(data.summary.additionalLedgerGapCents),
       ]);
       rows.push([
         "Bookings With An Additional Ledger Gap",
@@ -379,7 +379,7 @@ export default function ReportsPage() {
     }
     rows.push([
       "Outstanding Additions",
-      (data.summary.outstandingAdditionalCents / 100).toFixed(2),
+      formatCentsPlain(data.summary.outstandingAdditionalCents),
     ]);
     rows.push([
       "Bookings With An Outstanding Addition",
@@ -413,7 +413,7 @@ export default function ReportsPage() {
     for (const entry of data.revenue) {
       rows.push([
         entry.tooltipLabel,
-        (entry.revenueCents / 100).toFixed(2),
+        formatCentsPlain(entry.revenueCents),
         String(entry.bookingCount),
       ]);
     }
