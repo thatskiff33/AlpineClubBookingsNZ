@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 /**
  * WHAT `resolveManualRefundTask` READS OF THE TASK, its booking and its
@@ -8,7 +8,7 @@ import type { Prisma } from "@prisma/client";
  * `pg_advisory_xact_lock(1)`, because the settlement route is chosen from it
  * (docs/CONCURRENCY_AND_LOCKING.md, #3582).
  */
-export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = {
+export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.ManualRefundTaskSelect>()({
   id: true,
   bookingId: true,
   paymentId: true,
@@ -73,4 +73,4 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = {
       },
     },
   },
-} as const satisfies Prisma.ManualRefundTaskSelect;
+});
