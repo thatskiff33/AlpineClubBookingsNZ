@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * #3595: the real-PostgreSQL proof of the ledger's idempotency self-skips
  * without `RUN_CONCURRENCY_RACE_TESTS`, and hosted CI reaches it only because
@@ -11,24 +13,29 @@ import { describe, expect, it } from "vitest";
  */
 const REPO_ROOT = resolve(__dirname, "../../..");
 
+/**
+ * A suite's code with its comments blanked (strings kept), so a commented-out
+ * import or case cannot keep a pin green (INV-SSOT-004; #3740 SSOT F6).
+ */
+function source(path: string): string {
+  return stripComments(readFileSync(path, "utf8"));
+}
+
 describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
   it("is imported by the race harness CI runs against a real database", () => {
-    const harness = readFileSync(
+    const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
-      "utf8",
     );
     expect(harness).toContain('import "./booking-ledger-posting-key.realdb.test";');
   });
 
   it("carries #3581's settlement-sync proof into the same harness", () => {
-    const harness = readFileSync(
+    const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
-      "utf8",
     );
     expect(harness).toContain('import "./booking-ledger-settlement-sync.realdb.test";');
-    const suite = readFileSync(
+    const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-settlement-sync.realdb.test.ts"),
-      "utf8",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("matches the mirror's own arithmetic where both read the same rows: captures, and refunds with a refund row");
@@ -38,14 +45,12 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
   });
 
   it("carries #3599's credit and hand-back proof into the same harness", () => {
-    const harness = readFileSync(
+    const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
-      "utf8",
     );
     expect(harness).toContain('import "./booking-ledger-credit-sync.realdb.test";');
-    const suite = readFileSync(
+    const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-credit-sync.realdb.test.ts"),
-      "utf8",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     for (const caseName of [
@@ -61,14 +66,12 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
   });
 
   it("carries #3582's edit and review-closure proof into the same harness", () => {
-    const harness = readFileSync(
+    const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
-      "utf8",
     );
     expect(harness).toContain('import "./booking-ledger-modification.realdb.test";');
-    const suite = readFileSync(
+    const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-modification.realdb.test.ts"),
-      "utf8",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     for (const caseName of [
@@ -76,15 +79,21 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "a replayed posting posts nothing and the transaction still commits",
       "posts nothing for a booking not yet confirmed on the ledger",
       "a closure's re-price posts under its history row from the real guest rows, and the share posts no second record",
+      "REFUND: the first closure's re-price carries both removals, the second posts nothing, and the ledger bills the booking's price",
+      "REFUND, dismiss then complete: the dismissal's re-price stands and the completion adds nothing",
+      "REFUND, declined then re-priced: the stand-in is reversed by its line id when the re-price carries it",
+      "CHARGE: the first closure's re-price carries both additions, the second posts nothing",
+      "a same-price category change, then a second edit: the second reverses the FIRST EDIT'S re-post, never the stale confirmation line",
+      "a direct write of a reversal of an already-reversed line inserts nothing, and the transaction stays usable",
+      "a replayed change-fee-only edit posts its fee once: the replay's plan is identical, and ON CONFLICT skips it",
     ]) {
       expect(suite).toContain(caseName);
     }
   });
 
   it("still gates on the harness's variable and carries its three proofs", () => {
-    const suite = readFileSync(
+    const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),
-      "utf8",
     );
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     for (const caseName of [
