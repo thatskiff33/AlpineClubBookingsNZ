@@ -405,6 +405,16 @@ is what makes Release 2 reversible.
 The census reuses `auditIbAppliedCreditStrands`'s shape (`INV-PAY-047` (3)) and
 retires it: that script's identity is one of the six.
 
+**The back-post skips an edit that has already posted (#3582).** Any
+`BookingModification` with a line anchored `MODIFICATION`/`<its id>` has posted,
+and sum-or-nothing (§5.1) makes that all of its lines. #3583's back-post must
+skip it: its stored `priceLines` fold runs across guests and nights, so they
+cannot regenerate the per-night `modification:<id>:night:<guest>:<date>` keys or
+the `reversal:<lineId>` targets (which depend on which line was live when the
+edit posted), and a back-post from them would mint different keys that
+`ON CONFLICT` cannot catch — a night charged twice. The back-post posts only
+through the key functions in `booking-ledger-posting-keys.ts`.
+
 ## 7. Cut-over order
 
 **Owner decision D-3532-1 (23 Sep 2026): prove against history, then cut over
