@@ -18,6 +18,10 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import {
+  NET_COLLECTED_SCOPE_FIXTURE,
+  NET_COLLECTED_SCOPE_PAYMENTS,
+} from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -31,6 +35,9 @@ const EXPECTED_REPORT_STATUS_VALUES = [
 const mockLodgeFindUnique = vi.fn();
 const mockPrisma = {
   booking: { findMany: vi.fn() },
+  // #3372: Net Collected Cash reads its own payments, in the one Net Collected
+  // booking scope, not the report cohort's status list.
+  payment: { findMany: vi.fn() },
   member: { count: vi.fn() },
   memberSubscription: { count: vi.fn() },
   lodge: { findUnique: mockLodgeFindUnique },
@@ -146,9 +153,40 @@ function reportBooking(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The payment rows Net Collected Cash reads for a set of report bookings: the
+ * same payments, as the route's payment query returns them. A test whose
+ * figure should come from bookings OUTSIDE the report cohort passes those too.
+ */
+function netCollectedPaymentRows(
+  bookings: ReadonlyArray<{
+    id: string;
+    deletedAt?: Date | null;
+    payment: Record<string, unknown> | null;
+  }>,
+) {
+  return bookings
+    .filter((booking) => booking.payment !== null)
+    .map((booking) => ({
+      bookingId: booking.id,
+      ...booking.payment,
+      booking: { deletedAt: booking.deletedAt ?? null },
+    }));
+}
+
+function mockReportRows(
+  bookings: ReadonlyArray<ReturnType<typeof reportBooking>>,
+) {
+  mockPrisma.booking.findMany.mockResolvedValue(bookings);
+  mockPrisma.payment.findMany.mockResolvedValue(
+    netCollectedPaymentRows(bookings as never),
+  );
+}
+
 function zeroMemberQueries() {
   mockPrisma.member.count.mockResolvedValue(0);
   mockPrisma.memberSubscription.count.mockResolvedValue(0);
+  mockPrisma.payment.findMany.mockResolvedValue([]);
 }
 
 describe("admin reports route", () => {
@@ -180,7 +218,7 @@ describe("admin reports route", () => {
   afterEach(() => vi.useRealTimers());
 
   it("selects a created-elsewhere booking by overlapping stay nights and slices cents after full allocation", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([reportBooking()]);
+    mockReportRows([reportBooking()]);
 
     const { GET } = await import("@/app/api/admin/reports/route");
     const response = await GET(
@@ -225,12 +263,36 @@ describe("admin reports route", () => {
       refundedAmountCents: true,
       additionalAmountCents: true,
       additionalPaymentStatus: true,
+    });
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledTimes(1);
+
+    // #3372, owner decision A: Net Collected Cash reads the payments of every
+    // booking in the range and lodge - no status list, no deleted view; the
+    // one booking scope is applied by `summarizeCollectedCash` from the
+    // booking's `deletedAt`.
+    expect(mockPrisma.payment.findMany).toHaveBeenCalledTimes(1);
+    const paymentQuery = mockPrisma.payment.findMany.mock.calls[0][0];
+    expect(paymentQuery.where).toEqual({
+      booking: {
+        is: {
+          checkIn: { lte: day("2026-04-08") },
+          checkOut: { gt: day("2026-04-08") },
+        },
+      },
+    });
+    expect(paymentQuery.select).toEqual({
+      bookingId: true,
+      status: true,
+      amountCents: true,
+      refundedAmountCents: true,
+      additionalAmountCents: true,
+      additionalPaymentStatus: true,
       transactions: {
         where: { kind: PaymentTransactionKind.ADDITIONAL },
         select: { kind: true, status: true, amountCents: true },
       },
+      booking: { select: { deletedAt: true } },
     });
-    expect(mockPrisma.booking.findMany).toHaveBeenCalledTimes(1);
   }, 15_000);
 
   it("counts new members from the two CALENDAR DAYS, not the club-day instants (#2872)", async () => {
@@ -337,10 +399,14 @@ describe("admin reports route", () => {
     const queryWhere = mockPrisma.booking.findMany.mock.calls[0][0].where;
     expect(queryWhere).toMatchObject({ lodgeId: "lodge-2" });
     expect(queryWhere).not.toHaveProperty("deletedAt");
+    // #3372 decision A: Net Collected Cash reads its own payments, and a
+    // lodge-scoped report must scope that read to the lodge too.
+    const paymentWhere = mockPrisma.payment.findMany.mock.calls[0][0].where;
+    expect(paymentWhere.booking.is).toMatchObject({ lodgeId: "lodge-2" });
   }, 15_000);
 
   it("preserves outstanding-addition visibility beside payment-derived cash", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockReportRows([
       reportBooking({
         finalPriceCents: 30_000,
         payment: {
@@ -379,7 +445,7 @@ describe("admin reports route", () => {
   }, 15_000);
 
   it("surfaces the exact #2408 additional-ledger gap without changing cash arithmetic", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
+    mockReportRows([
       reportBooking({
         id: "booking-unproven-extra",
         finalPriceCents: 12_100,
@@ -418,6 +484,53 @@ describe("admin reports route", () => {
       }),
       expect.stringContaining("Net Collected Cash may understate"),
     );
+  }, 15_000);
+
+  /*
+    #3372, owner decision A: the one Net Collected booking scope. The shared
+    fixture - a cancelled booking that kept a $50.00 fee, and a soft-deleted
+    booking's $70.00 capture - reads $50.00 here, on the dashboard and on the
+    payments tile. Reports used to read Net Collected Cash over its status
+    list, which leaves cancelled bookings out ($0.00). The other figures keep
+    that list: the cancelled booking is in no count and no booked revenue.
+  */
+  it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.payment.findMany.mockResolvedValue(
+      NET_COLLECTED_SCOPE_PAYMENTS.map((payment) => ({
+        bookingId: payment.bookingId,
+        status: payment.status,
+        amountCents: payment.amountCents,
+        refundedAmountCents: payment.refundedAmountCents,
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        transactions: [],
+        booking: { deletedAt: payment.deletedAt },
+      })),
+    );
+
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/reports?from=2026-04-07&to=2026-04-09&deleted=only",
+      ),
+    );
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.summary.netCollectedCents).toBe(
+      NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents,
+    );
+    expect(data.summary.totalBookings).toBe(0);
+    expect(data.summary.totalRevenueCents).toBe(0);
+    // The report's "deleted" view governs the booking cohort, never the Net
+    // Collected scope: the payment query carries no status and no deletedAt.
+    expect(mockPrisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      deletedAt: { not: null },
+    });
+    const paymentWhere = mockPrisma.payment.findMany.mock.calls[0][0].where;
+    expect(paymentWhere.booking.is).not.toHaveProperty("status");
+    expect(paymentWhere.booking.is).not.toHaveProperty("deletedAt");
   }, 15_000);
 
   it("rejects an unknown or inactive lodgeId before querying reports", async () => {

@@ -3,10 +3,19 @@
  * refunded since. `REFUNDED` belongs here: the question is whether a capture
  * ever happened, not whether the club still holds the cash.
  *
- * THE ONE HOME for this list (`INV-SSOT-001`, #3340). There were two copies —
- * this module's and `additional-ledger-gap.ts`'s — and the change that
- * generalised the ledger mirror added a third, which is the finding that put the
- * list here. This file is a pure leaf — no
+ * The home for this list (`INV-SSOT-001`, #3340). There were two copies — this
+ * module's and `additional-ledger-gap.ts`'s — and the change that generalised
+ * the ledger mirror added a third, which is the finding that put the list here.
+ *
+ * KNOWN REMAINING COPIES of the same three values, each being retired onto this
+ * list by its own issue; until then a change here must be made there too:
+ *   - `ib-hold-clearing-audit.ts` `REALIZED_PAYMENT_STATUSES` and
+ *     `xero-booking-edit-conditions.ts` `UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES`
+ *     — #3632.
+ *   - `finance-booking-metrics.ts` `FINANCE_CAPTURED_PAYMENT_STATUSES` and
+ *     `xero-booking-invoices.ts` `STRIPE_CAPTURED_PAYMENT_STATUSES` — #3637.
+ *
+ * This file is a pure leaf — no
  * client, no logger, no `server-only` — so a census, a route and a page can all
  * import it without dragging anything behind it.
  *
@@ -158,6 +167,127 @@ export function getRemainingRefundableCents(
 }
 
 /**
+ * #3372: ONE payment row's amount net of what has gone back out of it —
+ * `amountCents - refundedAmountCents`, with NO status gate and no floor. It is
+ * the figure the payments list's "Amount (net)" column shows for every row
+ * (`INV-PAY-047`), and the order that column sorts in, so a list whose headline
+ * is net cannot be sorted or described by a different sum.
+ *
+ * NOT `getRemainingRefundableCents` above, which asks a different question —
+ * "how much more could a refund take out?" — and so answers 0 whenever nothing
+ * was captured: a PENDING or FAILED row has nothing to refund, but its row still
+ * shows its amount. Routing the column through that helper would blank every
+ * unpaid row.
+ *
+ * `refundedAmountCents` counts cancellation credit to the member's account as
+ * well as money back to the card (`INV-PAY-050`), so "net of refunds and
+ * credits" is the honest reading, not "cash the club holds".
+ *
+ * Both fields are REQUIRED, not the optional `BookingPaymentState` shape: a row
+ * loaded without `refundedAmountCents` would otherwise read as unrefunded and
+ * print the gross — the #3340 misreading this helper exists to prevent.
+ */
+export function getPaymentNetOfRefundsCents(payment: {
+  amountCents: number;
+  refundedAmountCents: number;
+}): number {
+  return payment.amountCents - payment.refundedAmountCents;
+}
+
+/**
+ * #3372: the "{gross} paid, {refunded} refunded or credited" line printed
+ * beneath a net headline, so the arithmetic is on screen — the one wording for
+ * the payments list, the dashboard card and the change-requests panel.
+ *
+ * Returns `null` when nothing was refunded or credited, and every caller renders
+ * the line only when it is non-null, so the guard lives here once rather than
+ * at three sites. The caller supplies its own cents formatter (exact cents —
+ * never a rounded one, which could disagree with the headline by a dollar), so
+ * this leaf keeps no formatting import. It makes no net-versus-gross choice of
+ * its own: the caller decides which sums it passes.
+ */
+export function formatPaidRefundedBreakdown(
+  grossCents: number,
+  refundedCents: number,
+  formatCents: (cents: number) => string,
+): string | null {
+  if (refundedCents <= 0) return null;
+  return `${formatCents(grossCents)} paid, ${formatCents(refundedCents)} refunded or credited`;
+}
+
+/**
+ * Money collected on a set of payments: what was captured, what has gone back
+ * out as a refund or an account credit, and the difference.
+ */
+export interface CollectedCashSummary {
+  /** `Payment.amountCents` summed over captured payments only — before refunds. */
+  capturedGrossCents: number;
+  /**
+   * `Payment.refundedAmountCents` summed — card refunds and cancellation credit
+   * to the member's account alike (`INV-PAY-050`).
+   */
+  refundedCents: number;
+  /**
+   * `capturedGrossCents - refundedCents`, floored at zero: collected money net
+   * of refunds AND credits. Not "cash the club holds" — a credit is still owed
+   * to the member as a future booking, and it is subtracted here all the same.
+   */
+  netCollectedCents: number;
+}
+
+/**
+ * The booking a payment belongs to, as far as the Net Collected scope needs it.
+ */
+export interface NetCollectedBookingScopeFields {
+  deletedAt: Date | null;
+}
+
+/**
+ * #3372, owner decision A (29 Sep 2026): THE booking scope of every "Net
+ * Collected" figure - the dashboard card, the payments board tile and Reports'
+ * Net Collected Cash. A payment counts when its booking has not been
+ * soft-deleted, whatever the booking's status: a cancelled booking nets to the
+ * cancellation fee the club kept, and that fee is money collected.
+ *
+ * Before the decision each screen chose its own set: Reports a fixed status
+ * list, the payments tile everything but cancelled (#773, which kept a refunded
+ * booking's GROSS out of "Total Revenue" - a job the netting now does), the
+ * dashboard everything. The same month's figure differed by every kept fee.
+ *
+ * It is not a caller's choice. `summarizeCollectedCash` applies it to every row
+ * itself, and its row type requires the booking's `deletedAt`, so a surface
+ * cannot hand in rows without the fact the rule reads. A surface's OWN filters
+ * (a date range, a lodge, the payments board's filter bar) still narrow which
+ * payments it hands in; the Reports "deleted" view does not widen this scope.
+ */
+export function isInNetCollectedBookingScope(
+  booking: NetCollectedBookingScopeFields,
+): boolean {
+  return booking.deletedAt === null;
+}
+
+/** A payment as `summarizeCollectedCash` reads it. */
+export interface NetCollectedPaymentRow {
+  status: string | null;
+  amountCents: number;
+  refundedAmountCents: number;
+  booking: NetCollectedBookingScopeFields;
+}
+
+/**
+ * The payments inside the Net Collected booking scope - for a check that must
+ * run over exactly the payments the figure counts, such as the ledger-gap
+ * warning beside it.
+ */
+export function netCollectedScopedPayments<T extends NetCollectedPaymentRow>(
+  payments: ReadonlyArray<T>,
+): T[] {
+  return payments.filter((payment) =>
+    isInNetCollectedBookingScope(payment.booking),
+  );
+}
+
+/**
  * The base a paid-path cancellation tiers its refund off (#1031, INV-PAY-018) -
  * the one derivation, shared by the executed cancel (`booking-cancel.ts`) and
  * the preview a member sees before confirming (`booking-route-decisions.ts`),
@@ -180,6 +310,90 @@ export function cancelRefundableBaseCents(input: {
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents
   );
+}
+
+/**
+ * `Payment.refundedAmountCents` summed over the rows handed in, captured or not:
+ * card refunds and account credits alike (`INV-PAY-050`). The one refund fold -
+ * `summarizeCollectedCash` uses it for the net, and the payments board's
+ * "Refunded / Credited" tile uses it over every payment its filters match.
+ */
+export function sumRefundedAndCreditedCents(
+  payments: ReadonlyArray<{ refundedAmountCents: number }>,
+): number {
+  return payments.reduce(
+    (sum, payment) => sum + payment.refundedAmountCents,
+    0,
+  );
+}
+
+/**
+ * #3372: net collected cash over a set of payments, for the officer surfaces —
+ * the Reports summary, the dashboard's "Net Collected This Month" card and the
+ * payments board's "Net Collected Cash" tile all read it (`INV-SSOT-001`), so
+ * they cannot disagree about what "net of refunds and credits" means, nor about
+ * which bookings count: the Net Collected booking scope
+ * (`isInNetCollectedBookingScope`) is applied here, to every row, and a row
+ * outside it contributes nothing. Each surface still decides WHICH payments it
+ * hands in - a month's, a filter's, a report range's - and says so on screen.
+ *
+ * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
+ * EVERY in-scope row, captured or not, and the net is floored at zero.
+ *
+ * Cash is payment-derived and deliberately NOT allocated over stay nights.
+ * `Payment.amountCents` already contains captured additions (#2408); rebuilding
+ * it from transaction rows would undercount legacy/group captures or double
+ * count a later addition.
+ *
+ * KNOWN SECOND COPY: `src/lib/finance-booking-metrics.ts` still sums
+ * `capturedGrossCents`, `refundedCents` and the floored net by hand for the
+ * finance dashboard, against its own `FINANCE_CAPTURED_PAYMENT_STATUSES`. It is
+ * being converged onto this function by a follow-up child of epic #3372; until
+ * then a change to the rule here must be made there too.
+ *
+ * `status` is `string | null`, not `PaymentStatus`: the payments service hands
+ * in a plain string, and a `null` captures nothing.
+ */
+export function summarizeCollectedCash(
+  payments: ReadonlyArray<NetCollectedPaymentRow>,
+): CollectedCashSummary {
+  const inScope = netCollectedScopedPayments(payments);
+  let capturedGrossCents = 0;
+  for (const payment of inScope) {
+    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
+      capturedGrossCents += payment.amountCents;
+    }
+  }
+  const refundedCents = sumRefundedAndCreditedCents(inScope);
+  return {
+    capturedGrossCents,
+    refundedCents,
+    netCollectedCents: Math.max(capturedGrossCents - refundedCents, 0),
+  };
+}
+
+/**
+ * #3372: the "may understate" warning that goes with a Net Collected Cash figure
+ * when `summarizeAdditionalLedgerGap` finds payments that record an additional
+ * payment as collected with no captured ADDITIONAL ledger row behind it. One
+ * sentence for every surface that runs the check - Reports and the payments
+ * board - so the warning cannot read differently on each. `subject` names what
+ * the count counts on that surface. `null` when there is no gap.
+ *
+ * The dashboard card does not carry it: it reads only each payment's status and
+ * amounts for the month, with no ledger rows, and loading every payment's
+ * ledger on the landing page is not worth it for a check Reports and the
+ * payments board already run.
+ */
+export function formatNetCollectedLedgerGapWarning(
+  gap: { additionalLedgerGapCents: number; additionalLedgerGapBookings: number },
+  subject: { one: string; many: string },
+  formatCents: (cents: number) => string,
+): string | null {
+  const count = gap.additionalLedgerGapBookings;
+  if (count === 0) return null;
+  const singular = count === 1;
+  return `Net Collected Cash may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${count} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 /**

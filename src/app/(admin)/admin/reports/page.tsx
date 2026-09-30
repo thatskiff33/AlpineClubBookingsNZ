@@ -35,11 +35,11 @@ import {
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
 import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,
 } from "@/lib/admin-dataset-reset-state";
-import type { ClubFormat } from "@/lib/club-format";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
 // _components/report-charts and mount after the page shell. The placeholders
@@ -140,19 +140,6 @@ function getRevenueDescription(granularity: RevenueGranularity): string {
     return "Booked revenue allocated across selected stay nights and grouped by week for ranges from 15 to 90 days.";
   }
   return "Booked revenue allocated across selected stay nights and grouped by month for ranges longer than 90 days.";
-}
-
-function getAdditionalLedgerGapWarning(
-  summary: {
-    additionalLedgerGapCents: number;
-    additionalLedgerGapBookings: number;
-  },
-  clubFormat: ClubFormat,
-): string | null {
-  if (summary.additionalLedgerGapBookings === 0) return null;
-
-  const singular = summary.additionalLedgerGapBookings === 1;
-  return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents, clubFormat)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 /**
@@ -335,7 +322,11 @@ export default function ReportsPage() {
 
   const occupancyData = data?.occupancy ?? [];
   const additionalLedgerGapWarning = data
-    ? getAdditionalLedgerGapWarning(data.summary, clubFormat)
+    ? formatNetCollectedLedgerGapWarning(
+        data.summary,
+        { one: "overlapping booking", many: "overlapping bookings" },
+        (cents) => formatCents(cents, clubFormat),
+      )
     : null;
   const unreconciledBookingCount =
     data?.summary.moneyReconciliation.byState.UNRECONCILED ?? 0;
@@ -620,7 +611,7 @@ export default function ReportsPage() {
               <StatCard
                 title="Net Collected Cash"
                 value={formatCents(data.summary.netCollectedCents, clubFormat)}
-                subtitle="Captured payment cash less refunds for overlapping bookings; not allocated by night"
+                subtitle={`Captured payment cash less refunds for overlapping bookings of any status, cancelled ones at the fee kept; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
                 icon={DollarSign}
               />
               <StatCard

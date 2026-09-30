@@ -500,12 +500,15 @@ export default function RefundRequestsPage() {
                           </div>
                           {payment && (
                             <>
+                              {/* #3372: GROSS - what was captured before any
+                                  refund - so the label says so. "Remaining
+                                  refundable" is `getRemainingRefundableCents`. */}
                               <div>
-                                <span className="text-muted-foreground">Paid:</span>{" "}
+                                <span className="text-muted-foreground">Gross paid:</span>{" "}
                                 {formatCents(payment.amountCents, format)}
                               </div>
                               <div>
-                                <span className="text-muted-foreground">Remaining:</span>{" "}
+                                <span className="text-muted-foreground">Remaining refundable:</span>{" "}
                                 {formatCents(maxRefundable, format)}
                               </div>
                               <div>

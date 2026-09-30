@@ -30,6 +30,7 @@ import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClu
 import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
+import { netCollectedScopedPayments } from "@/lib/booking-payment-state";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -104,6 +105,7 @@ export async function GET(request: NextRequest) {
 
     const [
       bookings,
+      netCollectedPayments,
       totalActiveMembers,
       paidMembers,
       unpaidMembers,
@@ -140,22 +142,46 @@ export async function GET(request: NextRequest) {
               refundedAmountCents: true,
               additionalAmountCents: true,
               additionalPaymentStatus: true,
-              // #2408: the cash figure continues to come from amountCents. We
-              // load only ADDITIONAL ledger evidence so Reports can surface the
-              // same possible-understatement guard as Finance without
-              // rebuilding cash or returning transaction rows.
-              transactions: {
-                where: { kind: PaymentTransactionKind.ADDITIONAL },
-                select: {
-                  kind: true,
-                  status: true,
-                  amountCents: true,
-                },
-              },
             },
           },
         },
         orderBy: [{ checkIn: "asc" }, { id: "asc" }],
+      }),
+      // #3372, owner decision A: Net Collected Cash reads its own payments -
+      // every booking in the range and lodge, any status - not the cohort
+      // above, whose status list and "deleted" view govern the other figures.
+      // `summarizeCollectedCash` applies the one Net Collected booking scope
+      // from the `deletedAt` loaded here.
+      prisma.payment.findMany({
+        where: {
+          booking: {
+            is: {
+              ...bookingLodgeWhere,
+              checkIn: { lte: toDay },
+              checkOut: { gt: fromDay },
+            },
+          },
+        },
+        select: {
+          bookingId: true,
+          status: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          additionalAmountCents: true,
+          additionalPaymentStatus: true,
+          // #2408: ADDITIONAL ledger evidence only, for the understatement
+          // guard; cash still comes from amountCents.
+          transactions: {
+            where: { kind: PaymentTransactionKind.ADDITIONAL },
+            select: {
+              kind: true,
+              status: true,
+              amountCents: true,
+            },
+          },
+          booking: { select: { deletedAt: true } },
+        },
+        orderBy: { bookingId: "asc" },
       }),
       prisma.member.count({
         where: {
@@ -254,10 +280,14 @@ export async function GET(request: NextRequest) {
     // Collected cash is booking-level payment data, deliberately separate from
     // stay-night revenue. Payment.amountCents already includes captured
     // additions (#2408), so transaction-ledger reconstruction is forbidden.
-    const netCollectedCents = summarizeNetCollectedCash(
-      bookings.map((booking) => booking.payment),
+    const netCollectedCents = summarizeNetCollectedCash(netCollectedPayments);
+    // The possible understatement of THAT figure, so over the same payments.
+    const additionalLedgerGap = summarizeAdditionalLedgerGap(
+      netCollectedScopedPayments(netCollectedPayments).map((payment) => ({
+        id: payment.bookingId,
+        payment,
+      })),
     );
-    const additionalLedgerGap = summarizeAdditionalLedgerGap(bookings);
     if (additionalLedgerGap.bookingIds.length > 0) {
       logger.error(
         {
