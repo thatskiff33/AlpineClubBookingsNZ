@@ -143,9 +143,12 @@ export async function buildBookingsDashboard(
       value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this
-      // is the whole of the cash and not a part of it.
+      // is the whole of the cash and not a part of it. #3637: over the one Net
+      // Collected booking scope (every booking in the range whatever its
+      // status, deleted ones left out), so it answers as the dashboard,
+      // Payments and Reports do.
       description:
-        "Captured payments less refunds from local payment rows, including any collected price increase.",
+        "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count at the fee kept; deleted bookings are left out.",
       footnote:
         ledgerGapBookings > 0
           ? `May understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`

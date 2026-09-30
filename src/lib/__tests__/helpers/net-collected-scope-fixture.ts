@@ -1,17 +1,18 @@
 /**
  * #3372, owner decision A: ONE fixture for the one Net Collected booking scope,
- * handed to all three surfaces that show a "Net Collected" figure - the
- * dashboard card, the payments board tile and Reports' Net Collected Cash - so
- * each surface's test asserts the SAME expected amount from the SAME payments.
+ * handed to all four surfaces that show a "Net Collected" figure - the
+ * dashboard card, the payments board tile, Reports' Net Collected Cash and the
+ * Finance dashboard's "Net collected cash" (#3637) - so each surface's test
+ * asserts the SAME expected amount from the SAME payments.
  *
  * Two payments:
  *  - a CANCELLED booking that paid $200.00 and was refunded $150.00, so the
  *    club kept a $50.00 cancellation fee. It counts: $50.00 is money collected.
  *  - a SOFT-DELETED booking's captured $70.00. It does not count.
  *
- * Each surface used to answer differently: the payments tile and Reports left
- * the cancelled booking out ($0.00), the dashboard counted the deleted booking
- * too ($120.00). Under the one scope all three read $50.00.
+ * Each surface used to answer differently: the payments tile, Reports and
+ * Finance left the cancelled booking out ($0.00), the dashboard counted the
+ * deleted booking too ($120.00). Under the one scope all four read $50.00.
  */
 export const NET_COLLECTED_SCOPE_FIXTURE = {
   keptFee: {

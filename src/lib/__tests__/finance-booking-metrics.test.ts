@@ -10,6 +10,11 @@ const { mockPrisma, mockLogger } = vi.hoisted(() => ({
     booking: {
       findMany: vi.fn(),
     },
+    // #3637: Net collected cash reads its own payments (every booking in the
+    // window, whatever its status), not the status-listed bookings above.
+    payment: {
+      findMany: vi.fn(),
+    },
     // #1982 — the default lodge's capacity is a DB override (self-healed from
     // the config bed total), not a club.json runtime fallback. Return value set
     // in beforeEach so it stays LODGE_CAPACITY.
@@ -31,6 +36,10 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
 import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
+import {
+  NET_COLLECTED_SCOPE_FIXTURE,
+  NET_COLLECTED_SCOPE_PAYMENTS,
+} from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 function availableBeds(occupiedBeds: number): number {
@@ -124,13 +133,57 @@ function withReconciledMoneyEvidence<T extends FinanceFixtureBooking>(rows: T[])
   });
 }
 
-function mockBookingRows<T extends FinanceFixtureBooking>(rows: T[]): void {
+type NetCollectedFixturePayment = {
+  status: PaymentStatus | string;
+  amountCents: number;
+  refundedAmountCents: number;
+};
+
+/**
+ * #3637: the Net Collected payment read, as the database would answer it - a
+ * payment row with the stay dates and `deletedAt` of its booking.
+ */
+function netCollectedPaymentRows(
+  rows: ReadonlyArray<{
+    checkIn: Date;
+    checkOut: Date;
+    deletedAt?: Date | null;
+    payment?: NetCollectedFixturePayment | null;
+  }>,
+) {
+  return rows.flatMap((row) =>
+    row.payment
+      ? [
+          {
+            status: row.payment.status,
+            amountCents: row.payment.amountCents,
+            refundedAmountCents: row.payment.refundedAmountCents,
+            booking: {
+              checkIn: row.checkIn,
+              checkOut: row.checkOut,
+              deletedAt: row.deletedAt ?? null,
+            },
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * The status-listed booking rows, and - unless a test states them itself - the
+ * same bookings' payments as the Net Collected read.
+ */
+function mockBookingRows<
+  T extends FinanceFixtureBooking & { payment?: NetCollectedFixturePayment | null },
+>(rows: T[]): void {
   mockPrisma.booking.findMany.mockResolvedValue(withReconciledMoneyEvidence(rows));
+  mockPrisma.payment.findMany.mockResolvedValue(netCollectedPaymentRows(rows));
 }
 
 describe("finance-booking-metrics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.payment.findMany.mockResolvedValue([]);
     mockPrisma.lodgeSettings.findUnique.mockResolvedValue({
       capacity: LODGE_CAPACITY,
     });
@@ -1144,5 +1197,169 @@ describe("finance-booking-metrics", () => {
       })
     ).rejects.toThrow("realized window cannot exceed 366 days");
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3637 (epic #3372, owner decision A): Finance's "Net collected cash" is
+ * `summarizeCollectedCash` over the one Net Collected booking scope - every
+ * booking staying in the window, whatever its status, soft-deleted ones left
+ * out - and no longer the status-listed bookings the stay figures count.
+ */
+describe("finance net collected cash: the one Net Collected scope (#3637)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.lodgeSettings.findUnique.mockResolvedValue({
+      capacity: LODGE_CAPACITY,
+    });
+  });
+
+  function payment(
+    status: PaymentStatus,
+    amountCents: number,
+    refundedAmountCents = 0,
+  ) {
+    return {
+      status,
+      amountCents,
+      refundedAmountCents,
+      changeFeeCents: 0,
+      creditAppliedCents: 0,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+      transactions: [],
+    };
+  }
+
+  function stay(id: string, from: string, to: string) {
+    return {
+      id,
+      checkIn: new Date(`${from}T00:00:00.000Z`),
+      checkOut: new Date(`${to}T00:00:00.000Z`),
+      guests: [{ id: `${id}-guest` }],
+    };
+  }
+
+  // Two disjoint windows: April stayed, June ahead. May sits between them.
+  const QUERY = {
+    realized: { from: "2026-04-01", to: "2026-04-10", cutoffDate: "2026-04-10" },
+    forward: { from: "2026-06-01", to: "2026-06-10", asOfDate: "2026-05-31" },
+  };
+
+  const paid = {
+    ...stay("b-paid", "2026-04-02", "2026-04-04"),
+    status: BookingStatus.PAID,
+    finalPriceCents: 30_000,
+    payment: payment(PaymentStatus.SUCCEEDED, 30_000),
+  };
+  const partlyRefunded = {
+    ...stay("b-partly-refunded", "2026-06-03", "2026-06-05"),
+    status: BookingStatus.PAID,
+    finalPriceCents: 12_000,
+    payment: payment(PaymentStatus.PARTIALLY_REFUNDED, 12_000, 2_000),
+  };
+  // A soft-deleted booking still carrying a listed status: Finance's booking
+  // read does not check `deletedAt`, so the stay figures still see it.
+  const deletedPaid = {
+    ...stay("b-deleted-paid", "2026-04-03", "2026-04-05"),
+    status: BookingStatus.PAID,
+    finalPriceCents: 6_000,
+    deletedAt: new Date("2026-04-20T00:00:00.000Z"),
+    payment: payment(PaymentStatus.SUCCEEDED, 6_000),
+  };
+  const keptFee = {
+    ...stay("b-cancelled-kept-fee", "2026-04-05", "2026-04-07"),
+    payment: payment(PaymentStatus.PARTIALLY_REFUNDED, 20_000, 15_000),
+  };
+  const deletedCancelled = {
+    ...stay("b-deleted-cancelled", "2026-04-06", "2026-04-08"),
+    deletedAt: new Date("2026-04-09T00:00:00.000Z"),
+    payment: payment(PaymentStatus.SUCCEEDED, 7_000),
+  };
+  const pendingPayment = {
+    ...stay("b-pending", "2026-06-02", "2026-06-04"),
+    payment: payment(PaymentStatus.PENDING, 8_000),
+  };
+  const failedPayment = {
+    ...stay("b-failed", "2026-04-08", "2026-04-09"),
+    payment: payment(PaymentStatus.FAILED, 9_000),
+  };
+  const betweenWindows = {
+    ...stay("b-may", "2026-05-01", "2026-05-03"),
+    payment: payment(PaymentStatus.SUCCEEDED, 4_000),
+  };
+
+  it("counts every non-deleted booking in the window, whatever its status", async () => {
+    mockBookingRows([paid, partlyRefunded, deletedPaid]);
+    mockPrisma.payment.findMany.mockResolvedValue(
+      netCollectedPaymentRows([
+        paid,
+        partlyRefunded,
+        deletedPaid,
+        keptFee,
+        deletedCancelled,
+        pendingPayment,
+        failedPayment,
+        betweenWindows,
+      ]),
+    );
+
+    const metrics = await getFinanceBookingMetrics(QUERY);
+
+    // The payment read is the window envelope and lodge scope only: no status
+    // list. The window test and the deleted test are applied after it.
+    expect(mockPrisma.payment.findMany).toHaveBeenCalledWith({
+      where: {
+        booking: {
+          is: {
+            checkIn: { lte: new Date("2026-06-10T00:00:00.000Z") },
+            checkOut: { gt: new Date("2026-04-01T00:00:00.000Z") },
+          },
+        },
+      },
+      select: expect.any(Object),
+    });
+    // Captured: paid 300 + partly refunded 120 + kept-fee 200. Refunded: 20 +
+    // 150. Not counted: both deleted bookings, the pending and failed
+    // payments' amounts, and the May stay between the two windows.
+    expect(metrics.paymentSummary).toMatchObject({
+      capturedGrossCents: 62_000,
+      refundedCents: 17_000,
+      netCollectedCents: 45_000,
+    });
+    // Before #3637 the figure was the status-listed bookings' own: 300 + 120 +
+    // the deleted booking's 60, less 20 = 460.00. It rises by the 50.00 fee
+    // kept and falls by the deleted booking's 60.00.
+    //
+    // Only Net collected changed scope: the other payment figures still count
+    // the status-listed bookings.
+    expect(metrics.paymentSummary.bookingCount).toBe(3);
+    expect(metrics.paymentSummary.paymentStatusBreakdown).toMatchObject({
+      SUCCEEDED: 2,
+      PARTIALLY_REFUNDED: 1,
+      PENDING: 0,
+      FAILED: 0,
+    });
+  });
+
+  it("reads the same figure as the dashboard, Payments and Reports on the shared fixture", async () => {
+    mockBookingRows([]);
+    mockPrisma.payment.findMany.mockResolvedValue(
+      NET_COLLECTED_SCOPE_PAYMENTS.map((row) => ({
+        status: row.status,
+        amountCents: row.amountCents,
+        refundedAmountCents: row.refundedAmountCents,
+        booking: {
+          ...stay(row.bookingId, "2026-04-02", "2026-04-04"),
+          deletedAt: row.deletedAt,
+        },
+      })),
+    );
+
+    const metrics = await getFinanceBookingMetrics({ realized: QUERY.realized });
+
+    expect(metrics.paymentSummary.netCollectedCents).toBe(
+      NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents,
+    );
   });
 });

@@ -12,8 +12,6 @@
  *   - `ib-hold-clearing-audit.ts` `REALIZED_PAYMENT_STATUSES` and
  *     `xero-booking-edit-conditions.ts` `UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES`
  *     — #3632.
- *   - `finance-booking-metrics.ts` `FINANCE_CAPTURED_PAYMENT_STATUSES` and
- *     `xero-booking-invoices.ts` `STRIPE_CAPTURED_PAYMENT_STATUSES` — #3637.
  *
  * This file is a pure leaf — no
  * client, no logger, no `server-only` — so a census, a route and a page can all
@@ -312,6 +310,9 @@ export function sumRefundedAndCreditedCents(
  * outside it contributes nothing. Each surface still decides WHICH payments it
  * hands in - a month's, a filter's, a report range's - and says so on screen.
  *
+ * The finance dashboard's "Net collected cash" (`finance-booking-metrics.ts`)
+ * reads it too, over the bookings staying in its window (#3637).
+ *
  * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
  * EVERY in-scope row, captured or not, and the net is floored at zero.
  *
@@ -319,12 +320,6 @@ export function sumRefundedAndCreditedCents(
  * `Payment.amountCents` already contains captured additions (#2408); rebuilding
  * it from transaction rows would undercount legacy/group captures or double
  * count a later addition.
- *
- * KNOWN SECOND COPY: `src/lib/finance-booking-metrics.ts` still sums
- * `capturedGrossCents`, `refundedCents` and the floored net by hand for the
- * finance dashboard, against its own `FINANCE_CAPTURED_PAYMENT_STATUSES`. It is
- * being converged onto this function by a follow-up child of epic #3372; until
- * then a change to the rule here must be made there too.
  *
  * `status` is `string | null`, not `PaymentStatus`: the payments service hands
  * in a plain string, and a `null` captures nothing.
