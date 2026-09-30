@@ -231,7 +231,9 @@ per-night step extracted from `diffBookingPricing` so the stored lines and the
 ledger read one differ (`INV-SSOT`): one reversal per removed or repriced night
 naming that night's **live** line (never one an earlier edit already
 reversed), keyed `reversal:<lineId>`; one `GUEST_NIGHT` per added night, keyed
-on the modification. Every line is anchored on the edit's `BookingModification`,
+on the modification; a `PROMOTION` reversal and re-post when the promotion
+moved, and a `CHANGE_FEE` when the edit charged one, both keyed on the
+modification. Every line is anchored on the edit's `BookingModification`,
 reversals included, so an edit's slice is what that edit changed. **Sum or
 nothing**: the lines must add up to `priceDiffCents + changeFeeCents`, and a
 night with no live line, a live line at a different price, or any other
@@ -253,7 +255,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | --- | --- | --- | --- |
 | Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero; one `GROUP_DISCOUNT` (−) for `discountCents` when non-zero; one `CHANGE_FEE` (+) when `changeFeeCents > 0` | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
-| Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night (see above): a **reversal** (−) of each removed or repriced night's live `GUEST_NIGHT` line, and a fresh `GUEST_NIGHT` (+) per added night; a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one — all or nothing against `priceDiffCents + changeFeeCents` | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
+| Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 

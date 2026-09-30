@@ -6,15 +6,9 @@ import "server-only";
  * this module asks the ledger what it holds, plans, and writes — inside the
  * caller's transaction, under the caller's `pg_advisory_xact_lock(1)`.
  *
- * ONLY A BOOKING ALREADY CONFIRMED ON THE LEDGER POSTS (`bookingHasConfirmationLines`),
- * whatever its payment status (LANE-SYNC rule 1 on #3582). The settle confirms a
- * booking on the ledger once, and posts nothing if it already has; so once
- * confirmed, an edit's own lines are the only record of the change. An edit to a
- * booking not yet confirmed posts nothing: the confirmation, when it comes,
- * reads the booking as it then is. The question is asked under `lock(1)` —
- * which every edit door, the batch path and (since this issue) the review
- * completion already hold — because the settle asks it under the same key, so
- * an edit and a first settle cannot both see "not yet" and both post.
+ * Only a booking already confirmed on the ledger posts
+ * (`bookingHasConfirmationLines`), asked under that key: design
+ * `docs/design/booking-ledger.md` §5.1 and §4.1a.
  *
  * Build in pure code, caught and logged; write unwrapped. A refused statement
  * has already aborted the transaction (#3590's review), so the write is never

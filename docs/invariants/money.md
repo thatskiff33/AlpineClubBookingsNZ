@@ -544,25 +544,15 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 ## INV-MONEY-036
 
 - **An edit posts its own lines, per guest-night, or none; a review closure
-  records the share's money once** (#3582). Each priced edit (the four doors and
-  the batch path) posts, from the same before and after its `priceLines` are
-  computed from (`diffGuestNights`, `INV-SSOT`): a reversal of each removed or
-  repriced night's LIVE line — never one already reversed — a `GUEST_NIGHT` per
-  added night, a promotion reversal and re-post, and a `CHANGE_FEE`, all
-  anchored on its `BookingModification`. The lines must sum to
-  `priceDiffCents + changeFeeCents` or none post and the gap is logged. Only a
-  booking already confirmed on the ledger posts, asked under `lock(1)`; a parked
-  edit posts nothing (`INV-MOD-040`).
-
-  **A closure records one parked edit's money once, decided at booking grain.**
-  After its re-price, a closure whose charge lines now equal the re-based final
-  price reverses every live `AGREED_ADJUSTMENT` and posts no share; otherwise
-  the share posts as a stand-in only where its own re-price recorded no
-  movement. No review share posts a settlement line (`INV-MONEY-034`,
-  `INV-MONEY-035`). Rule and reason: design `booking-ledger.md` §5.3.
-  `booking-ledger-modification-sync.test.ts` holds two-sibling fixtures per
-  direction; `booking-ledger-modification.realdb.test.ts` proves them against
-  PostgreSQL.
+  records one parked edit's money once** (#3582). Rule and reason: design
+  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night, sum or
+  nothing, only on a booking confirmed on the ledger, asked under `lock(1)`;
+  a parked edit posts nothing, `INV-MOD-040`) and §5.3 (a closure's share,
+  decided at booking grain). No review share posts a settlement line
+  (`INV-MONEY-034`, `INV-MONEY-035`). Pins:
+  `booking-ledger-modification-posting.test.ts`,
+  `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
+  direction), `booking-ledger-modification.realdb.test.ts`.
 
 ## INV-MONEY-006
 

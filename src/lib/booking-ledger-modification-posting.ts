@@ -1,38 +1,18 @@
 /**
- * THE CHARGE LINES AN EDIT POSTS, AND THE ADJUSTMENT A REVIEW AGREES (#3582,
- * programme #3527; design `docs/design/booking-ledger.md` §5.1 and §5.3).
+ * THE CHARGE LINES AN EDIT POSTS, AND WHAT A REVIEW CLOSURE POSTS BESIDE ITS
+ * RE-PRICE (#3582, programme #3527).
  *
- * Pure: it takes the edit's own before and after, and the charge lines the
- * booking already holds, and returns the lines to post. It reads nothing and
- * writes nothing; `booking-ledger-modification-sync.ts` does both, inside the
- * edit's own transaction.
+ * The rules live in the design, once: an edit per guest-night, reversal plus
+ * re-post, sum or nothing — `docs/design/booking-ledger.md` §5.1; a closure's
+ * share at booking grain — §5.3. This module implements them and states only
+ * what the code itself must know.
  *
- * AN EDIT IS A REVERSAL PLUS A RE-POST, NEVER A DELTA, and it is posted PER
- * GUEST-NIGHT from the edit's OWN before and after (the shape decision on
- * #3582): the per-night step is `diffGuestNights`, the same differ the edit's
- * folded Xero and history lines are cut from (`INV-SSOT`), so the two cannot
- * disagree about which nights an edit touched.
- *
- *  - every night the differ says was REMOVED (gone, repriced, or re-sold under a
- *    new category) reverses that night's LIVE line — the one no later line has
- *    reversed, so an edit never reverses a line an earlier edit already
- *    reversed. The reversal copies the line it reverses and is keyed by that
- *    line's id (`reversalKey`), so it can be posted at most once;
- *  - every night the differ says was ADDED posts one fresh `GUEST_NIGHT`, keyed
- *    on the modification (`modificationNightKey`);
- *  - a moved promotion reverses the live `PROMOTION` line(s) and re-posts what
- *    the promotion now comes to;
- *  - a change fee posts one `CHANGE_FEE`.
- *
- * SUM OR NOTHING. The lines must add up to exactly what the edit says it moved
- * — `priceDiffCents + changeFeeCents` — or nothing posts and the reason is
- * returned for the caller to log (`INV-MOD-058`'s discipline, applied to the
- * ledger). A night with no live line (never confirmed, or taken away by an
- * earlier edit that posted nothing) or a live line whose figure is not the
- * price the edit says it gave back can therefore never produce a wrong figure;
- * C4's census (#3583) counts the gap. Every reversal is anchored on THIS edit's
- * modification, not on the line it reverses, so the edit's own slice of the
- * ledger is what the edit changed (C6, #3585, renders it).
+ * Pure: it takes the edit's own before and after and the lines the booking
+ * already holds, and returns the lines to post. It reads nothing and writes
+ * nothing; `booking-ledger-modification-sync.ts` does both, inside the edit's
+ * own transaction. The per-night step is `diffGuestNights`, the same differ the
+ * edit's folded Xero lines are cut from (`INV-SSOT`). A plan that cannot sum
+ * returns its reason for the caller to log.
  */
 import type { AgeTier, ManualRefundTaskDirection } from "@prisma/client";
 
@@ -307,18 +287,9 @@ export type PostedAdjustmentLine = {
 };
 
 /**
- * WHAT A REVIEW CLOSURE POSTS BESIDE ITS RE-PRICE — decided at BOOKING grain,
- * never per task. The rule and why: design `docs/design/booking-ledger.md` §5.3.
- *
- *  - The re-base ran and the booking's charge lines (after this closure's
- *    re-price rows) come to exactly its re-based final price: the charges carry
- *    the price, so every live `AGREED_ADJUSTMENT` on the booking is a stand-in
- *    the re-price has now superseded. Each is reversed by its line id, and this
- *    share posts nothing.
- *  - Otherwise, if this closure's own re-price rows recorded a movement, they
- *    carry the share: nothing more posts.
- *  - Otherwise (the re-base declined, or the charges do not carry the price) the
- *    share stands in for the money the headline has not moved yet.
+ * WHAT A REVIEW CLOSURE POSTS BESIDE ITS RE-PRICE, decided at booking grain:
+ * the reversals of superseded stand-ins, the share as a stand-in, or nothing.
+ * The rule and why: design `docs/design/booking-ledger.md` §5.3.
  */
 export function planReviewClosureShareLines({
   bookingId,
