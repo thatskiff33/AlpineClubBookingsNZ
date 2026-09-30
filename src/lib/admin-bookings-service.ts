@@ -6,7 +6,6 @@ import {
   emptyXeroActivitySummary,
   isXeroInvoiceExpectedPaymentStatus,
   mergeXeroActivitySummaries,
-  isXeroInvoiceExpectedPaymentStatus,
   matchesXeroStateFilter,
   paymentSourceFilters,
   xeroStateFilters,
