@@ -151,6 +151,7 @@ describe("membership cancellation unpaid-invoice blockers", () => {
         invoiceStatus: "AUTHORISED",
         direction: "receivable",
         amountDueCents: 12050,
+        amountDueTenThousandths: 1205000,
         currency: "NZD",
         dueDate: "2026-06-30",
         xeroUrl: expect.stringContaining("inv-1"),
@@ -214,6 +215,84 @@ describe("membership cancellation unpaid-invoice blockers", () => {
       invoice({ invoiceID: "draft", status: "DRAFT", amountDue: 99 }),
       // A zero-dollar authorised invoice owes nobody anything.
       invoice({ invoiceID: "zero", status: "AUTHORISED", amountDue: 0 }),
+    ]);
+
+    const blockers = await loadMembershipCancellationInvoiceBlockersByMemberId(
+      ["member-1"],
+      { nowMs: NOW_MS },
+    );
+
+    expect(blockers.get("member-1")).toEqual([]);
+  });
+
+  // #3724: "is anything owing" is asked of Xero's own figure, not of the
+  // rounded hundredths, which lose a three-decimal currency's third digit.
+  describe("an invoice in a three-decimal currency", () => {
+    it("blocks on a balance under half a hundredth, which rounds to zero cents", async () => {
+      respondWithInvoices([
+        invoice({
+          invoiceID: "inv-kwd",
+          invoiceNumber: "INV-KWD",
+          amountDue: 0.004,
+          currencyCode: "KWD",
+        }),
+      ]);
+
+      const blockers = await loadMembershipCancellationInvoiceBlockersByMemberId(
+        ["member-1"],
+        { nowMs: NOW_MS },
+      );
+
+      expect(blockers.get("member-1")).toHaveLength(1);
+      expect(blockers.get("member-1")?.[0]).toMatchObject({
+        invoiceNumber: "INV-KWD",
+        amountDueCents: 0,
+        amountDueTenThousandths: 40,
+        currency: "KWD",
+      });
+    });
+
+    it("keeps the third digit, and the refusal prints it", async () => {
+      respondWithInvoices([
+        invoice({
+          invoiceID: "inv-kwd",
+          invoiceNumber: "INV-KWD",
+          amountDue: 1.234,
+          currencyCode: "KWD",
+        }),
+      ]);
+
+      const blockers = await loadMembershipCancellationInvoiceBlockersByMemberId(
+        ["member-1"],
+        { nowMs: NOW_MS },
+      );
+
+      expect(blockers.get("member-1")?.[0]).toMatchObject({
+        amountDueCents: 123,
+        amountDueTenThousandths: 12340,
+      });
+      expect(
+        buildMembershipCancellationApprovalBlockedMessage(
+          blockers.get("member-1") ?? [],
+        ),
+      ).toContain("INV-KWD (KWD 1.234)");
+    });
+  });
+
+  it("does not block on a derived balance that is only a double's rounding residue", async () => {
+    respondWithInvoices([
+      invoice({
+        invoiceID: "inv-residue",
+        status: "AUTHORISED",
+        // No AmountDue, so the fallback computes 0.4 - 0.1 - 0.3, which a
+        // double evaluates to +5.55e-17 rather than zero. That is settled.
+        // (The residue must be POSITIVE: a negative one is already clamped to
+        // zero by the fallback, and the test would pass without the rounding.)
+        total: 0.4,
+        amountPaid: 0.1,
+        amountCredited: 0.3,
+        amountDue: undefined,
+      }),
     ]);
 
     const blockers = await loadMembershipCancellationInvoiceBlockersByMemberId(
