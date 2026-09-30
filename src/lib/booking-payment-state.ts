@@ -288,6 +288,31 @@ export function netCollectedScopedPayments<T extends NetCollectedPaymentRow>(
 }
 
 /**
+ * The base a paid-path cancellation tiers its refund off (#1031, INV-PAY-018) -
+ * the one derivation, shared by the executed cancel (`booking-cancel.ts`) and
+ * the preview a member sees before confirming (`booking-route-decisions.ts`),
+ * which must agree (`INV-SSOT`).
+ *
+ * What was paid and not yet handed back (`amountCents - refundedAmountCents`),
+ * capped at what the booking is now worth (`finalPrice + changeFee`), less the
+ * non-refundable change fee. The cap is why a stale mirror cannot pay out more
+ * than the booking is worth; the refunded term is why an understated mirror
+ * would (#3640).
+ */
+export function cancelRefundableBaseCents(input: {
+  amountCents: number;
+  refundedAmountCents: number;
+  finalPriceCents: number;
+  changeFeeCents: number;
+}): number {
+  const paidAmountCents = input.amountCents - input.refundedAmountCents;
+  return (
+    Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
+    input.changeFeeCents
+  );
+}
+
+/**
  * `Payment.refundedAmountCents` summed over the rows handed in, captured or not:
  * card refunds and account credits alike (`INV-PAY-050`). The one refund fold -
  * `summarizeCollectedCash` uses it for the net, and the payments board's

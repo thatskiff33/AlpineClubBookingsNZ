@@ -42,6 +42,10 @@ export function dedupeResolvedXeroObjectLinks(
   return Array.from(seen.values());
 }
 
+/** #3643: the payment roles on a booking's own invoices, named once. */
+export const INVOICE_PAYMENT_ROLE = "INVOICE_PAYMENT";
+export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT";
+
 export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
   if (link.xeroObjectType === "PAYMENT") {
     return link.role;
@@ -49,9 +53,9 @@ export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, 
 
   switch (link.role) {
     case "PRIMARY_INVOICE":
-      return "INVOICE_PAYMENT";
+      return INVOICE_PAYMENT_ROLE;
     case "SUPPLEMENTARY_INVOICE":
-      return "SUPPLEMENTARY_INVOICE_PAYMENT";
+      return SUPPLEMENTARY_INVOICE_PAYMENT_ROLE;
     case "SUBSCRIPTION_INVOICE":
       return "SUBSCRIPTION_PAYMENT";
     case "REFUND_CREDIT_NOTE":
@@ -59,6 +63,39 @@ export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, 
     default:
       return null;
   }
+}
+
+/**
+ * #3643 (`INV-PAY-107`): the roles `getDerivedInboundPaymentRole` gives a
+ * payment against a booking's OWN invoices — primary and supplementary.
+ */
+export const BOOKING_INVOICE_PAYMENT_ROLES = [
+  INVOICE_PAYMENT_ROLE,
+  SUPPLEMENTARY_INVOICE_PAYMENT_ROLE,
+] as const;
+
+/**
+ * #3643: whether a stored link records money paid against a booking's invoice.
+ * A part payment leaves nothing else locally (the booking settles only when the
+ * invoice is fully paid), so this is what the hold-expiry job and the repair
+ * tool read. A payment Xero reported as DELETED (reversed) is not money held.
+ */
+export function isRecordedBookingInvoicePayment(link: {
+  xeroObjectType: string;
+  role: string | null;
+  metadata: unknown;
+}): boolean {
+  if (link.xeroObjectType !== "PAYMENT") return false;
+  if (!(BOOKING_INVOICE_PAYMENT_ROLES as readonly string[]).includes(link.role ?? "")) {
+    return false;
+  }
+  const status =
+    link.metadata && typeof link.metadata === "object"
+      ? (link.metadata as { status?: unknown }).status
+      : null;
+  // Xero's payment statuses are AUTHORISED and DELETED; VOIDED is refused too
+  // because the #3535 audit always did, and one list now serves both.
+  return !["DELETED", "VOIDED"].includes(String(status ?? "").toUpperCase());
 }
 
 export function getDerivedInboundAllocationRole(creditNoteRole: string) {

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
+  bookingModificationFindMany: vi.fn(),
+  getInvoice: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
@@ -39,13 +41,18 @@ const mocks = vi.hoisted(() => ({
   readClubTimeZoneOutsideRequest: vi.fn(),
   createPayments: vi.fn(),
   createCreditNoteAllocation: vi.fn(),
+  findLateCapturePaymentIntents: vi.fn(),
+  readLateCaptureXeroReceipt: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
-    bookingModification: { findUnique: mocks.bookingModificationFindUnique },
+    bookingModification: {
+      findUnique: mocks.bookingModificationFindUnique,
+      findMany: mocks.bookingModificationFindMany,
+    },
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
     xeroObjectLink: {
       findFirst: mocks.xeroObjectLinkFindFirst,
@@ -103,6 +110,13 @@ vi.mock("@/lib/xero-contacts", async (importOriginal) => {
 vi.mock("@/lib/organisation-xero-contacts", () => ({
   findOrCreateXeroContactForInvoicedParty: mocks.findOrCreateXeroContactForInvoicedParty,
   invoicedPartyContactRepair: () => async () => "contact_1",
+}));
+
+// #3635 round-3 R5: which intents are late captures, and what receipt each has.
+vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/late-capture-xero-receipt")),
+  findLateCapturePaymentIntents: mocks.findLateCapturePaymentIntents,
+  readLateCaptureXeroReceipt: mocks.readLateCaptureXeroReceipt,
 }));
 
 vi.mock("@/lib/club-time-zone-runtime", () => ({
@@ -177,9 +191,11 @@ function completion(): Record<string, unknown> {
 }
 
 /** The credit-note payment that settled it, or undefined when none was made. */
-function settlingPayment(): { account?: { code?: string }; reference?: string } | undefined {
+function settlingPayment(): { account?: { code?: string }; reference?: string; date?: string } | undefined {
   const call = mocks.createPayments.mock.calls[0];
-  return call ? (call[1] as { payments: Array<{ account?: { code?: string }; reference?: string }> }).payments[0] : undefined;
+  return call
+    ? (call[1] as { payments: Array<{ account?: { code?: string }; reference?: string; date?: string }> }).payments[0]
+    : undefined;
 }
 
 beforeEach(() => {
@@ -189,6 +205,7 @@ beforeEach(() => {
       accountingApi: {
         createPayments: mocks.createPayments,
         createCreditNoteAllocation: mocks.createCreditNoteAllocation,
+        getInvoice: mocks.getInvoice,
       },
     },
     tenantId: "tenant_1",
@@ -212,6 +229,8 @@ beforeEach(() => {
   });
   mocks.readClubTimeZoneOutsideRequest.mockResolvedValue("Pacific/Auckland");
   mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+  mocks.findLateCapturePaymentIntents.mockImplementation(async () => new Set<string>());
+  mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "none" });
   mocks.findOrCreateXeroContactForInvoicedParty.mockResolvedValue("contact_1");
   mocks.retryXeroWriteWithContactRepair.mockImplementation(
     async (options: { buildRequestPayload: (id: string) => unknown }) => {
@@ -222,9 +241,140 @@ beforeEach(() => {
   mocks.createPayments.mockResolvedValue({ body: { payments: [{ paymentID: "pay_1" }] } });
   mocks.createCreditNoteAllocation.mockResolvedValue({ body: {} });
   mocks.bookingFindUnique.mockResolvedValue(bookingRow());
+  // #3535: a booking-anchored clearing note reads each invoice's amount due.
+  // By default the booking has no edits and its one invoice owes $150.00.
+  mocks.bookingModificationFindMany.mockResolvedValue([]);
+  configureInvoicesDue({ invoice_1: 150 });
 });
 
+/** Each invoice's live AUTHORISED amount due, in dollars, as Xero returns it. */
+function configureInvoicesDue(dueByInvoiceId: Record<string, number>) {
+  mocks.getInvoice.mockImplementation(async (_tenant: string, invoiceId: string) => ({
+    body: {
+      invoices: [
+        { invoiceID: invoiceId, status: "AUTHORISED", amountDue: dueByInvoiceId[invoiceId] ?? 0 },
+      ],
+    },
+  }));
+}
+
 describe("the cash refund note (createXeroCreditNote)", () => {
+  /**
+   * #3635 (`INV-PAY-110`): a late capture a treasurer kept, then reopened and
+   * refunded, was recorded on its OWN invoice (anchored on its approval task),
+   * and a booking paid only late has no primary one. The refund note answers
+   * that invoice and settles from Stripe, so the kept $50.00 nets to zero.
+   */
+  it("#3635: a refund after a reopened keep credits back the kept invoice when there is no primary one", async () => {
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...paymentRow(PaymentSource.STRIPE),
+      xeroInvoiceId: null,
+    });
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ id: "task_kept" }]);
+    mocks.xeroObjectLinkFindFirst.mockImplementation(async ({ where }: { where: { role?: string } }) =>
+      where.role === "KEPT_LATE_CAPTURE_INVOICE" ? { xeroObjectId: "inv_kept" } : null,
+    );
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" });
+
+    expect(builtCreditNote().lineItems?.[0]?.unitAmount).toBe(50);
+    expect(settlingPayment()).toMatchObject({ account: { code: "606" } });
+    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
+      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
+      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
+  });
+
+  it("#3635: names the kept invoice, not the pre-cancel one the cancel cleared, when the payment has both", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+    mocks.manualRefundTaskFindMany.mockResolvedValue([{ id: "task_kept" }]);
+    mocks.xeroObjectLinkFindFirst.mockImplementation(async ({ where }: { where: { role?: string } }) =>
+      where.role === "KEPT_LATE_CAPTURE_INVOICE" ? { xeroObjectId: "inv_kept" } : null,
+    );
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" });
+
+    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
+      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
+      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
+  });
+
+  /**
+   * #3635 round-3 R5/R3: a note for a LATE CAPTURE names that capture's own
+   * receipt and never the cleared pre-cancel invoice; with no receipt the app
+   * recorded it is not raised at all; and one raised after the fact carries
+   * the refund's own day.
+   */
+  describe("a late capture's refund note (round 3)", () => {
+    beforeEach(() => {
+      mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+      mocks.findLateCapturePaymentIntents.mockImplementation(async () => new Set(["pi_late"]));
+    });
+
+    it("names the capture's own receipt, not the payment's pre-cancel invoice, and is dated the refund's day", async () => {
+      mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: "inv_change" });
+
+      await createXeroCreditNote(PAYMENT_ID, 2500, {
+        refundMethod: "card",
+        paymentIntentId: "pi_late",
+        documentDate: "2026-06-12",
+      });
+
+      const recorded = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+      expect(recorded.allocation).toMatchObject({ invoiceId: "inv_change" });
+      expect(recorded).toMatchObject({ paymentIntentId: "pi_late", documentDate: "2026-06-12" });
+      expect(builtCreditNote()).toMatchObject({ date: "2026-06-12" });
+      expect(settlingPayment()).toMatchObject({ date: "2026-06-12" });
+      // R4: the note's link names its capture, which is what the per-capture
+      // sizing counts, so a later credit-back cannot note the same refund twice.
+      const noteLink = (completion().extraLinks as Array<{ role: string; metadata?: Record<string, unknown> }>)
+        .find((link) => link.role === "REFUND_CREDIT_NOTE");
+      expect(noteLink?.metadata).toMatchObject({ amountCents: 2500, paymentIntentId: "pi_late" });
+    });
+
+    for (const kind of ["none", "resolved-by-hand"] as const) {
+      it(`raises nothing, and completes its row as skipped, when the receipt is ${kind}`, async () => {
+        mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind });
+
+        await expect(
+          createXeroCreditNote(PAYMENT_ID, 2500, {
+            refundMethod: "card",
+            paymentIntentId: "pi_late",
+            syncOperationId: "op_note",
+          }),
+        ).resolves.toBe("");
+
+        expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+        expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+          "op_note",
+          expect.objectContaining({
+            responsePayload: expect.objectContaining({ skipped: "late-capture-refund-not-app-recorded", receipt: kind }),
+          }),
+        );
+      });
+    }
+
+    it("waits, as a retryable failure, while the released receipt is still on its way to Xero", async () => {
+      mocks.readLateCaptureXeroReceipt.mockResolvedValue({ kind: "recorded", invoiceId: null });
+
+      await expect(
+        createXeroCreditNote(PAYMENT_ID, 2500, { refundMethod: "card", paymentIntentId: "pi_late" }),
+      ).rejects.toThrow(/has not reached Xero yet/);
+      expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    });
+  });
+
+  it("#3635: still refuses a payment with neither a primary nor a kept invoice", async () => {
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...paymentRow(PaymentSource.STRIPE),
+      xeroInvoiceId: null,
+    });
+    await expect(createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" })).rejects.toThrow(
+      /No Xero invoice linked to payment/,
+    );
+  });
+
   it("a card refund says so and settles from the Stripe account", async () => {
     mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
 
@@ -394,6 +544,218 @@ describe("the modification credit note (createXeroCreditNoteForModification)", (
     expect(builtCreditNote().reference).toBe(
       "Refund against original credit card - Booking cmbookin",
     );
+  });
+
+  // #3535 (`INV-PAY-017`): a released internet-banking hold clears an invoice
+  // nobody paid. The note closes it by ALLOCATION, records no payment, and
+  // says why the invoice was cleared rather than naming a refund.
+  it("clears an unpaid invoice by allocation, records no payment, and names no refund", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.[0]?.description).toBe(
+      "Invoice cleared - booking not paid - Booking cmbookin",
+    );
+    expect(note.reference).toBe("Invoice cleared - booking not paid - Booking cmbookin");
+    expect(note.lineItems?.[0]?.unitAmount).toBe(150);
+    expect(`${note.reference} ${note.lineItems?.[0]?.description}`).not.toMatch(/refund/i);
+
+    // Allocated against the booking's own invoice for the full amount…
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    const allocation = mocks.createCreditNoteAllocation.mock.calls[0]![2] as {
+      allocations: Array<{ invoice: { invoiceID: string }; amount: number }>;
+    };
+    expect(allocation.allocations).toEqual([
+      expect.objectContaining({ invoice: { invoiceID: "invoice_1" }, amount: 150 }),
+    ]);
+    // …and no credit-note payment: no money is recorded as leaving any account.
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    expect(settlingPayment()).toBeUndefined();
+
+    // The choice is recorded on the operation, and no refund method with it.
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      localModel: string;
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.localModel).toBe("Booking");
+    expect(recorded.requestPayload).toEqual(
+      expect.objectContaining({ clearsUnpaidInvoice: true, invoiceId: "invoice_1" }),
+    );
+    expect(recorded.requestPayload).not.toHaveProperty("refundMethod");
+    expect(completion()).toEqual(
+      expect.objectContaining({
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_1",
+        extraLinks: expect.arrayContaining([
+          expect.objectContaining({ role: "MODIFICATION_CREDIT_NOTE_ALLOCATION" }),
+        ]),
+      }),
+    );
+  });
+
+  // #3643 (`INV-PAY-107`): the cancel path recorded a part payment, so the note
+  // clears only the unpaid rest and must not say the booking was not paid. The
+  // same allocation, no payment, and the choice recorded for a replay.
+  it("words a partly paid booking's note as clearing the unpaid balance", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+      clearsUnpaidBalance: true,
+    });
+
+    const note = builtCreditNote();
+    expect(note.lineItems?.[0]?.description).toBe(
+      "Unpaid balance cleared - booking cancelled - Booking cmbookin",
+    );
+    expect(note.reference).toBe("Unpaid balance cleared - booking cancelled - Booking cmbookin");
+    expect(`${note.reference}`).not.toMatch(/not paid/i);
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload).toEqual(
+      expect.objectContaining({ clearsUnpaidInvoice: true, clearsUnpaidBalance: true }),
+    );
+  });
+});
+
+/**
+ * #3535 (`INV-PAY-017`): a clearing note is sized over the booking's whole
+ * invoicing, so it is allocated across the primary and any supplementary
+ * invoice, each up to what it owes — and not created at all when they owe
+ * less than it.
+ */
+describe("clearing-note allocation across the booking's invoices (#3535)", () => {
+  it("spreads an upward-edited booking's note over the primary and the supplementary invoice", async () => {
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "mod_up" }]);
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([{ xeroObjectId: "inv_supp" }]);
+    configureInvoicesDue({ invoice_1: 300, inv_supp: 110 });
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 41000,
+      clearsUnpaidInvoice: true,
+    });
+
+    const allocations = mocks.createCreditNoteAllocation.mock.calls.map((call) => ({
+      body: (call[2] as { allocations: Array<{ invoice: { invoiceID: string }; amount: number }> })
+        .allocations[0],
+      key: call[4] as string,
+    }));
+    expect(allocations.map((entry) => [entry.body.invoice.invoiceID, entry.body.amount])).toEqual([
+      ["invoice_1", 300],
+      ["inv_supp", 110],
+    ]);
+    // Each allocation carries its own idempotency key.
+    expect(new Set(allocations.map((entry) => entry.key)).size).toBe(2);
+    expect(mocks.createPayments).not.toHaveBeenCalled();
+    expect(completion()).not.toHaveProperty("status");
+    const links = (completion().extraLinks as Array<{ role: string; metadata?: { invoiceId: string } }>)
+      .filter((link) => link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION")
+      .map((link) => link.metadata?.invoiceId);
+    expect(links).toEqual(["invoice_1", "inv_supp"]);
+    // The plan is recorded, so a PARTIAL repair replays exactly it.
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload.allocations).toEqual([
+      { invoiceId: "invoice_1", amountCents: 30000 },
+      { invoiceId: "inv_supp", amountCents: 11000 },
+    ]);
+  });
+
+  it("creates nothing and fails the operation when the invoices owe less than the note", async () => {
+    configureInvoicesDue({ invoice_1: 100 });
+
+    await expect(
+      createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        refundAmountCents: 15000,
+        clearsUnpaidInvoice: true,
+        syncOperationId: "op_queued",
+      }),
+    ).rejects.toThrow(/owe \$100\.00, less than this \$150\.00 invoice-clearing credit note/);
+
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_queued", expect.any(Error));
+  });
+
+  it("goes PARTIAL with the allocations that landed when a later one is refused", async () => {
+    mocks.bookingModificationFindMany.mockResolvedValue([{ id: "mod_up" }]);
+    mocks.xeroObjectLinkFindMany.mockResolvedValue([{ xeroObjectId: "inv_supp" }]);
+    configureInvoicesDue({ invoice_1: 300, inv_supp: 110 });
+    mocks.createCreditNoteAllocation
+      .mockResolvedValueOnce({ body: { ok: 1 } })
+      .mockRejectedValueOnce(new Error("allocation refused"));
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 41000,
+      clearsUnpaidInvoice: true,
+    });
+
+    expect(completion()).toEqual(expect.objectContaining({ status: "PARTIAL" }));
+    const links = (completion().extraLinks as Array<{ role: string; metadata?: { invoiceId: string } }>)
+      .filter((link) => link.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION")
+      .map((link) => link.metadata?.invoiceId);
+    expect(links).toEqual(["invoice_1"]);
+  });
+
+  // #3535 delta D3: a retry of a FAILED clearing note opens its own row here;
+  // the queue-type column is stamped so the audit and the late-cash alert see it.
+  it("stamps the clearing queue type on a row it opens itself, and not on an edit's note", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 15000,
+      clearsUnpaidInvoice: true,
+      repairExistingLink: true,
+    });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ localModel: "Booking", queueType: "MODIFICATION_CREDIT_NOTE" }),
+    );
+
+    mocks.startXeroSyncOperation.mockClear();
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+    });
+    expect(mocks.startXeroSyncOperation.mock.calls[0]![0]).not.toHaveProperty("queueType");
+  });
+
+  it("leaves an edit's reduction note on the original invoice without reading any invoice", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 2500,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.getInvoice).not.toHaveBeenCalled();
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+    // The key it always had (#3535 must not change an edit's key): the Xero
+    // idempotency key rides as the call's fifth argument.
+    expect(mocks.createCreditNoteAllocation.mock.calls[0]![4]).toBe(
+      "booking-mod:cmmodification01:mod-credit-note-allocation:2500:v1",
+    );
+    const recorded = mocks.startXeroSyncOperation.mock.calls[0]![0] as {
+      requestPayload: Record<string, unknown>;
+    };
+    expect(recorded.requestPayload).not.toHaveProperty("allocations");
   });
 });
 

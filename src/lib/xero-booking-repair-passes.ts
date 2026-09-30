@@ -3,6 +3,8 @@
 // the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2). Money stays in integer cents; provider
 // calls stay outside DB transactions (unchanged).
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { keptLateCaptureDocumentDate } from "@/lib/xero-kept-late-capture-invoice";
 import { editReviewChargeRequestCriteria } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
 import { PartialRefundError } from "@/lib/payment-transactions";
@@ -15,9 +17,11 @@ import type {
   XeroBookingRepairActionStatus,
 } from "./xero-booking-repair-types";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
+import { describeRepairedLateCaptureRefund } from "@/lib/late-capture-repair-result-message";
 import { createCountMap } from "./xero-booking-repair-utils";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 
 export function buildPassReport(pass: number, bookings: BookingXeroRepairBookingSummary[]): BookingXeroRepairPassReport {
   const bookingsWithFindings = bookings.filter((booking) => booking.findings.length > 0);
@@ -225,12 +229,22 @@ async function applyLateCaptureRefundRepair(
   const paymentId = String(action.payload.paymentId);
   const refundAmountCents = Number(action.payload.refundAmountCents);
   const bookingId = String(action.payload.bookingId);
-  const invoiceId =
-    typeof action.payload.invoiceId === "string"
-      ? action.payload.invoiceId
-      : null;
+  // The payload's `invoiceId` (the booking's pre-cancel invoice) no longer
+  // decides the note (#3635 C2); it stays in the payload for the report.
 
-  if (!Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
+  // #3639 delta D1: the classifier pins the refund to the captures no
+  // treasurer-approval task owns. Without that plan this refuses rather than
+  // letting a newest-first allocation reach a held capture.
+  // A legacy payment with no ledger rows carries no plan (and can hold nothing).
+  const allocation = Array.isArray(action.payload.allocation)
+    ? (action.payload.allocation as { paymentTransactionId: string; amountCents: number }[])
+    : null;
+  if (
+    !Number.isFinite(refundAmountCents) ||
+    refundAmountCents <= 0 ||
+    (allocation !== null &&
+      allocation.reduce((sum, slice) => sum + slice.amountCents, 0) !== refundAmountCents)
+  ) {
     action.status = "failed";
     action.resultMessage = "Late-capture repair payload is incomplete.";
     return;
@@ -244,6 +258,7 @@ async function applyLateCaptureRefundRepair(
       format,
       paymentId,
       amountCents: refundAmountCents,
+      allocation: allocation ?? undefined,
       reason: "requested_by_customer",
       metadata: {
         bookingId,
@@ -253,54 +268,42 @@ async function applyLateCaptureRefundRepair(
     });
   } catch (error) {
     // #1495: a multi-slice refund can fail partway — earlier slices already
-    // refunded at Stripe and recorded to the ledger. Queue the Xero refund
-    // credit note for that recorded portion BEFORE rethrowing, so Xero stays
-    // consistent with what actually moved instead of understating refunds
-    // until the amount-mismatch arm surfaces the drift. The note is sized from
-    // the recorded refund ledger by enqueueXeroRefundCreditNoteOperation
-    // (capped at the provider-backed cash evidence minus already-covered —
-    // resolveStripeCashRefundEvidence, #2902/INV-PAY-050; the slices just
-    // recorded ARE that evidence here), so passing the
-    // completed portion produces exactly the delta that moved; the operator's
-    // re-run for the remainder then enqueues only the still-uncovered slice
-    // under a distinct cumulative-watermark correlation key, never double-noting.
-    if (
-      invoiceId &&
-      error instanceof PartialRefundError &&
-      error.completedRefundCents > 0
-    ) {
+    // refunded at Stripe and recorded to the ledger. Record and note THOSE
+    // before rethrowing, so Xero stays consistent with what actually moved;
+    // the operator's re-run refunds the rest, and the per-capture sizing
+    // (`noteLateCaptureRefunds`) never notes a slice twice.
+    if (error instanceof PartialRefundError && error.refunds.length > 0) {
       try {
-        await deps.enqueueXeroRefundCreditNoteOperation(
+        await deps.recordAndNoteRepairedLateCaptureRefunds({
+          bookingId,
           paymentId,
-          error.completedRefundCents
-        );
-      } catch (enqueueError) {
-        // Best-effort: never let an enqueue failure mask the refund error the
-        // operator needs to see. The amount-mismatch arm still surfaces any
-        // residual drift on a later scan.
+          refunds: error.refunds,
+          format,
+        });
+      } catch (recordError) {
+        // Best-effort: never let it mask the refund error the operator needs.
         logger.error(
-          {
-            err: enqueueError,
-            bookingId,
-            paymentId,
-            completedRefundCents: error.completedRefundCents,
-          },
-          "Failed to queue Xero refund credit note for the completed slices of a partially-failed late-capture refund"
+          { err: recordError, bookingId, paymentId, completedRefundCents: error.completedRefundCents },
+          "Failed to record the completed slices of a partially-failed late-capture refund"
         );
       }
     }
     throw error;
   }
 
-  if (invoiceId) {
-    await deps.enqueueXeroRefundCreditNoteOperation(paymentId, refundAmountCents);
-  }
+  // #3635 (C2, `INV-PAY-110`): the webhook's own record first, then a note per
+  // capture only against a receipt the app recorded in Xero. Never the
+  // payment-wide note: for a late capture that names the invoice the cancel
+  // already cleared and posts a Stripe-account refund of money Xero never had.
+  const xero = await deps.recordAndNoteRepairedLateCaptureRefunds({
+    bookingId,
+    paymentId,
+    refunds: refundResult.refunds,
+    format,
+  });
 
-  const refundIds = refundResult.refunds.map((refund) => refund.refundId).filter(Boolean);
-  action.status = invoiceId ? "queued" : "applied";
-  action.resultMessage = invoiceId
-    ? `Refunded ${refundResult.refunds.length} Stripe payment intent(s) (${refundIds.join(", ")}) and queued the matching Xero refund credit note.`
-    : `Refunded ${refundResult.refunds.length} Stripe payment intent(s) (${refundIds.join(", ")}). No Xero invoice was linked, so no refund credit note was queued.`;
+  action.status = xero.noted.length > 0 ? "queued" : "applied";
+  action.resultMessage = describeRepairedLateCaptureRefund(refundResult.refunds, xero);
 }
 
 /**
@@ -330,8 +333,10 @@ async function applyLateCaptureRefundRepair(
  * the worker books the invoice's own net as the Stripe receipt, so releasing
  * would assert money the club does not hold - the overstatement
  * `planEditReviewChargeInvoicePayment` refuses at classify time, arriving by a
- * different door. That case is reported instead, and the invoice it leaves
- * behind is retired by the 14-day reaper; a stated limit, not a silent one.
+ * different door. That case is reported instead. The invoice it leaves behind
+ * is not issued: the waiting-invoice reaper's next run (#3641) finds its payment
+ * captured, applies the same capture rule, and cancels it unsent with an alert
+ * to an officer, so the shortfall is collected by hand.
  */
 async function releaseRepairedSupplementaryInvoiceIfAlreadyPaid(params: {
   action: BookingXeroRepairAction;
@@ -392,6 +397,29 @@ async function applyQueuedAction(
       const result = await deps.enqueueXeroBookingInvoiceOperation(
         String(action.payload.bookingId),
         { invoiceEmailDelivery: null }
+      );
+      action.status = result.queueOperationId ? "queued" : "skipped";
+      action.resultMessage = result.message;
+      return;
+    }
+    case "QUEUE_KEPT_LATE_CAPTURE_INVOICE": {
+      // #3635 (review F4): on a transaction of its own, where the enqueue takes
+      // the task's row lock and re-reads that the task is still DISMISSED, so a
+      // stale snapshot queues nothing for a capture since reopened or refunded,
+      // and the dismissal's own enqueue on the same task serialises with it.
+      const clubZone = await readClubTimeZoneOutsideRequest();
+      const result = await deps.prisma.$transaction((tx) =>
+        deps.enqueueXeroKeptLateCaptureInvoiceOperation({
+          manualRefundTaskId: String(action.payload.manualRefundTaskId),
+          bookingId: String(action.payload.bookingId),
+          paymentIntentId: String(action.payload.paymentIntentId),
+          capturedCents: Number(action.payload.capturedCents),
+          capturedOn: keptLateCaptureDocumentDate(
+            new Date(String(action.payload.capturedAt)),
+            clubZone,
+          ),
+          store: tx,
+        }),
       );
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;
@@ -496,6 +524,9 @@ async function applyQueuedAction(
             ? action.payload.bookingModificationId
             : undefined,
         refundAmountCents: Number(action.payload.refundAmountCents),
+        // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
+        // edit's note keeps the default (method) wording.
+        ...readModificationNoteWording(action.payload),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

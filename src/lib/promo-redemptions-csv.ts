@@ -1,5 +1,6 @@
 import { escapeCsvCell } from "./csv";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import { formatCentsPlain } from "@/lib/utils";
 
 // The 13-column export header. Kept as the single source of truth so the header
 // row and every data row built by `buildPromoRedemptionCsvCells` stay aligned.
@@ -82,7 +83,7 @@ export function buildPromoRedemptionCsvCells(
     row.booking.checkOut,
     String(row.booking.nights),
     row.eligibleGuestCount != null ? String(row.eligibleGuestCount) : "",
-    (row.discountCents / 100).toFixed(2),
+    formatCentsPlain(row.discountCents),
     String(row.freeNightsUsed),
     String(row.memberUseIndex),
   ];

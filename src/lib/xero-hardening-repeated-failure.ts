@@ -59,6 +59,9 @@ export async function maybeNotifyXeroRepeatedFailure(
       status: {
         in: ["FAILED", "PARTIAL"],
       },
+      // #3635 (`INV-INT-025`): a failure an officer resolved in Xero is done;
+      // the reconciliation report leaves it out of the same count.
+      manuallyResolvedAt: null,
       createdAt: {
         gte: windowStart,
       },

@@ -12,6 +12,12 @@ import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import {
+  PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
+  readPartPaymentAtCancel,
+} from "@/lib/internet-banking-part-payment-at-cancel";
+import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -62,6 +68,34 @@ export async function GET(
       return NextResponse.json({ error: refusal }, { status: 400 });
     }
 
+    // #3643 (`INV-PAY-107`): an internet banking booking Xero shows partly
+    // paid is cancelled on the paid path, with the policy applied to what was
+    // paid. The preview asks the SAME live question the cancel asks, through
+    // the same reader, so the two cannot disagree except by Xero changing in
+    // between (the cancel reads again). A GET holds no transaction, so the
+    // provider call is safe here. It is bounded twice (D8): a per-user limit on
+    // the existing booking-query limiter, and a one-minute cache per booking,
+    // so reopening the dialog does not spend the tenant's Xero allowance.
+    const isOfficer =
+      hasAdminAccess(session.user) ||
+      hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" });
+    let partPaymentRead = null as Awaited<ReturnType<typeof readPartPaymentAtCancel>>;
+    if (booking.status !== "PENDING") {
+      const limited = await checkRateLimit(
+        rateLimiters.bookingQuery,
+        `cancel-preview:${session.user.id}`,
+      );
+      if (!limited.success) return rateLimitedResponse(limited);
+      partPaymentRead = await readPartPaymentAtCancel(booking, { cached: true });
+    }
+    // DECISION 2: money the app cannot credit — an officer may cancel it as
+    // unpaid (the treasurer settles it by hand); a member is sent to the club.
+    const manualPartPayment = partPaymentRead?.kind === "manual";
+    if (manualPartPayment && !isOfficer) {
+      return NextResponse.json({ error: PART_PAYMENT_MANUAL_MEMBER_REFUSAL }, { status: 409 });
+    }
+    const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
+
     // PENDING bookings — no payment taken. #1491: paid-path eligibility is
     // shared with cancelBooking (SUCCEEDED, or PARTIALLY_REFUNDED with a
     // captured ledger row) so the preview can never show $0 for a cancel
@@ -70,7 +104,7 @@ export async function GET(
     if (
       booking.status === "PENDING" ||
       !booking.payment ||
-      !(await paymentEligibleForPaidCancelPath(booking.payment))
+      (!partPayment && !(await paymentEligibleForPaidCancelPath(booking.payment)))
     ) {
       // #1547: the no-refund / never-captured executed path restores applied
       // credit at 100% (ledger truth, no override) — so the preview must show
@@ -100,12 +134,17 @@ export async function GET(
         totalPaidCents: 0,
         hasPayment: false,
         manualRefund: false,
+        // DECISION 2: say that a recorded payment is left to the treasurer.
+        paymentSettledByHand: manualPartPayment,
       });
     }
 
     const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
     const preview = calculateCancellationPreview({
-      payment: booking.payment,
+      // #3643: the cash the cancel will record, not the invoice's face value.
+      payment: partPayment
+        ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
+        : booking.payment,
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
@@ -129,6 +168,10 @@ export async function GET(
       // tier, which is what the executed cancel uses), so preview parity holds;
       // this flag only lets the dialog say honestly what will happen.
       manualRefund: booking.payment.manuallyMarkedPaidAt !== null,
+      // The method the cancel will use whatever is chosen (an internet banking
+      // payment refunds as account credit), from the cancel path's own home,
+      // so the dialog offers only that option.
+      refundMethodForced: forcedCancelRefundMethod(booking.payment.source),
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");

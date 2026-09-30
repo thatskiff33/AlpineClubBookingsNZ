@@ -6,6 +6,7 @@ import {
   emptyXeroActivitySummary,
   isXeroInvoiceExpectedPaymentStatus,
   mergeXeroActivitySummaries,
+  isXeroInvoiceExpectedPaymentStatus,
   matchesXeroStateFilter,
   paymentSourceFilters,
   xeroStateFilters,
@@ -1130,7 +1131,9 @@ function deriveBookingOperationalState(
         emptyXeroActivitySummary()
     ),
   ]);
-  const invoiceExpected = isXeroInvoiceExpectedPaymentStatus(booking.payment?.status);
+  const invoiceExpected = booking.payment
+    ? isXeroInvoiceExpectedPaymentStatus(booking.payment.status)
+    : false;
   // #3467: the set already applies the one evidence rule (stored id OR active
   // PRIMARY_INVOICE link), so the field is not OR'd in a second time here.
   const invoiceLinked = booking.payment

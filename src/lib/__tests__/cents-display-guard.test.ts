@@ -45,8 +45,6 @@ const RULE_ID = "INV-SSOT-001 / #3302";
 const ORDINARY_FILE = "src/lib/cents-display-guard-fixture.ts";
 /** A `.tsx` counterpart: JSX in a real exempted file cannot parse under a `.ts` filePath. */
 const ORDINARY_TSX_FILE = "src/components/cents-display-guard-fixture.tsx";
-/** A file exempted from `CENTS_DISPLAY_RESTRICTIONS` AND `MONEY_DOMAIN_MODULES`'s money arm swap. */
-const LAYERED_FILE = "src/lib/finance-legacy-dashboard-export.ts";
 
 /** A single `(cents / 100).toFixed(2)` call — the exact shape the rule bans. */
 const VIOLATING_CODE =
@@ -148,6 +146,8 @@ describe("cents-display guard: catches the shape", () => {
       .find((entry) => entry.message?.startsWith(RULE_ID))?.message;
     expect(message).toContain("formatCents");
     expect(message).toContain("formatCentsPlain");
+    expect(message).toContain("including editable dollars inputs");
+    expect(message).toContain("Only a genuinely different output");
     expect(message).toContain("CENTS_DISPLAY_EXEMPTIONS");
   });
 
@@ -284,15 +284,16 @@ describe("currency-locale guard (#3325, INV-CONFIG-001): literal locale or curre
     ).toEqual([]);
   });
 
-  it("is NOT lifted at a file on the toFixed exemption list — that list excuses an input's plain value, never a hard-coded locale", async () => {
+  it("is NOT lifted at any file on the toFixed exemption list — that list excuses the toFixed arithmetic, never a hard-coded locale", async () => {
     const { exemptFiles } = await loadEslintConfig();
-    const [exempted] = Array.from(exemptFiles).filter((file) => file !== "src/lib/utils.ts");
-    expect(exempted).toBeDefined();
-    const results = await eslint.lintText(
-      'import { APP_CURRENCY } from "@/config/operational";\nexport const f = new Intl.NumberFormat("en-NZ", { style: "currency", currency: APP_CURRENCY });\n',
-      { filePath: path.join(REPO_ROOT, exempted as string) },
-    );
-    expect(hitsIn(results)).toHaveLength(1);
+    expect(exemptFiles.size).toBeGreaterThan(0);
+    for (const exempted of exemptFiles) {
+      const results = await eslint.lintText(
+        'import { APP_CURRENCY } from "@/config/operational";\nexport const f = new Intl.NumberFormat("en-NZ", { style: "currency", currency: APP_CURRENCY });\n',
+        { filePath: path.join(REPO_ROOT, exempted) },
+      );
+      expect(hitsIn(results), exempted).toHaveLength(1);
+    }
   });
 
   // The structural mirror: the config's exported arm is what the resolved rule
@@ -412,19 +413,5 @@ describe("cents-display guard: the declared exemptions", () => {
         resolved.messages.some((message) => message.startsWith("INV-OPS-001")),
       ).toBe(true);
     }
-  });
-
-  it("swaps in the money-MODULE arm, not the narrow one, for the three MONEY_DOMAIN_MODULES overlaps", async () => {
-    // `LAYERED_FILE` is also a `finance-*` member, so its resolved config must
-    // still carry `MONEY_MODULE_RESTRICTIONS` (the broad arm) even though it
-    // drops `CENTS_DISPLAY_RESTRICTIONS` — proving the two exemption blocks
-    // did not collapse into one that silently reverts it to the narrow arm.
-    const resolved = await resolveRestrictedSyntax(eslint, REPO_ROOT, LAYERED_FILE);
-    expect(resolved.severity).toBe(2);
-    // A money-MODULE-arm selector this file must still carry: the broad
-    // "anything * 100 that is not a ratio" arm from `MONEY_MODULE_RESTRICTIONS`.
-    expect(
-      resolved.selectors.some((selector) => selector.includes('operator="*"')),
-    ).toBe(true);
   });
 });

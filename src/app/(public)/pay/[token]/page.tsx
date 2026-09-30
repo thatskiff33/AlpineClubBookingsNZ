@@ -29,9 +29,11 @@ import {
 // migration carried this file past its 500-line route-page budget. See that
 // file's header for why an allowance was not the answer.
 import {
+  CardPaymentUnavailableNotice,
   FinancialReviewNotice,
   formatLinkExpiry,
   formatStayDay,
+  internetBankingHeading,
   NarrativeCard,
   toneForState,
   type Narrative,
@@ -456,9 +458,13 @@ export default function PayByLinkPage() {
           </StripeProvider>
         ) : (
           <div className="space-y-3">
-            <Button onClick={startCardPayment} disabled={intentLoading}>
-              {intentLoading ? "Preparing..." : "Pay by card"}
-            </Button>
+            {payable.cardPaymentAvailable !== false ? (
+              <Button onClick={startCardPayment} disabled={intentLoading}>
+                {intentLoading ? "Preparing..." : "Pay by card"}
+              </Button>
+            ) : (
+              <CardPaymentUnavailableNotice />
+            )}
             {intentError ? (
               <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {intentError}
@@ -467,7 +473,7 @@ export default function PayByLinkPage() {
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">
-                <p className="font-medium text-foreground">Or pay by internet banking</p>
+                <p className="font-medium text-foreground">{internetBankingHeading(payable)}</p>
                 <p className="mt-1 text-muted-foreground">
                   {/* #2919 review: every token this body may carry, not just the
                       payment reference — and the lodge is THIS booking's. */}

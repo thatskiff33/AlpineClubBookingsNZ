@@ -17,16 +17,34 @@ const mocks = vi.hoisted(() => ({
   deriveBookingAppliedCreditCents: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    booking: {
-      findUnique: vi.fn(),
+vi.mock("@/lib/prisma", () => {
+  const payment = {
+    upsert: vi.fn(),
+  };
+  return {
+    prisma: {
+      booking: {
+        findUnique: vi.fn(),
+      },
+      payment,
+      // #3638: the mint attaches its intent under lock(1), re-reading the
+      // payment's source first; nothing here has switched to Internet Banking.
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({
+          $executeRaw: vi.fn(),
+          payment: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            upsert: payment.upsert,
+          },
+          // ...and the booking's status, which is still payable.
+          booking: {
+            findUnique: vi.fn().mockResolvedValue({ status: "PAYMENT_PENDING" }),
+          },
+        })
+      ),
     },
-    payment: {
-      upsert: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),

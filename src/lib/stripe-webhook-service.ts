@@ -6,10 +6,10 @@ import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
 import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
-  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
-  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
+import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
@@ -24,10 +24,19 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { findCompletedHandBackForLateCapture } from "@/lib/deleted-booking-modification-payment";
 import {
   announceAutomaticLateCaptureRefund,
+  acknowledgeSettledLateNotice,
   recordAutomaticLateCaptureRefund,
   reportWithheldLateCaptureRefund,
   type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
+import { CANCELLED_BOOKING_LATE_CAPTURE_REASON } from "@/lib/cancellation-settled-money";
+import { holdLateCaptureForTreasurerIfRequired } from "@/lib/late-capture-refund-hold";
+import { queueLateCaptureRefundCreditNote } from "@/lib/late-capture-refund-credit-note";
+import { findLateCapturePaymentIntents } from "@/lib/late-capture-xero-receipt";
+import {
+  buildLateCaptureRefundMetadata,
+  buildLateCaptureRefundStripeKeyPrefix,
+} from "@/lib/payment-recovery-keys";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
@@ -880,7 +889,8 @@ async function handleAdditionalModificationPaymentSucceeded(
     },
   });
 
-  if (bookingRecord?.status === "CANCELLED") {
+  // #3641: the one "refunded, not kept" predicate, shared with the late-capture Xero release.
+  if (bookingRecord && isLateCaptureRefundedBookingStatus(bookingRecord.status)) {
     await handleCancelledBookingAdditionalPaymentSucceeded(
       bookingRecord,
       paymentIntent,
@@ -891,7 +901,7 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
-    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
     if (released.released > 0) {
@@ -931,7 +941,7 @@ async function handleAdditionalModificationPaymentSucceeded(
       : paymentIntent.payment_method?.id ?? null,
   });
 
-  const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     paymentIntent.id
   );
   if (released.released > 0) {
@@ -1090,6 +1100,12 @@ async function handleSetupIntentCanceled(
   );
 }
 
+/** A refund of a late capture on a cancelled booking (#3635 round-3 R1). */
+async function isLateCaptureRefund(paymentIntentId: string | null | undefined): Promise<boolean> {
+  if (!paymentIntentId) return false;
+  return (await findLateCapturePaymentIntents([paymentIntentId])).has(paymentIntentId);
+}
+
 /**
  * Handle charge refund events (from Stripe dashboard or API refunds).
  */
@@ -1131,8 +1147,16 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     "Refund processed for payment"
   );
 
-  if (refundSync.refundDeltaCents > 0) {
-    // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
+  // #3635: a refund of a LATE capture is noted per capture, and only once the
+  // app has recorded that capture's receipt in Xero; one taken earlier is
+  // credited back when the receipt is recorded (`creditBackLateCaptureRefunds`).
+  if (refundSync.refundDeltaCents > 0 && (await isLateCaptureRefund(paymentIntentId))) {
+    await queueLateCaptureRefundCreditNote({
+      paymentId: refundSync.paymentId,
+      paymentIntentId: paymentIntentId!,
+    });
+  } else if (refundSync.refundDeltaCents > 0) {
+    // Queue only what this sync newly added to the refunded total (#3640); charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
         refundSync.paymentId,
@@ -1403,6 +1427,20 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     return;
   }
 
+  // #3639: the same question as the primary handler, first. A change payment
+  // captured before a cancel that kept it — or a replay of one this handler
+  // already refunded — is acknowledged, not refunded again.
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "modification",
+    })
+  ) {
+    return;
+  }
+
   // The cancel claim marked this transaction FAILED; Stripe has now proven it
   // captured. Record the capture before refunding (the refund allocates
   // against a captured transaction). Skipped on replays where the row is
@@ -1465,6 +1503,10 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     return;
   }
 
+  // #3639 (owner decision 26 Sep 2026): the club may have a treasurer approve
+  // this refund; and a task that already owns this capture decides it.
+  if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
+
   const refundResult = await refundPaymentTransactions({
     format,
     paymentId: booking.payment.id,
@@ -1477,11 +1519,8 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
         amountCents: paymentIntent.amount,
       },
     ],
-    metadata: {
-      bookingId: booking.id,
-      reason: "cancelled_booking_late_capture",
-    },
-    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+    metadata: buildLateCaptureRefundMetadata(booking.id),
+    idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
   });
   const refundId = refundResult.refunds[0]?.refundId;
 
@@ -1566,33 +1605,12 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
     )
   );
 
-  // The supplementary invoice operation for this intent is left in
-  // WAITING_PAYMENT on purpose (the stale-WAITING_PAYMENT reaper retires it).
-  // Only when a race already released it — or the payment carries a primary
-  // Xero invoice — does the refund need a corrective credit note; the
-  // enqueue is delta-capped against payment.refundedAmountCents, so replays
-  // and already-covered states collapse to a no-op.
-  try {
-    const needsCorrectiveCreditNote =
-      booking.payment.xeroInvoiceId !== null ||
-      (await hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
-        paymentIntent.id
-      ));
-    if (needsCorrectiveCreditNote) {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        booking.payment.id,
-        paymentIntent.amount
-      );
-      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    }
-  } catch (xeroErr) {
-    logger.error(
-      { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
-      "Failed to queue corrective Xero refund credit note after late additional capture on a cancelled booking"
-    );
-  }
+  // The corrective Xero credit note, when there is anything to correct - shared
+  // with the primary handler and the treasurer-approved refund (#3639).
+  await queueLateCaptureRefundCreditNote({
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
 
   logger.warn(
     { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },
@@ -1628,10 +1646,10 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * there.
  *
  * #2774's FENCE APPLIES HERE TOO, and one thing about it is worth stating plainly
- * rather than left for a reader to assume: nothing in the tree currently raises an
- * `OPEN` `ManualRefundTask` for a PRIMARY payment intent — the confirm-modification
- * -payment route is the only raiser of one of these and it handles modification
- * intents — so today the fence cannot fire on this path. It is here anyway because
+ * rather than left for a reader to assume: only the confirm-modification-payment
+ * route raises an `OPEN` task under the fence's `reason` sentences, and it handles
+ * modification intents — so today the fence cannot fire on this path. (#3639's
+ * treasurer-approval task carries its own sentence and is found by its marker.) It is here anyway because
  * the fence is keyed on the payment intent rather than on the handler, so a reader
  * of one handler must not conclude the other is unfenced, and a future raiser is
  * covered by construction. `booking-cancel.ts`'s cash-settlement task sits on the
@@ -1641,6 +1659,11 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
  * A refund failure is deliberately NOT swallowed, as in the sibling handler: the
  * webhook returns 500, the processed-event marker is cleared, and Stripe's retry
  * replays the same idempotent refund keys.
+ *
+ * #3639: it first asks what the cancellation already settled. A notice for money
+ * captured before the cancel, or already refunded, is acknowledged — 200, no
+ * refund, no Xero note, no status write, an audit entry — see
+ * `acknowledgeSettledLateNotice`.
  */
 async function handleCancelledBookingPaymentSucceeded(
   booking: {
@@ -1676,6 +1699,17 @@ async function handleCancelledBookingPaymentSucceeded(
     return;
   }
 
+  if (
+    await acknowledgeSettledLateNotice({
+      bookingId: booking.id,
+      paymentId: booking.payment.id,
+      paymentIntent,
+      captureKind: "primary",
+    })
+  ) {
+    return;
+  }
+
   const paymentMethodId =
     typeof paymentIntent.payment_method === "string"
       ? paymentIntent.payment_method
@@ -1688,7 +1722,8 @@ async function handleCancelledBookingPaymentSucceeded(
     amountCents: paymentIntent.amount,
     status: PaymentStatus.SUCCEEDED,
     paymentMethodId,
-    reason: "cancelled_booking_late_capture",
+    // #3639: marks this handler's own write, so a crash-and-retry still refunds.
+    reason: CANCELLED_BOOKING_LATE_CAPTURE_REASON,
   });
 
   // #2773: the same shape the sibling handler builds, so the record, the audit
@@ -1725,15 +1760,15 @@ async function handleCancelledBookingPaymentSucceeded(
     return;
   }
 
+  // #3639: the same setting and ownership check as the sibling handler.
+  if (await holdLateCaptureForTreasurerIfRequired(lateCapture)) return;
+
   const refundResult = await refundPaymentTransactions({
     format,
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
-    metadata: {
-      bookingId: booking.id,
-      reason: "cancelled_booking_late_capture",
-    },
-    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+    metadata: buildLateCaptureRefundMetadata(booking.id),
+    idempotencyKeyPrefix: buildLateCaptureRefundStripeKeyPrefix(booking.id, paymentIntent.id),
   });
   const refundId = refundResult.refunds[0]?.refundId;
 
@@ -1769,23 +1804,10 @@ async function handleCancelledBookingPaymentSucceeded(
     logger.error({ err, bookingId: booking.id }, "Failed to send late-capture cancellation alert")
   );
 
-  if (booking.payment.xeroInvoiceId) {
-    try {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        booking.payment.id,
-        paymentIntent.amount
-      );
-
-      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
-        "Failed to queue Xero refund credit note after late cancelled-booking capture"
-      );
-    }
-  }
+  await queueLateCaptureRefundCreditNote({
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
 
   logger.warn(
     { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },

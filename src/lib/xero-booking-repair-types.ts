@@ -15,6 +15,13 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_ACCOUNT_CREDIT_NOTE",
   "CANCELLED_IN_FLIGHT_PAYMENT",
   "LATE_CAPTURE_AFTER_CANCELLATION",
+  // #3635: a late capture a treasurer kept on a cancelled booking, whose
+  // booking payment Xero has no invoice for.
+  "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+  // #3635 round-3 R5: a kept capture an officer recorded by hand in Xero was
+  // refunded; the app raises no note for it, so an officer records the refund
+  // by hand too. Report-only, never actionable.
+  "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -25,6 +32,10 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // action — that action would mint (and email) an awaiting-payment invoice for
   // money the club already holds.
   "MANUALLY_SETTLED_NO_XERO_EXPECTED",
+  // #3635 (orchestrator decision 2): informational, never actionable. An
+  // officer resolved the operation in Xero and the club's records hold no
+  // document for it: done, never re-run, but still seen.
+  "RESOLVED_IN_XERO_BY_OFFICER",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -45,6 +56,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "SYNC_BOOKING_SCOPED_LINK",
   "REPAIR_CANCELLED_IN_FLIGHT_PAYMENT",
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
+  // #3635: the invoice, paid from Stripe, recording a kept late capture.
+  "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
   "MARK_MANUAL_REVIEW",
 ] as const;
 
@@ -207,6 +220,8 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       // cash / off-Xero settlement (no Xero objects expected) apart from a
       // genuinely missing invoice.
       manuallyMarkedPaidAt: true,
+      // #3635: only a Stripe payment's refund gap is read (the note-eligible cash).
+      source: true,
       transactions: {
         orderBy: {
           createdAt: "asc",
@@ -332,6 +347,10 @@ export const xeroOperationSelect = Prisma.validator<Prisma.XeroSyncOperationSele
   createdAt: true,
   updatedAt: true,
   replayable: true,
+  // #3643 F1 / #3635 (`INV-INT-025`): an officer's "resolved in Xero" mark
+  // means the operation is done - never retried, and never re-minted beside.
+  manuallyResolvedAt: true,
+  manuallyResolvedReason: true,
 });
 
 export type XeroOperationRecord = Prisma.XeroSyncOperationGetPayload<{
@@ -348,9 +367,37 @@ export interface ResolvedLocalObject {
   conflicts: string[];
 }
 
-export interface BlockingOperationMatch {
+/**
+ * What `getBlockingOperation` found (#3635, `INV-INT-025`). A discriminated
+ * union so that every call site has to say what it does with each case:
+ *
+ * - `retryable`: a live FAILED/PARTIAL row the retry helper can replay. The
+ *   only shape `buildRetryAction` accepts, so a repair offer can never be
+ *   built from anything else.
+ * - `blocked`: a live row that must not be retried or minted beside - PENDING,
+ *   RUNNING, WAITING_PAYMENT, or a FAILED/PARTIAL row the helper refuses.
+ * - `resolved`: the only matching rows are ones an officer marked resolved in
+ *   Xero. The object was made by hand, so the answer is "done": nothing is
+ *   retried and nothing new is queued (a new document would be a rival to the
+ *   officer's). It deliberately carries no `operation` field, so a site that
+ *   reads `.operation` without first excluding it fails to compile.
+ */
+export type BlockingOperationMatch =
+  | RetryableOperationMatch
+  | {
+      kind: "blocked";
+      operation: XeroOperationRecord;
+      retryMeta: XeroOperationRetryMeta;
+    }
+  | {
+      kind: "resolved";
+      resolvedOperation: XeroOperationRecord;
+    };
+
+export interface RetryableOperationMatch {
+  kind: "retryable";
   operation: XeroOperationRecord;
-  retryMeta: XeroOperationRetryMeta;
+  retryMeta: XeroOperationRetryMeta & { supported: true };
 }
 
 export interface XeroAmountEvidence {
@@ -383,6 +430,61 @@ export interface BookingClassificationContext {
   modificationOperationsById: Map<string, XeroOperationRecord[]>;
   cancellationRefundRecoveryOperations: BookingCancellationRefundRecoveryRecord[];
   /**
+   * #3639 review F3: the payment intents on this booking a treasurer-approval
+   * task owns, whatever its status. A held or kept late capture is DECIDED, so
+   * the late-capture finding must not offer to refund it.
+   */
+  lateCaptureApprovalIntentIds: Set<string>;
+  /**
+   * #3635: of those, the ones a treasurer KEPT (task DISMISSED), by intent: the
+   * task and the Xero rows anchored on it. A kept booking payment is recorded
+   * by its own invoice, anchored on that task (`late-capture-kept-xero-rules.ts`).
+   */
+  keptLateCaptures: Map<
+    string,
+    { taskId: string; raisedAt: Date; operations: XeroOperationRecord[] }
+  >;
+  /**
+   * #3635 round-3 N1/R5: EVERY #3639 approval task on this booking, whatever
+   * its status, by intent, with the Xero rows anchored on it. A kept invoice
+   * raised before a reopen and approval can still lack its payment, and one an
+   * officer recorded by hand can still have been refunded.
+   */
+  lateCaptureTasks: Map<
+    string,
+    { taskId: string; status: string; operations: XeroOperationRecord[] }
+  >;
+  /**
+   * #3643 F2: the payments on this booking the organisation late-cash arm
+   * raised a `CANCELLED_BOOKING_HAND_BACK` task for. Beside a retired clearing
+   * note it means cash arrived and no clearing note is owed.
+   */
+  cancelledBookingHandBackPaymentIds: Set<string>;
+  /**
+   * #3635: the refund cents a note may still answer for a cancelled Stripe
+   * payment (`readRefundCreditNoteGap`), or null when not read. The
+   * missing-refund-note arm asks for no more than this.
+   */
+  refundNoteUncoveredCents: number | null;
+  /**
+   * #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): the payments on this
+   * booking whose part-payment review task a treasurer has closed. A review
+   * closes only as DISMISSED - COMPLETED is unrepresentable
+   * (`ManualRefundTask_part_payment_review_shape`), a deliberate narrowing of
+   * the owner's "completes or dismisses", since there is no amount to complete
+   * at. The payment was settled by hand in Xero, so the cancelled-open-invoice
+   * arm reports nothing for it and never queues a clearing note.
+   */
+  closedPartPaymentReviewPaymentIds: Set<string>;
+  /**
+   * #3643 (`INV-PAY-108`): the payments on this booking with an OPEN
+   * part-payment review. Counted as a recorded invoice payment even when the
+   * local PAYMENT link is absent (an over/prepayment allocation, or a link the
+   * inbound sync has not written yet), so the cancelled-open-invoice arm never
+   * offers the full-size clearing note over a part payment.
+   */
+  openPartPaymentReviewPaymentIds: Set<string>;
+  /**
    * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
    * money owed to the club, totalled per `BookingModification` anchor.
    *
@@ -394,6 +496,12 @@ export interface BookingClassificationContext {
    * say what such an edit owes. This map is where that number comes from.
    */
   editReviewChargeCentsByModificationId: Map<string, number>;
+  /**
+   * #3535: the booking's applied credit already allocated to its invoice as a
+   * Xero credit note (sum of `MemberCreditNoteAllocation.amountCents`), so the
+   * cancelled-open-invoice arm sizes its note by INV-PAY-017.
+   */
+  xeroAllocatedAppliedCreditCents: number;
   /**
    * #3187 fix round: the edits whose additional PaymentIntent mint FAILED and
    * is still owed by the recovery replay (PENDING or PROCESSING).

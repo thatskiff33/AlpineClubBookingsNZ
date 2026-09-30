@@ -3,6 +3,7 @@ import {
   buildMembershipCancellationApprovalBlockedMessage,
   describeMembershipCancellationBlocker,
   describeUnpaidInvoiceBlockerParts,
+  formatBlockerAmount,
   membershipCancellationBlockerHeading,
   membershipCancellationBlockerHint,
   type MembershipCancellationBlocker,
@@ -20,6 +21,7 @@ function unpaidInvoice(
     invoiceStatus: "AUTHORISED",
     direction: "receivable",
     amountDueCents: 12050,
+    amountDueTenThousandths: 1205000,
     currency: "NZD",
     dueDate: "2026-06-30",
     xeroUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-1",
@@ -106,6 +108,69 @@ describe("membership cancellation blocker wording", () => {
     ).toContain("120.50 still owing");
   });
 
+  // #3722 and #3724: hundredths are exact only for a currency that counts in
+  // them. Anything else prints Xero's own figure, from ten-thousandths, with
+  // neither the padding nor the rounding that two fixed places would impose.
+  describe("an invoice currency without two decimal places", () => {
+    /** The two figures the loader records for one Xero amount. */
+    const amount = (
+      amountDueCents: number,
+      amountDueTenThousandths: number,
+      currency: string,
+    ) => ({ amountDueCents, amountDueTenThousandths, currency });
+
+    it("prints a zero-decimal amount as a whole number", () => {
+      expect(formatBlockerAmount(amount(120000, 12000000, "JPY"))).toBe(
+        "JPY 1200",
+      );
+      expect(
+        describeMembershipCancellationBlocker(
+          unpaidInvoice(amount(120000, 12000000, "JPY")),
+        ),
+      ).toContain("JPY 1200 still owing");
+    });
+
+    it("keeps a three-decimal currency's third digit, unpadded", () => {
+      expect(formatBlockerAmount(amount(123, 12340, "KWD"))).toBe("KWD 1.234");
+      expect(formatBlockerAmount(amount(123, 12300, "KWD"))).toBe("KWD 1.23");
+      expect(formatBlockerAmount(amount(120, 12000, "KWD"))).toBe("KWD 1.2");
+    });
+
+    it("names a balance under half a hundredth rather than printing zero", () => {
+      expect(formatBlockerAmount(amount(0, 40, "KWD"))).toBe("KWD 0.004");
+    });
+
+    it("reads the code the way the minor-unit rule does", () => {
+      expect(formatBlockerAmount(amount(120000, 12000000, "jpy"))).toBe(
+        "jpy 1200",
+      );
+    });
+
+    it("leaves a two-decimal currency, and an unknown one, at two places", () => {
+      expect(formatBlockerAmount(amount(120000, 12000000, "NZD"))).toBe(
+        "NZD 1200.00",
+      );
+      expect(formatBlockerAmount(amount(120000, 12000000, "UNKNOWN"))).toBe(
+        "1200.00",
+      );
+      expect(formatBlockerAmount(amount(120000, 12000000, ""))).toBe("1200.00");
+    });
+
+    it("does not round away a digit a two-decimal figure cannot hold", () => {
+      // Xero would not report this for NZD, but if it did, "NZD 0.00 still
+      // owing" would contradict the block it explains.
+      expect(formatBlockerAmount(amount(0, 40, "NZD"))).toBe("NZD 0.004");
+    });
+
+    it("carries the same figure into the approval refusal", () => {
+      expect(
+        buildMembershipCancellationApprovalBlockedMessage([
+          unpaidInvoice(amount(120000, 12000000, "JPY")),
+        ]),
+      ).toContain("INV-0042 (JPY 1200)");
+    });
+  });
+
   it("keeps the existing booking wording, and honours a caller's date format", () => {
     expect(
       describeMembershipCancellationBlocker(ownedBooking, {
@@ -118,7 +183,7 @@ describe("membership cancellation blocker wording", () => {
     it("names the invoices and says how to clear them", () => {
       const message = buildMembershipCancellationApprovalBlockedMessage([
         unpaidInvoice(),
-        unpaidInvoice({ invoiceId: "inv-2", invoiceNumber: "INV-0051", amountDueCents: 8000 }),
+        unpaidInvoice({ invoiceId: "inv-2", invoiceNumber: "INV-0051", amountDueCents: 8000, amountDueTenThousandths: 800000 }),
       ]);
 
       expect(message).toContain("INV-0042 (NZD 120.50)");
