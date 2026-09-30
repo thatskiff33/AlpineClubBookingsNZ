@@ -190,6 +190,8 @@ from multi-period profit-and-loss and balance-sheet report pulls; see
 
 Booking-derived finance metrics come from AlpineClubBookingsNZ `Booking`, `BookingGuest`, and `Payment`.
 
+No Finance figure counts a soft-deleted booking (`deletedAt` set), whatever its status (#3745). The reads ask `buildBookingDeletedWhere("hide")`, Reports' default view.
+
 ### Realized Stay Metrics
 
 Use for historical guest nights, average nightly revenue, and realized occupancy.
