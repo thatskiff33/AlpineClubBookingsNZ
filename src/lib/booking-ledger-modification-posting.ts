@@ -51,6 +51,7 @@ import {
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 
 /** A charge line already on the ledger, with what a reversal must copy. */
 export type PostedChargeLine = {
@@ -435,7 +436,7 @@ export function planAgreedAdjustmentLine({
     lodgeId,
     side: "ADJUSTMENT",
     kind: "AGREED_ADJUSTMENT",
-    sign: direction === "CHARGE_TO_MEMBER" ? 1 : -1,
+    sign: editReviewSettlementSign(direction),
     quantity: 1,
     unitCents: amountCents,
     anchorKind: "REVIEW_TASK",
