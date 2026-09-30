@@ -1402,17 +1402,16 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
   });
 
   it("counts a soft-deleted PAID booking in none of Finance's figures (#3745)", async () => {
-    const withoutDeleted = async (rows: Array<typeof paid>) => {
+    const metricsFor = async (rows: Array<typeof paid>) => {
       mockBookingRows(rows);
-      const { generatedAt: _generatedAt, ...figures } = await getFinanceBookingMetrics(QUERY);
-      return figures;
+      return getFinanceBookingMetrics(QUERY);
     };
-    const baseline = await withoutDeleted([paid, partlyRefunded]);
-    const withDeleted = await withoutDeleted([paid, partlyRefunded, deletedPaid]);
+    const baseline = await metricsFor([paid, partlyRefunded]);
+    const withDeleted = await metricsFor([paid, partlyRefunded, deletedPaid]);
 
     // Every figure - stays, occupancy, revenue, payment counts, additions,
     // cash and the money-trust summary - is the same as if it did not exist.
-    expect(withDeleted).toEqual(baseline);
+    expect(withDeleted).toEqual({ ...baseline, generatedAt: expect.any(String) });
     expect(baseline.bookingCount).toBe(2);
     expect(mockPrisma.booking.findMany).toHaveBeenLastCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ deletedAt: null }) }),
