@@ -197,6 +197,26 @@ describe("finance revenue reconciliation", () => {
     expect(period.status).toBe("TIES");
   });
 
+  it("leaves a soft-deleted booking's nights out of booking hut fees (#3745)", async () => {
+    mockListFinanceSnapshots.mockResolvedValue([
+      pnlSnapshot(incomePayload([["Hut Fees", "10,000.00"]], "10,000.00")),
+    ]);
+    // The database adds a deleted booking's $600 of nights unless the booking
+    // filter leaves deleted bookings out.
+    mockBookingGuestNightAggregate.mockImplementation(async (args: any) => {
+      const booking = args.where.bookingGuest.booking;
+      const deletedNights = booking.deletedAt === null ? 0 : 60_000;
+      return { _sum: { priceCents: 1_000_000 + deletedNights } };
+    });
+
+    const result = await buildFinanceRevenueReconciliation(CLUB_FORMAT_TEST, {
+      now: new Date("2026-04-30T10:00:00.000Z"),
+    });
+
+    expect(result.periods[0].bookingHutFeesCents).toBe(1_000_000);
+    expect(result.periods[0].status).toBe("TIES");
+  });
+
   it("flags a material variance as not tying", async () => {
     mockListFinanceSnapshots.mockResolvedValue([
       pnlSnapshot(incomePayload([["Hut Fees", "10,000.00"]], "10,000.00")),

@@ -179,15 +179,22 @@ function netCollectedPaymentRows(
 
 /**
  * The status-listed booking rows, and - unless a test states them itself - the
- * same bookings' payments as the Net Collected read.
+ * same bookings' payments as the Net Collected read. The booking read answers
+ * its `deletedAt` filter as the database would (#3745).
  */
 function mockBookingRows<
   T extends FinanceFixtureBooking & {
     id: string;
+    deletedAt?: Date | null;
     payment?: NetCollectedFixturePayment | null;
   },
 >(rows: T[]): void {
-  mockPrisma.booking.findMany.mockResolvedValue(withReconciledMoneyEvidence(rows));
+  mockPrisma.booking.findMany.mockImplementation(
+    async ({ where }: { where: { deletedAt?: null } }) =>
+      withReconciledMoneyEvidence(rows).filter(
+        (row) => where.deletedAt !== null || !row.deletedAt,
+      ),
+  );
   mockPrisma.payment.findMany.mockResolvedValue(netCollectedPaymentRows(rows));
 }
 
@@ -337,6 +344,7 @@ describe("finance-booking-metrics", () => {
       where: {
         checkIn: { lte: new Date("2026-04-24T00:00:00.000Z") },
         checkOut: { gt: new Date("2026-04-18T00:00:00.000Z") },
+        deletedAt: null,
         status: {
           in: [
             BookingStatus.PAID,
@@ -1269,8 +1277,8 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     finalPriceCents: 12_000,
     payment: payment(PaymentStatus.PARTIALLY_REFUNDED, 12_000, 2_000),
   };
-  // A soft-deleted booking still carrying a listed status: Finance's booking
-  // read does not check `deletedAt`, so the stay figures still see it.
+  // A soft-deleted booking still carrying a listed status: no Finance figure
+  // counts it (#3745).
   const deletedPaid = {
     ...stay("b-deleted-paid", "2026-04-03", "2026-04-05"),
     status: BookingStatus.PAID,
@@ -1343,10 +1351,10 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     // kept and falls by the deleted booking's 60.00.
     //
     // Only Net collected changed scope: the other payment figures still count
-    // the status-listed bookings.
-    expect(metrics.paymentSummary.bookingCount).toBe(3);
+    // the status-listed bookings, less the deleted one (#3745).
+    expect(metrics.paymentSummary.bookingCount).toBe(2);
     expect(metrics.paymentSummary.paymentStatusBreakdown).toMatchObject({
-      SUCCEEDED: 2,
+      SUCCEEDED: 1,
       PARTIALLY_REFUNDED: 1,
       PENDING: 0,
       FAILED: 0,
@@ -1356,8 +1364,7 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
   it("runs the ledger-gap warning over the same payments the figure counts", async () => {
     // Both payments claim a collected $21 increase with no ADDITIONAL ledger
     // row behind it. The cancelled one is in the figure, so its gap is warned
-    // about; the soft-deleted PAID one is not in the figure, so it is not -
-    // although the status-listed stay figures still see that booking.
+    // about; the soft-deleted PAID one is in no figure, so it is not.
     const gapPayment = (amountCents: number) => ({
       ...payment(PaymentStatus.PARTIALLY_REFUNDED, amountCents, 1_000),
       additionalAmountCents: 2_100,
@@ -1387,10 +1394,28 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
       additionalLedgerGapCents: 2_100,
       additionalLedgerGapBookings: 1,
     });
-    expect(metrics.paymentSummary.bookingCount).toBe(1);
+    expect(metrics.paymentSummary.bookingCount).toBe(0);
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ bookingIds: ["b-cancelled-gap"] }),
       expect.any(String),
+    );
+  });
+
+  it("counts a soft-deleted PAID booking in none of Finance's figures (#3745)", async () => {
+    const withoutDeleted = async (rows: Array<typeof paid>) => {
+      mockBookingRows(rows);
+      const { generatedAt: _generatedAt, ...figures } = await getFinanceBookingMetrics(QUERY);
+      return figures;
+    };
+    const baseline = await withoutDeleted([paid, partlyRefunded]);
+    const withDeleted = await withoutDeleted([paid, partlyRefunded, deletedPaid]);
+
+    // Every figure - stays, occupancy, revenue, payment counts, additions,
+    // cash and the money-trust summary - is the same as if it did not exist.
+    expect(withDeleted).toEqual(baseline);
+    expect(baseline.bookingCount).toBe(2);
+    expect(mockPrisma.booking.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ deletedAt: null }) }),
     );
   });
 
