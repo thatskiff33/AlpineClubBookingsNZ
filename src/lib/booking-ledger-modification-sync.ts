@@ -40,6 +40,7 @@ import {
 import { pricingSideFromWrittenGuests } from "@/lib/booking-modification-lines";
 import type { ModificationPricingSides } from "@/lib/booking-modification-pricing";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
+import { rebasedPriceMovementCents } from "@/lib/booking-review-price-rebase-history";
 import logger from "@/lib/logger";
 
 type LedgerStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -164,7 +165,7 @@ export async function postReviewClosureLedgerLines({
                 promoAdjustmentCents: rebase.newPromoAdjustmentCents,
               }),
               changeFeeCents: 0,
-              expectedCents: rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
+              expectedCents: rebasedPriceMovementCents(rebase),
               postedLines,
             });
       if (plan.kind === "none") {
@@ -201,7 +202,7 @@ export async function postReviewClosureLedgerLines({
         chargeLinesAfter: [...postedLines, ...repricePostings],
         repriceRecordsMovement:
           rebase !== null &&
-          rebase.newFinalPriceCents !== rebase.previousFinalPriceCents &&
+          rebasedPriceMovementCents(rebase) !== 0 &&
           repricePostings.length > 0,
         postedAdjustmentLines,
       }),

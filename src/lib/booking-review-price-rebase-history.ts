@@ -3,6 +3,17 @@ import type { Prisma } from "@prisma/client";
 import type { BookingMoneyBuildUpSelection } from "@/lib/booking-money-build-up";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 
+/**
+ * The signed movement of the booking's final price a re-base made: what its
+ * history row records as `rebasedPriceMovementCents`, and what the closure's
+ * ledger lines must add up to (#3582). One definition for both.
+ */
+export function rebasedPriceMovementCents(
+  rebase: Pick<BookingPriceRebase, "newFinalPriceCents" | "previousFinalPriceCents">,
+): number {
+  return rebase.newFinalPriceCents - rebase.previousFinalPriceCents;
+}
+
 export async function recordBookingPriceRebaseHistory({
   bookingId,
   actingMemberId,
@@ -46,8 +57,7 @@ export async function recordBookingPriceRebaseHistory({
         // The signed movement of the booking's final price, kept HERE rather
         // than on `priceDiffCents` - see the docblock. Nothing that decides
         // whether money is owed reads `newData`.
-        rebasedPriceMovementCents:
-          rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
+        rebasedPriceMovementCents: rebasedPriceMovementCents(rebase),
         ...moneyBuildUpSelection.historyMetadata,
       },
       // NOT a settlement: no money is moved by this row, and the review's own
