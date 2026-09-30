@@ -48,7 +48,7 @@
 # Check 4 is the only one that reads git. It compares against a BASE REF, and it
 # FAILS rather than passing when it cannot read that comparison — an unresolvable
 # ref, or a shallow clone that would narrow the diff silently. That is the rule
-# `npm run pr:check` and the file-size ratchet already follow.
+# `pnpm run pr:check` and the file-size ratchet already follow.
 #
 # Checks 1-3 and 5 are read-only and need no database or git — the script still
 # runs as an early fail-fast step in CI's migration-drift job, and check 5 is
@@ -322,7 +322,7 @@ same_release_base_failure() {
   echo "  This check compares the migrations THIS BRANCH adds against a base ref, so it" >&2
   echo "  cannot run without one - and it fails rather than passing, because a gate that" >&2
   echo "  cannot read its comparison must not report a green it has not earned. That is" >&2
-  echo "  the rule npm run pr:check and the file-size ratchet already follow." >&2
+  echo "  the rule pnpm run pr:check and the file-size ratchet already follow." >&2
   echo "  Fix with:  ${2:-git fetch origin ${BASE_REF#origin/}}" >&2
   echo "             or pass --base <ref>, or set MIGRATION_SAFETY_BASE_REF=<ref>" >&2
   failures=1

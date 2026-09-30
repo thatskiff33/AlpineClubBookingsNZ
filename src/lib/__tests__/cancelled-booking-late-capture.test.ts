@@ -473,6 +473,8 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
     // And it reports NO conflict: the writer is the only thing that reads the row's
     // status, so when it throws nothing is known about a hand-back either way.
     expect(outcome.handCompletedAfterRefund).toBe(false);
+    // And it says the record was NOT written, so no caller claims it (#3635 N4).
+    expect(outcome.recorded).toBe(false);
   });
 
   it("reports a hand-COMPLETED row found after the refund", async () => {
@@ -485,6 +487,7 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
 
     const outcome = await recordAutomaticLateCaptureRefund(capture());
     expect(outcome.handCompletedAfterRefund).toBe(true);
+    expect(outcome.recorded).toBe(true);
   });
 
   it("does NOT report a hand-DISMISSED row, which is the documented carve-out", async () => {
@@ -507,6 +510,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
   it("sends the auto-refund alert on the ordinary outcome", async () => {
     await announceAutomaticLateCaptureRefund(capture({ captureKind: "primary" }), {
       bookingDeleted: false,
+      recorded: true,
       handCompletedAfterRefund: false,
     }, CLUB_FORMAT_TEST);
 
@@ -528,6 +532,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     // So the row's sentence, the subject and the card's grouping cannot disagree.
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: true,
+      recorded: true,
       handCompletedAfterRefund: false,
     }, CLUB_FORMAT_TEST);
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
@@ -538,6 +543,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
   it("swaps to the conflict alert, with a CRITICAL audit row, on a suspected double payment", async () => {
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: false,
+      recorded: true,
       handCompletedAfterRefund: true,
     }, CLUB_FORMAT_TEST);
 

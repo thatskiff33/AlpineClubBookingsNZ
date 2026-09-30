@@ -231,9 +231,9 @@ async function runWizard() {
           "The setup wizard now writes configuration to the database, not to a file.\n" +
           "Complete the deploy first:\n" +
           "- Set env values manually; do not commit secrets.\n" +
-          "- Run npm run db:migrate && npm run db:seed.\n" +
+          "- Run pnpm run db:migrate && pnpm run db:seed.\n" +
           "- Then sign in as the seeded admin and finish setup at /admin/setup\n" +
-          "  (or re-run npm run setup:wizard once the database is reachable).",
+          "  (or re-run pnpm run setup:wizard once the database is reachable).",
       );
       process.exitCode = 1;
       return;
@@ -449,7 +449,7 @@ async function main() {
     }
 
     console.error(`Unknown setup command: ${command}`);
-    console.error("Usage: npm run setup:check | npm run setup:wizard");
+    console.error("Usage: pnpm run setup:check | pnpm run setup:wizard");
     process.exitCode = 1;
   } finally {
     // Both commands may open a database connection; release it so the CLI exits.

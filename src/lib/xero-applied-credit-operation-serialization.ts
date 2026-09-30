@@ -1,5 +1,41 @@
 import { Prisma } from "@prisma/client";
-import { XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE } from "./xero-operation-outbox-payload";
+import {
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+} from "./xero-operation-outbox-payload";
+import { asRecord, readString } from "./xero-json";
+
+/**
+ * #3635 (orchestrator decision 1, `INV-INT-025`): an applied-credit allocation
+ * or deallocation cannot be marked resolved in Xero. Fixing Xero by hand does
+ * not bring the local credit-slice ledger back in line, and an unconverged
+ * deallocation deliberately fences the booking's cancel, the hold-expiry cron
+ * and credit writes (below) - a resolved one would fence them for good. These
+ * rows stay retry-only. Read from the queue-type column, or the payload for a
+ * row written before the column.
+ */
+export function isAppliedCreditLedgerOperation(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+}): boolean {
+  return readAppliedCreditLedgerQueueType(operation) !== null;
+}
+
+/** Which of the two applied-credit ledger types a row is, or null (#3635 N9). */
+export function readAppliedCreditLedgerQueueType(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+}):
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
+  | typeof XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+  | null {
+  const queueType =
+    operation.queueType ?? readString(asRecord(operation.requestPayload)?.queueType);
+  return queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE ||
+    queueType === XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE
+    ? queueType
+    : null;
+}
 
 /**
  * A claimed applied-credit worker found another claimed operation for the same

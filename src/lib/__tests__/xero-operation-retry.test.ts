@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   createUnappliedXeroCreditNote: vi.fn(),
   createUnappliedXeroCreditNoteForModification: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
+  findManyXeroObjectLink: vi.fn().mockResolvedValue([]),
   createXeroRefundPaymentForInvoice: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
@@ -57,6 +58,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
+    },
+    // #3535: a PARTIAL clearing note's repair skips targets already allocated.
+    xeroObjectLink: {
+      findMany: mocks.findManyXeroObjectLink,
     },
   },
 }));
@@ -116,12 +121,15 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 import {
   getXeroOperationRetryMeta,
   retryXeroSyncOperation,
+  XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
+import { RESOLVED_IN_XERO_RETRY_REASON } from "@/lib/xero-operation-resolution";
 import {
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -140,9 +148,105 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     responsePayload: null,
     xeroObjectId: null,
     xeroObjectNumber: null,
+    manuallyResolvedAt: null,
     ...overrides,
   };
 }
+
+const RESOLVED_AT = new Date("2026-06-20T00:00:00.000Z");
+
+describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it.each([
+    ["a failed booking invoice", {}],
+    ["a failed booking invoice update", { operationType: "UPDATE" }],
+    [
+      "a failed group settlement invoice",
+      {
+        localModel: "GroupBookingSettlement",
+        localId: "settlement_1",
+        queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+      },
+    ],
+  ])("refuses %s the officer resolved, whatever else would allow it", (_label, overrides) => {
+    const live = makeOperation(overrides);
+    // The control: the same row unresolved is retryable, so only the mark
+    // can be what refuses it.
+    expect(getXeroOperationRetryMeta(live).supported).toBe(true);
+    expect(getXeroOperationRetryMeta({ ...live, manuallyResolvedAt: RESOLVED_AT })).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+  });
+
+  it.each([
+    ["allocation", XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE, "ALLOCATE"],
+    ["deallocation", XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, "UPDATE"],
+  ])(
+    "an applied-credit %s resolved before this release stays retryable, so its fence can converge (#3635 N2)",
+    async (_label, queueType, operationType) => {
+      const resolvedBeforeRelease = makeOperation({
+        entityType: "ALLOCATION",
+        operationType,
+        localModel: "Payment",
+        localId: "pay_1",
+        queueType,
+        requestPayload: { queueType, bookingId: "book_1", paymentId: "pay_1" },
+        manuallyResolvedAt: RESOLVED_AT,
+      });
+      expect(getXeroOperationRetryMeta(resolvedBeforeRelease)).toEqual({
+        supported: true,
+        reason: null,
+      });
+      mocks.findUniqueOperation.mockResolvedValue(resolvedBeforeRelease);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: expect.stringContaining("Queued applied-credit"),
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) })
+      );
+    }
+  );
+
+  it("retryXeroSyncOperation re-reads the row and 409s a resolved one without claiming it or calling Xero", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ manuallyResolvedAt: RESOLVED_AT }));
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBeInstanceOf(XeroOperationResolvedInXeroError);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)
+    ).rejects.toMatchObject({ status: 409, message: RESOLVED_IN_XERO_RETRY_REASON });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+
+  it("a resolve landing between the read and the claim makes the claim lose (no mint)", async () => {
+    // The read saw the row unresolved; the claim's `manuallyResolvedAt: null`
+    // guard is what matches nothing once the officer's mark has landed.
+    // First read: unresolved. The re-read after the lost claim: resolved.
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(makeOperation())
+      .mockResolvedValueOnce({ manuallyResolvedAt: RESOLVED_AT });
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+
+    // The resolved error, not "claimed by another retry", so the drain closes
+    // its queued row CANCELLED rather than FAILED.
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+});
 
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
@@ -380,6 +484,80 @@ describe("getXeroOperationRetryMeta", () => {
   });
 });
 
+// #3535: a FAILED booking-anchored invoice-clearing note (hold expiry, the
+// never-captured cancel, the repair re-queue) was refused by the retry screen,
+// leaving the unpaid invoice open with no way back.
+describe("booking-anchored clearing note retries (#3535)", () => {
+  const clearingOperation = (requestPayload: Record<string, unknown>, queueType: string | null = "MODIFICATION_CREDIT_NOTE") =>
+    makeOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      queueType,
+      requestPayload,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("marks a failed clearing note retryable from its queued or its executed payload", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation({
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_7",
+          refundAmountCents: 15000,
+          bookingModificationId: null,
+          clearsUnpaidInvoice: true,
+        })
+      )
+    ).toEqual({ supported: true, reason: null });
+    expect(
+      getXeroOperationRetryMeta(
+        clearingOperation(
+          { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+          null
+        )
+      )
+    ).toEqual({ supported: true, reason: null });
+  });
+
+  it("refuses a booking-anchored row with no recorded amount", () => {
+    expect(
+      getXeroOperationRetryMeta(clearingOperation({ queueType: "MODIFICATION_CREDIT_NOTE", bookingId: "booking_7" }))
+        .supported
+    ).toBe(false);
+  });
+
+  it("replays the recorded amount and keeps the clearing wording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      clearingOperation(
+        { invoiceId: "inv_7", refundAmountCents: 15000, clearsUnpaidInvoice: true },
+        null
+      )
+    );
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn_7");
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero invoice-clearing credit note creation." });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "booking_7",
+      refundAmountCents: 15000,
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      clearsUnpaidInvoice: true,
+      format: CLUB_FORMAT_TEST,
+    });
+    const [params] = mocks.createXeroCreditNoteForModification.mock.calls[0]!;
+    expect(params).not.toHaveProperty("refundMethod");
+  });
+});
+
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -538,7 +716,12 @@ describe("retryXeroSyncOperation", () => {
     // fence (RUNNING is in its in-flight set) for the whole execution, and the
     // threaded syncOperationId means completion lands on THIS row.
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      // #3635: a resolve landing after the read makes the claim lose.
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+        manuallyResolvedAt: null,
+      },
       data: { status: "RUNNING", startedAt: expect.any(Date) },
     });
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("book_123", {
@@ -1907,6 +2090,77 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  // #3535: a clearing note planned across the primary and a supplementary
+  // invoice replays exactly that plan, skipping the target already allocated.
+  it("repairs a partial clearing note across its recorded invoices, skipping one already allocated", async () => {
+    mocks.findManyXeroObjectLink.mockResolvedValueOnce([
+      { metadata: { creditNoteId: "cn_clear", invoiceId: "inv_primary", amountCents: 30000 } },
+      // A different note's allocation to the same invoice does not count.
+      { metadata: { creditNoteId: "cn_other", invoiceId: "inv_supp", amountCents: 11000 } },
+    ]);
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Booking",
+        localId: "booking_7",
+        xeroObjectId: "cn_clear",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 41000,
+          clearsUnpaidInvoice: true,
+          allocations: [
+            { invoiceId: "inv_primary", amountCents: 30000 },
+            { invoiceId: "inv_supp", amountCents: 11000 },
+          ],
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Repaired Xero modification credit note allocation." });
+
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith("cn_clear", "inv_supp", 11000, {
+      localModel: "Booking",
+      localId: "booking_7",
+      role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+      createdByMemberId: "admin_1",
+    });
+  });
+
+  // #3535: a plan whose invoice id was redacted into storage is refused, never
+  // replayed against "[REDACTED]".
+  it("refuses to replay a clearing note's plan when an invoice id in it was redacted", async () => {
+    const redactedPlan = makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Booking",
+      localId: "booking_7",
+      xeroObjectId: "cn_clear",
+      requestPayload: {
+        invoiceId: "inv_primary",
+        refundAmountCents: 41000,
+        allocations: [
+          { invoiceId: "inv_primary", amountCents: 30000 },
+          { invoiceId: "[REDACTED]", amountCents: 11000 },
+        ],
+      },
+    });
+    expect(getXeroOperationRetryMeta(redactedPlan)).toEqual({
+      supported: false,
+      reason: expect.stringContaining("redacted invoice id"),
+    });
+    mocks.findUniqueOperation.mockResolvedValue(redactedPlan);
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toThrow(/redacted invoice id/);
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+  });
+
   it("replays membership cancellation credit note creation using the stored request payload", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -1936,6 +2190,176 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #3635: a kept late capture's invoice goes back to the outbox from its
+  // queued payload, which its worker keeps beside the request it sent.
+  it("returns a failed or partial kept late-capture invoice to the outbox with its queued payload", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    for (const status of ["FAILED", "PARTIAL"] as const) {
+      mocks.updateManyOperation.mockReset();
+      const operation = makeOperation({
+        status,
+        localModel: "ManualRefundTask",
+        localId: "task_kept",
+        queueType: "KEPT_LATE_CAPTURE_INVOICE",
+        requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+      });
+      expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+      mocks.findUniqueOperation.mockResolvedValue(operation);
+      mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Queued the kept-payment Xero invoice for retry.",
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        data: expect.objectContaining({ status: "PENDING", requestPayload: queued }),
+      });
+    }
+
+    // Unreadable cents are never guessed.
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          localModel: "ManualRefundTask",
+          localId: "task_kept",
+          queueType: "KEPT_LATE_CAPTURE_INVOICE",
+          requestPayload: { ...queued, capturedCents: null },
+        }),
+      ).supported,
+    ).toBe(false);
+  });
+
+  // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
+  // recorded by hand in Xero is never re-run - refused on read, and a resolve
+  // landing between the read and the requeue makes the claim lose.
+  it("never re-runs a kept late-capture invoice resolved in Xero", async () => {
+    const queued = {
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      bookingId: "booking_1",
+      manualRefundTaskId: "task_kept",
+      paymentIntentId: "pi_kept",
+      capturedCents: 24000,
+      capturedOn: "2026-06-10",
+    };
+    const kept = makeOperation({
+      localModel: "ManualRefundTask",
+      localId: "task_kept",
+      queueType: "KEPT_LATE_CAPTURE_INVOICE",
+      requestPayload: { ...queued, invoices: [{ type: "ACCREC" }] },
+    });
+    const resolved = { ...kept, manuallyResolvedAt: RESOLVED_AT };
+    expect(getXeroOperationRetryMeta(resolved)).toEqual({
+      supported: false,
+      reason: RESOLVED_IN_XERO_RETRY_REASON,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(resolved);
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+
+    mocks.findUniqueOperation
+      .mockReset()
+      .mockResolvedValueOnce(kept)
+      .mockResolvedValueOnce({ ...resolved });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError
+    );
+  });
+
+  // #3642: the combined group invoice's rows go back to the outbox; a failed
+  // abandon VOID used to be terminal, with no Retry and no alert.
+  it("returns a failed group settlement VOID to the outbox with its queued payload", async () => {
+    const payload = {
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      settlementId: "settle_1",
+      xeroInvoiceId: "inv_1",
+    };
+    const operation = makeOperation({
+      operationType: "UPDATE",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE_VOID",
+      requestPayload: payload,
+    });
+    expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued the group settlement invoice operation for retry.",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      data: expect.objectContaining({ status: "PENDING", requestPayload: payload }),
+    });
+  });
+
+  it("rebuilds a failed group settlement CREATE's queued payload, which its worker overwrote", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+        requestPayload: { invoices: [{ type: "ACCREC" }] },
+      })
+    );
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      data: expect.objectContaining({
+        status: "PENDING",
+        requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
+      }),
+    });
+  });
+
+  it("refuses to retry a group settlement operation that is not FAILED, or was already requeued", async () => {
+    const running = makeOperation({
+      status: "PARTIAL",
+      localModel: "GroupBookingSettlement",
+      localId: "settle_1",
+      queueType: "GROUP_SETTLEMENT_INVOICE",
+    });
+    expect(getXeroOperationRetryMeta(running).supported).toBe(false);
+
+    mocks.findUniqueOperation.mockResolvedValue({ ...running, status: "FAILED" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it("answers 409, not a uniqueness 500, when the organiser already queued the same attempt again (#3642 D6)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        queueType: "GROUP_SETTLEMENT_INVOICE",
+      })
+    );
+    mocks.updateManyOperation.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" })
+    );
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
   it("atomically queues applied-credit allocation for sole outbox execution", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -1955,7 +2379,11 @@ describe("retryXeroSyncOperation", () => {
     ).resolves.toEqual({ message: "Queued applied-credit allocation retry." });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] } },
+      // No resolved guard: applied-credit rows are retry-only (#3635 N2).
+      where: {
+        id: "op_123",
+        status: { in: ["FAILED", "PARTIAL"] },
+      },
       data: {
         status: "PENDING",
         startedAt: null,

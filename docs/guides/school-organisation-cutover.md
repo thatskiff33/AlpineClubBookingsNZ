@@ -43,8 +43,8 @@ records.
 ## Running these commands on the deploy host
 
 **The deploy host has Docker and Docker Compose and nothing else** — no Node, no
-`npm`, no `psql` (`DEPLOYMENT.md` → "Prerequisites"). Every command on this page
-is therefore written to run *inside* a container, and a bare `npm run …` or
+`pnpm`, no `psql` (`DEPLOYMENT.md` → "Prerequisites"). Every command on this page
+is therefore written to run *inside* a container, and a bare `pnpm run …` or
 `psql …` pasted at the host shell fails with `command not found`. The two
 wrappers, from the repository root:
 
@@ -69,14 +69,14 @@ emphatic about it. So:
 
 ```bash
 docker compose --profile migrate run --rm migrate \
-  npm run db:school-classification-census \
+  pnpm run db:school-classification-census \
   | tee ./school-census-$(date +%Y%m%d-%H%M).txt
 ```
 
 and then move that file off the host, beside the backup.
 
 On a laptop with the repository and a Node toolchain — a rehearsal database, say
-— the bare forms work and are shorter: `npm run db:school-classification-census`.
+— the bare forms work and are shorter: `pnpm run db:school-classification-census`.
 Nothing on this page depends on which you use.
 
 ## Step-by-step
@@ -88,7 +88,7 @@ nothing, changes nothing, and can be run as often as you like.
 
 ```bash
 docker compose --profile migrate run --rm migrate \
-  npm run db:school-classification-census \
+  pnpm run db:school-classification-census \
   | tee ./school-census-$(date +%Y%m%d-%H%M).txt
 ```
 
@@ -132,12 +132,12 @@ school being merged into a person: that rule reads the classification where
 there is one and falls back to the row's shape where there is not, so it still
 refuses. See "What this does not change" at the foot of this page.
 
-If you would rather see the numbers yourself, `-- --sql` prints the exact query so
+If you would rather see the numbers yourself, `--sql` prints the exact query so
 you can run it against a read-only replica:
 
 ```bash
 docker compose --profile migrate run --rm migrate \
-  npm run db:school-classification-census -- --sql
+  pnpm run db:school-classification-census --sql
 ```
 
 ### 2. Read the groups that are about to become one record
@@ -196,7 +196,7 @@ the one outcome that could not be undone.
 
 ```bash
 docker compose --profile migrate run --rm migrate \
-  npm run db:school-classification-census -- --record-proved
+  pnpm run db:school-classification-census --record-proved
 ```
 
 This writes a decision for every row the two proofs settle, recorded as
@@ -219,7 +219,7 @@ who remembers — are what settle it. When you know, record it:
 
 ```bash
 docker compose --profile migrate run --rm migrate \
-  npm run db:school-classification-census -- \
+  pnpm run db:school-classification-census \
   --classify cm9x4k2p0000abcd --as ORGANISATION \
   --by "Jordan (treasurer)" --because "2019 invoice file: this is the school itself, not Mr Smith."
 ```
@@ -376,7 +376,7 @@ the club's data — so this table is the only place the identifiers can be decod
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `school_member_classification_incomplete` from the backfill | At least one candidate row has no recorded decision. Almost always an officer approved another school booking between your last census and the window. | Nothing was written. Run the census (step 1) — it prints the list — and record the new rows (steps 3–4). **Then clear the failed migration before re-running**, or the next attempt refuses with P3009 instead: `npx prisma migrate resolve --rolled-back 20260928030000_backfill_school_bookings_to_organisations`. Both ways out, including how to back out of the window if the decision needs somebody who is not there, are in [`PRODUCTION_UPGRADE_RUNBOOK.md`](../PRODUCTION_UPGRADE_RUNBOOK.md) §2.4.2 under "If the backfill refuses inside the window". |
+| `school_member_classification_incomplete` from the backfill | At least one candidate row has no recorded decision. Almost always an officer approved another school booking between your last census and the window. | Nothing was written. Run the census (step 1) — it prints the list — and record the new rows (steps 3–4). **Then clear the failed migration before re-running**, or the next attempt refuses with P3009 instead: `pnpm exec prisma migrate resolve --rolled-back 20260928030000_backfill_school_bookings_to_organisations`. Both ways out, including how to back out of the window if the decision needs somebody who is not there, are in [`PRODUCTION_UPGRADE_RUNBOOK.md`](../PRODUCTION_UPGRADE_RUNBOOK.md) §2.4.2 under "If the backfill refuses inside the window". |
 | `school_backfill_organisation_unresolved` from the backfill | A classified school row does not match the record minted from its own name. The fold is collapse-then-trim-then-cap, so this should not happen; if it does, the two names differ in a way the fold does not remove. | Stop and get help before re-running. The query in the next row lists the rows involved. |
 | `school_reverse_wrong_order` from `20260928020000/rollback.sql` | The two reverse scripts were run in the order they were applied. | Run `20260928030000/rollback.sql` first, then this one. See "Rolling back". |
 | `school_backfill_rollback_unreconstructable` from `20260928030000/rollback.sql` | A booking owned by a school has no member to give back — the new release has already created one, or two member rows spell one school and the booking request that would say which owned which is gone. | Stop. This is the point at which the reverse scripts are not a release rollback. Restore the verified backup taken immediately before the migration, with the owner leading. |
@@ -426,7 +426,7 @@ SQL
   merge then proceeds:
 
   ```bash
-  docker compose --profile migrate run --rm migrate     npm run db:school-classification-census --     --classify <memberId> --as PERSON     --by "<your name>" --because "<what you checked>"
+  docker compose --profile migrate run --rm migrate     pnpm run db:school-classification-census     --classify <memberId> --as PERSON     --by "<your name>" --because "<what you checked>"
   ```
 
 ## Related

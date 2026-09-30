@@ -14,11 +14,11 @@
  * Dry run by default. SAFE USAGE — run against a NON-PRODUCTION copy first:
  *
  *   DATABASE_URL='postgresql://user:pass@127.0.0.1:5432/scratch_copy' \
- *     npm run payments:backfill-cancel-flattened
+ *     pnpm run payments:backfill-cancel-flattened
  *
  * Only after reviewing the dry-run report, apply inside a transaction:
  *
- *   ... npm run payments:backfill-cancel-flattened -- --apply
+ *   ... pnpm run payments:backfill-cancel-flattened --apply
  */
 import "dotenv/config";
 import process from "node:process";
@@ -30,9 +30,9 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npm run payments:backfill-cancel-flattened               # dry run (default)
-  npm run payments:backfill-cancel-flattened -- --dry-run  # explicit dry run
-  npm run payments:backfill-cancel-flattened -- --apply    # write restorations
+  pnpm run payments:backfill-cancel-flattened               # dry run (default)
+  pnpm run payments:backfill-cancel-flattened --dry-run  # explicit dry run
+  pnpm run payments:backfill-cancel-flattened --apply    # write restorations
 
 Options:
   --apply         Restore the flattened statuses inside a transaction.

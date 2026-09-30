@@ -40,7 +40,7 @@
  * RUN IT LOCALLY (any throwaway database; the suite creates and drops its own):
  *
  *   DATA_MIGRATION_VERIFICATION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres \
- *     npx vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";

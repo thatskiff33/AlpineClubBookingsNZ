@@ -418,7 +418,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   exports and per-booking Xero reconciliation input carry the same state and
   ordered reasons; the Xero invoice shape and every displayed or settled amount
   are unchanged. A read-only repeatable-read census
-  (`npm run booking-money:census`) reports state/reason counts, night rows by
+  (`pnpm run booking-money:census`) reports state/reason counts, night rows by
   provenance and strands by `INV-MOD-028` verdict per booking month, and edit
   reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`
   names direct headline/component writers and rejects raw-SQL or

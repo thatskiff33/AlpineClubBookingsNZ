@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
+import { isResolvedInXero } from "@/lib/xero-operation-resolution"
 import { resetXeroOperationsDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
@@ -490,7 +491,7 @@ export function OperationItem({
   // `createdAt` is a real INSTANT: shown in the club's persisted zone, so the
   // same operation reads identically wherever the admin is (CT-4, #2870).
   const clubTime = useClubTime()
-  const resolved = Boolean(operation.manuallyResolvedAt)
+  const resolved = isResolvedInXero(operation)
   const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
   const [showRaw, setShowRaw] = useState(false)
   const summary = summarizeXeroOperation({

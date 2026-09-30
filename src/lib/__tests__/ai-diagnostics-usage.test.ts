@@ -617,14 +617,14 @@ describe("real-Postgres over-budget race proof stays wired into CI (#2532)", () 
 
     const workflow = repoFile(".github/workflows/ci.yml");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
     expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
   });
 
   it("keeps its opt-in + dedicated-loopback-database guards and its forced barrier", () => {
     const raceTest = repoFile(raceTestPath);
-    // Opt-in only, dedicated database only — ordinary `npm test` must never
+    // Opt-in only, dedicated database only — ordinary `pnpm test` must never
     // need a live PostgreSQL.
     expect(raceTest).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(raceTest).toContain("CONCURRENCY_RACE_DATABASE_URL");
@@ -693,7 +693,7 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
     // budget-race guard above so both edges of the chain are covered.
     const workflow = repoFile(".github/workflows/ci.yml");
     expect(workflow).toContain(
-      "npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
+      "pnpm exec vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts",
     );
     expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
   });
@@ -702,7 +702,7 @@ describe("real-Postgres read-only SEAM proof stays wired into CI (AID-8 F2)", ()
     const seamTest = repoFile(
       "src/lib/__tests__/ai-diagnostics-readonly-seam.realdb.test.ts",
     );
-    // Opt-in only, dedicated database only — ordinary `npm test` must never need a
+    // Opt-in only, dedicated database only — ordinary `pnpm test` must never need a
     // live PostgreSQL to keep this proof honest.
     expect(seamTest).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(seamTest).toContain("CONCURRENCY_RACE_DATABASE_URL");

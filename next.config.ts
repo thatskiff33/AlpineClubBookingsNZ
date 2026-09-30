@@ -108,7 +108,7 @@ const nextConfig: NextConfig = {
   /**
    * Trace the deployed-code knowledge bundle (AID-3, #2372) into
    * `.next/standalone` so it ships inside the running artifact. The bundle is
-   * generated in the Docker builder by `npm run diagnostics:bundle` (before
+   * generated in the Docker builder by `pnpm run diagnostics:bundle` (before
    * `next build`), written to this path, and read at runtime by
    * `src/lib/diagnostics/knowledge/load.ts`. Path literal kept in lockstep with
    * `KNOWLEDGE_BUNDLE_RELATIVE_PATH`; not imported because Next's config loader

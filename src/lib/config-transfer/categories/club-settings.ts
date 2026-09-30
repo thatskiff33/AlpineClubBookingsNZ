@@ -363,8 +363,12 @@ export const SINGLETONS: SingletonSpec[] = [
       // and a club adopting this codebase should carry its own answer with it
       // rather than silently reverting to charging.
       "linkedMoveChargesBothChangeFees",
+      // #3639: refund a late capture on a cancelled booking automatically, or
+      // have a treasurer approve it. It TRAVELS for the same reason: it is the
+      // club's own answer about how it handles members' money.
+      "lateCaptureRefundNeedsApproval",
     ],
-    // All four columns are non-null (@default); a present null fails the dry-run
+    // All five columns are non-null (@default); a present null fails the dry-run
     // (#2200). nonMemberHoldDays mirrors the admin route's 1–365 bound
     // (booking-policies/cancellation route: z.number().int().min(1).max(365)).
     // waitlistCrossLodgeOrder is enum-validated automatically.
@@ -373,6 +377,7 @@ export const SINGLETONS: SingletonSpec[] = [
       nonMemberHoldDays: { required: true, min: 1, max: 365 },
       waitlistCrossLodgeOrder: { required: true },
       linkedMoveChargesBothChangeFees: { required: true },
+      lateCaptureRefundNeedsApproval: { required: true },
     },
     excluded: {
       lodgeId:

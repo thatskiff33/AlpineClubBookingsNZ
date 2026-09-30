@@ -162,7 +162,7 @@ export function loadClubConfigWithSource(
 
   warnClubConfig(
     `No club config found (looked for ${primaryPath} and ${examplePath}); ` +
-      `using SAFE_DEFAULT_CONFIG. Run \`npm run setup:wizard\` or configure via ` +
+      `using SAFE_DEFAULT_CONFIG. Run \`pnpm run setup:wizard\` or configure via ` +
       `/admin/setup.`,
     { path: primaryPath, cause: "absent" },
   );

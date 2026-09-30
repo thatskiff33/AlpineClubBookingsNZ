@@ -206,7 +206,7 @@ export async function buildFinanceDashboardPageModel(input: {
     assumed: `cli-server-only-reach-census.test.ts` walks the real static import
     graph from every `tsx` entrypoint and reports no operator script reaching
     this module. `server-only` throws at import outside the react-server
-    condition, so a CLI edge here would break `npm run` scripts that no route
+    condition, so a CLI edge here would break `pnpm run` scripts that no route
     test covers.
   */
   const club = await clubTime();

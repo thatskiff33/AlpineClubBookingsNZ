@@ -720,6 +720,10 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // charging a fee the source club charges.
       linkedMoveChargesBothChangeFees:
         DEFAULT_BOOKING_DEFAULTS.linkedMoveChargesBothChangeFees,
+      // #3639: an unsaved club refunds late captures automatically, and exports
+      // that answer rather than switching a target install to treasurer approval.
+      lateCaptureRefundNeedsApproval:
+        DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,

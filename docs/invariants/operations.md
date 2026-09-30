@@ -5,7 +5,8 @@ Audience: Developer, Agent.
 Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
-already stored in a column mean, and what may be used as test input — and
+already stored in a column mean, what may be used as test input, and which money
+seams a test may mock (`INV-OPS-015`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -20,8 +21,9 @@ these rules against real writers rather than restating them.
 Read this file when you are writing raw SQL, taking a row lock or an advisory
 lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
-rows already written no longer match the code, deploying to production, or
-choosing credentials or data for CI and local validation.
+rows already written no longer match the code, deploying to production,
+choosing credentials or data for CI and local validation, or mocking a money
+seam in a test that asserts money.
 
 `INV-OPS-005` to `INV-OPS-011` are the `FamilyGroupMember.role` column drop,
 re-homed here from `membership-lifecycle.md` by #2706: they are migration
@@ -344,8 +346,8 @@ rules first written here. #2765 extended it with the measured-audience half.
   **Which modules carry the marker, and how the operator CLIs live with it.**
   `server-only` throws at import under plain Node, so for a year the marker
   could not go on the modules that matter most: **fourteen** operator CLI
-  entrypoints reach `@/lib/prisma` — `npm run setup:check`, the seed,
-  `npm run config:self-heal`, `npm run induction:baseline`, the finance, Xero
+  entrypoints reach `@/lib/prisma` — `pnpm run setup:check`, the seed,
+  `pnpm run config:self-heal`, `pnpm run induction:baseline`, the finance, Xero
   and credit repair tools, and both E2E seeds — and marking it would have
   aborted every one of them at startup with an error message about React that
   names nothing the operator did. A `server-only` edge added for a route's
@@ -508,7 +510,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
   without a
   backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 128 of its 488 write sites
+  than having none: the audit-writer census pins only 128 of its 492 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
@@ -690,3 +692,25 @@ behaviourally.
 
 - Production data, production backups, live provider accounts, and live webhooks
   are not valid exploratory test inputs.
+
+## INV-OPS-015
+
+- **A test never mocks a named money seam away while asserting a money figure
+  that seam decides.** The seams, and the figures each decides, are listed once:
+  `MONEY_SEAMS` in `src/lib/__tests__/money-seam-mock-census.test.ts`. A suite may
+  stub a seam to isolate something else, but then asserts none of its money; the
+  fix for an offender is to unmock the seam or move the assertion to a suite where
+  it runs, never an allowlist.
+- Every seam also runs unmocked in at least one suite that asserts its money. For
+  the supersede pair that is `superseded-additional-ask-integration.test.ts`:
+  mint, supersede and resulting ask over one ledger.
+- Why: #3340 under-charged two members $135 because every suite that touched
+  `queueSupersededAdditionalIntentCancellations` mocked it, so the ask sizing and
+  the retirement never ran together (#486 → #543 → #3340; process record #3341).
+- It sits under `INV-OPS` rather than `INV-SSOT` because it governs what a test
+  may stand in for — the family of `INV-OPS-003`/`004` on test inputs — not
+  where a fact is defined.
+- Enforced by that census, which fails naming this ID. Its limits are in its
+  docblock — chiefly that stubbing the seam's own collaborators (a ledger read
+  answering `[]`) leaves the seam "real" and inert, which is why the witness
+  suite exists.

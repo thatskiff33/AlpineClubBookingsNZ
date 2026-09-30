@@ -244,14 +244,14 @@ them is claimed by exactly one entry. There is a twelfth case, and no correlatio
 covers it: the column is optional.
 
 `AuditLog.category` is `String?` with no default, and the audit writer sets it only when
-the caller supplies one. The **executable census** — `npm run audit:census`, pinned by
+the caller supplies one. The **executable census** — `pnpm run audit:census`, pinned by
 `src/lib/__tests__/audit-writer-census.test.ts` — counted **82 production audit write
 sites that passed no category** when #2581 opened: 69 through `logAudit`, 11 through
 `createAuditLog`, 2 hand-built Prisma writes, and none through
 `createStructuredAuditLog`. Those same 82 were still uncategorised on `main`
 immediately before this change, out of **426** write sites in total.
 
-**All 82 have now been classified at the source.** The census reads **488 write sites and
+**All 82 have now been classified at the source.** The census reads **492 write sites and
 zero uncategorised**, so no *new* audit row is born invisible to these five entries. What
 each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 (`scripts/audit/audit-writer-census-manifest.ts`), and the contract test compares that
@@ -294,7 +294,7 @@ What the census still uniquely catches is the writer the compiler cannot see —
 reverted.
 
 **Scope the two compile-time and runtime layers honestly**: they cover writes that go
-through `src/lib/audit.ts`, which is every one of the 488 sites in the tree. A write that
+through `src/lib/audit.ts`, which is every one of the 492 sites in the tree. A write that
 never reaches the helper — hand-built Prisma, raw SQL, a migration — is outside them by
 construction, which is what the census is for, and the census is a heuristic AST walk
 rather than a proof.
@@ -502,7 +502,7 @@ take it away. The real-PostgreSQL proof asserts it by hand-granting `"ipAddress"
 re-provisioning, and finding it refused.
 
 **Upgrading to this release is a two-step operation: deploy, then re-run
-`npm run diagnostics:provision-role`.** Until it is re-run, readiness reports
+`pnpm run diagnostics:provision-role`.** Until it is re-run, readiness reports
 `under_provisioned` or the correlation tools fail with a privilege error — the
 deliberate friction ADR-007 asks for.
 
@@ -636,7 +636,7 @@ instruction to obey.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Every correlation tool fails; readiness says `under_provisioned` | The release added a grant and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
+| Every correlation tool fails; readiness says `under_provisioned` | The release added a grant and provisioning has not been re-run | `pnpm run diagnostics:provision-role`, then re-check readiness |
 | Readiness says `not_configured` for the database role | `AI_DIAGNOSTICS_DATABASE_URL` is unset | Provision the role and set the variable ([deployment.md](deployment.md)) |
 | `diagnostics.readiness` answers, but no other tool will run | The diagnostics credential is the blocker | Read the `databaseRoleState` and `blockerCodes` this tool returns; that is what it is for |
 | Readiness says `module_flags_unreadable`, and `moduleEnabled` is `null` | The club's module settings could not be read — a transient database timeout, or a deploy window where the running code expects a `ClubModuleSettings` column the database does not have yet | Do **not** switch the module on; it may already be on. Check application database health and re-check readiness. `module_off` is the code that means someone really did switch it off |

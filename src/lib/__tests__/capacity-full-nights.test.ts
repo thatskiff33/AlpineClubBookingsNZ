@@ -154,7 +154,7 @@ describe("getCapacityFullNights — a held night is a full night (#2930)", () =>
  *
  * A census that only imported the canonical helper could not see any of that,
  * because a copy has no import edge to the thing it copies — which is exactly
- * the class `npm run test:related` is blind to, and why this file is in
+ * the class `pnpm run test:related` is blind to, and why this file is in
  * `test:named` territory.
  */
 describe("the capacity refusal is spelled in exactly two files — TEXT scan of src, scripts and e2e, blind to a renamed field or a runtime-built copy (#2930)", () => {

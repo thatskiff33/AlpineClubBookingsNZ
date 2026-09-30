@@ -55,6 +55,7 @@ async function summaryFor(
       amountCents: 4_500,
       raisedAmountCents: 4_500,
       kind: kind as never,
+      partPaymentReviewPaymentId: null,
       booking: { memberId: "member-1" },
     },
     resolution,
@@ -73,7 +74,7 @@ async function summaryFor(
 
 describe("#3213: closing a withheld share is not dismissing a refund", () => {
   it("tells the officer what they actually did, and names no refund", async () => {
-    const toast = dismissalMessage(WITHHELD_SHARE);
+    const toast = dismissalMessage(WITHHELD_SHARE, false);
     expect(toast).toBe(
       "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.",
     );
@@ -100,7 +101,7 @@ describe("#3213: every other kind reads exactly as it always has", () => {
       "AUTOMATIC_LATE_CAPTURE_RECORD",
       "EDIT_FINANCIAL_REVIEW",
     ]) {
-      expect(dismissalMessage(kind)).toBe(LEGACY_TOAST);
+      expect(dismissalMessage(kind, false)).toBe(LEGACY_TOAST);
     }
   });
 
@@ -140,9 +141,9 @@ describe("#3213: a kind this build does not recognise reads as it always has", (
     from the door that refuses the close.
   */
   it("falls back to the legacy wording for null, undefined and an unknown label", async () => {
-    expect(dismissalMessage(null)).toBe(LEGACY_TOAST);
-    expect(dismissalMessage(undefined)).toBe(LEGACY_TOAST);
-    expect(dismissalMessage("SOME_FUTURE_KIND")).toBe(LEGACY_TOAST);
+    expect(dismissalMessage(null, false)).toBe(LEGACY_TOAST);
+    expect(dismissalMessage(undefined, false)).toBe(LEGACY_TOAST);
+    expect(dismissalMessage("SOME_FUTURE_KIND", false)).toBe(LEGACY_TOAST);
     expect(await summaryFor(null, "dismissed")).toBe(LEGACY_SUMMARY);
   });
 });

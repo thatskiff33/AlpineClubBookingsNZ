@@ -135,7 +135,7 @@ never calls Xero live — and has no range/compare selectors.
   derived from multi-period profit-and-loss and balance-sheet pulls in the
   same daily sync. Historical coverage comes from the re-runnable backfill
   (`POST /api/finance/sync/backfill-monthly-facts` or
-  `npm run finance:backfill-monthly-facts`). See
+  `pnpm run finance:backfill-monthly-facts`). See
   [finance-monthly-facts-contract.md](finance-monthly-facts-contract.md).
 - Daily sync is handled by the finance sync cron and durable service layer.
 - Treasurer-controlled report groups are stored in `FinanceReportCategory` and

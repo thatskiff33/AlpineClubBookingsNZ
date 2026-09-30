@@ -327,7 +327,7 @@ changeFeeCents         == Σ CHANGE_FEE
 additionalAmountCents  == max(0, owed(b)) when an ADDITIONAL PENDING row exists, else 0
 ```
 
-`npm run booking-ledger:census` (read-only, one `RepeatableRead` snapshot —
+`pnpm run booking-ledger:census` (read-only, one `RepeatableRead` snapshot —
 the `censusBookingMoneyReconciliation` pattern, `INV-MONEY-031`) evaluates
 those six identities for every booking and reports, per identity, the count
 that agrees, the count that disagrees, and per disagreeing booking the six
@@ -457,6 +457,7 @@ No row is "unknown". Codes:
 | 047 | C | the identity *is* `owed(b)`; (1) construction and (2) the fence exist to keep a stored copy true — retired with the copy; (3) is the census |
 | 048, 009, 010, 011, 012 | U | the credit election (a pre-settlement intent, not money) |
 | 050 | L | a Stripe refund note renders a `CARD_REFUND` line; the "refunded-amount mirror" no longer exists to be rendered by mistake |
+| 103 | P | the transaction mirror's card-refund increment (#3640); a `CARD_REFUND` line posts once per refund row by construction, so it retires with the column |
 | 051, 067, 060, 068, 096, 097, 099, 100 | U | the review task's lifecycle; it anchors `ADJUSTMENT` lines and is otherwise unchanged |
 | 052–054, 073–080 | U | saved-card handling |
 | 055, 081–090 | L | one attempt = one `PaymentTransaction` = at most one `CARD_CAPTURE` line (anchor uniqueness per transaction id) |
@@ -538,7 +539,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `npm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |
 | [#3586](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3586) | Contract: drop the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |

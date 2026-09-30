@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

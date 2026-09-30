@@ -8,28 +8,55 @@
      scheduled job that may well run with nobody awake to read it.
      `scripts/ci/render-epic-sync-pr-body.test.mjs` runs this file
      through the real gates, and through the real field list in
-     `.github/pull_request_template.md`, so a mistyped label fails `npm test`
+     `.github/pull_request_template.md`, so a mistyped label fails `pnpm test`
      instead.
 
-     Substituted by the workflow, with no escaping and no other placeholders:
-       __BRANCH__   the epic branch being synced, e.g. epic/2943-group-trip-hosting
-       __RUN_URL__  the workflow run that opened or refreshed this pull request -->
+     TWO WRITERS, ONE TEXT (#3721). The workflow renders it for the sync pull
+     requests it opens from `main`; `pnpm run epic:sync-body` renders it for a
+     sync a person opens by hand from a merge branch. Everything outside a
+     marked block is shared, so the five field labels below are written once.
+     A block between the `workflow` open and close markers is kept only in the
+     workflow's body, and one between the `by-hand` markers only in the
+     hand-opened one. A block may sit inside a line or span whole lines; a
+     whole-line block is removed together with its line breaks.
 
+     Substituted literally, with no escaping and no other placeholders:
+       __BRANCH__       the epic branch being synced, e.g. epic/2943-group-trip-hosting
+       __RUN_URL__      (workflow) the run that opened or refreshed this pull request
+       __HEAD_SHA__     (by hand) the sync merge commit
+       __EPIC_SHA__     (by hand) its first parent, the epic branch's tip
+       __MAIN_SHA__     (by hand) its second parent, the `main` commit merged in
+       __RESOLUTIONS__  (by hand) every path git reported as conflicted or whose
+                        content differs from its automatic merge, read from
+                        `git merge-tree`, never from the author -->
+
+<!-- workflow -->
 Automated sync of `main` into this epic's integration branch (#3002), opened or refreshed every six hours.
+<!-- /workflow -->
+<!-- by-hand -->
+Sync of `main` into `__BRANCH__` (#3002), opened by hand from a merge branch because `epic/**` does not take direct pushes.
+
+- Merge commit: `__HEAD_SHA__`
+- Epic tip (first parent): `__EPIC_SHA__`
+- `main` merged in (second parent): `__MAIN_SHA__`
+- Hand resolutions: __RESOLUTIONS__
+<!-- /by-hand -->
 
 It exists so the eventual `__BRANCH__` → `main` merge is a series of small reconciles rather than one large one. This repository has twice shipped a **wrong value** out of a hand-resolved long-lived conflict — #2979's file-size ceiling, and the `CHANGELOG.md` churn #2452 ended — so the cost of letting this sit is not merely inconvenience.
 
+<!-- workflow -->
 **If it is green, it merges itself.** Auto-merge is armed.
 
-**If it conflicts,** resolve it on `__BRANCH__` by hand: `git merge origin/main`, resolve, commit, push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong.
+**If it conflicts,** resolve it by hand on a merge branch made from `origin/__BRANCH__`, and open that as a hand sync with `pnpm run epic:sync-body` (the steps are in `docs/agents/ISSUE_WORKFLOW.md` → "Drift"); `epic/**` takes no direct push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong.
 
 Run: __RUN_URL__
+<!-- /workflow -->
 
 ## Concurrency And Lock Impact
 
-**The sync workflow wrote this section; no person examined the diff to produce it, and it must not be read as though one had.** It is here because the gate that requires it is the first step of `verify`, so without it the job fails in under half a minute and every later step — lint, typecheck, knip, the suite, the build — is skipped. That is precisely backwards: proving `main` and this epic branch still work together is the entire point of the sync, and the missing section was stopping the proof from ever running (#3142).
+**<!-- workflow -->The sync workflow<!-- /workflow --><!-- by-hand -->`pnpm run epic:sync-body`<!-- /by-hand --> wrote this section; no person examined the diff to produce it, and it must not be read as though one had.** It is here because the gate that requires it is the first step of `verify`, so without it the job fails in under half a minute and every later step — lint, typecheck, knip, the suite, the build — is skipped. That is precisely backwards: proving `main` and this epic branch still work together is the entire point of the sync, and the missing section was stopping the proof from ever running (#3142).
 
-The answers below are true structurally, not because anything was inspected. **This pull request's head IS `main`.** It therefore introduces no commit that has not already merged to `main` under its own declaration and its own nine required checks — nothing in the range is being reviewed here for the first time, and no writer, key or acquisition order anywhere is added, removed or reordered by merging `main` into a branch.
+The answers below are true structurally, not because anything was inspected. <!-- workflow -->**This pull request's head IS `main`.**<!-- /workflow --><!-- by-hand -->**This pull request's head is a merge of a `main` commit into this branch, and no hand resolution in it touches a concurrency-sensitive path** — the command refuses to write this section otherwise.<!-- /by-hand --> It therefore introduces no commit that has not already merged to `main` under its own declaration and its own nine required checks — nothing in the range is being reviewed here for the first time, and no writer, key or acquisition order anywhere is added, removed or reordered by merging `main` into a branch.
 
 `N/A` is deliberately not ticked. The range does carry concurrency-sensitive paths — `prisma/schema.prisma` and `prisma/migrations/` among them — so ticking it would assert something untrue about the diff even though it is true about the merge.
 

@@ -29,7 +29,7 @@ import { stripComments } from "./support/strip-comments";
  * defect at the site it removed it from — cannot be counted as a live copy.
  *
  * This test reads the source tree from disk, so it has no import edge to the
- * files it scans and `npm run test:related` cannot reach it. Run it by name.
+ * files it scans and `pnpm run test:related` cannot reach it. Run it by name.
  */
 
 const SCANNED_DIR = "src";

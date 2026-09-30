@@ -21,7 +21,7 @@ import { Client } from "pg";
  * Gated on CONTENTION_TEST_DATABASE_URL so the dummy-DATABASE_URL unit gate
  * skips it cleanly; run it locally against the dev Postgres:
  *   CONTENTION_TEST_DATABASE_URL="postgresql://tac:tacdev@localhost:5433/tacbookings" \
- *     npx vitest run src/lib/__tests__/lodge-capacity-lock.integration.test.ts
+ *     pnpm exec vitest run src/lib/__tests__/lodge-capacity-lock.integration.test.ts
  *
  * Uses advisory locks only — creates and mutates no rows — and disconnects both
  * connections cleanly.
