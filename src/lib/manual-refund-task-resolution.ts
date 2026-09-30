@@ -104,14 +104,10 @@ import {
  * amount is written inside that same claim, so an amount can no more be applied
  * twice than a status can.
  *
- * Holds NO advisory lock across a provider round trip, and that is
- * `docs/CONCURRENCY_AND_LOCKING.md` speaking rather than an omission: the
- * Stripe refund and the Xero leg run after the commit. The structural
- * `updateMany` claim is the single-flight guarantee. Since #3582 an
- * `EDIT_FINANCIAL_REVIEW` closure takes `pg_advisory_xact_lock(1)` as its first
- * lock, inside the transaction only, because it may post booking-ledger lines
- * and must ask whether the booking is confirmed on the ledger under the key the
- * settle asks it under.
+ * Holds NO advisory lock across a provider round trip (the Stripe refund and
+ * Xero leg run after the commit); the `updateMany` claim is the single-flight
+ * guarantee. Since #3582 an `EDIT_FINANCIAL_REVIEW` closure takes `lock(1)`
+ * first, inside the transaction only — `docs/CONCURRENCY_AND_LOCKING.md`.
  */
 export async function resolveManualRefundTask(
   input: ManualRefundTaskResolution,
@@ -239,16 +235,9 @@ export async function resolveManualRefundTask(
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
     if (isEditReview) {
-      // #3582: an edit review's closure may post the booking-ledger lines its
-      // re-price and its share record, and "is this booking confirmed on the
-      // ledger yet?" must be asked under the key the settle asks it under, or an
-      // edit review and a first settle could both see "not yet" and both post.
-      // Taken HERE — before the route is chosen, before the claim, before any
-      // row is written or locked — so it is this transaction's FIRST lock, as
-      // it is on every edit door (`INV-LOCK-002`: global before anything
-      // narrower, including the promotion key the re-price takes). No provider
-      // is called inside this transaction: the Stripe refund and the Xero leg
-      // run after the commit (`executeEditReviewSettlement`).
+      // #3582: the closure may post ledger lines, so it asks "confirmed on the
+      // ledger?" under the settle's key, as this transaction's FIRST lock
+      // (INV-LOCK-002). Why and where: docs/CONCURRENCY_AND_LOCKING.md.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
 
