@@ -242,8 +242,9 @@ export interface NetCollectedBookingScopeFields {
 
 /**
  * #3372, owner decision A (29 Sep 2026): THE booking scope of every "Net
- * Collected" figure - the dashboard card, the payments board tile and Reports'
- * Net Collected Cash. A payment counts when its booking has not been
+ * Collected" figure - the dashboard card, the payments board tile, Reports'
+ * Net Collected Cash and the finance dashboard's Net Collected Cash (#3637). A
+ * payment counts when its booking has not been
  * soft-deleted, whatever the booking's status: a cancelled booking nets to the
  * cancellation fee the club kept, and that fee is money collected.
  *
@@ -275,7 +276,8 @@ export interface NetCollectedPaymentRow {
 /**
  * The payments inside the Net Collected booking scope - for a check that must
  * run over exactly the payments the figure counts, such as the ledger-gap
- * warning beside it.
+ * warning beside it. The surfaces get both from one call,
+ * `summarizeNetCollectedWithLedgerGap` in `additional-ledger-gap.ts` (#3637).
  */
 export function netCollectedScopedPayments<T extends NetCollectedPaymentRow>(
   payments: ReadonlyArray<T>,
@@ -335,7 +337,7 @@ export function sumRefundedAndCreditedCents(
  * outside it contributes nothing. Each surface still decides WHICH payments it
  * hands in - a month's, a filter's, a report range's - and says so on screen.
  *
- * The finance dashboard's "Net collected cash" (`finance-booking-metrics.ts`)
+ * The finance dashboard's "Net Collected Cash" (`finance-booking-metrics.ts`)
  * reads it too, over the bookings staying in its window (#3637).
  *
  * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
@@ -371,14 +373,17 @@ export function summarizeCollectedCash(
  * #3372: the "may understate" warning that goes with a Net Collected Cash figure
  * when `summarizeAdditionalLedgerGap` finds payments that record an additional
  * payment as collected with no captured ADDITIONAL ledger row behind it. One
- * sentence for every surface that runs the check - Reports and the payments
- * board - so the warning cannot read differently on each. `subject` names what
- * the count counts on that surface. `null` when there is no gap.
+ * sentence for every surface that runs the check - Reports, the payments board
+ * and the finance dashboard (#3637) - so the warning cannot read differently on
+ * each. `subject` names what the count counts on that surface; `formatCents`
+ * and `formatCount` are the surface's money and number formatters in the
+ * club's format (#3205), so the count groups like every other count on that
+ * page. `null` when there is no gap.
  *
- * The dashboard card does not carry it: it reads only each payment's status and
- * amounts for the month, with no ledger rows, and loading every payment's
- * ledger on the landing page is not worth it for a check Reports and the
- * payments board already run.
+ * The admin dashboard card, the fourth Net Collected figure, does not carry it:
+ * it reads only each payment's status and amounts for the month, with no
+ * ledger rows, and loading every payment's ledger on the landing page is not
+ * worth it for a check the other three surfaces already run.
  */
 export function formatNetCollectedLedgerGapWarning(
   gap: { additionalLedgerGapCents: number; additionalLedgerGapBookings: number },
