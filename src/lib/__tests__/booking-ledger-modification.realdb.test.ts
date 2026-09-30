@@ -6,7 +6,7 @@
  * suites pin that each door calls the sync with its own history row and
  * sides. What a mock cannot show is the posting path against the table's real
  * constraints — the CHECKs, the unique `reversesLineId`, `ON CONFLICT DO
- * NOTHING` on the key — across two edits in two transactions. Five claims:
+ * NOTHING` on the key — across two edits in two transactions. Six claims:
  *
  *  1. Two edits in turn: the second reverses the FIRST EDIT'S re-post, never the
  *     confirmation line the first already reversed, and the booking's live
@@ -19,6 +19,10 @@
  *  5. Two sibling reviews from one parked edit, in each direction and in the
  *     dismiss-then-complete and declined-then-re-priced orders, leave the
  *     ledger billing exactly the booking's price (design §5.3).
+ *  6. The constraints themselves: a same-price re-sale followed by a second
+ *     edit reverses the re-post; a second reversal of one line inserts nothing
+ *     and leaves the transaction usable; a replayed change-fee-only edit posts
+ *     its fee once, through `ON CONFLICT` alone.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -179,7 +183,14 @@ async function confirmOnLedger(): Promise<void> {
 }
 
 /** One edit's posting, in its own transaction under `lock(1)`, as every door runs it. */
-async function postEdit(bookingModificationId: string, before: ModificationPricingSide, after: ModificationPricingSide, priceDiffCents: number, bookingId = BOOKING_ID) {
+async function postEdit(
+  bookingModificationId: string,
+  before: ModificationPricingSide,
+  after: ModificationPricingSide,
+  priceDiffCents: number,
+  bookingId = BOOKING_ID,
+  changeFeeCents = 0,
+) {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     await sync.postModificationLedgerLines({
@@ -189,7 +200,7 @@ async function postEdit(bookingModificationId: string, before: ModificationPrici
       bookingModificationId,
       sides: { before, after },
       priceDiffCents,
-      changeFeeCents: 0,
+      changeFeeCents,
       site: "race-3582",
     });
     // The transaction is still usable after the posting — a refused statement
@@ -422,6 +433,78 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
         await closeReview("race-3582-tC", rebaseOf(40_000, 40_000), charge);
         expect(await adjustments()).toEqual([]);
         expect(await billedCents()).toBe(40_000);
+      });
+    });
+
+    describe("the unique constraints themselves (#3740 review F3)", () => {
+      it("a same-price category change, then a second edit: the second reverses the FIRST EDIT'S re-post, never the stale confirmation line", async () => {
+        // Edit 1 re-sells G1's nights as a non-member at the SAME price: the
+        // confirmation lines are reversed and re-posted at $50. A planner that
+        // later targeted the stale confirmation line would have its reversal
+        // skipped (that line is already reversed) while its replacement posts.
+        const nonMember = (nights: Night[]) => ({ ...guestSide(G1, nights), isMember: false });
+        const g2 = guestSide(G2, [[D1, 5_000], [D2, 5_000]]);
+        const recategorised = { guests: [nonMember([[D1, 5_000], [D2, 5_000]]), g2], promoAdjustmentCents: 0 };
+        const edit1 = await historyRow("BATCH_MODIFY", 0);
+        await postEdit(edit1, BOTH, recategorised, 0);
+        const reposted = (await lines()).find(
+          (line) => line.anchorId === edit1 && line.reversesLineId === null && line.postingKey?.endsWith("2026-08-02"),
+        );
+        expect(reposted).toMatchObject({ kind: "GUEST_NIGHT", amountCents: 5_000, bookingGuestId: G1 });
+
+        const edit2 = await historyRow("BATCH_MODIFY", 1_000);
+        await postEdit(edit2, recategorised, { guests: [nonMember([[D1, 5_000], [D2, 6_000]]), g2], promoAdjustmentCents: 0 }, 1_000);
+
+        const edit2Lines = (await lines()).filter((line) => line.anchorId === edit2);
+        expect(edit2Lines.map((line) => [line.amountCents, line.reversesLineId]).sort((a, b) => Number(a[0]) - Number(b[0]))).toEqual([
+          [-5_000, reposted!.id],
+          [6_000, null],
+        ]);
+        expect(await liveChargeCents()).toBe(21_000);
+      });
+
+      it("a direct write of a reversal of an already-reversed line inserts nothing, and the transaction stays usable", async () => {
+        const edit = await historyRow("GUEST_REMOVE", -10_000);
+        await prisma.bookingGuest.delete({ where: { id: G1 } });
+        await postEdit(edit, BOTH, G2_ONLY, -10_000);
+        const reversedLine = (await lines()).find((line) => line.anchorKind === "CONFIRMATION" && line.bookingGuestId === G1);
+        expect((await lines()).some((line) => line.reversesLineId === reversedLine!.id)).toBe(true);
+        const before = await lines();
+
+        await prisma.$transaction(async (tx) => {
+          const rows = write.buildBookingLedgerRows([
+            {
+              bookingId: BOOKING_ID,
+              lodgeId: LODGE_ID,
+              side: "CHARGE",
+              kind: "GUEST_NIGHT",
+              sign: -1,
+              quantity: 1,
+              unitCents: 5_000,
+              anchorKind: "MODIFICATION",
+              anchorId: edit,
+              bookingGuestId: G1,
+              nightStart: D1,
+              nightEndExclusive: D2,
+              narration: "Reversed twice",
+              reversesLineId: reversedLine!.id,
+              // A key of its own, so the only thing that can refuse it is the
+              // unique `reversesLineId`.
+              postingKey: "race-3582-second-reversal",
+            },
+          ]);
+          expect(await write.writeBookingLedgerRows(tx, rows)).toBe(0);
+          await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { id: true } });
+        });
+        expect(await lines()).toEqual(before);
+      });
+
+      it("a replayed change-fee-only edit posts its fee once: the replay's plan is identical, and ON CONFLICT skips it", async () => {
+        const edit = await historyRow("DATE_CHANGE", 0);
+        await postEdit(edit, BOTH, BOTH, 0, BOOKING_ID, 1_500);
+        await postEdit(edit, BOTH, BOTH, 0, BOOKING_ID, 1_500);
+        const fees = (await lines()).filter((line) => line.kind === "CHANGE_FEE");
+        expect(fees.map((line) => [line.amountCents, line.postingKey])).toEqual([[1_500, `modification:${edit}:change-fee`]]);
       });
     });
   },
