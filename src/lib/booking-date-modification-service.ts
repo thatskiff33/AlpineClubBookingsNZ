@@ -1351,10 +1351,8 @@ export async function modifyBookingDates({
       store: tx,
       bookingId,
       lodgeId: booking.lodgeId,
-      bookingModificationId: bookingModification.id,
+      bookingModification,
       sides: pricingSides,
-      priceDiffCents,
-      changeFeeCents,
       site: "date-change",
     });
 

@@ -173,14 +173,8 @@ const SIDES_REMOVE_G2 = {
 };
 
 describe("postModificationLedgerLines (#3582)", () => {
-  const base = {
-    bookingId: "b1",
-    lodgeId: "l1",
-    bookingModificationId: "m1",
-    priceDiffCents: -10_000,
-    changeFeeCents: 0,
-    site: "guest-removal",
-  };
+  const row = { id: "m1", priceDiffCents: -10_000, changeFeeCents: 0 };
+  const base = { bookingId: "b1", lodgeId: "l1", bookingModification: row, site: "guest-removal" };
 
   it("posts an edit's reversals on a booking confirmed on the ledger, leaving owed(b) at the refund due", async () => {
     const ledger = confirmedLedger();
@@ -196,7 +190,7 @@ describe("postModificationLedgerLines (#3582)", () => {
     const s = store(confirmedLedger().filter((row) => row.anchorKind !== "CONFIRMATION"));
     await postModificationLedgerLines({
       ...base,
-      priceDiffCents: 10_000,
+      bookingModification: { ...row, priceDiffCents: 10_000 },
       store: s.store,
       sides: { before: SIDES_REMOVE_G2.after, after: SIDES_REMOVE_G2.before },
     });
@@ -205,7 +199,7 @@ describe("postModificationLedgerLines (#3582)", () => {
     const confirmed = store(confirmedLedger().filter((row) => row.bookingGuestId !== "g2"));
     await postModificationLedgerLines({
       ...base,
-      priceDiffCents: 10_000,
+      bookingModification: { ...row, priceDiffCents: 10_000 },
       store: confirmed.store,
       sides: { before: SIDES_REMOVE_G2.after, after: SIDES_REMOVE_G2.before },
     });
@@ -221,7 +215,12 @@ describe("postModificationLedgerLines (#3582)", () => {
   it("logs and posts nothing when the lines do not sum to the edit's figure", async () => {
     log.warn.mockClear();
     const s = store(confirmedLedger());
-    await postModificationLedgerLines({ ...base, priceDiffCents: -9_000, store: s.store, sides: SIDES_REMOVE_G2 });
+    await postModificationLedgerLines({
+      ...base,
+      bookingModification: { ...row, priceDiffCents: -9_000 },
+      store: s.store,
+      sides: SIDES_REMOVE_G2,
+    });
     expect(s.createMany).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: "SUM_MISMATCH" }), expect.any(String));
   });

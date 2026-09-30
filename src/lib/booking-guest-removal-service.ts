@@ -1202,10 +1202,8 @@ export async function removeBookingGuestInTransaction({
     store: tx,
     bookingId,
     lodgeId: booking.lodgeId,
-    bookingModificationId: bookingModification.id,
+    bookingModification,
     sides: pricingSides,
-    priceDiffCents,
-    changeFeeCents: 0,
     site: "guest-removal",
   });
 

@@ -197,10 +197,8 @@ async function postEdit(
       store: tx,
       bookingId,
       lodgeId: LODGE_ID,
-      bookingModificationId,
+      bookingModification: { id: bookingModificationId, priceDiffCents, changeFeeCents },
       sides: { before, after },
-      priceDiffCents,
-      changeFeeCents,
       site: "race-3582",
     });
     // The transaction is still usable after the posting — a refused statement

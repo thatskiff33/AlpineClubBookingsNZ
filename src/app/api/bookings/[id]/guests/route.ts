@@ -1245,10 +1245,8 @@ export async function POST(
         store: tx,
         bookingId,
         lodgeId: booking.lodgeId,
-        bookingModificationId: bookingModification.id,
+        bookingModification,
         sides: pricingSides,
-        priceDiffCents,
-        changeFeeCents: 0,
         site: "guest-add",
       });
 

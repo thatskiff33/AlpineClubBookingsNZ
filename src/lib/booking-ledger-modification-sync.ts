@@ -20,7 +20,7 @@ import "server-only";
  * has already aborted the transaction (#3590's review), so the write is never
  * the thing anyone is invited to swallow.
  */
-import type { ManualRefundTaskDirection, Prisma } from "@prisma/client";
+import type { BookingModification, ManualRefundTaskDirection, Prisma } from "@prisma/client";
 
 import {
   planModificationChargeLines,
@@ -50,26 +50,27 @@ type LedgerStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
  * wrote. `sides` is what `computeModificationPricing` composed, or null where
  * the edit parked, stubbed its promotion figures, or could not compose them —
  * each of which posts nothing (`INV-MOD-040`).
+ *
+ * The figures the lines must sum to are READ FROM THAT ROW, never handed over
+ * beside it, so the ledger and the edit's own history cannot be given two
+ * different change fees (#3740 SSOT F5).
  */
 export async function postModificationLedgerLines({
   store,
   bookingId,
   lodgeId,
-  bookingModificationId,
+  bookingModification,
   sides,
-  priceDiffCents,
-  changeFeeCents,
   site,
 }: {
   store: LedgerStore;
   bookingId: string;
   lodgeId: string;
-  bookingModificationId: string;
+  bookingModification: Pick<BookingModification, "id" | "priceDiffCents" | "changeFeeCents">;
   sides: ModificationPricingSides | null;
-  priceDiffCents: number;
-  changeFeeCents: number;
   site: string;
 }): Promise<void> {
+  const { id: bookingModificationId, priceDiffCents, changeFeeCents } = bookingModification;
   if (sides === null) return;
   if (!(await bookingHasConfirmationLines(store, bookingId))) return;
   const postedLines = await findPostedChargeLines(store, bookingId);

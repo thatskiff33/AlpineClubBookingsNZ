@@ -1945,10 +1945,8 @@ export async function modifyBookingBatch({
       store: tx,
       bookingId,
       lodgeId: booking.lodgeId,
-      bookingModificationId: bookingModification.id,
+      bookingModification,
       sides: pricingSides,
-      priceDiffCents,
-      changeFeeCents,
       site: "batch-modify",
     });
 

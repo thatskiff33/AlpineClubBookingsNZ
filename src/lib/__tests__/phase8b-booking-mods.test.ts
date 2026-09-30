@@ -865,9 +865,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       expect.objectContaining({
         store: tx,
         bookingId: "bk1",
-        bookingModificationId: "mod1",
-        priceDiffCents: 20000,
-        changeFeeCents: 0,
+        // The written row itself, so its own figures are the ledger's (#3740 SSOT F5).
+        bookingModification: await vi.mocked(tx.bookingModification.create).mock.results[0]!.value,
         site: "date-change",
         sides: expect.objectContaining({ before: expect.any(Object), after: expect.any(Object) }),
       }),
@@ -2302,9 +2301,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     expect(vi.mocked(postModificationLedgerLines)).toHaveBeenCalledWith(
       expect.objectContaining({
         store: tx,
-        bookingModificationId: "mod1",
-        priceDiffCents: -5000,
-        changeFeeCents: 0,
+        bookingModification: await vi.mocked(tx.bookingModification.create).mock.results[0]!.value,
         site: "guest-removal",
       }),
     );
