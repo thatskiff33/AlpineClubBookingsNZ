@@ -812,6 +812,24 @@ describe("finance dashboard page model", () => {
     ).toContain("May understate by $21");
   });
 
+  it("prints the warning's booking count in the club number format (#3637)", async () => {
+    const metrics = bookingMetrics();
+    metrics.paymentSummary.additionalLedgerGapCents = 2_100;
+    metrics.paymentSummary.additionalLedgerGapBookings = 1_234;
+    mockGetFinanceBookingMetrics.mockResolvedValue(metrics);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings" },
+    });
+
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("1,234 bookings in this range record an additional payment"),
+      ),
+    ).toBe(true);
+  });
+
   it("leaves the cash figure uncaveated when the ledger backs every increase", async () => {
     const model = await buildFinanceDashboardPageModel({
       member: financeManager(),

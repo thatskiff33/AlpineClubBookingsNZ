@@ -384,11 +384,12 @@ export function formatNetCollectedLedgerGapWarning(
   gap: { additionalLedgerGapCents: number; additionalLedgerGapBookings: number },
   subject: { one: string; many: string },
   formatCents: (cents: number) => string,
+  formatCount: (count: number) => string,
 ): string | null {
   const count = gap.additionalLedgerGapBookings;
   if (count === 0) return null;
   const singular = count === 1;
-  return `Net Collected Cash may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${count} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
+  return `Net Collected Cash may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${formatCount(count)} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 /**

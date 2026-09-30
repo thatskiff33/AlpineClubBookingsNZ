@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatNetCollectedLedgerGapWarning,
   formatPaidRefundedBreakdown,
   getPaymentNetOfRefundsCents,
   getRemainingRefundableCents,
@@ -78,5 +79,35 @@ describe("per-payment net and its breakdown line", () => {
   it("returns null when nothing was refunded or credited, so no caller prints the line", () => {
     const cents = (value: number) => `$${(value / 100).toFixed(2)}`;
     expect(formatPaidRefundedBreakdown(13_000, 0, cents)).toBeNull();
+  });
+});
+
+// #3637: the count in the shared warning is printed by the caller's number
+// formatter, as the money is by its money formatter - the club's grouping.
+describe("the Net Collected ledger-gap warning", () => {
+  const cents = (value: number) => `$${(value / 100).toFixed(2)}`;
+  const grouped = (count: number) =>
+    String(count).replace(/(\d)(?=(\d{3})+$)/g, "$1,");
+
+  it("prints the count in the caller's number format", () => {
+    expect(
+      formatNetCollectedLedgerGapWarning(
+        { additionalLedgerGapCents: 2_100, additionalLedgerGapBookings: 1_234 },
+        { one: "booking in this range", many: "bookings in this range" },
+        cents,
+        grouped,
+      ),
+    ).toContain("may understate by $21.00: 1,234 bookings in this range record an");
+  });
+
+  it("returns null when there is no gap", () => {
+    expect(
+      formatNetCollectedLedgerGapWarning(
+        { additionalLedgerGapCents: 0, additionalLedgerGapBookings: 0 },
+        { one: "booking", many: "bookings" },
+        cents,
+        grouped,
+      ),
+    ).toBeNull();
   });
 });

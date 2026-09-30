@@ -101,6 +101,7 @@ export async function buildBookingsDashboard(
     metrics.paymentSummary,
     { one: "booking in this range", many: "bookings in this range" },
     (cents) => formatDollarsDisplay(cents, format),
+    (count) => formatNumber(count, format),
   );
   if (ledgerGapWarning) warnings.push(ledgerGapWarning);
   const moneyReconciliationPanel =

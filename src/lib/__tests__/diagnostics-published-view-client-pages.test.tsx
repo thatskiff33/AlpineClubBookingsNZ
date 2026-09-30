@@ -568,6 +568,35 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
     expect(netCard).not.toHaveTextContent("NaN");
   });
 
+  it("prints the warning's payment count in the club number format (#3637)", async () => {
+    respondWith({
+      data: [],
+      total: 0,
+      page: 1,
+      pageSize: 25,
+      summary: {
+        netCollectedCents: 6_500,
+        refundedCents: 0,
+        count: 1_234,
+        additionalLedgerGapCents: 2_100,
+        additionalLedgerGapBookings: 1_234,
+      },
+    });
+    const { default: PaymentsPage } = await import(
+      "@/app/(admin)/admin/payments/page"
+    );
+
+    render(
+      <HelpWidgetProvider>
+        <PaymentsPage />
+      </HelpWidgetProvider>,
+    );
+
+    expect(
+      await screen.findByText(/: 1,234 payments counted in it record an additional payment/),
+    ).toBeInTheDocument();
+  });
+
   it("warns that Net Collected Cash may understate, as Reports does, when the ledger check finds a gap", async () => {
     respondWith({
       data: [],

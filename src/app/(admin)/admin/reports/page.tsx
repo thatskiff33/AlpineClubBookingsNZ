@@ -27,6 +27,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
+import { formatFinanceNumber } from "@/lib/finance-format";
 import {
   type ClubDateFormat,
   formatClubDate,
@@ -326,6 +327,7 @@ export default function ReportsPage() {
         data.summary,
         { one: "overlapping booking", many: "overlapping bookings" },
         (cents) => formatCents(cents, clubFormat),
+        (count) => formatFinanceNumber(count, clubFormat),
       )
     : null;
   const unreconciledBookingCount =
