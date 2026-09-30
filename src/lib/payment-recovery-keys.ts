@@ -100,6 +100,49 @@ export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
   return `edit_financial_review_refund_${taskId}`;
 }
 
+// #1350 / #3639: the Stripe idempotency-key prefix, and the metadata, of the
+// refund of a genuine late capture on a cancelled booking. ONE builder for the
+// webhook's automatic refund and the treasurer-approved one, because they are the
+// same refund of the same capture: whichever runs first, a repeat under this
+// prefix is answered by Stripe with the original refund (INV-PAY-106).
+const LATE_CAPTURE_REFUND_KEY_PREFIX = "late_cancel_refund_";
+// Independent of `CANCELLED_BOOKING_LATE_CAPTURE_REASON` (the frozen
+// PaymentTransaction.reason marker) despite the same spelling: this is Stripe
+// refund metadata, replayed byte for byte, and neither may be derived from the other.
+export const LATE_CAPTURE_REFUND_METADATA_REASON = "cancelled_booking_late_capture";
+export function buildLateCaptureRefundStripeKeyPrefix(
+  bookingId: string,
+  paymentIntentId: string,
+) {
+  return `${LATE_CAPTURE_REFUND_KEY_PREFIX}${bookingId}_${paymentIntentId}`;
+}
+export function buildLateCaptureRefundMetadata(
+  bookingId: string,
+): Record<string, string> {
+  return { bookingId, reason: LATE_CAPTURE_REFUND_METADATA_REASON };
+}
+// #3639: the recovery row of a treasurer-approved late-capture refund. One per
+// capture: the approval task is one per payment intent (its `occurrenceKey`).
+export function buildLateCaptureApprovalRefundRecoveryIdempotencyKey(
+  paymentIntentId: string,
+) {
+  return `late_capture_approval_refund_recovery_${paymentIntentId}`;
+}
+// The inverse of `buildLateCaptureRefundStripeKeyPrefix`, for the recovery
+// replay: the operation's own `paymentIntentId` is the payment's representative
+// intent, not necessarily the late capture's.
+export function lateCaptureRefundPaymentIntentId(
+  keyPrefix: string,
+  bookingId: string,
+): string {
+  return keyPrefix.slice(`${LATE_CAPTURE_REFUND_KEY_PREFIX}${bookingId}_`.length);
+}
+export function isLateCaptureRefundStripeKeyPrefix(
+  keyPrefix: string | null | undefined,
+): boolean {
+  return keyPrefix?.startsWith(LATE_CAPTURE_REFUND_KEY_PREFIX) ?? false;
+}
+
 // The recovery-operation dedup key for an ordinary booking edit's additional
 // PaymentIntent (#1096), scoped to the `BookingModification` that recorded the
 // price increase - one edit, one charge debt.
@@ -378,6 +421,11 @@ export function bookingModificationRefundReasonForKeyPrefix(
   // recover - safe, but permanently stuck.
   if (keyPrefix?.startsWith("edit_financial_review_refund_")) {
     return "edit_financial_review";
+  }
+  // #3639: a treasurer-approved late-capture refund, replayed under the webhook's
+  // own prefix and body (`buildLateCaptureRefundMetadata`).
+  if (isLateCaptureRefundStripeKeyPrefix(keyPrefix)) {
+    return LATE_CAPTURE_REFUND_METADATA_REASON;
   }
   return "booking_modification_refund_recovery";
 }

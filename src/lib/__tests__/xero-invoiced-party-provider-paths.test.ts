@@ -67,6 +67,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3635: the refund note names a kept late capture's own invoice first;
+    // these bookings have none.
+    manualRefundTask: { findMany: async () => [] },
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
     bookingModification: { findUnique: mocks.bookingModificationFindUnique },

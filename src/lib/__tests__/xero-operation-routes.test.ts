@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   xeroOperationFindUnique: vi.fn(),
   xeroOperationFindMany: vi.fn(),
+  xeroOperationFindFirst: vi.fn(),
   xeroOperationCount: vi.fn(),
   xeroOperationUpdate: vi.fn(),
   xeroOperationUpdateMany: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: {
       findUnique: mocks.xeroOperationFindUnique,
       findMany: mocks.xeroOperationFindMany,
+      findFirst: mocks.xeroOperationFindFirst,
       count: mocks.xeroOperationCount,
       update: mocks.xeroOperationUpdate,
       updateMany: mocks.xeroOperationUpdateMany,
@@ -75,7 +77,9 @@ vi.mock("@/lib/xero-admin-failures", () => ({
   resolveFailedXeroOperationStates: mocks.resolveFailedXeroOperationStates,
 }));
 
-vi.mock("@/lib/xero-operation-queue", () => ({
+vi.mock("@/lib/xero-operation-queue", async (importOriginal) => ({
+  // The real requeue correlation key, which the resolve route checks (#3635).
+  ...((await importOriginal()) as typeof import("@/lib/xero-operation-queue")),
   enqueueXeroSyncOperationRetry: mocks.enqueueXeroSyncOperationRetry,
   processQueuedXeroOperationRetries: mocks.processQueuedXeroOperationRetries,
 }));
@@ -156,6 +160,7 @@ describe("Xero operation admin retry routes", () => {
       replayable: true,
     });
     mocks.xeroOperationUpdate.mockResolvedValue({});
+    mocks.xeroOperationFindFirst.mockResolvedValue(null);
     mocks.xeroOperationFindMany.mockResolvedValue([]);
     mocks.xeroOperationCount.mockResolvedValue(0);
     mocks.resolveFailedXeroOperationStates.mockResolvedValue(new Map());
@@ -386,6 +391,7 @@ describe("Xero operation admin retry routes", () => {
   });
 
   it("marks a failed operation resolved in Xero and audits it", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
     const response = await resolveOperation(
       new NextRequest("http://localhost", {
         method: "POST",
@@ -397,9 +403,14 @@ describe("Xero operation admin retry routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.xeroOperationUpdate).toHaveBeenCalledWith(
+    expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_failed" },
+        // #3635: status-guarded, so a retry that claimed the row first wins.
+        where: {
+          id: "op_failed",
+          status: { in: ["FAILED", "PARTIAL"] },
+          manuallyResolvedAt: null,
+        },
         data: expect.objectContaining({
           manuallyResolvedReason: "Contact was archived directly in Xero.",
           manuallyResolvedById: "admin-1",
@@ -415,6 +426,281 @@ describe("Xero operation admin retry routes", () => {
       })
     );
   });
+
+  const resolveRequest = () =>
+    new NextRequest("http://localhost", {
+      method: "POST",
+      body: JSON.stringify({ reason: "Credit note raised by hand in Xero." }),
+    });
+
+  it("refuses to resolve an applied-credit allocation or deallocation, and says to retry it (#3635)", async () => {
+    for (const queueType of ["APPLIED_CREDIT_ALLOCATION", "APPLIED_CREDIT_DEALLOCATION"]) {
+      mocks.xeroOperationUpdateMany.mockClear();
+      mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+        id: "op_credit",
+        direction: "OUTBOUND",
+        entityType: "ALLOCATION",
+        operationType: "UPDATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        status: "FAILED",
+        replayable: true,
+        queueType,
+        requestPayload: null,
+        manuallyResolvedAt: null,
+      });
+
+      const response = await resolveOperation(resolveRequest(), {
+        params: Promise.resolve({ id: "op_credit" }),
+      });
+
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toMatch(/Retry it instead/);
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    }
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses to resolve while a retry has claimed the operation itself (#3635)", async () => {
+    mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+      id: "op_failed",
+      status: "RUNNING",
+      queueType: null,
+      requestPayload: null,
+      manuallyResolvedAt: null,
+    });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/retry of this Xero operation is running/);
+    expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // An evaluator of the retry-conflict query against one queued-retry row, so
+  // the tests read what the where clause would match, not what a stub says.
+  type RetryRow = { status: string; startedAt: Date | null; completedAt: Date | null };
+  const retryRowMatches = (row: RetryRow, where: { OR: Record<string, unknown>[] }) =>
+    where.OR.some((clause) => {
+      if (clause.status === "RUNNING") return row.status === "RUNNING";
+      const started = (clause.startedAt as { lte: Date }).lte;
+      const completed = (clause.completedAt as { gte: Date }).gte;
+      return (
+        row.status !== "CANCELLED" &&
+        row.startedAt !== null &&
+        row.startedAt <= started &&
+        row.completedAt !== null &&
+        row.completedAt >= completed
+      );
+    });
+  const withQueuedRetry = (row: RetryRow | ((markAt: Date) => RetryRow)) =>
+    mocks.xeroOperationFindFirst.mockImplementation(
+      async (args: { where: { operationType?: string; OR: Record<string, unknown>[] } }) => {
+        if (args.where.operationType !== "REQUEUE") return null;
+        const markAt = (args.where.OR[1]!.startedAt as { lte: Date }).lte;
+        const resolved = typeof row === "function" ? row(markAt) : row;
+        return retryRowMatches(resolved, args.where)
+          ? { id: "queue_retry", status: resolved.status, startedAt: resolved.startedAt }
+          : null;
+      }
+    );
+
+  it("withdraws the mark and answers 409 when a queued retry of the operation is running (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+    withQueuedRetry({ status: "RUNNING", startedAt: new Date(), completedAt: null });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/was not marked resolved/);
+    expect(mocks.xeroOperationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          correlationKey: "xero-operation:requeue:op_failed",
+          operationType: "REQUEUE",
+        }),
+      })
+    );
+    // The check runs after the mark is written, and the mark is taken back.
+    const [writeCall, withdrawCall] = mocks.xeroOperationUpdateMany.mock.calls;
+    const writtenAt = writeCall[0].data.manuallyResolvedAt;
+    expect(writtenAt).toBeInstanceOf(Date);
+    expect(withdrawCall[0]).toEqual({
+      where: { id: "op_failed", manuallyResolvedAt: writtenAt },
+      data: {
+        manuallyResolvedAt: null,
+        manuallyResolvedReason: null,
+        manuallyResolvedById: null,
+      },
+    });
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the mark when a queued retry finished in the moments between the mark and the check (#3635 N4)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+    // Started before the mark (it read the row unresolved), completed after it.
+    withQueuedRetry((markAt) => ({
+      status: "SUCCEEDED",
+      startedAt: new Date(markAt.getTime() - 50),
+      completedAt: new Date(markAt.getTime() + 5),
+    }));
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the mark when the queued retry stood down or finished before it (#3635 N4)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+    withQueuedRetry((markAt) => ({
+      status: "SUCCEEDED",
+      startedAt: new Date(markAt.getTime() - 5000),
+      completedAt: new Date(markAt.getTime() - 4000),
+    }));
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.createAuditLog).toHaveBeenCalled();
+  });
+
+  it("points at Reset stale running operations when the running retry looks stuck (#3635 N7)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+    withQueuedRetry({
+      status: "RUNNING",
+      startedAt: new Date("2020-01-01T00:00:00.000Z"),
+      completedAt: null,
+    });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/Reset stale running operations/);
+  });
+
+  it("refuses while a live copy of the same document is queued (#3635 N3)", async () => {
+    mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+      id: "op_failed",
+      status: "FAILED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      correlationKey: "payment:pay_1:refund-credit-note:5000:v2",
+      queueType: "REFUND_CREDIT_NOTE",
+      requestPayload: null,
+      manuallyResolvedAt: null,
+    });
+    mocks.xeroOperationFindFirst.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+      args.where.correlationKey === "payment:pay_1:refund-credit-note:5000:v2" &&
+      (args.where.status as { in: string[] }).in.includes("PENDING")
+        ? { id: "op_live_copy" }
+        : null
+    );
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/new copy of this Xero document is queued/);
+    expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("never tells a second officer 'already resolved' while the first mark may still be withdrawn (#3635 N5)", async () => {
+    const markAt = new Date("2026-06-30T00:00:00.000Z");
+    mocks.xeroOperationFindUnique.mockResolvedValueOnce({
+      id: "op_failed",
+      status: "FAILED",
+      queueType: null,
+      requestPayload: null,
+      manuallyResolvedAt: markAt,
+    });
+    withQueuedRetry({ status: "RUNNING", startedAt: new Date(), completedAt: null });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("answers 'already resolved' to the second of two officers resolving at once (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.xeroOperationFindUnique
+      .mockResolvedValueOnce({
+        id: "op_failed",
+        status: "FAILED",
+        queueType: null,
+        requestPayload: null,
+        manuallyResolvedAt: null,
+      })
+      .mockResolvedValueOnce({
+        status: "FAILED",
+        manuallyResolvedAt: new Date("2026-06-30T00:00:00.000Z"),
+      });
+
+    const response = await resolveOperation(resolveRequest(), {
+      params: Promise.resolve({ id: "op_failed" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).message).toBe("Xero operation was already resolved.");
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses to resolve an operation a retry claimed after the read (#3635)", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+
+    const response = await resolveOperation(
+      new NextRequest("http://localhost", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Credit note raised by hand in Xero." }),
+      }),
+      { params: Promise.resolve({ id: "op_failed" }) }
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["retry", retryOperation],
+    ["requeue", requeueOperation],
+  ])(
+    "the %s route passes the queue's 409 refusal of a resolved operation through, and kicks nothing (#3635)",
+    async (_name, route) => {
+      mocks.enqueueXeroSyncOperationRetry.mockRejectedValue(
+        new XeroOperationRetryError(
+          "An officer marked this operation resolved in Xero; it is treated as done and is never re-run.",
+          409
+        )
+      );
+
+      const response = await route(new NextRequest("http://localhost"), {
+        params: Promise.resolve({ id: "op_resolved" }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error:
+          "An officer marked this operation resolved in Xero; it is treated as done and is never re-run.",
+      });
+      expect(mocks.processQueuedXeroOperationRetries).not.toHaveBeenCalled();
+      expect(mocks.logAudit).not.toHaveBeenCalled();
+    }
+  );
 
   it("resets stale running operations without erasing provider-created recovery proof", async () => {
     mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 3 });

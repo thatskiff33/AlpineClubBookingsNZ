@@ -39,6 +39,8 @@ vi.mock("@/lib/manual-refund-task-resolution", () => ({
   },
 }));
 
+import { revalidatePath } from "next/cache";
+import { expectRevalidatesPageFile } from "@/lib/__tests__/support/revalidated-page";
 import { POST } from "../[id]/route";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
@@ -84,6 +86,12 @@ describe("a $0 completion reaches the layer that can explain it (#3195)", () => 
     expect(mocks.resolveManualRefundTask).toHaveBeenCalledWith(
       expect.objectContaining({ confirmedAmountCents: 0 }),
       CLUB_FORMAT_TEST,
+    );
+    // #3635: the booking detail page is refreshed - the pattern must name its
+    // file, route group included, or it refreshes nothing.
+    expectRevalidatesPageFile(
+      vi.mocked(revalidatePath),
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
   });
 

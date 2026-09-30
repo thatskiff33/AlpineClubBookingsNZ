@@ -101,6 +101,12 @@ interface CreateXeroInvoicePaymentParams {
   role: string;
   createdByMemberId?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * #3635: the payment's Xero date, when the money moved on a day other than
+   * today - a kept late capture is recorded on the day Stripe took it. Absent,
+   * the club's today, as before.
+   */
+  date?: string;
 }
 
 export async function createXeroPaymentForInvoice(
@@ -117,7 +123,7 @@ export async function createXeroPaymentForInvoice(
     // which is still yesterday all New Zealand morning (INV-DATE-019, #2834) —
     // and "the club's" now means the PERSISTED zone rather than the container's
     // `TZ` (CT-5, #2869; INV-CONFIG-002).
-    date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+    date: params.date ?? xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
     reference: params.reference,
   };
 

@@ -106,7 +106,9 @@ full booking state machine is in
 6. **Make this a group trip** (optional): tick it if you want other people to
    book their **own** beds on the same dates. You choose whether each person pays
    their own bill or you pay one combined bill, and you get a join code/link to
-   share. Full detail is in
+   share. If you pay one combined bill, anyone who joins after you have paid,
+   or who was not on the bill you paid, books and pays for their own beds; you
+   are never charged for them. Full detail is in
    [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md) (the "Group trip organiser" journey).
 
 ### 3. Review, confirm, and the hold policies

@@ -77,6 +77,15 @@ that still need triage or splitting. The task form asks for the sections above
 in this order, so filling it in from the top produces a body that reads to a
 person and still briefs an agent.
 
+**A finding that touches a payment instrument, invoice, refund or credit says
+what happens to the money, not only to the row** — the finding form's required
+"What happens to the money?" field. The worked example is #486 → #543 → #3340:
+the audit saw the exact two-edits trigger but framed it as a `PaymentTransaction`
+stuck in `PENDING`; #543 did precisely what it asked and retired the instrument;
+nobody asked what became of the debt it represented, and members were
+under-charged $135 four months later. A money seam's test is held to the same
+standard by `INV-OPS-015`.
+
 ## What qualifies as an epic
 
 "An epic reaches `main` as ONE merge, from an integration branch" below governs
@@ -322,9 +331,9 @@ runs the next epic.
   auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
   human — which is the correct division. **A red sync pull request is the branch
   telling you `main` and the epic no longer compose**, so read it rather than
-  re-running it. Resolve a conflict on the epic branch by hand
-  (`git merge origin/main`, resolve, commit, push), never by force-pushing a
-  shared branch and never by letting a merge tool pick a side unread.
+  re-running it. Resolve a conflict by hand on a merge branch, opened as a
+  hand sync (below), never by force-pushing a shared branch and never by
+  letting a merge tool pick a side unread.
 
   The description that workflow writes carries a complete
   `## Concurrency And Lock Impact` section, and says in its own words that the
@@ -336,6 +345,17 @@ runs the next epic.
   question a merge really raises: `main` taking lock A then B while the epic
   takes B then A. That belongs to the `epic/…` → `main` pull request, where a
   person writes a real declaration over the epic's real diff.
+
+  **A sync you open by hand gets the same description from a command.** Because
+  `epic/**` takes no direct push, a hand sync is a merge branch: make it from
+  `origin/epic/…`, run `git merge origin/main`, resolve and commit, then run
+  `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
+  with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
+  pull request with `--body-file body.md`. The command reads the merge commit
+  rather than your account of it. It names both parents, lists every file git
+  reported as conflicted or that differs from its automatic merge, and refuses
+  when one of those is concurrency-sensitive. In that case you write the declaration yourself.
+  Hand-typing the description is how #3718 failed the gate in 23 seconds (#3721).
 - **Every migration in the epic lands in ONE deploy.** So **no child may pair an
   expand with its own contract.** A contract half waits for a release *after* the
   epic merges, because `previous_expand_release` has to name something that has
@@ -427,7 +447,8 @@ checks gate **pushes**, not only merges, so nothing lands on an integration bran
 without the nine checks — which is why the sync opens a pull request from
 `main` rather than pushing a merge commit it has just created. And
 `required_pull_request_reviews` is deliberately absent (`main` has it with a count
-of `0`, meaning a pull request is required and an approval is not); on an
+of `0`, and a code-owner rule decided but not yet applied — `AGENTS.md` →
+"Pre-authorisation and attributability"); on an
 integration branch the pull request arrives from the workflow model rather than
 from enforcement, and the owner's gate is the `epic → main` merge.
 
@@ -689,7 +710,11 @@ docs/TESTING.md "Census tests and the merge hazard".
 Post one on the issue once the PR is reviewed, every confirmed finding is fixed,
 and CI is green: what was built, which review lenses ran and what they found,
 how each finding was fixed, and whether the PR is eligible for autonomous merge
-or is held for owner approval. With the CLAIM comment it makes the issue thread
+or is held for owner approval. On a PR touching a `.github/CODEOWNERS` path,
+once code-owner review is applied, the ask requests the owner's GitHub
+**Approve** as well as the approval comment: the agent account cannot merge
+past a missing Approve (`AGENTS.md` → "Pre-authorisation and
+attributability"). With the CLAIM comment it makes the issue thread
 a full audit trail that reads cold — which is the point, because whoever picks
 the work up next may be a session that never saw yours.
 

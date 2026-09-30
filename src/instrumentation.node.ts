@@ -376,7 +376,7 @@ export async function register() {
     let isXeroReplayCronRunning = false;
     let isXeroInboundCronRunning = false;
     let isXeroCreditSyncCronRunning = false;
-    let isPaymentRecoveryCronRunning = false;
+    let isPaymentsCronRunning = false;
     let isWaitlistCronRunning = false;
 
     // Helper: record a cron job run
@@ -461,12 +461,11 @@ export async function register() {
     );
 
     cron.default.schedule("*/15 * * * *", async () => {
-      if (isPaymentRecoveryCronRunning) {
-        logger.info({ job: "payment-recovery" }, "Already running, skipping");
+      if (isPaymentsCronRunning) {
+        logger.info({ job: "payments-cron" }, "Already running, skipping");
         return;
       }
-      isPaymentRecoveryCronRunning = true;
-      const startedAt = new Date();
+      isPaymentsCronRunning = true;
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "payment-recovery", status: "in_progress" },
@@ -474,24 +473,24 @@ export async function register() {
       );
 
       try {
-        const { processPaymentRecoveryOperations } = await import(
-          "./lib/payment-recovery"
+        // #3663: the cycle `POST /api/cron/payments` runs (recovery, IB hold release,
+        // waiting-invoice reaper); the runner isolates and records each task.
+        const { runPaymentsCronCycle } = await import(
+          "./lib/payments-cron-runner"
         );
-        const result = await processPaymentRecoveryOperations();
-        logger.info({ job: "payment-recovery", ...result }, "Payment recovery cron complete");
-        await recordCronRun("payment-recovery", startedAt, "SUCCESS", { ...result });
+        const result = await runPaymentsCronCycle();
+        logger.info({ job: "payments-cron", ...result }, "Payments cron cycle complete");
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "ok" });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        reportCronError({ tag: "payment-recovery", err, message: "Error in payment recovery cron" });
-        await recordCronRun("payment-recovery", startedAt, "FAILURE", undefined, message);
+        // Failed tasks already bridged to Sentry and recorded FAILURE in the runner.
+        logger.error({ err, job: "payments-cron" }, "Error in payments cron cycle");
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "error" });
       } finally {
-        isPaymentRecoveryCronRunning = false;
+        isPaymentsCronRunning = false;
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "payment-recovery" }, "Scheduled payment recovery (every 15 minutes)");
+    logger.info({ job: "payments-cron" }, "Scheduled payments cycle (every 15 minutes)");
 
     if (optionalCron.xeroIntegration) {
       // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)

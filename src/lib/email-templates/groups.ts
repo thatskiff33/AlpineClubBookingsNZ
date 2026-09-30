@@ -60,6 +60,29 @@ export function groupJoinSettledTemplate(data: {
   `);
 }
 
+/**
+ * #3672 (`INV-PAY-109`): the organiser paid the group's bill before this
+ * joiner was on it, so the joiner now pays for their own place. The booking
+ * link (added for every booking-scoped message) takes them to the pay step.
+ */
+export function groupJoinPaySelfTemplate(data: {
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Please Pay For Your Place")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " has paid for their group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge. You joined after that payment was prepared, so your place was not included in it.")}
+    ${infoTable([
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+    ])}
+    ${paragraph("Your place is not confirmed until you pay for it yourself. Open your booking to pay.")}
+    ${supportContactSentence("If you have any questions, contact the club at ")}
+  `);
+}
+
 export function groupSettlementExpiredTemplate(data: {
   firstName: string;
   checkIn: Date;

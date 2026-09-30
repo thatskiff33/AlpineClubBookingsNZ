@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   bookingUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
+  // #3639: the paid path writes its CANCELLED event inside the claim.
+  txBookingEventCreate: vi.fn().mockResolvedValue({}),
   daysUntilDate: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
@@ -42,7 +44,7 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
-  cancelPaymentIntentIfCancellable: vi.fn(),
+  cancelPaymentIntentIfCancellableWithResult: vi.fn(),
   processRefund: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   markPaymentIntentTransactionFailed: vi.fn(),
@@ -126,7 +128,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
-  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
+  cancelPaymentIntentIfCancellableWithResult:
+    mocks.cancelPaymentIntentIfCancellableWithResult,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -143,6 +146,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     completedRefundCents = 0;
   },
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
+  // #3640: the Payment row lock the paid-path claim takes first.
+  lockPaymentForRefundedTotal: vi.fn(async () => undefined),
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
@@ -278,6 +283,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             mocks.bookingFindUnique(args),
           );
           const mockTx = {
+            bookingEvent: { create: mocks.txBookingEventCreate },
             $executeRaw: vi.fn().mockResolvedValue(undefined),
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -332,7 +338,11 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
       queueOperationId: "op_2",
       message: "queued",
     });
-    mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    // #3638: Stripe confirms the cancel unless a test says otherwise.
+    mocks.cancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      paymentIntent: { status: "canceled" },
+      canceled: true,
+    });
     mocks.applyLocalRefundAllocation.mockResolvedValue(undefined);
     mocks.markPaymentIntentTransactionFailed.mockResolvedValue(undefined);
     mocks.refundPaymentTransactions.mockResolvedValue({

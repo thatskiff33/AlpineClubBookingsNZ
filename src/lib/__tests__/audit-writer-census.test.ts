@@ -1398,8 +1398,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 360 -> 361 (#3566): the AI spend rate clear (`ai-spend-currency-clear.ts`,
     // run by `/api/admin/club-format/`), unpinned like #3563's writer there.
     // RE-MEASURED with `npm run audit:census` on the tree merged with #3029.
-    // #3415 removes the unpinned accept-time capacity-block/revert writer.
-    ).toEqual({ pinned: 128, unpinned: 360 });
+    // 361 -> 362 (#3639): the late-notice acknowledgement, a new unpinned
+    // `payment` writer. RE-MEASURED with `npm run audit:census`.
+    // 362 -> 364 (#3639): the two late-capture approval writers, both unpinned
+    // `payment` rows. RE-MEASURED with `npm run audit:census`.
+    // 364 -> 365 (#3639 review): the setting-change record, unpinned
+    // `payment`. RE-MEASURED with `npm run audit:census`.
+    // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
+    ).toEqual({ pinned: 128, unpinned: 364 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

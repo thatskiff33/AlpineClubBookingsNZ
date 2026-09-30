@@ -1050,9 +1050,9 @@ implementation rather than a copy per handler: one record writer, one `deletedAt
 re-read, one alert decision.
 
 **WHAT "EVERY ORDERING" MEANS ON THE PRIMARY PATH, checked rather than assumed.**
-Nothing in the tree raises an `OPEN` `ManualRefundTask` for a PRIMARY payment
-intent — the confirm-modification-payment route is the only raiser of one of these
-and it handles modification intents — so the close arm is unreachable there and the
+Only the confirm-modification-payment route raises an `OPEN` task under these
+`reason` sentences, for modification intents (#3639's approval task has its own),
+so the close arm is unreachable there and the
 CREATE arm is the only one that fires. First delivery creates the row; a Stripe
 redelivery finds this writer's own row and creates nothing; a deletion landing
 between two deliveries resolves to the one row, because every lookup matches all
@@ -1267,16 +1267,13 @@ left badges and the digest alone.
   payment was the mistake, the booking has to be made again and the member charged
   again, because the refund has already gone out.
 
-**The refund itself is deliberately NOT gated, and that is the decision this rule
-records.** Suppressing #1350's automatic refund while the booking is soft-deleted
-was considered and rejected: it leaves a member's money with the club until
-somebody acts, and it puts a new condition on a Critical webhook money path. The
-money returning to the member is the safe direction when nobody is watching, so
-visibility was added instead of the refund being held. **Do not gate it as a side
-effect of work in this area** — reversing this needs a fresh owner decision, a
-test pinning that the capture is not auto-refunded and the task stays `OPEN`, and
-its own review of the webhook path. Nothing here changes what money moves, when,
-or by how much.
+**The refund is NOT gated by default, and that is the decision this rule
+records.** Holding #1350's automatic refund leaves a member's money with the club
+until somebody acts, and the money returning is the safe direction when nobody is
+watching, so visibility was added instead. **Do not gate it as a side effect of
+work in this area.** The one gate is the club's own choice: owner decision 26 Sep
+2026 ([#3639](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3639#issuecomment-5845224249))
+made treasurer approval a club setting, off by default, stated in `INV-PAY-106`.
 
 ### INV-ADDPAY-038
 
@@ -1372,12 +1369,12 @@ Four obligations:
 - **Still exactly one notification, and no badge or digest changed.** This replaced
   the previous mail on both paths; it did not join it. `AdminPendingCounts` and the
   count fixtures are untouched by design, and the digest keeps its explicit template
-  allowlist — so these events no longer land in its "Payment Failures" count,
-  which is a correction rather than a loss: nothing failed. The webhook still sends
-  it fire-and-forget with a `.catch` that only logs, because webhooks stay
-  non-blocking and the durable record is the row plus the audit entry. **The
-  `INV-ADDPAY-039` alert REPLACES this one when it fires** — the epilogue sends
-  exactly one of the two — so "one notification" holds across all three outcomes.
+  allowlist — so these events no longer land in its "Payment Failures" count
+  (nothing failed). The webhook still sends it fire-and-forget with a `.catch`
+  that only logs, because webhooks stay non-blocking and the durable record is the
+  row plus the audit entry. **The `INV-ADDPAY-039` alert REPLACES this one when it
+  fires.** A capture HELD for a treasurer (`INV-PAY-106`) sends its own
+  `admin-late-capture-held` alert instead, ONCE per payment (claim-guarded).
 
 ### INV-ADDPAY-039
 
