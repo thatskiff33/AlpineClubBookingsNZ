@@ -399,6 +399,10 @@ describe("admin reports route", () => {
     const queryWhere = mockPrisma.booking.findMany.mock.calls[0][0].where;
     expect(queryWhere).toMatchObject({ lodgeId: "lodge-2" });
     expect(queryWhere).not.toHaveProperty("deletedAt");
+    // #3372 decision A: Net Collected Cash reads its own payments, and a
+    // lodge-scoped report must scope that read to the lodge too.
+    const paymentWhere = mockPrisma.payment.findMany.mock.calls[0][0].where;
+    expect(paymentWhere.booking.is).toMatchObject({ lodgeId: "lodge-2" });
   }, 15_000);
 
   it("preserves outstanding-addition visibility beside payment-derived cash", async () => {
