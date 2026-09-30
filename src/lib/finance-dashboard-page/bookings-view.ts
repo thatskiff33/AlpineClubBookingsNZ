@@ -143,7 +143,7 @@ export async function buildBookingsDashboard(
         : undefined,
     },
     {
-      title: "Net collected cash",
+      title: "Net Collected Cash",
       value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this

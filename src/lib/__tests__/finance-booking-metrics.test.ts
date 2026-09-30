@@ -1212,7 +1212,7 @@ describe("finance-booking-metrics", () => {
 });
 
 /**
- * #3637 (epic #3372, owner decision A): Finance's "Net collected cash" is
+ * #3637 (epic #3372, owner decision A): Finance's "Net Collected Cash" is
  * `summarizeCollectedCash` over the one Net Collected booking scope - every
  * booking staying in the window, whatever its status, soft-deleted ones left
  * out - and no longer the status-listed bookings the stay figures count.

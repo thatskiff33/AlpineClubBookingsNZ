@@ -807,7 +807,7 @@ describe("finance dashboard page model", () => {
       ),
     ).toBe(true);
     expect(
-      model.cards.find((entry) => entry.title === "Net collected cash")
+      model.cards.find((entry) => entry.title === "Net Collected Cash")
         ?.footnote,
     ).toContain("May understate by $21");
   });
@@ -842,7 +842,7 @@ describe("finance dashboard page model", () => {
       ),
     ).toBe(false);
     expect(
-      model.cards.find((entry) => entry.title === "Net collected cash")
+      model.cards.find((entry) => entry.title === "Net Collected Cash")
         ?.footnote,
     ).toBe("Cash is local payment-derived and separate from Xero revenue.");
   });

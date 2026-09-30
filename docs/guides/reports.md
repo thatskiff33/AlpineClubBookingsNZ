@@ -101,8 +101,8 @@ It does not use the status list above. It counts every overlapping booking in
 the chosen lodge whatever its status, so a cancelled booking counts at the
 cancellation fee the club kept, and it leaves deleted bookings out whichever
 **Deleted** view is chosen. All four Net Collected figures (this card, the
-dashboard's, the Payments page's and the Finance dashboard's Net collected
-cash) use that same rule for which bookings count.
+dashboard's, the Payments page's and the Finance dashboard's Net Collected
+Cash) use that same rule for which bookings count.
 A captured later addition is already inside that payment amount and is never
 added again. **Outstanding Additions** remains the booking-level amount still
 owing after an upward change. Do not subtract it from selected stay-night
