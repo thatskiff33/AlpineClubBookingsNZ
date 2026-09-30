@@ -96,12 +96,14 @@ describe("cents-in-prose guard: catches the shape", () => {
     expect(await hitsIn(`const refundAmountCents = 1, amountCents = 1, coveredCents = 1, owedCents = 1, payment = { changeFeeCents: 1 }, total = (r: unknown) => 1, rows = [];\n${code}\n`)).toHaveLength(1);
   });
 
-  it("names the canonical helpers and an escape hatch that passes CI", async () => {
+  it("names the canonical helpers and says no exemption list lifts it (#3399)", async () => {
     const message = (await hitsIn(VIOLATING_CODE))[0]?.message;
     expect(message).toContain("formatCents");
     expect(message).toContain("@/lib/utils");
     expect(message).toContain("CENTS_DISPLAY_EXEMPTIONS");
     expect(message).toContain("eslint.config.mjs");
+    expect(message).toContain("No exemption list lifts this rule");
+    expect(message).not.toContain("so adding to it passes CI");
     expect(message).toContain("Never an eslint-disable comment");
   });
 });
@@ -109,9 +111,11 @@ describe("cents-in-prose guard: catches the shape", () => {
 describe("cents-in-prose guard: it is its own group", () => {
   /*
     Review of #3533 found the first cut appended this selector to
-    `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions —
-    files excused for seeding an editable input or writing a raw export cell,
-    none of which is a reason to put the storage form in a sentence. The arm is
+    `CENTS_DISPLAY_RESTRICTIONS`, so it inherited that group's ten exemptions
+    at the time — files excused for seeding an editable input, writing a raw
+    export cell or prefixing a Xero invoice's currency, none of which is a
+    reason to put the storage form in a sentence. #3399 retired all ten; only
+    the canonical definition in `src/lib/utils.ts` is still listed. The arm is
     its own array; #3589's one direct-return exception is confined to one
     diagnostic file. These two cases stop it being folded back in.
   */
@@ -129,23 +133,36 @@ describe("cents-in-prose guard: it is its own group", () => {
     );
   });
 
-  it("still fires inside a file the toFixed arm exempts", async () => {
-    // `finance-legacy-dashboard-export.ts` is a declared CENTS_DISPLAY
-    // exemption. Its reason — a raw numeric export cell — says nothing about
-    // sentences, so this rule must still reach it.
-    const results = await eslint.lintText(VIOLATING_CODE, {
-      filePath: path.join(REPO_ROOT, "src/lib/finance-legacy-dashboard-export.ts"),
-    });
-    const hits = results
-      .flatMap((result) => result.messages)
-      .filter(
-        (message) =>
-          message.ruleId === "no-restricted-syntax" &&
-          typeof message.message === "string" &&
-          message.message.startsWith(RULE_ID),
-      );
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.severity).toBe(2);
+  it("still fires inside every file the toFixed arm exempts", async () => {
+    // Read from the config rather than named here, so the case follows the
+    // roster (#3399 took the export cells off it). Every reason on that list
+    // is about the toFixed arithmetic; none says anything about sentences, so
+    // this rule must still reach each file.
+    const { pathToFileURL } = await import("url");
+    const config: {
+      CENTS_DISPLAY_EXEMPTIONS?: { files: string[] }[];
+    } = await import(
+      pathToFileURL(path.join(REPO_ROOT, "eslint.config.mjs")).href
+    );
+    const exemptFiles = (config.CENTS_DISPLAY_EXEMPTIONS ?? []).flatMap(
+      (entry) => entry.files,
+    );
+    expect(exemptFiles.length).toBeGreaterThan(0);
+    for (const file of exemptFiles) {
+      const results = await eslint.lintText(VIOLATING_CODE, {
+        filePath: path.join(REPO_ROOT, file),
+      });
+      const hits = results
+        .flatMap((result) => result.messages)
+        .filter(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            typeof message.message === "string" &&
+            message.message.startsWith(RULE_ID),
+        );
+      expect(hits, file).toHaveLength(1);
+      expect(hits[0]?.severity, file).toBe(2);
+    }
   });
 });
 
