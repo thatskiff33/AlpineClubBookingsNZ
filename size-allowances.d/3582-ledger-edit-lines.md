@@ -10,11 +10,11 @@ Moving the call out of the door would separate a posting from the history row
 and the transaction it records.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1670
+lines: 1668
 reason: one ledger posting call after the guest-add history row, plus its import.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2635
+lines: 2633
 reason: one ledger posting call after the batch edit's history row, plus its import.
 
 file: src/lib/booking-date-modification-service.ts
@@ -22,5 +22,5 @@ lines: 2340
 reason: one ledger posting call after the date change's history row, and one after the admin date shift's (#3741), plus their imports.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1525
+lines: 1523
 reason: one ledger posting call after the removal's history row, plus its import.

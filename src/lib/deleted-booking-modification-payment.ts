@@ -270,8 +270,7 @@ export function automaticCancelledBookingRefundTaskReasons(
  *
  * WHAT IT DOES NOT CLOSE, STATED RATHER THAN IMPLIED. A hand-completion that
  * commits AFTER this read but before or during the Stripe refund is not caught
- * here: `resolveManualRefundTask` takes no advisory lock for this kind (only an
- * `EDIT_FINANCIAL_REVIEW` closure takes `lock(1)`, #3582), and closing the window
+ * here: `resolveManualRefundTask` takes no advisory lock for this kind (#3582), and closing the window
  * would mean holding `pg_advisory_xact_lock(1)` across a provider round trip,
  * which `docs/CONCURRENCY_AND_LOCKING.md` forbids outright. What the fence does is
  * shrink the exposure from "any time in the hours or days the task sits OPEN" to

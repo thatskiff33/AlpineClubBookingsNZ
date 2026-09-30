@@ -254,9 +254,8 @@ export function diffGuestNights(
 }
 
 /**
- * A side's promotion figure. One that is not a number (a legacy row read
- * without the column) counts as zero; every caller's sum postcondition still
- * has to hold against its real delta, so a coerced zero can hide nothing.
+ * A side's promotion figure; a non-number (a legacy row read without the column)
+ * counts as zero. Every caller's sum still holds against its real delta.
  */
 export function normalisedPromoCents(promoAdjustmentCents: number): number {
   return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
