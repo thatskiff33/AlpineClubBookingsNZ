@@ -24,11 +24,7 @@
  */
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
-import {
-  addCalendarDays,
-  calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
-} from "@/lib/club-time";
+import { guestNightPosting, promotionPosting } from "@/lib/booking-ledger-charge-line";
 import {
   confirmationNightKey,
   confirmationPromotionKey,
@@ -61,26 +57,17 @@ export type ConfirmationPostingPlan = {
   reconciles: boolean;
 };
 
-/**
- * The morning after a stored night, half-open like every stay range here.
- *
- * Through `club-time` rather than through `date-only`'s adapter (CT-6): the
- * stored value is a `@db.Date`, so it is DECODED to the calendar day it
- * encodes (`INV-DATE-010`), stepped as a day, and re-encoded. Review of #3580
- * first routed this to `addDaysDateOnly`, which is the same arithmetic but
- * adds an importer to the escape-hatch census that may only ever shrink.
- */
-export function morningAfter(storedNight: Date): Date {
-  return dateOnlyInstantOf(
-    addCalendarDays(calendarDateOfDateOnlyInstant(storedNight), 1),
-  );
-}
-
 export function planConfirmationChargeLines(
   booking: ConfirmationPostingBooking,
 ): ConfirmationPostingPlan {
   const postings: BookingLedgerPosting[] = [];
   const unpricedStrandIds: string[] = [];
+  const anchor = {
+    bookingId: booking.id,
+    lodgeId: booking.lodgeId,
+    anchorKind: "CONFIRMATION" as const,
+    anchorId: booking.id,
+  };
 
   for (const guest of booking.guests) {
     const nights = [...guest.nights].sort(
@@ -97,48 +84,25 @@ export function planConfirmationChargeLines(
     // whole strand. Folding runs of equal-priced nights would be a rendering
     // decision, and rendering is C6's (#3585), not the posting's.
     for (const night of nights) {
-      postings.push({
-        bookingId: booking.id,
-        lodgeId: booking.lodgeId,
-        side: "CHARGE",
-        kind: "GUEST_NIGHT",
-        sign: 1,
-        quantity: 1,
-        unitCents: night.priceCents ?? 0,
-        anchorKind: "CONFIRMATION",
-        anchorId: booking.id,
-        bookingGuestId: guest.id,
-        nightStart: night.stayDate,
-        nightEndExclusive: morningAfter(night.stayDate),
-        rateMembershipTypeId: guest.rateMembershipTypeId,
-        ageTier: guest.ageTier,
-        guestNames: guestName ? [guestName] : [],
-        narration: `${guestName || "Guest"} — one night`,
-        // Makes THIS night's posting idempotent against a replay. It does not
-        // make the confirmation happen once — the settle fences that per
-        // booking, because nights can change between two settles (#3595).
-        postingKey: confirmationNightKey(booking.id, guest.id, night.stayDate),
-      });
+      // Makes THIS night's posting idempotent against a replay. It does not
+      // make the confirmation happen once — the settle fences that per
+      // booking, because nights can change between two settles (#3595).
+      postings.push(
+        guestNightPosting(anchor, {
+          bookingGuestId: guest.id,
+          name: guestName,
+          rateMembershipTypeId: guest.rateMembershipTypeId,
+          ageTier: guest.ageTier,
+          stayDate: night.stayDate,
+          priceCents: night.priceCents ?? 0,
+          postingKey: confirmationNightKey(booking.id, guest.id, night.stayDate),
+        }),
+      );
     }
   }
 
-  if (booking.promoAdjustmentCents !== 0) {
-    const sign = booking.promoAdjustmentCents < 0 ? -1 : 1;
-    postings.push({
-      bookingId: booking.id,
-      lodgeId: booking.lodgeId,
-      side: "CHARGE",
-      kind: "PROMOTION",
-      sign,
-      quantity: 1,
-      unitCents: Math.abs(booking.promoAdjustmentCents),
-      anchorKind: "CONFIRMATION",
-      anchorId: booking.id,
-      narration:
-        sign < 0 ? "Promotion applied" : "Promotion, price raised",
-      postingKey: confirmationPromotionKey(booking.id),
-    });
-  }
+  const promotion = promotionPosting(anchor, booking.promoAdjustmentCents, confirmationPromotionKey(booking.id));
+  if (promotion) postings.push(promotion);
 
   // Through the one home for a line's arithmetic, not a second copy of it.
   const posted = postings.reduce((sum, posting) => sum + ledgerLineAmountCents(posting), 0);

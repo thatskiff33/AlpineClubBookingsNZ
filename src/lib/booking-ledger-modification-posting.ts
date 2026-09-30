@@ -36,7 +36,11 @@
  */
 import type { AgeTier, ManualRefundTaskDirection } from "@prisma/client";
 
-import { morningAfter } from "@/lib/booking-ledger-confirmation-posting";
+import {
+  guestNightPosting,
+  isSingleNightLine,
+  promotionPosting,
+} from "@/lib/booking-ledger-charge-line";
 import {
   agreedAdjustmentKey,
   modificationChangeFeeKey,
@@ -48,6 +52,7 @@ import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-
 import {
   diffGuestNights,
   modificationPromoDeltaCents,
+  normalisedPromoCents,
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
@@ -90,23 +95,6 @@ function nightIndexKey(bookingGuestId: string, stayDate: Date): string {
   return `${bookingGuestId}|${calendarDateOfDateOnlyInstant(stayDate)}`;
 }
 
-/** A live line that prices exactly one guest's one night — the grain C1 posts at. */
-function isSingleNightLine(line: PostedChargeLine): line is PostedChargeLine & {
-  bookingGuestId: string;
-  nightStart: Date;
-  nightEndExclusive: Date;
-} {
-  return (
-    line.kind === "GUEST_NIGHT" &&
-    line.sign === 1 &&
-    line.quantity === 1 &&
-    line.bookingGuestId !== null &&
-    line.nightStart !== null &&
-    line.nightEndExclusive !== null &&
-    line.nightEndExclusive.getTime() === morningAfter(line.nightStart).getTime()
-  );
-}
-
 export type ModificationPostingNoneReason =
   | "UNPRICED_NIGHT"
   | "INEXACT_STORED_NIGHT_PRICE"
@@ -141,10 +129,6 @@ export type ModificationPostingInput = {
   postedLines: readonly PostedChargeLine[];
 };
 
-function normalisedPromo(cents: number): number {
-  return Number.isFinite(cents) ? cents : 0;
-}
-
 export function planModificationChargeLines(
   input: ModificationPostingInput,
 ): ModificationPostingPlan {
@@ -162,13 +146,13 @@ export function planModificationChargeLines(
     liveByNight.set(key, [...(liveByNight.get(key) ?? []), line]);
   }
 
-  const base = {
+  const anchor = {
     bookingId: input.bookingId,
     lodgeId: input.lodgeId,
-    side: "CHARGE" as const,
     anchorKind: "MODIFICATION" as const,
     anchorId: input.bookingModificationId,
   };
+  const base = { ...anchor, side: "CHARGE" as const };
   const postings: BookingLedgerPosting[] = [];
   const reversedHere = new Set<string>();
   const reverse = (line: PostedChargeLine): void => {
@@ -218,21 +202,17 @@ export function planModificationChargeLines(
         (line) => !reversedHere.has(line.id),
       );
       if (standing.length > 0) return { kind: "none", reason: "NIGHT_ALREADY_LIVE" };
-      postings.push({
-        ...base,
-        kind: "GUEST_NIGHT",
-        sign: 1,
-        quantity: 1,
-        unitCents: night.priceCents,
-        bookingGuestId: change.guestKey,
-        nightStart: night.stayDate,
-        nightEndExclusive: morningAfter(night.stayDate),
-        rateMembershipTypeId: shape.rateMembershipTypeId,
-        ageTier: shape.ageTier,
-        guestNames: shape.name ? [shape.name] : [],
-        narration: `${shape.name || "Guest"} — one night`,
-        postingKey: modificationNightKey(input.bookingModificationId, change.guestKey, night.stayDate),
-      });
+      postings.push(
+        guestNightPosting(anchor, {
+          bookingGuestId: change.guestKey,
+          name: shape.name,
+          rateMembershipTypeId: shape.rateMembershipTypeId,
+          ageTier: shape.ageTier,
+          stayDate: night.stayDate,
+          priceCents: night.priceCents,
+          postingKey: modificationNightKey(input.bookingModificationId, change.guestKey, night.stayDate),
+        }),
+      );
     }
   }
 
@@ -241,23 +221,16 @@ export function planModificationChargeLines(
     const liveCents = livePromotions.reduce((sum, line) => sum + ledgerLineAmountCents(line), 0);
     // The ledger's promotion must be the one the edit started from, or the
     // reversal below would take away a figure the edit never saw.
-    if (liveCents !== normalisedPromo(input.before.promoAdjustmentCents)) {
+    if (liveCents !== normalisedPromoCents(input.before.promoAdjustmentCents)) {
       return { kind: "none", reason: "LIVE_PROMOTION_DISAGREES" };
     }
     for (const line of livePromotions) reverse(line);
-    const afterCents = normalisedPromo(input.after.promoAdjustmentCents);
-    if (afterCents !== 0) {
-      const sign = afterCents < 0 ? -1 : 1;
-      postings.push({
-        ...base,
-        kind: "PROMOTION",
-        sign,
-        quantity: 1,
-        unitCents: Math.abs(afterCents),
-        narration: sign < 0 ? "Promotion applied" : "Promotion, price raised",
-        postingKey: modificationPromotionKey(input.bookingModificationId),
-      });
-    }
+    const promotion = promotionPosting(
+      anchor,
+      normalisedPromoCents(input.after.promoAdjustmentCents),
+      modificationPromotionKey(input.bookingModificationId),
+    );
+    if (promotion) postings.push(promotion);
   }
 
   if (input.changeFeeCents > 0) {

@@ -254,19 +254,20 @@ export function diffGuestNights(
 }
 
 /**
- * The signed change in the promotion adjustment. A figure that is not a number
- * (a legacy row read without the column) counts as zero; every caller's sum
- * postcondition still has to hold against its real delta, so a coerced zero can
- * hide nothing.
+ * A side's promotion figure. One that is not a number (a legacy row read
+ * without the column) counts as zero; every caller's sum postcondition still
+ * has to hold against its real delta, so a coerced zero can hide nothing.
  */
+export function normalisedPromoCents(promoAdjustmentCents: number): number {
+  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
+}
+
+/** The signed change in the promotion adjustment, each side normalised. */
 export function modificationPromoDeltaCents(
   before: Pick<ModificationPricingSide, "promoAdjustmentCents">,
   after: Pick<ModificationPricingSide, "promoAdjustmentCents">,
 ): number {
-  return (
-    (Number.isFinite(after.promoAdjustmentCents) ? after.promoAdjustmentCents : 0) -
-    (Number.isFinite(before.promoAdjustmentCents) ? before.promoAdjustmentCents : 0)
-  );
+  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
 }
 
 /**
