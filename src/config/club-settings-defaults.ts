@@ -51,6 +51,12 @@ export const DEFAULT_BOOKING_DEFAULTS = {
   // upgrade never silently starts giving fees away. Must agree with the schema
   // default on `BookingDefaults.linkedMoveChargesBothChangeFees`.
   linkedMoveChargesBothChangeFees: true,
+  // #3639 (owner decision 26 Sep 2026): a genuine late capture on a cancelled
+  // booking is refunded automatically unless the club asks a treasurer to
+  // approve it. `false` keeps the behaviour every club had before the setting
+  // existed. Must agree with the schema default on
+  // `BookingDefaults.lateCaptureRefundNeedsApproval`.
+  lateCaptureRefundNeedsApproval: false,
 } as const;
 
 /** `BedAllocationSettings` — read by `resolveAutoAllocationEnabled` and the admin surface. */

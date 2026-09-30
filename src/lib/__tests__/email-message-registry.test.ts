@@ -50,6 +50,28 @@ describe("email message registry", () => {
     }
   });
 
+  it("registers the #3663 started-stay hold alert as its own admin alert, not \"Payment Failed\"", () => {
+    const definition = getEmailTemplateDefinition(
+      "admin-internet-banking-hold-started-stay",
+    );
+    if (!definition) throw new Error("missing admin-internet-banking-hold-started-stay");
+
+    // Admin audience, admin-system, NOT delivery-locked (no money moved; the
+    // booking is still visibly held). The subject names the event itself.
+    expect(definition.audience).toBe("admin");
+    expect(isAdminSystemTemplate("admin-internet-banking-hold-started-stay")).toBe(true);
+    expect(definition.deliveryEditable).toBe(true);
+    expect(definition.defaultSubject).toBe(
+      "Overdue internet-banking hold on a stay that has started",
+    );
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining(["bookingReference", "memberName", "reviewUrl"]),
+    );
+    for (const token of ["checkIn", "holdUntil", "amountOwing", ...definition.requiredTokens]) {
+      expect(definition.defaultBody).toContain(`{{${token}}}`);
+    }
+  });
+
   it("has editor-safe defaults for every registered template", () => {
     // Kept for the checks that are NOT circular — raw HTML, unsafe links,
     // subject line breaks, sensitive subject tokens. The token half of this
@@ -264,6 +286,7 @@ const NEWLY_REGISTERED_HARDCODED_KEYS = [
   "group-booking-join-verification",
   "group-settlement-receipt",
   "group-join-settled",
+  "group-join-pay-self",
   "group-settlement-expired",
   "group-join-released",
   "group-join-cancelled",
@@ -393,6 +416,34 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(autoRefund?.requiredTokens).toContain("lateCaptureLeadNote");
     // #2774: the direction sentence is the whole message on the conflict alert.
     expect(conflict?.requiredTokens).toContain("handBackConflictNote");
+  });
+
+  it("keeps the second-instrument alert admin-audience, delivery-locked and pinned to its note and invoice link (#3638)", () => {
+    /*
+      The club may hold the price twice and nothing is refunded automatically, so
+      this is the one thing that pulls a person to reconcile it. The sender reads
+      no per-member preference; this entry is what stops it being disabled
+      club-wide. MUTATION PROOF: drop it from LOCKED_DELIVERY_TEMPLATE_NAMES and
+      this fails.
+    */
+    const definition = getEmailTemplateDefinition(
+      "admin-second-instrument-settlement-conflict",
+    );
+    if (!definition) throw new Error("missing admin-second-instrument-settlement-conflict");
+    expect(definition.audience).toBe("admin");
+    expect(definition.deliveryEditable).toBe(false);
+    expect(getDefaultDeliveryMode("admin-second-instrument-settlement-conflict")).toBe(
+      "always",
+    );
+    expect(definition.defaultSubject).toContain("may have been paid twice");
+    expect(definition.requiredTokens).toEqual(
+      expect.arrayContaining([
+        "secondInstrumentConflictNote",
+        "xeroObjectUrl",
+        "memberName",
+        "reviewUrl",
+      ]),
+    );
   });
 
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {

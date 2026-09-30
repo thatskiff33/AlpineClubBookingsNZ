@@ -167,6 +167,19 @@ function summarizeQueuedPayload(
       };
     }
 
+    case "KEPT_LATE_CAPTURE_INVOICE":
+      // #3635: a late card payment a treasurer kept, invoiced and paid in Xero.
+      facts
+        .add("Booking", shortId(req.bookingId))
+        .add("Refund task", shortId(req.manualRefundTaskId))
+        .add("Payment intent", readString(req.paymentIntentId))
+        .add("Captured", formatCentsValue(req.capturedCents, format))
+        .add("Captured on", readString(req.capturedOn));
+      return {
+        title: "Queued: invoice a kept late payment",
+        facts: facts.build(),
+      };
+
     case "GROUP_SETTLEMENT_INVOICE":
       facts.add("Settlement", shortId(req.settlementId));
       return {
@@ -176,6 +189,14 @@ function summarizeQueuedPayload(
 
     case "GROUP_SETTLEMENT_INVOICE_VOID":
       facts.add("Settlement", shortId(req.settlementId));
+      // #3642: the abandon VOID names its invoice; the cancellation VOID does not.
+      if (readString(req.xeroInvoiceId)) {
+        facts.add("Xero invoice", shortId(req.xeroInvoiceId));
+        return {
+          title: "Queued: void abandoned group-settlement invoice",
+          facts: facts.build(),
+        };
+      }
       return {
         title: "Queued: void cancelled group-settlement invoice",
         facts: facts.build(),

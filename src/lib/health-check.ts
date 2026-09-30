@@ -231,7 +231,7 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
     const problems: string[] = [];
     if (stale > 0) {
       problems.push(
-        `${stale} payment recovery operation(s) pending > 15 minutes; check /api/cron/payments scheduler`,
+        `${stale} payment recovery operation(s) pending > 15 minutes; check the cron leader's 15-minute payments cycle (payment-recovery on admin cron health)`,
       );
     }
     if (exhausted > 0) {

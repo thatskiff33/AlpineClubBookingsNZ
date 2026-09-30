@@ -19,8 +19,9 @@
  * the one fallback, for queued rows written before the field existed.
  *
  * Pure: no database, no provider, no clock. The three strings below are the
- * owner's exact wording (20 September 2026) and nothing else may spell them —
- * `xero-refund-method.test.ts` holds a census over `src/`.
+ * owner's exact wording (20 September 2026); with the unpaid-invoice clearing
+ * wording (#3535) nothing else may spell them — `xero-refund-method.test.ts`
+ * holds a census over `src/lib`, where every Xero document is built.
  */
 
 import { PaymentSource } from "@prisma/client";
@@ -38,6 +39,88 @@ export const REFUND_METHOD_WORDING: Readonly<Record<RefundMethod, string>> = {
 
 export function describeRefundMethod(method: RefundMethod): string {
   return REFUND_METHOD_WORDING[method];
+}
+
+/**
+ * The words on the note that closes an invoice nobody paid (`INV-PAY-017`,
+ * #3535): an internet-banking hold released unpaid, a booking cancelled before
+ * any payment was captured, and the repair tool's re-queue of that note. Not a
+ * fourth refund method: no money moved, so nothing settles the note and no
+ * payment source ever implies it. A caller asks for it with
+ * `clearsUnpaidInvoice: true`; `modificationNoteWording` maps that here.
+ */
+export const UNPAID_INVOICE_CLEARING_WORDING = "Invoice cleared - booking not paid";
+
+/**
+ * #3643 (`INV-PAY-107`): the same clearing note on a booking that WAS partly
+ * paid — cancelled after the cancel path recorded the part payment Xero showed,
+ * so the note clears only the unpaid rest. "Booking not paid" would be false on
+ * it. A caller asks with `clearsUnpaidBalance: true` beside
+ * `clearsUnpaidInvoice: true`; every clearing behaviour keys off the latter.
+ */
+export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking cancelled";
+
+/** What a credit document's wording is chosen from: how money went back, or that none was owed back. */
+export type CreditDocumentWording =
+  | RefundMethod
+  | "unpaid-invoice-clearing"
+  | "unpaid-balance-clearing";
+
+/**
+ * What the invoice-applied modification credit note is told to say, from its
+ * enqueue through the stored payload to the builder: either how the reduction
+ * went back, or that the invoice is being cleared because nobody paid it.
+ * Never both — a clearing note has no refund method to name.
+ */
+export type ModificationNoteWording =
+  | { refundMethod?: RefundMethod; clearsUnpaidInvoice?: undefined; clearsUnpaidBalance?: undefined }
+  | { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true; refundMethod?: undefined };
+
+/**
+ * The ONE reading of the fields, from a typed caller, a stored payload or a
+ * repair action alike: `clearsUnpaidInvoice` counts only when it is literally
+ * `true`, and then no refund method is carried — only whether the note clears
+ * the unpaid balance of a partly paid booking (`clearsUnpaidBalance`, also
+ * literally `true`, #3643); otherwise the refund method if it is one of the
+ * three. Spread the result wherever the choice is passed on.
+ */
+export function readModificationNoteWording(
+  raw:
+    | { clearsUnpaidInvoice?: unknown; clearsUnpaidBalance?: unknown; refundMethod?: unknown }
+    | null
+    | undefined,
+): ModificationNoteWording {
+  if (raw?.clearsUnpaidInvoice === true) {
+    return raw.clearsUnpaidBalance === true
+      ? { clearsUnpaidInvoice: true, clearsUnpaidBalance: true }
+      : { clearsUnpaidInvoice: true };
+  }
+  const refundMethod = parseRefundMethod(raw?.refundMethod);
+  return refundMethod ? { refundMethod } : {};
+}
+
+/**
+ * The choice with its default applied — a card refund when told nothing, as
+ * every pre-#3529 row was. What a built note records, so a replay says the same.
+ */
+export function settledModificationNoteWording(
+  choice: ModificationNoteWording,
+): { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true } | { refundMethod: RefundMethod } {
+  const read = readModificationNoteWording(choice);
+  return read.clearsUnpaidInvoice ? read : { refundMethod: read.refundMethod ?? "card" };
+}
+
+/** The wording a modification note carries. */
+export function modificationNoteWording(choice: ModificationNoteWording): CreditDocumentWording {
+  const settled = settledModificationNoteWording(choice);
+  if (!("clearsUnpaidInvoice" in settled)) return settled.refundMethod;
+  return settled.clearsUnpaidBalance ? "unpaid-balance-clearing" : "unpaid-invoice-clearing";
+}
+
+function describeCreditDocumentWording(wording: CreditDocumentWording): string {
+  if (wording === "unpaid-invoice-clearing") return UNPAID_INVOICE_CLEARING_WORDING;
+  if (wording === "unpaid-balance-clearing") return UNPAID_BALANCE_CLEARING_WORDING;
+  return describeRefundMethod(wording);
 }
 
 export function isRefundMethod(value: unknown): value is RefundMethod {
@@ -112,12 +195,12 @@ function bookingRef(bookingId: string): string {
  * booking edit rather than a cancellation.
  */
 export function buildRefundDocumentDescription(params: {
-  method: RefundMethod;
+  method: CreditDocumentWording;
   bookingId: string;
   stay?: { checkIn: string; checkOut: string } | null;
   modificationId?: string | null;
 }): string {
-  const head = `${describeRefundMethod(params.method)} - Booking ${bookingRef(params.bookingId)}`;
+  const head = `${describeCreditDocumentWording(params.method)} - Booking ${bookingRef(params.bookingId)}`;
   if (params.modificationId) {
     return `${head} - booking change ${bookingRef(params.modificationId)}`;
   }
@@ -129,10 +212,10 @@ export function buildRefundDocumentDescription(params: {
 
 /** The document's `reference` field: the wording and the booking, nothing else. */
 export function buildRefundDocumentReference(params: {
-  method: RefundMethod;
+  method: CreditDocumentWording;
   bookingId: string;
 }): string {
-  return `${describeRefundMethod(params.method)} - Booking ${bookingRef(params.bookingId)}`;
+  return `${describeCreditDocumentWording(params.method)} - Booking ${bookingRef(params.bookingId)}`;
 }
 
 /**

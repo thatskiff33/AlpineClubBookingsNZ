@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { BOOKING_DETAIL_ROUTE_PATTERN } from "@/lib/page-route-patterns";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -149,7 +150,7 @@ export async function POST(
     );
   }
 
-  revalidatePath("/bookings/[id]", "page");
+  revalidatePath(BOOKING_DETAIL_ROUTE_PATTERN, "page");
   return NextResponse.json({
     message:
       "Recorded what those nights sold for. What the stay is worth is unchanged.",

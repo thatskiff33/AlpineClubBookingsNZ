@@ -159,6 +159,13 @@ so the club has one meaning of the word:
   waiting for.
 - **Bills block too.** If the club owes this contact money, archiving it is the
   same mistake in the other direction.
+- **Any amount at all blocks, in the invoice's own currency** (#3724). A Xero
+  invoice can be raised in a currency that counts to three decimal places, such
+  as Kuwaiti dinar, and a balance of KWD 0.004 is less than half a hundredth. The
+  check reads Xero's figure to four decimal places rather than rounding it to
+  cents first, so that balance still blocks, and the reviewer is shown
+  "KWD 0.004" rather than "KWD 0.00". A currency without cents is shown without
+  them ("JPY 1200"), and NZD and other currencies with cents read as before.
 
 The member's own current-season subscription invoice is deliberately **not**
 counted when the cancellation is about to credit it **in full**. Approval raises
