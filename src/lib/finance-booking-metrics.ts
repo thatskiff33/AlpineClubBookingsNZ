@@ -142,20 +142,13 @@ type BookingMetricsRecord = Prisma.BookingGetPayload<{
 }>;
 
 /**
- * #3637 (#3372, owner decision A): "Net collected cash" reads its own payments -
- * every booking whose stay falls in the Finance window, WHATEVER its status -
- * not the status-listed bookings above, which the other figures keep. A
- * cancelled booking's kept fee is money collected. `summarizeCollectedCash`
- * applies the one Net Collected booking scope from the `deletedAt` loaded here,
- * so a soft-deleted booking's payment counts for nothing.
+ * #3637 (#3372 decision A): Net collected cash reads its own payments - every
+ * booking staying in the window, ANY status. `summarizeCollectedCash` drops
+ * soft-deleted bookings from the `deletedAt` loaded here.
  */
 const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
-  status: true,
-  amountCents: true,
-  refundedAmountCents: true,
-  booking: {
-    select: { checkIn: true, checkOut: true, deletedAt: true },
-  },
+  status: true, amountCents: true, refundedAmountCents: true,
+  booking: { select: { checkIn: true, checkOut: true, deletedAt: true } },
 });
 
 /**
@@ -256,12 +249,9 @@ interface FinanceBookingMetricsPaymentSummary {
   >;
   /**
    * Gross captured cash: `Payment.amountCents` summed over the payments whose
-   * status says money was taken (`isCapturedPaymentStatus`).
-   *
-   * This and `refundedCents` and `netCollectedCents` are the three fields of
-   * `summarizeCollectedCash` (#3637), over the Net Collected scope: every
-   * non-deleted booking in the window, whatever its status. Every OTHER field of
-   * this summary counts the status-listed bookings the stay figures use.
+   * status says money was taken. With `refundedCents` and `netCollectedCents`
+   * it is `summarizeCollectedCash`'s (#3637), over the Net Collected scope; every
+   * OTHER field here counts the status-listed bookings the stay figures use.
    *
    * `reconcilePaymentAggregates` (src/lib/payment-transactions.ts) sets that
    * column to the sum of EVERY captured ledger row — PRIMARY and ADDITIONAL
@@ -300,7 +290,6 @@ interface FinanceBookingMetricsPaymentSummary {
    */
   additionalLedgerGapCents: number;
   additionalLedgerGapBookings: number;
-  /** Refunds and account credits alike (`INV-PAY-050`). See `capturedGrossCents`. */
   refundedCents: number;
   /**
    * `capturedGrossCents - refundedCents`, floored at zero: collected money net
@@ -733,9 +722,7 @@ function summarizePayments(
   const ledgerGap = summarizeAdditionalLedgerGap(bookings);
 
   summary.bookingCount = bookings.length;
-  // #3637: the three collected-cash figures are `summarizeCollectedCash`'s,
-  // over the Net Collected scope the caller loaded - not summed in the loop
-  // below, which counts only the status-listed bookings.
+  // #3637: over the Net Collected scope, not the status-listed loop below.
   summary.capturedGrossCents = collectedCash.capturedGrossCents;
   summary.refundedCents = collectedCash.refundedCents;
   summary.netCollectedCents = collectedCash.netCollectedCents;
@@ -763,8 +750,7 @@ function summarizePayments(
     // the sum of ALL captured ledger rows, PRIMARY and ADDITIONAL alike. So a
     // $121 booking whose $21 addition captured already carries
     // `amountCents = 121`, and the old net added the same $21 a second time to
-    // report $142 collected. The addition is counted ONCE, in
-    // `summarizeCollectedCash`, by counting the gross figure and nothing else.
+    // report $142 collected. `summarizeCollectedCash` counts the gross alone.
     //
     // `capturedAdditionalCents` survives as the BREAKDOWN — how much of that
     // gross came from a later price increase — and must never be added back.
@@ -1276,28 +1262,16 @@ export async function getFinanceBookingMetrics(
 
   const { capacity: lodgeCapacity, bookingLodgeWhere } =
     await resolveMetricsCapacityAndScope(query.lodgeId);
-  const stayOverlapWhere: Prisma.BookingWhereInput =
-    activeWindows.length > 0
-      ? {
-          ...bookingLodgeWhere,
-          checkIn: {
-            lte: maxDateFromList(activeWindows.map((window) => window.toDate)),
-          },
-          checkOut: {
-            gt: minDateFromList(activeWindows.map((window) => window.fromDate)),
-          },
-        }
-      : {};
-  const [bookings, netCollectedCandidates] =
-    activeWindows.length > 0
+  const stayOverlapWhere: Prisma.BookingWhereInput | null =
+    activeWindows.length > 0 ? {
+      ...bookingLodgeWhere,
+      checkIn: { lte: maxDateFromList(activeWindows.map((w) => w.toDate)) },
+      checkOut: { gt: minDateFromList(activeWindows.map((w) => w.fromDate)) },
+    } : null;
+  const [bookings, netCollectedCandidates] = stayOverlapWhere
       ? await Promise.all([
           prisma.booking.findMany({
-            where: {
-              ...stayOverlapWhere,
-              status: {
-                in: getStatusFilter(query),
-              },
-            },
+            where: { ...stayOverlapWhere, status: { in: getStatusFilter(query) } },
             orderBy: [{ checkIn: "asc" }, { id: "asc" }],
             select: bookingMetricsSelect,
           }),
@@ -1324,25 +1298,15 @@ export async function getFinanceBookingMetrics(
         lodgeCapacity,
       )
     : undefined;
-  // #3637: the same "stays in a window" test the stay figures apply, without
-  // their status list. The query above is only the envelope of both windows.
-  const staysInAWindow = (booking: BookingStayDates) =>
+  // #3637: the stay figures' window test without their status list; the read
+  // above is only the envelope of both windows.
+  const staysInAWindow = ({ booking }: { booking: BookingStayDates }) =>
     [realizedWindow, forwardWindow].some(
-      (window) =>
-        window !== null &&
-        getContributingDates({
-          booking,
-          effectiveFromDate: window.effectiveFromDate,
-          effectiveToDate: window.effectiveToDate,
-        }).dates.length > 0,
+      (window) => window !== null && getContributingDates({ booking, ...window }).dates.length > 0,
     );
   const paymentSummary = summarizePayments(
     bookings.filter((booking) => contributingBookingIds.has(booking.id)),
-    summarizeCollectedCash(
-      netCollectedCandidates.filter((payment) =>
-        staysInAWindow(payment.booking),
-      ),
-    ),
+    summarizeCollectedCash(netCollectedCandidates.filter(staysInAWindow)),
   );
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),
