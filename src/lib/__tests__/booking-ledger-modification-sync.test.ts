@@ -281,7 +281,10 @@ describe("postReviewClosureLedgerLines — one record of the share's money, per 
     expect(owed([...ledger, ...s.written, settlementOf("REFUND_TO_MEMBER", 10_000)])).toBe(0);
   });
 
-  it("CHARGE, no history row (nothing moved): the AGREED_ADJUSTMENT (+) is the one record; owed(b) settles to zero", async () => {
+  it("CHARGE, nothing moved and the charges carry the price: NO adjustment — owed(b) follows the booking's own figures", async () => {
+    // The booking's price did not move, so its own figures say the captured
+    // share is money paid over the price, and the ledger says the same. A share
+    // the price does not carry is §5.3's limit, not a line.
     const ledger = confirmedLedger();
     const s = store(ledger);
     await postReviewClosureLedgerLines({
@@ -291,10 +294,23 @@ describe("postReviewClosureLedgerLines — one record of the share's money, per 
       rebaseHistoryId: null,
       settlement: { direction: "CHARGE_TO_MEMBER", amountCents: 2_500 },
     });
-    expect(s.written.map((row) => [row.kind, row.amountCents, row.postingKey])).toEqual([
-      ["AGREED_ADJUSTMENT", 2_500, "agreed-adjustment:t1"],
-    ]);
-    expect(owed([...ledger, ...s.written, settlementOf("CHARGE_TO_MEMBER", 2_500)])).toBe(0);
+    expect(s.createMany).not.toHaveBeenCalled();
+    expect(owed([...ledger, ...s.written, settlementOf("CHARGE_TO_MEMBER", 2_500)])).toBe(20_000 - 22_500);
+  });
+
+  it("REFUND, re-price could not be planned: the charges do not carry the price, so the share stands in", async () => {
+    const ledger = confirmedLedger();
+    // No guest rows read back: the plan reverses all four nights (−$200)
+    // against a −$100 movement, so it is refused and nothing re-prices.
+    const s = store(ledger, []);
+    await postReviewClosureLedgerLines({
+      ...base,
+      store: s.store,
+      rebase: rebase(20_000, 10_000),
+      rebaseHistoryId: "rb1",
+      settlement: { direction: "REFUND_TO_MEMBER", amountCents: 10_000 },
+    });
+    expect(s.written.map((row) => [row.kind, row.amountCents])).toEqual([["AGREED_ADJUSTMENT", -10_000]]);
   });
 
   it("a DISMISSAL posts no adjustment, and its re-price still posts", async () => {
@@ -320,5 +336,189 @@ describe("postReviewClosureLedgerLines — one record of the share's money, per 
       settlement: { direction: "REFUND_TO_MEMBER", amountCents: 10_000 },
     });
     expect(s.createMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * TWO SIBLING REVIEWS FROM ONE PARKED EDIT (review F1 of #3740). A parked edit
+ * that moved two strands raises one task per strand, and every closure re-bases
+ * the WHOLE booking — so the first closure's re-price already carries every
+ * sibling's money. The rule held after every closure, in every order: `owed(b)`
+ * on the ledger equals what the booking's own figures say (its final price less
+ * what has been paid, net of refunds).
+ */
+describe("postReviewClosureLedgerLines — sibling reviews never count one parked edit's money twice (#3582)", () => {
+  function guestRow(id: string) {
+    return { ...G1_AFTER, id, lastName: id };
+  }
+
+  /** A confirmed, fully paid booking of `ids`, two $50 nights each. */
+  function confirmedWith(ids: string[]): Row[] {
+    const plan = planConfirmationChargeLines({
+      id: "b1",
+      lodgeId: "l1",
+      totalPriceCents: ids.length * 10_000,
+      promoAdjustmentCents: 0,
+      guests: ids.map((id) => ({
+        id,
+        firstName: "Guest",
+        lastName: id,
+        ageTier: "ADULT" as const,
+        rateMembershipTypeId: "rate-m",
+        nights: [D1, D2].map((stayDate) => ({ stayDate, priceCents: 5_000 })),
+      })),
+    });
+    const capture = buildBookingLedgerRows([
+      {
+        bookingId: "b1",
+        lodgeId: "l1",
+        side: "SETTLEMENT",
+        kind: "CARD_CAPTURE",
+        sign: 1,
+        quantity: 1,
+        unitCents: ids.length * 10_000,
+        anchorKind: "PAYMENT_TRANSACTION",
+        anchorId: "txn-3",
+        settlementMethod: "CARD",
+        narration: "Card payment",
+        postingKey: "capture:txn-3",
+      },
+    ]);
+    return [...buildBookingLedgerRows(plan.postings), ...capture].map((row) => ({
+      ...row,
+      id: `line:${row.postingKey}`,
+    }));
+  }
+
+  type Share = { direction: "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER"; amountCents: number };
+  type Step = {
+    task: string;
+    rebase: BookingPriceRebase | null;
+    rebaseHistoryId: string | null;
+    guests: string[];
+    settlement: Share | null;
+  };
+
+  /** Close each step in turn on the growing ledger; each share's settlement follows its closure. */
+  async function closeInTurn(ledger: Row[], steps: Step[]): Promise<Row[]> {
+    let lines = [...ledger];
+    for (const step of steps) {
+      const s = store(lines, step.guests.map(guestRow));
+      await postReviewClosureLedgerLines({
+        bookingId: "b1",
+        lodgeId: "l1",
+        manualRefundTaskId: step.task,
+        note: `share ${step.task}`,
+        officerMemberId: "o1",
+        store: s.store,
+        rebase: step.rebase,
+        rebaseHistoryId: step.rebaseHistoryId,
+        settlement: step.settlement,
+      });
+      lines = [...lines, ...s.written];
+      if (step.settlement) {
+        const key = `settle-${step.task}`;
+        lines.push({
+          ...settlementOf(step.settlement.direction, step.settlement.amountCents),
+          postingKey: key,
+          id: `line:${key}`,
+        });
+      }
+    }
+    return lines;
+  }
+
+  const refund: Share = { direction: "REFUND_TO_MEMBER", amountCents: 10_000 };
+  const charge: Share = { direction: "CHARGE_TO_MEMBER", amountCents: 10_000 };
+  const adjustmentsOf = (lines: Row[]) => lines.filter((row) => row.kind === "AGREED_ADJUSTMENT");
+
+  for (const [first, second] of [
+    ["tB", "tC"],
+    ["tC", "tB"],
+  ] as const) {
+    it(`REFUND, ${first} then ${second}: the first re-price carries both removals and the second closure posts nothing; owed(b) = 0`, async () => {
+      // g1, gB and gC at $100 each, paid $300. A parked edit removes gB and gC.
+      const lines = await closeInTurn(confirmedWith(["g1", "gB", "gC"]), [
+        { task: first, rebase: rebase(30_000, 10_000), rebaseHistoryId: "rb1", guests: ["g1"], settlement: refund },
+        { task: second, rebase: rebase(10_000, 10_000), rebaseHistoryId: null, guests: ["g1"], settlement: refund },
+      ]);
+      expect(adjustmentsOf(lines)).toEqual([]);
+      // The booking: final $100; paid $300 less $200 refunded.
+      expect(owed(lines)).toBe(10_000 - (30_000 - 20_000));
+    });
+  }
+
+  it("REFUND, dismiss then complete: the dismissal's re-price stands and the completion adds nothing; owed(b) matches the booking", async () => {
+    const lines = await closeInTurn(confirmedWith(["g1", "gB", "gC"]), [
+      { task: "tB", rebase: rebase(30_000, 10_000), rebaseHistoryId: "rb1", guests: ["g1"], settlement: null },
+      { task: "tC", rebase: rebase(10_000, 10_000), rebaseHistoryId: null, guests: ["g1"], settlement: refund },
+    ]);
+    expect(adjustmentsOf(lines)).toEqual([]);
+    // The booking: final $100; paid $300 less $100 refunded — the club owes $100.
+    expect(owed(lines)).toBe(10_000 - (30_000 - 10_000));
+  });
+
+  it("REFUND, declined then re-priced: the first share stands in, and the re-price that carries it reverses it; owed(b) = 0", async () => {
+    const lines = await closeInTurn(confirmedWith(["g1", "gB", "gC"]), [
+      { task: "tB", rebase: null, rebaseHistoryId: null, guests: ["g1", "gC"], settlement: refund },
+      { task: "tC", rebase: rebase(30_000, 10_000), rebaseHistoryId: "rb2", guests: ["g1"], settlement: refund },
+    ]);
+    expect(adjustmentsOf(lines).map((row) => [row.amountCents, row.anchorId, row.reversesLineId ?? null])).toEqual([
+      [-10_000, "tB", null],
+      [10_000, "tC", "line:agreed-adjustment:tB"],
+    ]);
+    expect(owed(lines)).toBe(10_000 - (30_000 - 20_000));
+  });
+
+  it("REFUND, three siblings: a stand-in already reversed is never reversed again, and the last closure posts nothing", async () => {
+    const lines = await closeInTurn(confirmedWith(["g1", "gB", "gC", "gD"]), [
+      { task: "tB", rebase: null, rebaseHistoryId: null, guests: ["g1", "gC", "gD"], settlement: refund },
+      { task: "tC", rebase: rebase(40_000, 10_000), rebaseHistoryId: "rb2", guests: ["g1"], settlement: refund },
+      { task: "tD", rebase: rebase(10_000, 10_000), rebaseHistoryId: null, guests: ["g1"], settlement: refund },
+    ]);
+    expect(adjustmentsOf(lines).map((row) => row.anchorId)).toEqual(["tB", "tC"]);
+    expect(owed(lines)).toBe(10_000 - (40_000 - 30_000));
+  });
+
+  for (const [first, second] of [
+    ["tB", "tC"],
+    ["tC", "tB"],
+  ] as const) {
+    it(`CHARGE, ${first} then ${second}: the first re-price carries both additions and the second posts nothing; owed(b) = 0`, async () => {
+      // g1 at $100, paid $100. A parked edit adds gB and gC.
+      const lines = await closeInTurn(confirmedWith(["g1"]), [
+        {
+          task: first,
+          rebase: rebase(10_000, 30_000),
+          rebaseHistoryId: "rb1",
+          guests: ["g1", "gB", "gC"],
+          settlement: charge,
+        },
+        {
+          task: second,
+          rebase: rebase(30_000, 30_000),
+          rebaseHistoryId: null,
+          guests: ["g1", "gB", "gC"],
+          settlement: charge,
+        },
+      ]);
+      expect(adjustmentsOf(lines)).toEqual([]);
+      expect(owed(lines)).toBe(30_000 - 30_000);
+    });
+  }
+
+  it("CHARGE, declined then re-priced: the stand-in (+) is reversed by the re-price that carries it; owed(b) = 0", async () => {
+    const lines = await closeInTurn(confirmedWith(["g1"]), [
+      { task: "tB", rebase: null, rebaseHistoryId: null, guests: ["g1", "gB", "gC"], settlement: charge },
+      {
+        task: "tC",
+        rebase: rebase(10_000, 30_000),
+        rebaseHistoryId: "rb2",
+        guests: ["g1", "gB", "gC"],
+        settlement: charge,
+      },
+    ]);
+    expect(adjustmentsOf(lines).map((row) => row.amountCents)).toEqual([10_000, -10_000]);
+    expect(owed(lines)).toBe(30_000 - 30_000);
   });
 });

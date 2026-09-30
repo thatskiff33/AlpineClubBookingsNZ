@@ -554,16 +554,15 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   booking already confirmed on the ledger posts, asked under `lock(1)`; a parked
   edit posts nothing (`INV-MOD-040`).
 
-  **A closure's re-price and its share never both post.** Where the closure
-  re-prices (`INV-MOD-055`) its lines are anchored on the `PRICE_REBASE` row, and
-  the strands they post from already carry the settled share (the repair's typed
-  nights must equal the stored total plus or minus it), so the share posts no
-  `AGREED_ADJUSTMENT`. Only where no re-price records a movement does the share
-  post one, signed by direction, naming the officer, with the note as narration.
-  No review share posts a settlement line; its route's own writer does
-  (`INV-MONEY-034`, `INV-MONEY-035`). `booking-ledger-modification-sync.test.ts`
-  holds a fixture per direction; `booking-ledger-modification.realdb.test.ts`
-  proves an edit door against PostgreSQL.
+  **A closure records one parked edit's money once, decided at booking grain.**
+  After its re-price, a closure whose charge lines now equal the re-based final
+  price reverses every live `AGREED_ADJUSTMENT` and posts no share; otherwise
+  the share posts as a stand-in only where its own re-price recorded no
+  movement. No review share posts a settlement line (`INV-MONEY-034`,
+  `INV-MONEY-035`). Rule and reason: design `booking-ledger.md` §5.3.
+  `booking-ledger-modification-sync.test.ts` holds two-sibling fixtures per
+  direction; `booking-ledger-modification.realdb.test.ts` proves them against
+  PostgreSQL.
 
 ## INV-MONEY-006
 

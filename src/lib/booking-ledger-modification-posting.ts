@@ -77,7 +77,9 @@ export type PostedChargeLine = {
  * original is reversed (a line names it), the reversal is a reversal, and the
  * re-post is the one line left — whatever the chain's length.
  */
-export function liveChargeLines(lines: readonly PostedChargeLine[]): PostedChargeLine[] {
+export function liveLines<T extends { id: string; reversesLineId: string | null }>(
+  lines: readonly T[],
+): T[] {
   const reversed = new Set<string>();
   for (const line of lines) if (line.reversesLineId !== null) reversed.add(line.reversesLineId);
   return lines.filter((line) => line.reversesLineId === null && !reversed.has(line.id));
@@ -151,7 +153,7 @@ export function planModificationChargeLines(
     return { kind: "none", reason: "INVALID_CHANGE_FEE" };
   }
 
-  const live = liveChargeLines(input.postedLines);
+  const live = liveLines(input.postedLines);
   const liveByNight = new Map<string, PostedChargeLine[]>();
   for (const line of live) {
     if (!isSingleNightLine(line)) continue;
@@ -300,7 +302,7 @@ export function pricingSideFromLiveLedger(
 ): ModificationPricingSide | null {
   const isMemberById = new Map(currentGuests.map((guest) => [guest.id, guest.isMember]));
   const byGuest = new Map<string, { lines: Array<PostedChargeLine & { nightStart: Date }> }>();
-  for (const line of liveChargeLines(postedLines)) {
+  for (const line of liveLines(postedLines)) {
     if (line.kind !== "GUEST_NIGHT") continue;
     if (!isSingleNightLine(line) || line.ageTier === null) return null;
     const entry = byGuest.get(line.bookingGuestId) ?? { lines: [] };
@@ -320,12 +322,96 @@ export function pricingSideFromLiveLedger(
   };
 }
 
+/** A live-or-not `AGREED_ADJUSTMENT` on the ledger, with what a reversal copies. */
+export type PostedAdjustmentLine = {
+  id: string;
+  sign: 1 | -1;
+  quantity: number;
+  unitCents: number;
+  narration: string;
+  reversesLineId: string | null;
+};
+
 /**
- * The one line a completed review share posts when nothing else records its
- * money (§5.3): `AGREED_ADJUSTMENT`, signed by the direction the officer chose
- * (`CHARGE_TO_MEMBER` +, `REFUND_TO_MEMBER` −), naming the officer, with the
- * task's note as narration (`INV-MONEY-007`). The settlement that follows posts
- * its own line through its own writer (§5.2), never here.
+ * WHAT A REVIEW CLOSURE POSTS BESIDE ITS RE-PRICE — decided at BOOKING grain,
+ * never per task. The rule and why: design `docs/design/booking-ledger.md` §5.3.
+ *
+ *  - The re-base ran and the booking's charge lines (after this closure's
+ *    re-price rows) come to exactly its re-based final price: the charges carry
+ *    the price, so every live `AGREED_ADJUSTMENT` on the booking is a stand-in
+ *    the re-price has now superseded. Each is reversed by its line id, and this
+ *    share posts nothing.
+ *  - Otherwise, if this closure's own re-price rows recorded a movement, they
+ *    carry the share: nothing more posts.
+ *  - Otherwise (the re-base declined, or the charges do not carry the price) the
+ *    share stands in for the money the headline has not moved yet.
+ */
+export function planReviewClosureShareLines({
+  bookingId,
+  lodgeId,
+  manualRefundTaskId,
+  officerMemberId,
+  note,
+  settlement,
+  rebasedFinalPriceCents,
+  chargeLinesAfter,
+  repriceRecordsMovement,
+  postedAdjustmentLines,
+}: {
+  bookingId: string;
+  lodgeId: string;
+  manualRefundTaskId: string;
+  officerMemberId: string;
+  note: string | null;
+  /** The completed share, or null on a dismissal. */
+  settlement: { direction: ManualRefundTaskDirection; amountCents: number } | null;
+  /** The booking's final price after the re-base, or null where it declined. */
+  rebasedFinalPriceCents: number | null;
+  /** Every GUEST_NIGHT and PROMOTION line, posted or about to be, reversals included. */
+  chargeLinesAfter: ReadonlyArray<Pick<BookingLedgerPosting, "sign" | "unitCents" | "quantity">>;
+  /** Whether this closure's own re-price rows recorded a non-zero movement. */
+  repriceRecordsMovement: boolean;
+  /** Every AGREED_ADJUSTMENT the booking holds, live or not. */
+  postedAdjustmentLines: readonly PostedAdjustmentLine[];
+}): BookingLedgerPosting[] {
+  const chargedCents = chargeLinesAfter.reduce((sum, line) => sum + ledgerLineAmountCents(line), 0);
+  if (rebasedFinalPriceCents !== null && chargedCents === rebasedFinalPriceCents) {
+    return liveLines(postedAdjustmentLines).map((line) => ({
+      bookingId,
+      lodgeId,
+      side: "ADJUSTMENT",
+      kind: "AGREED_ADJUSTMENT",
+      sign: line.sign === 1 ? -1 : 1,
+      quantity: line.quantity,
+      unitCents: line.unitCents,
+      anchorKind: "REVIEW_TASK",
+      anchorId: manualRefundTaskId,
+      narration: `Reversed: ${line.narration}`,
+      postedByMemberId: officerMemberId,
+      reversesLineId: line.id,
+      postingKey: reversalKey(line.id),
+    }));
+  }
+  if (repriceRecordsMovement || settlement === null) return [];
+  return [
+    planAgreedAdjustmentLine({
+      bookingId,
+      lodgeId,
+      manualRefundTaskId,
+      direction: settlement.direction,
+      amountCents: settlement.amountCents,
+      note,
+      officerMemberId,
+    }),
+  ];
+}
+
+/**
+ * The one line a completed review share posts when it stands in for money the
+ * booking's charge lines do not carry (§5.3): `AGREED_ADJUSTMENT`, signed by
+ * the direction the officer chose (`CHARGE_TO_MEMBER` +, `REFUND_TO_MEMBER` −),
+ * naming the officer, with the task's note as narration (`INV-MONEY-007`). The
+ * settlement that follows posts its own line through its own writer (§5.2).
  */
 export function planAgreedAdjustmentLine({
   bookingId,

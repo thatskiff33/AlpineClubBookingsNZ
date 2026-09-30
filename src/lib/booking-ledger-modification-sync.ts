@@ -23,12 +23,20 @@ import "server-only";
 import type { ManualRefundTaskDirection, Prisma } from "@prisma/client";
 
 import {
-  planAgreedAdjustmentLine,
   planModificationChargeLines,
+  planReviewClosureShareLines,
   pricingSideFromLiveLedger,
 } from "@/lib/booking-ledger-modification-posting";
-import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
-import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
+import {
+  bookingHasConfirmationLines,
+  findPostedAdjustmentLines,
+  findPostedChargeLines,
+} from "@/lib/booking-ledger-read";
+import {
+  buildBookingLedgerRows,
+  writeBookingLedgerRows,
+  type BookingLedgerPosting,
+} from "@/lib/booking-ledger-write";
 import { pricingSideFromWrittenGuests } from "@/lib/booking-modification-lines";
 import type { ModificationPricingSides } from "@/lib/booking-modification-pricing";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
@@ -95,28 +103,10 @@ export async function postModificationLedgerLines({
 }
 
 /**
- * A parked review closing: the re-price's lines, and the agreed share where
- * nothing else records it.
- *
- * WHICH MONEY EACH LINE RECORDS (the question #3582's shape decision left for
- * the build, settled from the code):
- *
- *  - The RE-PRICE (`INV-MOD-055`) moves the booking's price to what its strands
- *    now say, and where the officer typed night prices those strands already
- *    carry the share — `checkStoredNightPriceRepair` requires the typed nights
- *    to come to the stored total plus or minus exactly the amount settled
- *    (`settlementDeltaCents`). Where no boxes were offered, the share settles
- *    the parked structural change the re-price also records (a removed guest's
- *    nights). So when the closure's re-price lines post and move the price, the
- *    share's money is already on the ledger, and an `AGREED_ADJUSTMENT` beside
- *    them would count it twice in `owed(b)`.
- *  - The `AGREED_ADJUSTMENT` therefore posts only where the re-price records
- *    no price movement — it declined, wrote no history row, moved nothing, or
- *    its lines could not be planned. There, the share is the one record of the
- *    money a person agreed.
- *
- * The re-price's lines are anchored on the `PRICE_REBASE` history row the
- * re-base writes (`rebaseHistoryId`); with no row, nothing moved and none post.
+ * A parked review closing: the re-price's lines under the `PRICE_REBASE`
+ * history row the re-base wrote (`rebaseHistoryId`; with no row nothing moved
+ * and none post), then what the closure posts beside them, decided at booking
+ * grain by `planReviewClosureShareLines` — design §5.3 is the rule.
  */
 export async function postReviewClosureLedgerLines({
   store,
@@ -144,10 +134,10 @@ export async function postReviewClosureLedgerLines({
 }): Promise<void> {
   if (!(await bookingHasConfirmationLines(store, bookingId))) return;
 
+  const postedLines = rebase === null ? [] : await findPostedChargeLines(store, bookingId);
+  let repricePostings: BookingLedgerPosting[] = [];
   let repriceRows: ReturnType<typeof buildBookingLedgerRows> = [];
-  let repriceRecordsMovement = false;
   if (rebase !== null && rebaseHistoryId !== null) {
-    const postedLines = await findPostedChargeLines(store, bookingId);
     const guests = await store.bookingGuest.findMany({
       where: { bookingId },
       select: {
@@ -160,7 +150,6 @@ export async function postReviewClosureLedgerLines({
         nights: { select: { stayDate: true, priceCents: true } },
       },
     });
-    const movementCents = rebase.newFinalPriceCents - rebase.previousFinalPriceCents;
     try {
       const before = pricingSideFromLiveLedger(postedLines, guests, rebase.previousPromoAdjustmentCents);
       const plan =
@@ -175,7 +164,7 @@ export async function postReviewClosureLedgerLines({
                 promoAdjustmentCents: rebase.newPromoAdjustmentCents,
               }),
               changeFeeCents: 0,
-              expectedCents: movementCents,
+              expectedCents: rebase.newFinalPriceCents - rebase.previousFinalPriceCents,
               postedLines,
             });
       if (plan.kind === "none") {
@@ -185,10 +174,11 @@ export async function postReviewClosureLedgerLines({
         );
       } else {
         repriceRows = buildBookingLedgerRows(plan.postings);
-        repriceRecordsMovement = movementCents !== 0 && repriceRows.length > 0;
+        repricePostings = plan.postings;
       }
     } catch (error) {
       repriceRows = [];
+      repricePostings = [];
       logger.error(
         { err: error, bookingId, manualRefundTaskId, rebaseHistoryId },
         "Booking ledger: could not build a review closure's re-price lines; the gap is the census's to report (#3582)",
@@ -196,27 +186,32 @@ export async function postReviewClosureLedgerLines({
     }
   }
 
-  let adjustmentRows: ReturnType<typeof buildBookingLedgerRows> = [];
-  if (settlement !== null && !repriceRecordsMovement) {
-    try {
-      adjustmentRows = buildBookingLedgerRows([
-        planAgreedAdjustmentLine({
-          bookingId,
-          lodgeId,
-          manualRefundTaskId,
-          direction: settlement.direction,
-          amountCents: settlement.amountCents,
-          note,
-          officerMemberId,
-        }),
-      ]);
-    } catch (error) {
-      logger.error(
-        { err: error, bookingId, manualRefundTaskId },
-        "Booking ledger: could not build a review share's agreed adjustment; the gap is the census's to report (#3582)",
-      );
-    }
+  const postedAdjustmentLines = await findPostedAdjustmentLines(store, bookingId);
+  let shareRows: ReturnType<typeof buildBookingLedgerRows> = [];
+  try {
+    shareRows = buildBookingLedgerRows(
+      planReviewClosureShareLines({
+        bookingId,
+        lodgeId,
+        manualRefundTaskId,
+        officerMemberId,
+        note,
+        settlement,
+        rebasedFinalPriceCents: rebase?.newFinalPriceCents ?? null,
+        chargeLinesAfter: [...postedLines, ...repricePostings],
+        repriceRecordsMovement:
+          rebase !== null &&
+          rebase.newFinalPriceCents !== rebase.previousFinalPriceCents &&
+          repricePostings.length > 0,
+        postedAdjustmentLines,
+      }),
+    );
+  } catch (error) {
+    logger.error(
+      { err: error, bookingId, manualRefundTaskId },
+      "Booking ledger: could not build a review closure's share lines; the gap is the census's to report (#3582)",
+    );
   }
 
-  await writeBookingLedgerRows(store, [...repriceRows, ...adjustmentRows]);
+  await writeBookingLedgerRows(store, [...repriceRows, ...shareRows]);
 }

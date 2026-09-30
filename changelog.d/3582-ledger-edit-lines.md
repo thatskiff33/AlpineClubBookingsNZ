@@ -4,6 +4,7 @@
   the nights it added are posted fresh, with the promotion and any change fee
   alongside, and nothing posts unless those lines add up to exactly what the
   edit charged or refunded. Closing a parked edit's review posts the re-priced
-  nights, and the agreed amount is recorded only where the re-price does not
-  already record it, so the same money is never counted twice. Nothing reads
+  nights, and the agreed amount is recorded only where the booking's charged
+  nights do not already carry it. That is decided across the whole booking, so
+  two reviews raised by one edit never count the same money twice. Nothing reads
   the ledger yet (#3584), so no figure anyone sees changes.

@@ -13,7 +13,7 @@
 import type { Prisma } from "@prisma/client";
 
 import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
-import type { PostedChargeLine } from "@/lib/booking-ledger-modification-posting";
+import type { PostedAdjustmentLine, PostedChargeLine } from "@/lib/booking-ledger-modification-posting";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -126,4 +126,20 @@ export async function findPostedChargeLines(
     kind: row.kind === "PROMOTION" ? "PROMOTION" : "GUEST_NIGHT",
     sign: row.sign === -1 ? -1 : 1,
   }));
+}
+
+/**
+ * The agreed adjustments already posted for one booking, live or not (#3582):
+ * a review closure whose re-price now carries the booking's price reverses the
+ * live ones it supersedes (design §5.3). No figure anyone sees comes from it.
+ */
+export async function findPostedAdjustmentLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedAdjustmentLine[]> {
+  const rows = await store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: ["AGREED_ADJUSTMENT"] } },
+    select: { id: true, sign: true, quantity: true, unitCents: true, narration: true, reversesLineId: true },
+  });
+  return rows.map((row) => ({ ...row, sign: row.sign === -1 ? -1 : 1 }));
 }

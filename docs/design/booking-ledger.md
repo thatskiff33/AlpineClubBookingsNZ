@@ -326,26 +326,44 @@ the database makes — and its lines cascade with it.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Review share completed `CHARGE_TO_MEMBER` (+) or `REFUND_TO_MEMBER` (−) (`INV-PAY-061`, `INV-PAY-069`; the only two directions today) | `AGREED_ADJUSTMENT` (± the share) with the task note as narration, naming the officer — **only where the closure's re-price (§5.1) records no price movement**; where it does, those lines already carry the share and this line would count it twice. Never a settlement line: the card refund, the account credit and the hand-back post their own through §5.2, and the ask is no line | `REVIEW_TASK` | the closure, beside the re-price |
+| Review share completed `CHARGE_TO_MEMBER` (+) or `REFUND_TO_MEMBER` (−) (`INV-PAY-061`, `INV-PAY-069`; the only two directions today) | `AGREED_ADJUSTMENT` (± the share) with the task note as narration, naming the officer — **only as a stand-in for money the booking's charge lines do not yet carry**, decided at booking grain (the rule below); a later closure whose re-price carries it reverses it. Never a settlement line: the card refund, the account credit and the hand-back post their own through §5.2, and the ask is no line | `REVIEW_TASK` | the closure, beside the re-price |
 | Review share dismissed (`INV-PAY-099`) | nothing for the share; a dismissal moves no money and can be reopened. Its closure's re-price, if any, still posts (§5.1) | — | — |
 | Admin credit adjustment (`ADMIN_ADJUSTMENT`, `INV-MONEY-007`) | not a booking-ledger event unless applied to a booking, when it posts `CREDIT_APPLIED` | `MEMBER_CREDIT` | — |
 | Additional-payment ask raised (`INV-PAY-062`, `INV-PAY-098`) | **no line.** `owed(b)` already states it. The ask row (`PaymentTransaction` `ADDITIONAL`, PENDING) is the *instrument* — the intent, the reminder clock, the Xero supplementary invoice — and stays a row about collection, not about money | — | — |
 | Ask withdrawn (#3528, `INV-ADDPAY-040`) | no line; the debt is not written off (`INV-PAY-093`) — `owed(b)` is unchanged and a later ask can re-collect it | — | — |
 | Late capture on a deleted booking (`INV-ADDPAY-036`) | `CARD_CAPTURE` (+) as any capture; the task that queues it for a person is the instrument | `PAYMENT_TRANSACTION` | the webhook |
 
-**Which money the closure's two lines record (#3582, settled from the code).**
-Where the officer typed night prices, `checkStoredNightPriceRepair` requires them
-to come to the strand's stored total plus or minus exactly the share
-(`settlementDeltaCents`), and the re-base moves the booking's price to the
-strands (`INV-MOD-055`, D1) — so the re-price's lines carry the share. Where no
-boxes were offered, the share settles the parked structural change the re-price
-also records (a removed guest's nights). Either way, once the re-price posts a
-movement the share's money is on the ledger, and `owed(b)` reaches zero when the
-settlement line follows. The `AGREED_ADJUSTMENT` is the record only where the
-re-price declined, wrote no row, moved nothing, or could not be planned. What it
+**Which money a closure's lines record (#3582) — decided at booking grain, never per task.**
+One parked edit can raise several `EDIT_FINANCIAL_REVIEW` tasks (one per strand
+it moved), and every closure re-bases the WHOLE booking from its strands
+(`INV-MOD-055`). So the first sibling's re-price already carries every
+sibling's money, and a rule decided per task counts it twice. The rule, applied
+by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
+
+- **The re-base ran and the charge lines now come to exactly its final price**
+  (Σ `GUEST_NIGHT` + `PROMOTION` = `finalPriceCents`, the confirmation's own
+  identity): the charges carry the price. Every live `AGREED_ADJUSTMENT` on the
+  booking is a stand-in that is now superseded, and each is reversed by its line
+  id (`reversal:<lineId>`, anchored on this task) in the same batch. This share
+  posts nothing.
+- **Otherwise, this closure's own re-price rows recorded a movement:** they
+  carry the share, and nothing more posts.
+- **Otherwise** (the re-base declined, or the charges do not carry the price):
+  the share posts as the stand-in for money the headline has not moved yet.
+
+Why the re-price carries the share: where the officer typed night prices,
+`checkStoredNightPriceRepair` requires them to come to the strand's stored total
+plus or minus exactly the share (`settlementDeltaCents`). Where no boxes were
+offered, the share settles the parked structural change the re-price also
+records (a removed guest's nights).
+
+The result, after every closure in any order: `owed(b)` equals what the
+booking's own figures say — its final price less what has been paid, net of
+refunds — or, while a re-base declines, that figure plus the stand-ins. What it
 does not settle: a share that differs from the re-price's movement (a fee kept
-back, a goodwill figure) leaves `owed(b)` off by that difference, exactly as an
-unparked removal with a policy-retained amount does today — naming what the club
+back, a goodwill figure, a share on a closure that moved nothing) leaves
+`owed(b)` equal to the booking's figures and not to the share, exactly as an
+unparked removal with a policy-retained amount does today. Naming what the club
 keeps is #3611's owner decision, not this line's.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`

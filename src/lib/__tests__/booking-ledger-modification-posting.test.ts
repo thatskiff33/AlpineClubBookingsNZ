@@ -8,9 +8,10 @@ import { describe, expect, it } from "vitest";
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import {
-  liveChargeLines,
+  liveLines,
   planAgreedAdjustmentLine,
   planModificationChargeLines,
+  planReviewClosureShareLines,
   pricingSideFromLiveLedger,
   type ModificationPostingInput,
   type PostedChargeLine,
@@ -295,7 +296,7 @@ describe("planModificationChargeLines — an edit's own lines, per guest-night (
     const all = asPosted([...confirmed(), ...first.postings, ...second.postings]);
     const targets = all.flatMap((l) => (l.reversesLineId ? [l.reversesLineId] : []));
     expect(new Set(targets).size).toBe(targets.length);
-    expect(liveChargeLines(all).reduce((s, l) => s + l.sign * l.unitCents * l.quantity, 0)).toBe(10_000 - 2_000);
+    expect(liveLines(all).reduce((s, l) => s + l.sign * l.unitCents * l.quantity, 0)).toBe(10_000 - 2_000);
   });
 });
 
@@ -340,5 +341,67 @@ describe("planAgreedAdjustmentLine (#3582, §5.3)", () => {
     });
     const refund = planAgreedAdjustmentLine({ ...base, direction: "REFUND_TO_MEMBER" });
     expect(bookingLedgerBalance([{ side: refund.side, amountCents: ledgerLineAmountCents(refund) }]).adjustedCents).toBe(-4_000);
+  });
+});
+
+describe("planReviewClosureShareLines — booking grain (#3582, §5.3)", () => {
+  const base = {
+    bookingId: "b1",
+    lodgeId: "l1",
+    manualRefundTaskId: "t2",
+    officerMemberId: "o1",
+    note: "Agreed",
+    settlement: { direction: "REFUND_TO_MEMBER" as const, amountCents: 3_000 },
+  };
+  const charges = (cents: number) => [{ sign: 1 as const, unitCents: cents, quantity: 1 }];
+  const standIn = { id: "adj-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: A", reversesLineId: null };
+
+  it("charges carry the re-based price: reverses every live stand-in by its line id and posts no share", () => {
+    const lines = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: 7_000,
+      chargeLinesAfter: charges(7_000),
+      repriceRecordsMovement: true,
+      postedAdjustmentLines: [standIn],
+    });
+    expect(lines).toEqual([
+      expect.objectContaining({ kind: "AGREED_ADJUSTMENT", sign: 1, unitCents: 3_000, reversesLineId: "adj-1", postingKey: "reversal:adj-1", anchorId: "t2" }),
+    ]);
+  });
+
+  it("this closure's re-price recorded a movement the charges do not fully carry (drift elsewhere): no share on top of it", () => {
+    expect(
+      planReviewClosureShareLines({
+        ...base,
+        rebasedFinalPriceCents: 7_000,
+        chargeLinesAfter: charges(6_000),
+        repriceRecordsMovement: true,
+        postedAdjustmentLines: [standIn],
+      }),
+    ).toEqual([]);
+  });
+
+  it("re-base declined: the share stands in, and nothing is reversed", () => {
+    const lines = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: null,
+      chargeLinesAfter: charges(10_000),
+      repriceRecordsMovement: false,
+      postedAdjustmentLines: [standIn],
+    });
+    expect(lines.map((line) => [line.postingKey, ledgerLineAmountCents(line)])).toEqual([["agreed-adjustment:t2", -3_000]]);
+  });
+
+  it("a dismissal that the charges do not carry posts nothing", () => {
+    expect(
+      planReviewClosureShareLines({
+        ...base,
+        settlement: null,
+        rebasedFinalPriceCents: null,
+        chargeLinesAfter: charges(10_000),
+        repriceRecordsMovement: false,
+        postedAdjustmentLines: [],
+      }),
+    ).toEqual([]);
   });
 });

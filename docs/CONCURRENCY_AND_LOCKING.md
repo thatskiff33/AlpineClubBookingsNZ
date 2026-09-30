@@ -3111,7 +3111,8 @@ the stored ones, which removes a write rather than adding one.
 **#3582 ADDS `lock(1)` TO AN EDIT REVIEW'S COMPLETION — INSIDE THE TRANSACTION,
 AS ITS FIRST LOCK, AND NEVER ACROSS THE PROVIDER CALL.** The closure now posts
 booking-ledger lines (the re-price's reversal and re-post, anchored on the
-`PRICE_REBASE` row, and the agreed share where nothing else records it), and a
+`PRICE_REBASE` row, and a share only where the ledger design's §5.3 says it
+stands in), and a
 poster may post only for a booking already confirmed on the ledger
 (`bookingHasConfirmationLines`). The settle asks that question under `lock(1)`;
 a closure asking it without the key could see "not yet" while a first settle

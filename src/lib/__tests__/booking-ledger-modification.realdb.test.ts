@@ -6,7 +6,7 @@
  * suites pin that each door calls the sync with its own history row and
  * sides. What a mock cannot show is the posting path against the table's real
  * constraints — the CHECKs, the unique `reversesLineId`, `ON CONFLICT DO
- * NOTHING` on the key — across two edits in two transactions. Four claims:
+ * NOTHING` on the key — across two edits in two transactions. Five claims:
  *
  *  1. Two edits in turn: the second reverses the FIRST EDIT'S re-post, never the
  *     confirmation line the first already reversed, and the booking's live
@@ -16,6 +16,9 @@
  *  3. A booking not yet confirmed on the ledger posts nothing.
  *  4. A review closure's re-price posts under its history row, from the real
  *     guest rows, and its share posts no second record of the same money.
+ *  5. Two sibling reviews from one parked edit, in each direction and in the
+ *     dismiss-then-complete and declined-then-re-priced orders, leave the
+ *     ledger billing exactly the booking's price (design §5.3).
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -25,7 +28,9 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { bookingLedgerPriceCents } from "@/lib/booking-ledger-balance";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
+import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -36,6 +41,8 @@ const BOOKING_ID = "race-3582-booking";
 const UNCONFIRMED_ID = "race-3582-unconfirmed";
 const G1 = "race-3582-g1";
 const G2 = "race-3582-g2";
+const G3 = "race-3582-g3";
+const G4 = "race-3582-g4";
 const D1 = new Date("2026-08-01T00:00:00.000Z");
 const D2 = new Date("2026-08-02T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
@@ -191,6 +198,50 @@ async function postEdit(bookingModificationId: string, before: ModificationPrici
   });
 }
 
+function rebaseOf(previousFinal: number, newFinal: number): BookingPriceRebase {
+  return {
+    previousTotalPriceCents: previousFinal,
+    previousDiscountCents: 0,
+    previousPromoAdjustmentCents: 0,
+    previousFinalPriceCents: previousFinal,
+    newTotalPriceCents: newFinal,
+    newDiscountCents: 0,
+    newPromoAdjustmentCents: 0,
+    newFinalPriceCents: newFinal,
+    promoRemoved: false,
+  };
+}
+
+type Share = { direction: "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER"; amountCents: number };
+
+/**
+ * One review closure, as the completion runs it: under `lock(1)`, with a
+ * `PRICE_REBASE` history row only where the re-base changed the booking.
+ */
+async function closeReview(task: string, rebase: BookingPriceRebase | null, settlement: Share | null): Promise<void> {
+  const moved = rebase !== null && rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
+  const rebaseHistoryId = moved ? await historyRow("PRICE_REBASE", 0) : null;
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await sync.postReviewClosureLedgerLines({
+      store: tx,
+      bookingId: BOOKING_ID,
+      lodgeId: LODGE_ID,
+      manualRefundTaskId: task,
+      rebase,
+      rebaseHistoryId,
+      settlement,
+      note: `share ${task}`,
+      officerMemberId: MEMBER_ID,
+    });
+  });
+}
+
+/** What the ledger bills: charges plus live agreed adjustments. */
+async function billedCents(): Promise<number> {
+  return bookingLedgerPriceCents(await lines());
+}
+
 const BOTH = { guests: [guestSide(G1, [[D1, 5_000], [D2, 5_000]]), guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: 0 };
 const REPRICED = { guests: [guestSide(G1, [[D1, 5_000], [D2, 6_000]]), guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: 0 };
 const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: 0 };
@@ -319,6 +370,59 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
         ["GUEST_NIGHT", -5_000, "MODIFICATION", rebaseRow],
       ]);
       expect(await liveChargeCents()).toBe(10_000);
+    });
+
+    describe("two sibling reviews from one parked edit (#3740 review F1)", () => {
+      const refund: Share = { direction: "REFUND_TO_MEMBER", amountCents: 10_000 };
+      const charge: Share = { direction: "CHARGE_TO_MEMBER", amountCents: 10_000 };
+      const adjustments = async () => (await lines()).filter((line) => line.kind === "AGREED_ADJUSTMENT");
+
+      /** G1, G2 and G3 confirmed at $100 each; a parked edit then removes G2 and G3. */
+      async function parkedRemovalOfTwo(): Promise<void> {
+        await clean();
+        await seedGuests(BOOKING_ID, [G1, G2, G3]);
+        await confirmOnLedger();
+        await prisma.bookingGuest.deleteMany({ where: { id: { in: [G2, G3] } } });
+      }
+
+      it("REFUND: the first closure's re-price carries both removals, the second posts nothing, and the ledger bills the booking's price", async () => {
+        await parkedRemovalOfTwo();
+        await closeReview("race-3582-tB", rebaseOf(30_000, 10_000), refund);
+        await closeReview("race-3582-tC", rebaseOf(10_000, 10_000), refund);
+        expect(await adjustments()).toEqual([]);
+        expect(await billedCents()).toBe(10_000);
+      });
+
+      it("REFUND, dismiss then complete: the dismissal's re-price stands and the completion adds nothing", async () => {
+        await parkedRemovalOfTwo();
+        await closeReview("race-3582-tB", rebaseOf(30_000, 10_000), null);
+        await closeReview("race-3582-tC", rebaseOf(10_000, 10_000), refund);
+        expect(await adjustments()).toEqual([]);
+        expect(await billedCents()).toBe(10_000);
+      });
+
+      it("REFUND, declined then re-priced: the stand-in is reversed by its line id when the re-price carries it", async () => {
+        await parkedRemovalOfTwo();
+        await closeReview("race-3582-tB", null, refund);
+        const [standIn] = await adjustments();
+        expect(standIn).toMatchObject({ amountCents: -10_000, reversesLineId: null });
+        expect(await billedCents()).toBe(30_000 - 10_000);
+        await closeReview("race-3582-tC", rebaseOf(30_000, 10_000), refund);
+        expect((await adjustments()).map((line) => [line.amountCents, line.reversesLineId])).toEqual([
+          [-10_000, null],
+          [10_000, standIn!.id],
+        ]);
+        expect(await billedCents()).toBe(10_000);
+      });
+
+      it("CHARGE: the first closure's re-price carries both additions, the second posts nothing", async () => {
+        // G1 and G2 confirmed at $200; a parked edit adds G3 and G4.
+        await seedGuests(BOOKING_ID, [G3, G4]);
+        await closeReview("race-3582-tB", rebaseOf(20_000, 40_000), charge);
+        await closeReview("race-3582-tC", rebaseOf(40_000, 40_000), charge);
+        expect(await adjustments()).toEqual([]);
+        expect(await billedCents()).toBe(40_000);
+      });
     });
   },
 );

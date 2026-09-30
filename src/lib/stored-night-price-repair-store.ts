@@ -231,8 +231,8 @@ export async function recordReviewClosurePricing({
     }));
   }
   // #3582: the closure on the booking ledger — the re-price's lines under that
-  // history row, and the agreed share where nothing else records its money.
-  // Which money each line records is `postReviewClosureLedgerLines`'s docblock.
+  // history row, and a share only as a stand-in the charges do not carry,
+  // decided at booking grain: design `booking-ledger.md` §5.3.
   // Under the `lock(1)` the completion took before its claim.
   await postReviewClosureLedgerLines({
     store,
